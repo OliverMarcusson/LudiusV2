@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from ludius import keys
 from ludius.loop import Agent, GroundTruth
-from ludius.policy import SHELL_PROCESSES
+from ludius.policy import SHELL_PROCESSES, shell_dialog
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
@@ -108,7 +108,7 @@ class Session:
                 return True
             if popup is not None or (fg is not None and fg.class_name == "#32770"):
                 # A save prompt from closing a noise app: discard like a person giving up.
-                target = _button(snap, DISCARD) or _button(snap, DISMISS)
+                target = None if shell_dialog(fg) else _button(snap, DISCARD) or _button(snap, DISMISS)
                 if target is not None:
                     self._click(target)
                 else:

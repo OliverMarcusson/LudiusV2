@@ -21,6 +21,17 @@ SHELL_PROCESSES = {
     "startmenuexperiencehost.exe",
     "shellexperiencehost.exe",
 }
+# Alt+F4 on the desktop or taskbar opens Shut Down Windows; one Enter or OK there powers the VM off.
+DESKTOP_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd"}
+
+
+def alt_f4_safe(fg: obs.Window | None) -> bool:
+    return fg is not None and fg.class_name not in DESKTOP_CLASSES
+
+
+def shell_dialog(fg: obs.Window | None) -> bool:
+    """A dialog of the shell itself (Shut Down Windows, Run): leave it with Esc, never click its buttons."""
+    return fg is not None and fg.class_name == "#32770" and fg.process_name.lower() in SHELL_PROCESSES
 
 
 @dataclass

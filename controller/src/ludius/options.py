@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from ludius.policy import SHELL_PROCESSES, Policy
+from ludius.policy import SHELL_PROCESSES, Policy, alt_f4_safe
 from ludius.tasks import Subgoal, Task
 from ludius.v1 import observation_pb2 as obs
 
@@ -139,8 +139,9 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
                 continue
             seen.add(text)
             add("type", f"type:copy {ref}'{text[:60]}' into [{focus.id}]", element=focus, literal=text)
+    fg = next((w for w in v.snapshot.windows if w.kind == obs.Window.FOREGROUND), None)
     for k in [*BASE_KEYS, *sg.keys]:
-        if k == "Win" and not sg.launch:
+        if (k == "Win" and not sg.launch) or (k == "Alt+F4" and not alt_f4_safe(fg)):
             continue
         add("key", f"press {k}", keys=k)
     if any("list continues" in h for e in v.allowed for h in e.hints) or any(e.role == "document" for e in v.allowed):

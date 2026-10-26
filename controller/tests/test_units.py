@@ -195,3 +195,22 @@ def test_mapping_recheck_on_display_change(tmp_path: Any) -> None:
     agent.size, agent.offset = (1600, 900), 7  # pointer lands 7 px off after this change
     runner.observe()
     assert not runner.mapping_ok
+
+
+def test_no_alt_f4_on_the_desktop() -> None:
+    """Alt+F4 on the desktop opens Shut Down Windows; an OK there powered the test VM off once."""
+    from ludius.options import build_options, view
+    from ludius.policy import alt_f4_safe, shell_dialog
+
+    t = load_template(DATA / "templates" / "notepad_write_note.yaml")
+    task = Task(t, TaskInstance(template=t.task, params=t.example), random.Random(0))
+    sg = task.subgoal("close_app")
+    for cls, offered in (("Progman", False), ("Shell_TrayWnd", False), ("Notepad", True)):
+        fg = obs.Window(kind=obs.Window.FOREGROUND, class_name=cls, process_name="explorer.exe")
+        snap = obs.Snapshot(windows=[fg])
+        opts = build_options(view(snap, task, sg, Policy()), task, sg, Policy())
+        assert any(o.keys == "Alt+F4" for o in opts) is offered
+    assert not alt_f4_safe(None)
+    shutdown = obs.Window(kind=obs.Window.FOREGROUND, class_name="#32770", process_name="explorer.exe")
+    assert shell_dialog(shutdown)
+    assert not shell_dialog(obs.Window(kind=obs.Window.FOREGROUND, class_name="#32770", process_name="notepad.exe"))

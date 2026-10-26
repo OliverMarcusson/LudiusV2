@@ -19,7 +19,7 @@ from ludius import keys
 from ludius.assist import Assist
 from ludius.jev import Decision
 from ludius.options import Option, StepView, build_options, build_state, describe, view
-from ludius.policy import Policy
+from ludius.policy import Policy, alt_f4_safe
 from ludius.tasks import Persona, Subgoal, Task, check_done
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
@@ -397,7 +397,7 @@ class Runner:
             if discard is not None:
                 self._move_to(discard)
                 self.agent.click()
-            elif fg is not None and fg.process_name.lower() in apps:
+            elif fg is not None and fg.process_name.lower() in apps and alt_f4_safe(fg):  # not the desktop
                 self.agent.chord(keys.chord("Esc") if fg.kind != obs.Window.FOREGROUND else keys.chord("Alt+F4"))
             else:
                 return
