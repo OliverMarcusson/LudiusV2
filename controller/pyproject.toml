@@ -16,9 +16,16 @@ ludius = "ludius.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.9", "pyright>=1.1.390", "grpcio-tools>=1.70", "types-pyyaml", "types-protobuf"]
+durable = [
+    "temporalio>=1.34.0",
+]
 visual = [
     "rapidocr-onnxruntime>=1.4.4",
 ]
+
+[tool.uv]
+# durable (Temporal) is light and fully typed: install it by default so CI typechecks and tests it.
+default-groups = ["dev", "durable"]
 
 [build-system]
 requires = ["hatchling"]
