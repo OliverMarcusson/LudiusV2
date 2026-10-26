@@ -1,0 +1,58 @@
+# Make a quick sketch in Paint and save it as .png in Pictures (Paint's default save folder and type).
+# Variants cover launch method (Start search vs Run), content (shape plus caption vs caption only)
+# and UI path (Ctrl+S vs File menu).
+task: paint_quick_sketch
+app: paint
+processes: [mspaint.exe]
+params: [file_name, caption]
+about: "Make a quick sketch in Paint (a shape and/or a text caption) and save it as .png in Pictures. file_name: without extension; caption: one short line of text on the image (ASCII)."
+defaults: {launch_query: paint}
+example: {file_name: admission test sketch, caption: room 2 layout}
+variants:
+  - [open_from_start, draw_shape, add_caption, save_shortcut, name_file, confirm_save, close_app]
+  - [open_from_run, add_caption, save_menu, name_file, confirm_save, close_app]
+  - [open_from_run, draw_shape, add_caption, save_menu, name_file, confirm_save, close_app]
+  - [open_from_start, add_caption, save_shortcut, name_file, confirm_save, close_app]
+budget_steps: 40
+budget_minutes: 8
+on_abandon: close_without_saving
+subgoals:
+  open_from_start:
+    goal: "Open Paint by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    done: {foreground: {process: mspaint.exe}}
+  open_from_run:
+    goal: "Open Paint through the Run dialog (Win+R)"
+    launch: true
+    keys: [Win+R]
+    text: launch_query
+    done: {foreground: {process: mspaint.exe}}
+  draw_shape:
+    # Open-ended: the canvas has no UIA state to check; Jev decides when the shape is drawn.
+    goal: "Pick a rectangle or oval from the Shapes group on the Home tab and drag it out on the canvas"
+    steps: 8
+  add_caption:
+    goal: "Click the Text tool (A) on the Home tab, click an empty spot on the canvas and type: {caption}"
+    text: caption
+    done: {typed: true}
+  save_shortcut:
+    goal: "Open the Save As dialog with the keyboard shortcut"
+    keys: [Ctrl+S]
+    done: {window: {process: mspaint.exe, title: "^Save As$"}}
+  save_menu:
+    goal: "Open the Save As dialog from Paint's File menu"
+    done: {window: {process: mspaint.exe, title: "^Save As$"}}
+  name_file:
+    goal: "Enter {file_name} as the file name in the Save As dialog"
+    text: file_name
+    done: {typed: true, element: {name: "^File name", value: '^{file_name}(\.png)?$'}}
+  confirm_save:
+    goal: "Save the picture as {file_name}"
+    keys: [Enter]
+    # Explorer hides known extensions by default, so the title may lack ".png".
+    done: {window: {process: mspaint.exe, title: '^{file_name}(\.png)? - Paint$'}}
+  close_app:
+    goal: "Close Paint"
+    done: {window: {process: mspaint.exe, absent: true}}
