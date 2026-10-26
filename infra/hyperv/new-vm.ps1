@@ -16,6 +16,9 @@ $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $build = Join-Path $PSScriptRoot 'build'
 $envFile = Join-Path $root '.env'
 if (Get-VM $VMName -ErrorAction SilentlyContinue) { throw "$VMName already exists" }
+# Owner's cap: at most one running Ludius VM on this host. This script starts the new VM, so refuse while another runs.
+$running = @(Get-VM -Name 'ludius-*' | Where-Object { $_.State -notin 'Off', 'Saved' })
+if ($running) { throw "one-VM cap: $($running.Name -join ', ') is running; save it first (Save-VM)" }
 
 function New-Password {
     $chars = [char[]]'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'

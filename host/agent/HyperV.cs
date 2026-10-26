@@ -188,6 +188,12 @@ sealed partial class HyperV(Guid observerService)
         'Deleted'
         """;
 
+    // Owner's cap: at most one running Ludius VM on this host; anything not Off or Saved counts (Paused, Starting).
+    // Start, and restore (a checkpoint of a running VM comes back running), refuse while another ludius-* VM is
+    // up; save that one first.
+    const string OneVm = "$other = @(Get-VM -Name 'ludius-*' | Where-Object { $_.State -notin 'Off', 'Saved' -and $_.Name -ne $env:LUDIUS_VM }); "
+        + "if ($other) { throw \"one-VM cap: $($other.Name -join ', ') is running; save it before starting $env:LUDIUS_VM\" }; ";
+
     public async Task<string> Lifecycle(string vm, Ludius.V1.LifecycleRequest.Types.Op op, string checkpoint, string target, CancellationToken ct)
     {
         if (!SafeName().IsMatch(vm) || (checkpoint != "" && !SafeName().IsMatch(checkpoint)) || (target != "" && !SafeName().IsMatch(target)))
@@ -200,10 +206,10 @@ sealed partial class HyperV(Guid observerService)
         // otherwise the trailing state query exits 0 and a run silently continues on the unrestored VM.
         var script = "$ErrorActionPreference = 'Stop'; " + op switch
         {
-            Ludius.V1.LifecycleRequest.Types.Op.Start => "Start-VM -Name $env:LUDIUS_VM",
+            Ludius.V1.LifecycleRequest.Types.Op.Start => OneVm + "Start-VM -Name $env:LUDIUS_VM",
             Ludius.V1.LifecycleRequest.Types.Op.Stop => "Stop-VM -Name $env:LUDIUS_VM -Force",
             Ludius.V1.LifecycleRequest.Types.Op.Checkpoint => "Checkpoint-VM -Name $env:LUDIUS_VM -SnapshotName $env:LUDIUS_CP",
-            Ludius.V1.LifecycleRequest.Types.Op.Restore => "Restore-VMSnapshot -VMName $env:LUDIUS_VM -Name $env:LUDIUS_CP -Confirm:$false",
+            Ludius.V1.LifecycleRequest.Types.Op.Restore => OneVm + "Restore-VMSnapshot -VMName $env:LUDIUS_VM -Name $env:LUDIUS_CP -Confirm:$false",
             Ludius.V1.LifecycleRequest.Types.Op.Clone => CloneScript,
             Ludius.V1.LifecycleRequest.Types.Op.Delete => DeleteScript,
             _ => "",
