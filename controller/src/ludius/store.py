@@ -6,20 +6,26 @@ local CLI keeps working without a database. sync() mirrors it into PostgreSQL, i
   logs are append-only, so only lines past the stored maximum are inserted, and a log that got shorter is
   an error rather than a silent divergence;
 - world_doc: one row per world/plan YAML file (narrative, revisions, derived state, day plans), replaced
-  when its content hash changes.
-Needs the `state` dependency group and a DSN (`ludius store sync --dsn ...` or LUDIUS_PG).
+  when its content hash changes;
+- screenshot: with an S3 bucket (MinIO), every *.png is stored once under its content hash and the row maps its
+  run path to that object; screenshot() reads it back and checks the hash.
+Needs the `state` dependency group, a DSN (`ludius store sync --dsn ...` or LUDIUS_PG) and optionally an S3 URL
+(`--s3 http://KEY:SECRET@host:9000/bucket` or LUDIUS_S3).
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 import psycopg
 import yaml
+from minio import Minio
 from psycopg.types.json import Jsonb
 
 SCHEMA = """
@@ -38,6 +44,12 @@ create table if not exists world_doc (
     sha256  text        not null,
     updated timestamptz not null default now()
 );
+create table if not exists screenshot (
+    key     text        primary key,  -- path relative to the run directory, forward slashes
+    sha256  text        not null,     -- the object is sha256/<sha256>.png in the bucket
+    size    bigint      not null,
+    updated timestamptz not null default now()
+);
 """
 WORLD_GLOBS = ["world/**/*.yaml", "plans/*.yaml"]
 
@@ -46,6 +58,32 @@ WORLD_GLOBS = ["world/**/*.yaml", "plans/*.yaml"]
 class Synced:
     lines: int = 0
     docs: int = 0
+    shots: int = 0
+
+
+@dataclass
+class Bucket:
+    client: Minio
+    name: str
+
+
+def bucket(url: str) -> Bucket:
+    """`http(s)://ACCESS:SECRET@host:port/bucket`, created if missing."""
+    u = urlsplit(url)
+    if u.scheme not in ("http", "https") or not u.hostname or not u.username or not u.password:
+        raise ValueError("S3 URL must be http(s)://ACCESS:SECRET@host:port/bucket")
+    name = u.path.strip("/")
+    if not name:
+        raise ValueError("S3 URL has no bucket")
+    client = Minio(f"{u.hostname}:{u.port or (443 if u.scheme == 'https' else 80)}", unquote(u.username),
+                   unquote(u.password), secure=u.scheme == "https")  # fmt: skip
+    if not client.bucket_exists(name):
+        client.make_bucket(name)
+    return Bucket(client, name)
+
+
+def _object(sha: str) -> str:
+    return f"sha256/{sha}.png"
 
 
 def connect(dsn: str, timeout_s: int = 10) -> psycopg.Connection[tuple[Any, ...]]:
@@ -69,7 +107,7 @@ def _lines(path: Path) -> list[str]:
     return lines[:-1]  # the last piece is "" after a final newline, or a line still being written: skip it
 
 
-def sync(conn: psycopg.Connection[tuple[Any, ...]], root: Path) -> Synced:
+def sync(conn: psycopg.Connection[tuple[Any, ...]], root: Path, shots: Bucket | None = None) -> Synced:
     out = Synced()
     with conn.transaction():
         for log in sorted(root.rglob("*.jsonl")):
@@ -101,6 +139,23 @@ def sync(conn: psycopg.Connection[tuple[Any, ...]], root: Path) -> Synced:
                 (_key(root, doc), Jsonb(yaml.safe_load(raw), dumps=_dumps), sha),  # YAML dates become strings
             )
             out.docs += cur.rowcount
+        for png in sorted(root.rglob("*.png")) if shots else []:
+            assert shots is not None
+            raw = png.read_bytes()
+            sha = hashlib.sha256(raw).hexdigest()
+            key = _key(root, png)
+            row = conn.execute("select sha256 from screenshot where key = %s", (key,)).fetchone()
+            if row and row[0] == sha:
+                continue
+            # The object goes first: a row never points at a missing object; an object left by a failed sync is
+            # the same content-addressed object the retry writes.
+            shots.client.put_object(shots.name, _object(sha), io.BytesIO(raw), len(raw), content_type="image/png")
+            conn.execute(
+                "insert into screenshot (key, sha256, size) values (%s, %s, %s) on conflict (key) do update "
+                "set sha256 = excluded.sha256, size = excluded.size, updated = now()",
+                (key, sha, len(raw)),
+            )
+            out.shots += 1
     return out
 
 
@@ -113,3 +168,19 @@ def doc(conn: psycopg.Connection[tuple[Any, ...]], key: str) -> Any:
     if row is None:
         raise KeyError(key)
     return row[0]
+
+
+def screenshot(conn: psycopg.Connection[tuple[Any, ...]], shots: Bucket, key: str) -> bytes:
+    """A synced screenshot's bytes, read back from the bucket and checked against the stored hash."""
+    row = conn.execute("select sha256 from screenshot where key = %s", (key,)).fetchone()
+    if row is None:
+        raise KeyError(key)
+    resp = shots.client.get_object(shots.name, _object(row[0]))
+    try:
+        raw = resp.read()
+    finally:
+        resp.close()
+        resp.release_conn()
+    if hashlib.sha256(raw).hexdigest() != row[0]:
+        raise ValueError(f"{key}: object does not match its stored sha256")
+    return raw

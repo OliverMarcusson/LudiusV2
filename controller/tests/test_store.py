@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import io
 import json
 import os
+import shutil
 import socket
 import subprocess
+import time
+import urllib.request
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -14,6 +18,12 @@ from psycopg import sql
 
 from ludius import store
 from ludius.loop import GroundTruth
+
+
+def _port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def _pg_bin() -> Path | None:
@@ -41,9 +51,7 @@ def pg_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     data = tmp_path_factory.mktemp("pg") / "data"
     subprocess.run([bin_dir / "initdb", "-D", data, "-U", "ludius", "-A", "trust", "-E", "UTF8", "--no-locale"],
                    check=True, capture_output=True, timeout=120)  # fmt: skip
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    port = _port()
     ctl = [bin_dir / "pg_ctl", "-D", data, "-w", "-t", "30"]
     # No pipes on start: the server inherits them and would keep them open, so waiting for EOF never returns.
     started = subprocess.run([*ctl, "-o", f"-p {port} -h 127.0.0.1", "-l", data / "server.log", "start"],
@@ -64,6 +72,38 @@ def pg(pg_server: str) -> Iterator[str]:
     with psycopg.connect(f"{pg_server}/postgres", autocommit=True, connect_timeout=10) as c:
         c.execute(sql.SQL("create database {}").format(sql.Identifier(name)))
     yield f"{pg_server}/{name}"
+
+
+@pytest.fixture(scope="session")
+def s3_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """A real MinIO for the session: LUDIUS_TEST_S3, or a private server on a temp dir, stopped afterwards."""
+    if url := os.environ.get("LUDIUS_TEST_S3"):
+        yield url
+        return
+    exe = os.environ.get("LUDIUS_MINIO_BIN") or shutil.which("minio")
+    if not exe:
+        # MinIO no longer publishes binaries: go install github.com/minio/minio@RELEASE.2025-10-15T17-29-55Z
+        pytest.skip("no MinIO: set LUDIUS_TEST_S3 or LUDIUS_MINIO_BIN")
+    data, port = tmp_path_factory.mktemp("minio"), _port()
+    env = os.environ | {"MINIO_ROOT_USER": "ludius", "MINIO_ROOT_PASSWORD": "ludius-test-secret"}
+    log = (data.parent / "minio.log").open("wb")
+    cmd = [exe, "server", str(data), "--address", f"127.0.0.1:{port}", "--console-address", f"127.0.0.1:{_port()}"]
+    server = subprocess.Popen(cmd, env=env, stdout=log, stderr=log)
+    try:
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/minio/health/live", timeout=2).close()
+                break
+            except OSError:
+                if server.poll() is not None or time.monotonic() > deadline:
+                    pytest.fail(f"MinIO did not start (exit {server.poll()})")
+                time.sleep(0.2)
+        yield f"http://ludius:ludius-test-secret@127.0.0.1:{port}"
+    finally:
+        server.terminate()
+        server.wait(timeout=30)
+        log.close()
 
 
 def test_traces_and_world_round_trip_incrementally(pg: str, tmp_path: Path) -> None:
@@ -109,3 +149,38 @@ def test_rewritten_log_is_refused(pg: str, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="a.jsonl:3: not JSON"):
             store.sync(conn, tmp_path)
         assert [r["event"] for r in store.trace(conn, "a.jsonl")] == ["x", "y"]  # the failed sync left nothing
+
+
+def test_screenshots_go_to_s3_once_and_read_back_checked(pg: str, s3_server: str, tmp_path: Path) -> None:
+    runs = tmp_path / "runs"
+    (runs / "visual").mkdir(parents=True)
+    a, b = b"PNG first screen", b"PNG second screen"  # stored as bytes, never decoded
+    (runs / "visual" / "a.png").write_bytes(a)
+    (runs / "visual" / "copy.png").write_bytes(a)
+    (runs / "screen.png").write_bytes(b)
+    shots = store.bucket(f"{s3_server}/t-{uuid.uuid4().hex[:12]}")  # created on first use
+
+    with store.connect(pg) as conn:
+        assert store.sync(conn, runs).shots == 0  # without a bucket screenshots are left alone
+        assert store.sync(conn, runs, shots) == store.Synced(shots=3)
+        assert store.sync(conn, runs, shots) == store.Synced()  # unchanged files are not uploaded again
+        assert len(list(shots.client.list_objects(shots.name, recursive=True))) == 2  # one object per content
+        for key, raw in (("visual/a.png", a), ("visual/copy.png", a), ("screen.png", b)):
+            assert store.screenshot(conn, shots, key) == raw
+        (runs / "screen.png").write_bytes(b + b" changed")
+        assert store.sync(conn, runs, shots) == store.Synced(shots=1)
+        assert store.screenshot(conn, shots, "screen.png") == b + b" changed"
+        with pytest.raises(KeyError):
+            store.screenshot(conn, shots, "missing.png")
+        # An object that no longer matches its hash is refused, not returned.
+        sha = conn.execute("select sha256 from screenshot where key = 'visual/a.png'").fetchone()
+        assert sha is not None
+        shots.client.put_object(shots.name, f"sha256/{sha[0]}.png", io.BytesIO(b"tampered"), 8)
+        with pytest.raises(ValueError, match="does not match"):
+            store.screenshot(conn, shots, "visual/a.png")
+
+
+def test_s3_url_must_carry_credentials_and_bucket() -> None:
+    for bad in ("http://127.0.0.1:9000/b", "http://k:s@127.0.0.1:9000", "ftp://k:s@h/b"):
+        with pytest.raises(ValueError):
+            store.bucket(bad)
