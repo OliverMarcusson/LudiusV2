@@ -6,12 +6,16 @@
 # Stand-in for the Packer + Ansible build (spec section 7) on local Hyper-V.
 # -RolesOnly: only the guest roles ($roles below) and a read-back of their named settings, on the already running
 # VM. No build, observer, task, certificate, DVD, start, restore or checkpoint.
-param([switch]$NoUiAccess, [switch]$NoCheckpoint, [string]$Checkpoint = 'clean', [switch]$RolesOnly)
+# -VM: target another range VM than .env's LUDIUS_VM (same .env credentials, e.g. a guest installed from the same
+# answer ISO). -WaitMinutes: first wait that long for setup to finish (the persona logged on), e.g. under Packer.
+param([switch]$NoUiAccess, [switch]$NoCheckpoint, [string]$Checkpoint = 'clean', [switch]$RolesOnly, [string]$VM,
+    [int]$WaitMinutes = 0)
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $cfg = @{}
 foreach ($line in Get-Content (Join-Path $root '.env')) { if ($line -match '^\s*([A-Z0-9_]+)=(.*)$') { $cfg[$Matches[1]] = $Matches[2] } }
-$vm = $cfg.LUDIUS_VM
+$vm = if ($VM) { $VM } else { $cfg.LUDIUS_VM }
+if ($vm -notmatch '^ludius-[A-Za-z0-9-]+$') { throw "not a range VM: $vm" }
 $admin = [pscredential]::new("$($cfg.LUDIUS_ADMIN_USER)", (ConvertTo-SecureString $cfg.LUDIUS_ADMIN_PASSWORD -AsPlainText -Force))
 $installDir = 'C:\Program Files\RangeAssist'
 
@@ -99,6 +103,13 @@ if (-not $NoCheckpoint -and (Get-VMSnapshot $vm -Name $Checkpoint -ErrorAction S
     throw "checkpoint '$Checkpoint' exists and is never replaced: pass -NoCheckpoint or -Checkpoint <new name>"
 }
 
+# Setup still reads its DVDs: eject only once the persona is logged on (autologon is unattend's last step).
+$until = (Get-Date).AddMinutes($WaitMinutes)
+while (-not (Invoke-Command -VMName $vm -Credential $admin -ErrorAction SilentlyContinue {
+    param($p) Get-Process explorer -IncludeUserName -ErrorAction SilentlyContinue | Where-Object UserName -like "*\$p" } -ArgumentList $cfg.LUDIUS_PERSONA_USER)) {
+    if ((Get-Date) -gt $until) { throw "$vm not ready: no admin session or persona not logged on" }
+    Start-Sleep 30
+}
 Get-VMDvdDrive $vm | Where-Object Path | Set-VMDvdDrive -Path $null
 
 # Range CA and code-signing certificate (spec: observer signed with the range's own CA).
