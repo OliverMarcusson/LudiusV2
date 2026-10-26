@@ -87,7 +87,7 @@ static unsafe class JavaBridge
     {
         const string name = "WindowsAccessBridge-64.dll";
         var homes = new List<string?> { Environment.GetEnvironmentVariable("JAVA_HOME") };
-        foreach (var kind in new[] { "JRE", "JDK" })
+        foreach (var kind in new[] { "JRE", "JDK", "Java Runtime Environment" })
         {
             using var k = Registry.LocalMachine.OpenSubKey($@"SOFTWARE\JavaSoft\{kind}");
             if (k?.GetValue("CurrentVersion") is string v)
