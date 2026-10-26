@@ -322,7 +322,7 @@ def cmd_timeline(args: argparse.Namespace) -> int:
 def cmd_metrics(args: argparse.Namespace) -> int:
     human = [Path(p) for p in args.human] if args.human else None
     logs = [Path(p) for p in args.logs]
-    out = metrics.report(logs, human)
+    out = metrics.report(logs, human, Path(args.features) if args.features else None)
     if args.timeline:
         personas = [load_yaml(Persona, p).user for p in sorted((DATA / "personas").glob("*.yaml"))]
         out["artifacts"] = artifacts.report(
@@ -530,6 +530,7 @@ def main(argv: list[str] | None = None) -> int:
     me.add_argument("--timeline", metavar="CSV", help="psort CSV export (dynamic or l2tcsv) after the noise")
     me.add_argument("--before", metavar="CSV", help="psort CSV export before the noise, for survival")
     me.add_argument("--manifest", metavar="JSON", help='scenario artifacts: [{"id": ..., "match": {field: regex}}]')
+    me.add_argument("--features", metavar="CSV", help="per-instance features with label, held-out split, provenance")
     me.set_defaults(fn=cmd_metrics)
 
     va = sub.add_parser("validate", help="admission gate: run every template variant from a clean checkpoint")

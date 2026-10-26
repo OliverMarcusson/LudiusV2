@@ -6,7 +6,10 @@ coverage and survival need a collected super-timeline (Velociraptor/KAPE -> Plas
 
 from __future__ import annotations
 
+import csv
+import hashlib
 import json
+import os
 import statistics
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -15,6 +18,15 @@ from typing import Any
 
 # Balanced accuracy a single trainee rule may reach before the noise counts as filterable.
 CHANCE_MARGIN = 0.6
+# Held-out evaluation: whole source logs (one run or session each) go to one side, never rows of the same
+# run on both sides; the order within each label is a salted hash, so the split is reproducible.
+HOLDOUT_FRACTION = 0.3
+HOLDOUT_SALT = "ludius-holdout-v1"
+# What the labels are. Nothing here verifies that the comparison logs are human sessions.
+LABELS = (
+    "stand-in: positive = logs given as noise, negative = logs given with --human; operator-supplied, "
+    "not verified as genuine human sessions"
+)
 
 
 @dataclass
@@ -26,6 +38,8 @@ class Instance:
     launch: str
     status: str = "open"
     steps: list[dict[str, Any]] = field(default_factory=lambda: [])
+    source: str = ""  # log path relative to the dataset root, forward slashes (provenance, never a feature)
+    line: int = 0  # 1-based line of its task_start
 
 
 @dataclass
@@ -40,11 +54,18 @@ def _ms(r: dict[str, Any]) -> int:
     return int(r.get("guest_ms") or r.get("host_ms") or 0)
 
 
-def load(paths: list[Path]) -> Logs:
+def root_of(paths: list[Path]) -> Path:
+    """The dataset root: the deepest directory holding every log, so source paths don't depend on the cwd."""
+    return Path(os.path.commonpath([p.resolve().parent for p in paths])) if paths else Path()
+
+
+def load(paths: list[Path], root: Path | None = None) -> Logs:
     logs = Logs()
+    root = root or root_of(paths)
     for path in paths:
         persona, cur, first, last = "", None, 0, 0
-        for line in path.read_text(encoding="utf-8").splitlines():
+        source = path.resolve().relative_to(root).as_posix()
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if not line.strip():
                 continue
             r: dict[str, Any] = json.loads(line)
@@ -54,7 +75,7 @@ def load(paths: list[Path]) -> Logs:
             persona = r.get("persona") or persona
             if ev == "task_start":
                 subgoals: list[str] = r.get("subgoals") or [""]
-                cur = Instance(persona, r.get("task", ""), subgoals[0])
+                cur = Instance(persona, r.get("task", ""), subgoals[0], source=source, line=n)
                 logs.instances.append(cur)
             elif ev == "task_end" and cur:
                 cur.status, cur = r.get("status", ""), None
@@ -151,34 +172,57 @@ def features(i: Instance) -> dict[str, float | str]:
     }
 
 
+Rule = tuple[str, str, float | str, bool]  # feature, op ("==" or "<="), value, predicts noise
+
+
 def _balanced(pred: list[bool], noise: list[bool]) -> float:
     pos = [p for p, n in zip(pred, noise, strict=True) if n]
     neg = [p for p, n in zip(pred, noise, strict=True) if not n]
     return (sum(pos) / len(pos) + sum(not p for p in neg) / len(neg)) / 2
 
 
-def filterability(noise: list[Instance], human: list[Instance]) -> dict[str, Any]:
-    """Best single-feature rule ("noise if x <= t", "noise if x == c", or their inverse) per feature.
+def _hits(x: float | str, op: str, v: float | str) -> bool:
+    return x == v if op == "==" else float(x) <= float(v)
 
-    A rule well above chance names a feature where the noise lacks human variety.
-    """
+
+def _text(rule: Rule | None) -> str:
+    if rule is None:
+        return ""
+    name, op, v, noise = rule
+    return f"{'noise' if noise else 'human'} if {name} {op} {v!r}"
+
+
+def _fit(rows: list[dict[str, float | str]], label: list[bool]) -> dict[str, tuple[float, Rule | None]]:
+    """Best single-feature rule ("noise if x <= t", "noise if x == c", or their inverse) per feature."""
     # ponytail: decision stumps stand in for the spec's LightGBM + rule miner; swap in a real model once
     # a human baseline of several days exists and multi-feature interactions matter.
-    rows: list[dict[str, float | str]] = [features(i) for i in noise + human]
-    label = [True] * len(noise) + [False] * len(human)
-    rules: dict[str, tuple[float, str]] = {}
-    names: list[str] = list(rows[0]) if noise and human else []
+    rules: dict[str, tuple[float, Rule | None]] = {}
+    names: list[str] = list(rows[0]) if rows and any(label) and not all(label) else []
     for name in names:
         vals = [r[name] for r in rows]
-        best = (0.5, "")
+        best: tuple[float, Rule | None] = (0.5, None)
         for v in set(vals):
-            pred = [x == v for x in vals] if isinstance(v, str) else [float(x) <= float(v) for x in vals]
-            acc = _balanced(pred, label)
             op = "==" if isinstance(v, str) else "<="
-            for score, rule in ((acc, f"noise if {name} {op} {v!r}"), (1 - acc, f"human if {name} {op} {v!r}")):
+            acc = _balanced([_hits(x, op, v) for x in vals], label)
+            for score, noise in ((acc, True), (1 - acc, False)):
                 if score > best[0]:
-                    best = (round(score, 3), rule)
+                    best = (round(score, 3), (name, op, v, noise))
         rules[name] = best
+    return rules
+
+
+def _score(rule: Rule, rows: list[dict[str, float | str]], label: list[bool]) -> float:
+    name, op, v, noise = rule
+    return _balanced([_hits(r[name], op, v) == noise for r in rows], label)
+
+
+def filterability(noise: list[Instance], human: list[Instance]) -> dict[str, Any]:
+    """In-sample: the best rule per feature on all instances. A rule well above chance names a feature where
+    the noise lacks human variety. `held_out` is the honest number: fitted on training logs only."""
+    rows: list[dict[str, float | str]] = [features(i) for i in noise + human]
+    label = [True] * len(noise) + [False] * len(human)
+    fitted = _fit(rows, label)
+    rules = {name: (score, _text(rule)) for name, (score, rule) in fitted.items()}
     top = max(rules.values(), default=(0.5, ""))
     return {
         "noise": len(noise),
@@ -186,12 +230,89 @@ def filterability(noise: list[Instance], human: list[Instance]) -> dict[str, Any
         "rules": dict(sorted(rules.items(), key=lambda kv: -kv[1][0])),
         "best": top,
         "pass": top[0] <= CHANCE_MARGIN,
+        "held_out": held_out(noise, human),
     }
 
 
-def report(noise: list[Path], human: list[Path] | None = None) -> dict[str, Any]:
-    logs = load(noise)
+def split(noise: list[Instance], human: list[Instance], fraction: float = HOLDOUT_FRACTION,
+          salt: str = HOLDOUT_SALT) -> dict[str, str] | str:  # fmt: skip
+    """Source log -> "train" or "test", or why no honest split exists. Per label, the sources are ordered by a
+    salted hash and the first max(1, round(fraction * n)) are held out, so each side gets every label."""
+    groups = {lab: sorted({i.source for i in xs}) for lab, xs in (("noise", noise), ("human", human))}
+    if both := set(groups["noise"]) & set(groups["human"]):
+        return f"source logs carry both labels: {sorted(both)}"
+    out: dict[str, str] = {}
+    for lab, gs in groups.items():
+        if len(gs) < 2:
+            return f"{len(gs)} independent {lab} source log(s); a held-out split needs at least 2 per label"
+        ordered = sorted(gs, key=lambda g: hashlib.sha256(f"{salt}:{g}".encode()).hexdigest())
+        k = max(1, round(fraction * len(gs)))
+        out |= {g: "test" if n < k else "train" for n, g in enumerate(ordered)}
+    return out
+
+
+def held_out(noise: list[Instance], human: list[Instance], fraction: float = HOLDOUT_FRACTION,
+             salt: str = HOLDOUT_SALT) -> dict[str, Any]:  # fmt: skip
+    """The best stump fitted on the training logs only, scored on the held-out logs only."""
+    out: dict[str, Any] = {"grouping": "source log", "fraction": fraction, "salt": salt}
+    sides = split(noise, human, fraction, salt)
+    if isinstance(sides, str):
+        return out | {"available": False, "reason": sides}
+    data = [(i, True) for i in noise] + [(i, False) for i in human]
+    parts = {s: [(i, lab) for i, lab in data if sides[i.source] == s] for s in ("train", "test")}
+    for s, xs in parts.items():
+        out[s] = {
+            "noise": sum(lab for _, lab in xs),
+            "human": sum(not lab for _, lab in xs),
+            "sources": sorted({i.source for i, _ in xs}),
+        }
+    train, test = parts["train"], parts["test"]
+    fitted = _fit([features(i) for i, _ in train], [lab for _, lab in train])
+    score, rule = max(fitted.values(), key=lambda sr: sr[0], default=(0.5, None))
+    if rule is None:
+        return out | {"available": False, "reason": "no training rule beats chance"}
+    held = round(_score(rule, [features(i) for i, _ in test], [lab for _, lab in test]), 3)
+    return out | {"available": True, "rule": _text(rule), "train_score": score, "held_out_score": held,
+                  "pass": held <= CHANCE_MARGIN}  # fmt: skip
+
+
+def provenance(paths: list[Path], root: Path) -> list[dict[str, Any]]:
+    return [{"source": p.resolve().relative_to(root).as_posix(), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+            for p in paths]  # fmt: skip
+
+
+def write_features(out: Path, noise: list[Instance], human: list[Instance]) -> int:
+    """One CSV row per instance: label, split and provenance columns, then the fitted features (readable as is by
+    DuckDB read_csv or polars.read_csv; neither is a dependency here)."""
+    sides = split(noise, human)
+    rows = [(i, "noise") for i in noise] + [(i, "human") for i in human]
+    with out.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        names = list(features(rows[0][0])) if rows else []
+        w.writerow(["label", "split", "source", "line", "persona", "template", "status", *names])
+        for i, lab in rows:
+            side = sides.get(i.source, "") if isinstance(sides, dict) else ""
+            w.writerow([lab, side, i.source, i.line, i.persona, i.template, i.status, *features(i).values()])
+    return len(rows)
+
+
+def report(noise: list[Path], human: list[Path] | None = None, features_csv: Path | None = None) -> dict[str, Any]:
+    root = root_of(noise + (human or []))
+    logs = load(noise, root)
     out = range_metrics(logs)
+    comparison = load(human, root).instances if human else []
     if human:
-        out["filterability"] = filterability(logs.instances, load(human).instances)
+        out["filterability"] = filterability(logs.instances, comparison)
+    dataset: dict[str, Any] = {
+        "labels": LABELS,
+        "human_baseline": False,  # never claimed: nothing here can verify the comparison logs are human
+        "noise": provenance(noise, root),
+        "comparison": provenance(human or [], root),
+    }
+    if features_csv:
+        dataset["features_csv"] = {
+            "path": str(features_csv),
+            "rows": write_features(features_csv, logs.instances, comparison),
+        }
+    out["dataset"] = dataset
     return out
