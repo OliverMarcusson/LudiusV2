@@ -1,9 +1,10 @@
 # Provisions the test guest made by new-vm.ps1 over PowerShell Direct: range CA
 # root, signed observer (uiAccess) under Program Files, logon task for the
 # persona, and the slice of the golden-image roles a test guest needs (base,
-# ux_noise). Ends with a "clean" checkpoint. Re-runnable.
+# eventlogs, ux_noise). Ends with a new checkpoint (-Checkpoint, default "clean"); an
+# existing checkpoint is never replaced, so re-runs pass -NoCheckpoint or a new name.
 # Stand-in for the Packer + Ansible build (spec section 7) on local Hyper-V.
-param([switch]$NoUiAccess, [switch]$NoCheckpoint)
+param([switch]$NoUiAccess, [switch]$NoCheckpoint, [string]$Checkpoint = 'clean')
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $cfg = @{}
@@ -11,6 +12,9 @@ foreach ($line in Get-Content (Join-Path $root '.env')) { if ($line -match '^\s*
 $vm = $cfg.LUDIUS_VM
 $admin = [pscredential]::new("$($cfg.LUDIUS_ADMIN_USER)", (ConvertTo-SecureString $cfg.LUDIUS_ADMIN_PASSWORD -AsPlainText -Force))
 $installDir = 'C:\Program Files\RangeAssist'
+if (-not $NoCheckpoint -and (Get-VMSnapshot $vm -Name $Checkpoint -ErrorAction SilentlyContinue)) {
+    throw "checkpoint '$Checkpoint' exists and is never replaced: pass -NoCheckpoint or -Checkpoint <new name>"
+}
 
 Get-VMDvdDrive $vm | Where-Object Path | Set-VMDvdDrive -Path $null
 
@@ -54,6 +58,28 @@ try {
         Set-Service wuauserv -StartupType Disabled; Stop-Service wuauserv -Force -ErrorAction SilentlyContinue
         New-Item -Force 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' | Out-Null
         Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' NoAutoUpdate 1 -Type DWord
+        # eventlogs: large enough that a scenario's events survive a day of noise (Sysmon's log: not installed yet).
+        foreach ($l in @{ Security = 1GB; System = 256MB; Application = 256MB }.GetEnumerator()) {
+            wevtutil sl $l.Key /ms:$($l.Value); if ($LASTEXITCODE) { throw "wevtutil $($l.Key): $LASTEXITCODE" }
+        }
+        # ux_noise, in the persona's hive: no minimize/taskbar animations, 100% scaling (96 dpi), no toasts over
+        # tasks (focus assist's effect). Read at logon: they apply from the persona's next logon.
+        $sid = ([Security.Principal.NTAccount]$persona).Translate([Security.Principal.SecurityIdentifier]).Value
+        $loaded = Test-Path "Registry::HKEY_USERS\$sid"
+        $hive = if ($loaded) { "Registry::HKEY_USERS\$sid" } else { 'Registry::HKEY_USERS\LudiusPersona' }
+        if (-not $loaded) { reg load 'HKU\LudiusPersona' "C:\Users\$persona\NTUSER.DAT" | Out-Null; if ($LASTEXITCODE) { throw 'reg load failed' } }
+        try {
+            $adv = "$hive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+            $push = "$hive\Software\Microsoft\Windows\CurrentVersion\PushNotifications"
+            foreach ($k in "$hive\Control Panel\Desktop\WindowMetrics", $adv, $push) { if (-not (Test-Path $k)) { New-Item $k | Out-Null } }
+            Set-ItemProperty "$hive\Control Panel\Desktop\WindowMetrics" MinAnimate '0'
+            Set-ItemProperty $adv TaskbarAnimations 0 -Type DWord
+            Set-ItemProperty "$hive\Control Panel\Desktop" LogPixels 96 -Type DWord
+            Set-ItemProperty "$hive\Control Panel\Desktop" Win8DpiScaling 1 -Type DWord
+            Set-ItemProperty $push ToastEnabled 0 -Type DWord
+        } finally {
+            if (-not $loaded) { [gc]::Collect(); reg unload 'HKU\LudiusPersona' | Out-Null }
+        }
         # Autologon for the persona stays on (the unattend count runs out).
         $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
         Set-ItemProperty $wl AutoAdminLogon '1'; Set-ItemProperty $wl DefaultUserName $persona; Set-ItemProperty $wl DefaultPassword $personaPassword
@@ -97,7 +123,4 @@ try {
 }
 finally { Remove-PSSession $s }
 
-if (-not $NoCheckpoint) {
-    Get-VMSnapshot $vm -Name clean -ErrorAction SilentlyContinue | Remove-VMSnapshot
-    Checkpoint-VM $vm -SnapshotName clean
-}
+if (-not $NoCheckpoint) { Checkpoint-VM $vm -SnapshotName $Checkpoint }
