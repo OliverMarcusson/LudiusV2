@@ -7,14 +7,18 @@ OPENROUTER_API_KEY, LUDIUS_VM, LUDIUS_AGENT (host agent address).
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime as dt
 import functools
+import hashlib
 import json
 import os
 import random
 import subprocess
 import sys
 import time
+from collections.abc import Generator
+from contextlib import ExitStack, closing, contextmanager, suppress
 from pathlib import Path
 
 import yaml
@@ -28,7 +32,7 @@ from ludius.hostagent import HostAgent
 from ludius.jev import DEFAULT_MODEL, JevClient
 from ludius.llm import DEFAULT_MODEL as PLANNER_MODEL
 from ludius.llm import LlmClient
-from ludius.loop import GroundTruth, Runner
+from ludius.loop import Clock, GroundTruth, Runner
 from ludius.policy import Policy
 from ludius.session import Session
 from ludius.tasks import Persona, Task, TaskInstance, Template, load_template, load_yaml
@@ -90,21 +94,23 @@ def start_agent(args: argparse.Namespace) -> HostAgent:
 
 
 @functools.cache
-def _clock_lease() -> Lease:
-    vm = os.environ["LUDIUS_VM"]  # set-clock.ps1 jumps .env's LUDIUS_VM
+def _clock_lease(vm: str | None = None) -> Lease:
+    vm = vm or os.environ["LUDIUS_VM"]
     return Lease(RUNS / "locks" / f"clock-{vm}.json", vm)
 
 
-def set_clock(at: dt.datetime | None) -> None:
+def set_clock(at: dt.datetime | None, *, vm: str | None = None) -> None:
     """Time-jump: the guest clock to a logical time (test VM only, via infra/hyperv/set-clock.ps1)."""
     script = str(ROOT / "infra" / "hyperv" / "set-clock.ps1")
     extra = ["-Reset"] if at is None else ["-Time", at.isoformat(timespec="seconds")]
     cmd = ["pwsh", "-NoProfile", "-NonInteractive", "-File", script, *extra]
+    if vm is not None:
+        cmd += ["-VM", vm]
     if at is not None:
-        _clock_lease().hold()  # before the jump: a controller killed mid-jump still leaves a lease to sweep
+        _clock_lease(vm).hold()  # before the jump: a controller killed mid-jump still leaves a lease to sweep
     subprocess.run(cmd, check=True, capture_output=True, text=True)
     if at is None:
-        _clock_lease().release()  # only after a reset that worked; a failed one leaves the lease to the sweeper
+        _clock_lease(vm).release()  # only after a reset that worked; a failed one leaves the lease to the sweeper
 
 
 def restore(agent: HostAgent, checkpoint: str) -> None:
@@ -239,9 +245,7 @@ def cmd_day(args: argparse.Namespace) -> int:
             log.write(event="skipped_drift", host_ms=int(time.time() * 1000), at=i.at, task=i.template,
                       app=templates[i.template].app)  # fmt: skip
             print(f"  {i.at} {i.template}: skipped, {templates[i.template].app} drifted (runs/health.json)")
-        pacing = "compressed" if args.clock == "time-jump" else args.clock
-        runner = Runner(agent, jev, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=make_policy())
-        day = DayRunner(runner, make_session(agent, log), templates, log, args.clock, seed, set_clock=set_clock)
+        day = build_day(agent, jev, persona, log, templates, args.clock, seed, args.vm or os.environ["LUDIUS_VM"])
         if args.temporal:  # durable: resumes after the last finished slot if this day was started before
             from ludius import durable
 
@@ -252,14 +256,22 @@ def cmd_day(args: argparse.Namespace) -> int:
                     templates, DATA / "admission.yaml", day.runner, day.session, RUNS / "health.json", apps
                 )
 
-            done = durable.run(args.temporal, day, plan, args.clock, desk, canary=check if args.canary else None)
+            done = durable.run(
+                args.temporal,
+                day,
+                plan,
+                args.clock,
+                desk,
+                canary=check if args.canary else None,
+                locked=getattr(args, "desk_locked", False),
+            )
             results = [(d.at, d.template, d.status) for d in done]
         else:
             results = [(r.item.at, r.item.template, r.status) for r in day.run(plan)]
     finally:
-        if args.clock == "time-jump":
+        if args.clock == "time-jump" and _clock_lease(args.vm or os.environ["LUDIUS_VM"]).held:
             try:  # an exception or Ctrl+C mid-day must not leave the range on a jumped clock
-                set_clock(None)
+                set_clock(None, vm=args.vm or os.environ["LUDIUS_VM"])
             except (subprocess.CalledProcessError, OSError) as e:  # report it; never mask an exception in flight
                 reset_failed = True
                 detail = (getattr(e, "stderr", "") or str(e)).strip()[-500:]
@@ -276,6 +288,113 @@ def cmd_day(args: argparse.Namespace) -> int:
     if reset_failed:
         return 3
     return 0 if done == len(results) else 1
+
+
+def build_day(
+    agent: HostAgent,
+    jev: JevClient,
+    persona: Persona,
+    log: GroundTruth,
+    templates: dict[str, Template],
+    clock: Clock,
+    seed: int,
+    vm: str,
+) -> DayRunner:
+    """Shared runner construction for one-shot and lazy long-lived workers."""
+    pacing = "compressed" if clock == "time-jump" else clock
+    runner = Runner(agent, jev, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=make_policy())
+    return DayRunner(
+        runner, make_session(agent, log), templates, log, clock, seed, set_clock=functools.partial(set_clock, vm=vm)
+    )
+
+
+def cmd_schedule(args: argparse.Namespace) -> int:
+    from ludius import durable
+
+    # Validate definitions before opening a connection. Creation never triggers immediately.
+    definition = durable.schedule_for(
+        args.persona, args.at, args.timezone, args.clock, paused=not args.unpause, canary=args.canary
+    )
+
+    async def manage() -> None:
+        client = await durable.connect(durable.Target(args.temporal))
+        name = durable.schedule_id(args.persona)
+        handle = client.get_schedule_handle(name)
+        if args.what == "create":
+            await client.create_schedule(name, definition)
+        elif args.what == "pause":
+            await handle.pause(note="paused by ludius schedule")
+        elif args.what == "unpause":
+            await handle.unpause(note="unpaused by ludius schedule")
+        elif args.what == "delete":
+            await handle.delete()
+            print(f"{name}: deleted (does not cancel a running day)")
+            return
+        desc = await handle.describe()
+        print(
+            json.dumps(
+                {
+                    "id": name,
+                    "paused": desc.schedule.state.paused,
+                    "next": [t.isoformat() for t in desc.info.next_action_times],
+                },
+                indent=2,
+            )
+        )
+
+    asyncio.run(asyncio.wait_for(manage(), timeout=30))
+    return 0
+
+
+def cmd_worker(args: argparse.Namespace) -> int:
+    from ludius import durable, scheduled
+
+    durable.schedule_id(args.persona)  # validate account syntax before forming a persona-file path
+    persona = load_persona(str(DATA / "personas" / f"{args.persona}.yaml"))
+    if persona.user != args.persona:
+        raise ValueError("persona file account differs from worker persona")
+    vm = args.vm or os.environ["LUDIUS_VM"]
+    desk = RUNS / "locks" / f"{vm}.lock"
+
+    @contextmanager
+    def factory(inp: durable.DayInput) -> Generator[DayRunner]:
+        if inp.plan.persona != persona.user:
+            raise ValueError("worker cannot drive another persona's plan")
+        # No restore/start: an explicit worker only connects to the already-running desktop.
+        with ExitStack() as stack:
+            agent = stack.enter_context(closing(agent_from(args)))
+            user = agent.observe(wait_settle=False).hello.user.rsplit("\\", 1)[-1]
+            if user.casefold() != persona.user.casefold():
+                raise ValueError(
+                    "worker requires the configured persona to be logged on; unknown identity fails closed"
+                )
+            jev = stack.enter_context(closing(JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)))
+            log = stack.enter_context(
+                closing(durable.HeartbeatLog(planner.World(RUNS).day_log(persona.user, inp.plan.date)))
+            )
+            seed = int.from_bytes(hashlib.sha256(f"{vm}/{persona.user}/{inp.plan.date}".encode()).digest()[:4])
+            try:
+                yield build_day(agent, jev, persona, log, load_templates(), inp.clock, seed, vm)
+            finally:
+                already_failed = sys.exc_info()[0] is not None
+                if inp.clock == "time-jump" and _clock_lease(vm).held:
+                    try:
+                        set_clock(None, vm=vm)  # never reset another process's lease on a failed claim/load
+                    except Exception:
+                        print("worker clock reset FAILED; lease/reservation retained for recovery", file=sys.stderr)
+                        if not already_failed:
+                            raise
+
+    def check(day: DayRunner, apps: set[str]) -> dict[str, str]:
+        return canary.run(day.templates, DATA / "admission.yaml", day.runner, day.session, RUNS / "health.json", apps)
+
+    async def run() -> None:
+        client = await durable.connect(durable.Target(args.temporal))
+        await scheduled.serve(client, RUNS, persona.user, desk, factory, check)
+
+    with suppress(KeyboardInterrupt):
+        asyncio.run(run())
+    return 0
 
 
 def cmd_canary(args: argparse.Namespace) -> int:
@@ -506,6 +625,24 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--canary", action="store_true", help="with --temporal: run the day's drift canaries first")
     d.set_defaults(fn=cmd_day)
 
+    sc = sub.add_parser("schedule", help="explicit Temporal schedule administration; never generates plans")
+    sc.add_argument("what", choices=["create", "describe", "pause", "unpause", "delete"])
+    sc.add_argument("--temporal", required=True, metavar="HOST:PORT")
+    sc.add_argument("--persona", required=True, help="persona account, e.g. aberg")
+    sc.add_argument("--at", default="08:30", help="daily HH:MM (create only)")
+    sc.add_argument("--timezone", default="Europe/Stockholm", help="IANA zone (create only)")
+    sc.add_argument("--clock", choices=["realtime", "compressed", "time-jump"], default="realtime")
+    sc.add_argument("--canary", action="store_true", help="run drift canaries before each scheduled day")
+    sc.add_argument("--unpause", action="store_true", help="create active; default is paused")
+    sc.set_defaults(fn=cmd_schedule)
+
+    wk = sub.add_parser("worker", help="explicit long-lived Temporal desktop worker; does not start/restore VM")
+    wk.add_argument("--temporal", required=True, metavar="HOST:PORT")
+    wk.add_argument("--persona", required=True, help="persona account, e.g. aberg")
+    wk.add_argument("--vm", default=argparse.SUPPRESS, help="already-running VM (or global --vm/LUDIUS_VM)")
+    wk.add_argument("--model", default=DEFAULT_MODEL)
+    wk.set_defaults(fn=cmd_worker)
+
     ca = sub.add_parser("canary", help="drift canaries: one admitted task per app, results to runs/health.json")
     ca.add_argument("app", nargs="*", help="only these apps (default: every app with an admitted template)")
     ca.add_argument("--persona")
@@ -562,6 +699,22 @@ def main(argv: list[str] | None = None) -> int:
 
     args = p.parse_args(argv)
     sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]  # guest UI text (U+200E...) on a cp1252 pipe
+    if args.cmd in {"run", "day", "validate", "canary", "contract", "session"}:
+        from ludius import durable, scheduled
+
+        vm = args.vm or os.environ["LUDIUS_VM"]
+        desk = RUNS / "locks" / f"{vm}.lock"
+        with durable.desk_lock(desk):  # before restore, input or clock cleanup; all controller entry points fence
+            rec = scheduled.DayOwner(desk).read()
+            if rec:
+                if args.cmd != "day" or not args.temporal:
+                    raise durable.DeskBusy(f"desktop reserved by {rec.owner}; resume that Temporal day first")
+                plan = planner.load_plan(Path(args.plan))
+                scheduled.DayOwner(desk).check(f"default/{durable.workflow_id(plan)}")
+                if rec.day.plan != plan or rec.day.clock != args.clock:
+                    raise ValueError("reserved day plan/clock changed")
+            args.desk_locked = True
+            return int(args.fn(args))
     return int(args.fn(args))
 
 

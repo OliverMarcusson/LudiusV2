@@ -33,6 +33,11 @@ class Lease:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()  # a renewal never lands after release() unlinked the lease
 
+    @property
+    def held(self) -> bool:
+        """This process is renewing the lease; a file left by a different controller does not count."""
+        return self._stop is not None
+
     def hold(self) -> None:
         """Write the lease now and keep renewing it until release(); a second hold() only renews."""
         with self._lock:

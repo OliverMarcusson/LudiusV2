@@ -60,3 +60,27 @@ def test_set_clock_keeps_the_lease_when_the_reset_fails(tmp_path: Path, monkeypa
     assert not lease.exists()
     cli._clock_lease().release()  # pyright: ignore[reportPrivateUsage]
     cli._clock_lease.cache_clear()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_explicit_vm_clock_and_lease_target_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LUDIUS_VM", "ludius-default")
+    monkeypatch.setattr(cli, "RUNS", tmp_path)
+    cli._clock_lease.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kw: Any) -> None:
+        calls.append(cmd)
+        assert cmd[-2:] == ["-VM", "ludius-selected"]
+        assert (tmp_path / "locks" / "clock-ludius-selected.json").exists()
+        assert not (tmp_path / "locks" / "clock-ludius-default.json").exists()
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    try:
+        cli.set_clock(dt.datetime(2026, 10, 28, 8, 20), vm="ludius-selected")
+        assert cli._clock_lease("ludius-selected").held  # pyright: ignore[reportPrivateUsage]
+        cli.set_clock(None, vm="ludius-selected")
+        assert not cli._clock_lease("ludius-selected").held  # pyright: ignore[reportPrivateUsage]
+        assert len(calls) == 2
+    finally:
+        cli._clock_lease("ludius-selected").release()  # pyright: ignore[reportPrivateUsage]
+        cli._clock_lease.cache_clear()  # pyright: ignore[reportPrivateUsage]

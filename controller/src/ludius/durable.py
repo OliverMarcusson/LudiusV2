@@ -22,17 +22,30 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import os
+import re
 import sys
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 from temporalio import activity, workflow
-from temporalio.client import Client, WorkflowFailureError
+from temporalio.client import (
+    Client,
+    Schedule,
+    ScheduleActionStartWorkflow,
+    ScheduleCalendarSpec,
+    ScheduleOverlapPolicy,
+    SchedulePolicy,
+    ScheduleRange,
+    ScheduleSpec,
+    ScheduleState,
+    WorkflowFailureError,
+)
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import WorkflowAlreadyStartedError
@@ -41,8 +54,8 @@ from temporalio.workflow import ActivityCancellationType
 
 with workflow.unsafe.imports_passed_through():
     from ludius.day import DayRunner, ItemResult, back_at, slots
-    from ludius.loop import GroundTruth
-    from ludius.planner import BREAK, DayPlan, PlanItem
+    from ludius.loop import Clock, GroundTruth
+    from ludius.planner import BREAK, DayPlan, PlanItem, World, load_plan
 
 ITEM_TIMEOUT = dt.timedelta(hours=2)
 QUICK = dt.timedelta(minutes=5)
@@ -51,11 +64,20 @@ NOT_RETRYABLE = ["KeyError", "ValueError"]  # template or plan errors do not get
 
 class DayInput(BaseModel):
     plan: DayPlan
-    clock: str  # realtime | compressed | time-jump
+    clock: Clock  # realtime | compressed | time-jump
     utc_offset_s: int  # the plan's times are wall-clock times in this offset
     heartbeat_s: int = 300  # longest a slot may go without a ground-truth write before it counts as hung
     retry_s: int = 30  # first retry backoff; at most 3 attempts per slot
     canary: bool = False  # run the day's apps' drift canaries first and skip the items of drifted apps
+
+
+class ScheduledInput(BaseModel):
+    """What a recurring schedule starts each day: the day's plan is chosen when it fires, never generated."""
+
+    persona: str
+    tz: str  # IANA zone the persona's day (and the plan's date) lives in
+    clock: Clock = "realtime"
+    canary: bool = False
 
 
 class SlotInput(BaseModel):
@@ -92,9 +114,25 @@ class HeartbeatLog(GroundTruth):
 class DayActivities:
     """The desktop side: one DayRunner, one activity at a time (there is one keyboard and mouse)."""
 
-    def __init__(self, day: DayRunner, canary: Callable[[set[str]], dict[str, str]] | None = None) -> None:
-        self.day = day
+    def __init__(
+        self, day: DayRunner, canary: Callable[[set[str]], dict[str, str]] | None = None, *, plan: DayPlan | None = None
+    ) -> None:
+        self._fixed_day = day
+        self._expected_plan = plan
         self.canary_run = canary  # apps -> state (ok, drift, unknown): canary.run bound to this desktop
+
+    def _owns_activity(self) -> bool:
+        return (
+            self._expected_plan is None
+            or not activity.in_activity()
+            or activity.info().workflow_id == workflow_id(self._expected_plan)
+        )
+
+    @property
+    def day(self) -> DayRunner:
+        if not self._owns_activity():
+            raise ValueError("one-shot worker cannot drive another dated workflow on this persona queue")
+        return self._fixed_day
 
     @activity.defn(name="canary")
     def canary(self, plan: DayPlan) -> list[Done]:
@@ -120,7 +158,20 @@ class DayActivities:
 
     @activity.defn(name="day_start")
     def start(self, plan: DayPlan) -> None:
+        if self._expected_plan is not None and plan != self._expected_plan:
+            raise ValueError("workflow plan differs from this one-shot worker")
         self.day.start(plan)
+
+    @activity.defn(name="day_prepare")
+    def prepare(self, inp: DayInput) -> None:
+        if self.day.clock != inp.clock:
+            raise ValueError("workflow clock differs from this worker's day")
+        self.start(inp.plan)
+
+    @activity.defn(name="day_abort")
+    def abort(self) -> None:
+        if self._owns_activity():
+            self.clock_reset()
 
     @activity.defn(name="day_end")
     def finish(self, e: DayEnd) -> None:
@@ -147,7 +198,17 @@ class DayActivities:
         return _done(self.day.end_break(self._attempt(s), s.item))
 
     def all(self) -> list[Callable[..., Any]]:
-        return [self.start, self.finish, self.clock_reset, self.canary, self.slot, self.break_start, self.break_end]
+        return [
+            self.start,
+            self.prepare,
+            self.abort,
+            self.finish,
+            self.clock_reset,
+            self.canary,
+            self.slot,
+            self.break_start,
+            self.break_end,
+        ]
 
 
 @workflow.defn
@@ -174,18 +235,47 @@ class PersonaDay:
                 cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,  # the desktop is free after
             )  # fmt: skip
 
-        await workflow.execute_activity("day_start", plan, start_to_close_timeout=QUICK)
-        if inp.canary:
+        # Version markers keep existing histories replayable. New workers need the complete input to bind
+        # a lazy runner to this workflow, and cleanup must cover prepare/canary/finish failures too.
+        lazy_day = workflow.patched("lazy-day-v1")
+
+        async def prepare() -> DayPlan:
+            if lazy_day:
+                await workflow.execute_activity(
+                    "day_prepare",
+                    inp,
+                    start_to_close_timeout=QUICK,
+                    retry_policy=retry,
+                    cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                )
+            else:
+                await workflow.execute_activity("day_start", plan, start_to_close_timeout=QUICK)
+            if not inp.canary:
+                return plan
             skipped = await workflow.execute_activity(
-                "canary", plan, result_type=list[Done], start_to_close_timeout=ITEM_TIMEOUT,
-                heartbeat_timeout=dt.timedelta(seconds=inp.heartbeat_s), retry_policy=retry,
-            )  # fmt: skip
+                "canary",
+                plan,
+                result_type=list[Done],
+                start_to_close_timeout=ITEM_TIMEOUT,
+                heartbeat_timeout=dt.timedelta(seconds=inp.heartbeat_s),
+                retry_policy=retry,
+                cancellation_type=(
+                    ActivityCancellationType.WAIT_CANCELLATION_COMPLETED
+                    if lazy_day
+                    else ActivityCancellationType.TRY_CANCEL
+                ),
+            )
             self.done += skipped
             gone = {(d.at, d.template) for d in skipped}
-            todo = plan.model_copy(update={"items": [i for i in plan.items if (i.at, i.template) not in gone]})
-        else:
-            todo = plan
+            return plan.model_copy(update={"items": [i for i in plan.items if (i.at, i.template) not in gone]})
+
+        # Preserve the old histories' failure boundaries as well as their activity names.
+        todo = plan
+        if not lazy_day:
+            todo = await prepare()
         try:
+            if lazy_day:
+                todo = await prepare()
             for item, interrupts in slots(todo):
                 if inp.clock == "realtime":
                     # Late slots run at once (a late start); early ones wait, with a minute or two of human slack.
@@ -207,12 +297,20 @@ class PersonaDay:
                         self.done += await slot(SlotInput(date=plan.date, item=late, jump_at=f"{back:%H:%M}"))
                 else:
                     self.done += await slot(s)
-        except (Exception, asyncio.CancelledError):  # failed or cancelled mid-day: do not leave a jumped clock
-            if inp.clock == "time-jump":
-                await workflow.execute_activity("clock_reset", start_to_close_timeout=QUICK,
-                                                retry_policy=RetryPolicy(maximum_attempts=5))  # fmt: skip
+            if lazy_day:
+                await workflow.execute_activity(
+                    "day_end", DayEnd(plan=plan, done=self.done), start_to_close_timeout=QUICK
+                )
+        except (Exception, asyncio.CancelledError):  # do not leave a jumped clock or another day's active context
+            if lazy_day or inp.clock == "time-jump":
+                await workflow.execute_activity(
+                    "day_abort" if lazy_day else "clock_reset",
+                    start_to_close_timeout=QUICK,
+                    retry_policy=RetryPolicy(maximum_attempts=5),
+                )
             raise
-        await workflow.execute_activity("day_end", DayEnd(plan=plan, done=self.done), start_to_close_timeout=QUICK)
+        if not lazy_day:
+            await workflow.execute_activity("day_end", DayEnd(plan=plan, done=self.done), start_to_close_timeout=QUICK)
         return self.done
 
 
@@ -228,6 +326,68 @@ def task_queue(plan: DayPlan) -> str:
 
 def workflow_id(plan: DayPlan) -> str:
     return f"day-{plan.persona}-{plan.date}"
+
+
+SCHEDULED_DAY = "ScheduledDay"  # registered by the explicitly started long-lived worker
+CATCHUP = dt.timedelta(hours=1)  # a fire missed by more than this (server down) is dropped, not replayed late
+
+
+def schedule_id(persona: str) -> str:
+    _persona_name(persona)
+    return f"day-{persona}"
+
+
+def schedule_for(
+    persona: str, at: str, tz: str, clock: Clock = "realtime", *, paused: bool = True, canary: bool = False
+) -> Schedule:
+    """Every day at `at` (HH:MM) in `tz`, start that persona's day. A day still running when the next fires is
+    not doubled (SKIP); created paused unless asked, so defining a schedule never starts a desktop by itself."""
+    _persona_name(persona)
+    ZoneInfo(tz)  # an unknown zone fails here, not on the server
+    if not re.fullmatch(r"\d{2}:\d{2}", at):
+        raise ValueError("schedule time must be HH:MM")
+    t = dt.time.fromisoformat(at)
+    return Schedule(
+        action=ScheduleActionStartWorkflow(
+            SCHEDULED_DAY,
+            ScheduledInput(persona=persona, tz=tz, clock=clock, canary=canary),
+            id=schedule_id(persona),
+            task_queue=f"ludius-day-{persona}",
+        ),  # fmt: skip
+        spec=ScheduleSpec(
+            calendars=[ScheduleCalendarSpec(hour=[ScheduleRange(t.hour)], minute=[ScheduleRange(t.minute)])],
+            time_zone_name=tz,
+        ),
+        policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP, catchup_window=CATCHUP),
+        state=ScheduleState(paused=paused, note=f"{persona} daily at {at} {tz}, {clock}"),
+    )
+
+
+def plan_date(now: dt.datetime, tz: str) -> str:
+    """The persona's local date at an aware instant: the date of the plan a fire replays."""
+    if now.tzinfo is None:
+        raise ValueError("plan_date needs an aware datetime")
+    return now.astimezone(ZoneInfo(tz)).date().isoformat()
+
+
+def scheduled_plan(runs: Path, persona: str, date: str) -> DayPlan:
+    """The plan nightly planning wrote for that date. Missing is an error: a schedule replays plans and never
+    generates one (no planner, no LLM call)."""
+    _persona_name(persona)
+    if dt.date.fromisoformat(date).isoformat() != date:
+        raise ValueError("plan date must be YYYY-MM-DD")
+    path = World(runs).plan_path(persona, date)
+    if not path.exists():
+        raise FileNotFoundError(f"no plan for {persona} on {date}: {path} (run `ludius plan` for that date)")
+    plan = load_plan(path)
+    if plan.persona != persona or plan.date != date:
+        raise ValueError(f"{path} is the plan of {plan.persona} on {plan.date}, not {persona} on {date}")
+    return plan
+
+
+def _persona_name(persona: str) -> None:
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", persona):
+        raise ValueError("persona must be an account name, not a path")
 
 
 async def connect(t: Target) -> Client:
@@ -261,8 +421,8 @@ def desk_lock(path: Path) -> Generator[None]:
 
 
 async def play(
-    client: Client, day: DayRunner, plan: DayPlan, clock: str, desk: Path,
-    *, canary: Callable[[set[str]], dict[str, str]] | None = None, **timing: int,
+    client: Client, day: DayRunner, plan: DayPlan, clock: Clock, desk: Path,
+    *, canary: Callable[[set[str]], dict[str, str]] | None = None, locked: bool = False, **timing: int,
 ) -> list[Done]:  # fmt: skip
     """Run (or resume, or read back) the persona-day workflow, with this process as its desktop's only worker.
 
@@ -272,9 +432,15 @@ async def play(
     offset = dt.datetime.now().astimezone().utcoffset() or dt.timedelta()
     inp = DayInput(plan=plan, clock=clock, utc_offset_s=int(offset.total_seconds()), canary=canary is not None,
                    **timing)  # fmt: skip
-    with desk_lock(desk), ThreadPoolExecutor(max_workers=1) as pool:
+    from ludius.scheduled import DayOwner
+
+    owner = DayOwner(desk)
+    with nullcontext() if locked else desk_lock(desk), ThreadPoolExecutor(max_workers=1) as pool:
+        rec = owner.check(f"{client.namespace}/{workflow_id(plan)}")
+        if rec and (rec.day.plan != plan or rec.day.clock != clock):
+            raise ValueError("reserved day plan/clock changed")
         async with Worker(client, task_queue=task_queue(plan), workflows=[PersonaDay],
-                          activities=DayActivities(day, canary).all(), activity_executor=pool,
+                          activities=DayActivities(day, canary, plan=plan).all(), activity_executor=pool,
                           max_concurrent_activities=1):  # fmt: skip
             try:
                 handle = await client.start_workflow(
@@ -284,17 +450,21 @@ async def play(
             except WorkflowAlreadyStartedError:  # running: this worker picks it up; finished: read its result
                 handle = client.get_workflow_handle_for(PersonaDay.run, workflow_id(plan))
             try:
-                return await handle.result()
+                result = await handle.result()
+                owner.release(f"{client.namespace}/{workflow_id(plan)}")
+                return result
             except WorkflowFailureError as e:
                 raise RuntimeError(f"workflow {workflow_id(plan)} failed: {e.cause}") from e
 
 
 def run(
-    address: str, day: DayRunner, plan: DayPlan, clock: str, desk: Path,
-    *, canary: Callable[[set[str]], dict[str, str]] | None = None, **timing: int,
+    address: str, day: DayRunner, plan: DayPlan, clock: Clock, desk: Path,
+    *, canary: Callable[[set[str]], dict[str, str]] | None = None, locked: bool = False, **timing: int,
 ) -> list[Done]:  # fmt: skip
     async def main() -> list[Done]:
-        return await play(await connect(Target(address)), day, plan, clock, desk, canary=canary, **timing)
+        return await play(
+            await connect(Target(address)), day, plan, clock, desk, canary=canary, locked=locked, **timing
+        )
 
     return asyncio.run(main())
 
