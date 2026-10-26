@@ -144,14 +144,16 @@ else:
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 
-INFERENCE_LOCK = os.path.join(tempfile.gettempdir(), "ludius-detector.lock")
+# The default lock lives in the temp dir, so it fences controllers that share it (normally one Windows account).
+# Controllers under different accounts share the fence only if LUDIUS_DETECTOR_LOCK names one file all can open.
+INFERENCE_LOCK = os.environ.get("LUDIUS_DETECTOR_LOCK") or os.path.join(tempfile.gettempdir(), "ludius-detector.lock")
 _in_process = threading.Lock()
 _detectors: dict[str, Reader] = {}
 
 
 @contextmanager
 def inference_slot(path: str = INFERENCE_LOCK) -> Generator[None]:
-    """One detector inference at a time on this host, across threads and controller processes: each one briefly
+    """One detector inference at a time per lock file, across threads and controller processes: each one briefly
     needs about 3 GiB of working set at full 1280 input, so N VMs must not mean N spikes at once."""
     # ponytail: host-wide serialisation, ~1.3 s per screen queues behind other VMs; a shared detector service
     # with a bounded pool replaces this when the pipeline design gets one.
