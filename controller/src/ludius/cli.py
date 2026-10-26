@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import random
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 import yaml
 from google.protobuf import json_format
 
-from ludius import admission, growth, keys, planner, timeline
+from ludius import admission, growth, keys, metrics, planner, timeline
 from ludius.assist import Assist
 from ludius.day import DayRunner, run_task
 from ludius.hostagent import HostAgent
@@ -187,6 +188,12 @@ def cmd_timeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_metrics(args: argparse.Namespace) -> int:
+    human = [Path(p) for p in args.human] if args.human else None
+    print(json.dumps(metrics.report([Path(p) for p in args.logs], human), indent=2))
+    return 0
+
+
 def _wait_for_observer(agent: HostAgent, seconds: float = 180) -> None:
     deadline = time.monotonic() + seconds
     while True:
@@ -349,6 +356,11 @@ def main(argv: list[str] | None = None) -> int:
     tl.add_argument("logs", nargs="+")
     tl.add_argument("--out", default=str(RUNS / "timeline.csv"))
     tl.set_defaults(fn=cmd_timeline)
+
+    me = sub.add_parser("metrics", help="range test metrics and filterability check from ground-truth logs")
+    me.add_argument("logs", nargs="+")
+    me.add_argument("--human", nargs="+", metavar="LOG", help="human baseline logs for the filterability check")
+    me.set_defaults(fn=cmd_metrics)
 
     va = sub.add_parser("validate", help="admission gate: run every template variant from a clean checkpoint")
     va.add_argument("template", help="template name (catalog or proposed) or YAML path")
