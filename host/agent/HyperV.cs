@@ -165,7 +165,9 @@ sealed partial class HyperV(Guid observerService)
     public async Task<string> Lifecycle(string vm, Ludius.V1.LifecycleRequest.Types.Op op, string checkpoint, CancellationToken ct)
     {
         if (!SafeName().IsMatch(vm) || (checkpoint != "" && !SafeName().IsMatch(checkpoint))) throw new ArgumentException("invalid name");
-        var script = op switch
+        // Stop: a failing cmdlet (e.g. Restore-VMSnapshot of a checkpoint that doesn't exist) must fail the call;
+        // otherwise the trailing state query exits 0 and a run silently continues on the unrestored VM.
+        var script = "$ErrorActionPreference = 'Stop'; " + op switch
         {
             Ludius.V1.LifecycleRequest.Types.Op.Start => "Start-VM -Name $env:LUDIUS_VM",
             Ludius.V1.LifecycleRequest.Types.Op.Stop => "Stop-VM -Name $env:LUDIUS_VM -Force",

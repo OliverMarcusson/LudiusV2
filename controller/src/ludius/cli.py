@@ -33,7 +33,7 @@ from ludius.v1 import agent_pb2 as pb
 
 ROOT = Path(__file__).resolve().parents[3]
 DATA = ROOT / "controller" / "data"
-RUNS = ROOT / "runs"
+RUNS = Path(os.environ.get("LUDIUS_RUNS") or ROOT / "runs")  # set it when running from a worktree
 
 
 def load_env() -> None:
