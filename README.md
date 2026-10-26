@@ -51,7 +51,7 @@ Each run writes a ground-truth JSONL file to `runs/` (gitignored); days go to `r
 
 ## Operator monitor
 
-A view-only web page with every range VM's desktop, refreshed about once a second (a tile opens a larger, faster view).
+A view-only web page with a 12 fps video feed of every range VM's desktop; a tile opens a larger view. Frames come from Hyper-V's console thumbnail on the host (nothing runs in the guest for this): about 22 ms per frame at 640 px and 100 ms at 1280 px, so the agent captures up to three frames in parallel and serves each VM and size from one shared capture loop over a WebSocket. Measured: 12 fps at 640 and 960 px, about 11.5 at 1280 px (the focus view), and three viewers of one VM at 11.8 fps each. Full 1080p frames take 350 ms, so the feed is capped at 1280 px.
 
 ```powershell
 cd web\monitor; bun install; bun run build   # the host agent serves web/monitor/dist
@@ -59,7 +59,7 @@ dotnet run --project hostgent              # then open http://127.0.0.1:7452
 bun run dev                                    # development, proxies /api to the agent
 ```
 
-The monitor runs on its own HTTP/1.1 endpoint (`Kestrel:Endpoints:Monitor`, default `127.0.0.1:7452`) with GET routes only: it cannot send input or change VM state. Only VMs whose names match `Monitor:Include` (default `^ludius-`) are listed or served. It has no authentication, so keep it on localhost, or bind it to an operator network only behind a reverse proxy with auth.
+The monitor runs on its own HTTP/1.1 endpoint (`Kestrel:Endpoints:Monitor`, default `127.0.0.1:7452`) with GET routes only: it cannot send input or change VM state. Only VMs whose names match `Monitor:Include` (default `^ludius-`) are listed or served. The stream rejects WebSocket connections from other origins, and the agent only answers to the host names in `AllowedHosts` (DNS rebinding). It has no authentication, so keep it on localhost, or bind it to an operator network only behind a reverse proxy with auth.
 
 ## Checks
 

@@ -123,11 +123,3 @@
     @apply font-sans;
     }
 }
-/* Freshness line: full at a new frame, empty when the frame turns stale. */
-@keyframes drain {
-  from { transform: scaleX(1); }
-  to { transform: scaleX(0); }
-}
-.freshness {
-  animation: drain linear forwards;
-}

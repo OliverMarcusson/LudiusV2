@@ -185,7 +185,9 @@ sealed partial class HyperV(Guid observerService)
     public (byte[] Png, int Width, int Height) Screenshot(Vm vm)
     {
         var (w, h) = Resolution(vm.System);
-        using var bmp = Thumbnail(vm.System, w, h);
+        var settings = Query($"ASSOCIATORS OF {{{vm.System.Path.RelativePath}}} WHERE ResultClass=Msvm_VirtualSystemSettingData")
+            .First(s => (string)s["VirtualSystemType"] == "Microsoft:Hyper-V:System:Realized");
+        using var bmp = Thumbnail(settings.Path.Path, w, h);
         using var ms = new MemoryStream();
         bmp.Save(ms, ImageFormat.Png);
         return (ms.ToArray(), w, h);
@@ -208,23 +210,66 @@ sealed partial class HyperV(Guid observerService)
             .OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+    public static bool ValidName(string name) => SafeName().IsMatch(name);
+
+    // Per VM, cached between frames: the realized settings path the thumbnail call needs and the guest resolution
+    // (re-read every 5 s). Without the cache every frame paid ~350 ms of WMI queries; the call itself is ~20 ms.
+    sealed class Screen
+    {
+        public required ManagementObject System;
+        public required string Settings;
+        public int W, H;
+        public DateTime ResolvedAt;
+    }
+
+    readonly Dictionary<string, Screen> screens = [];
+    static readonly ThreadLocal<ManagementObject> Service = new(() => Query("SELECT * FROM Msvm_VirtualSystemManagementService").Single());
+    static readonly ImageCodecInfo JpegCodec = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
+
     // One console frame as JPEG, scaled by Hyper-V to at most maxWidth. Read-only: never touches input.
     public byte[] Frame(string name, int maxWidth)
     {
-        if (!SafeName().IsMatch(name)) throw new ArgumentException("invalid VM name");
-        var system = Query($"SELECT * FROM Msvm_ComputerSystem WHERE ElementName='{name}'").SingleOrDefault()
-            ?? throw new KeyNotFoundException($"no VM named {name}");
-        if (StateName(Convert.ToInt32(system["EnabledState"])) != "running") throw new InvalidOperationException("VM is not running");
-        var (w, h) = Resolution(system);
-        int tw = Math.Clamp(maxWidth, 160, w) & ~1; // even width: RGB565 rows then need no stride padding
-        int th = Math.Max(2, (int)Math.Round((double)h * tw / w)) & ~1;
-        using var bmp = Thumbnail(system, tw, th);
-        using var ms = new MemoryStream();
-        var jpeg = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
-        using var quality = new EncoderParameters(1);
-        quality.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 82L);
-        bmp.Save(ms, jpeg, quality);
-        return ms.ToArray();
+        if (!ValidName(name)) throw new ArgumentException("invalid VM name");
+        var s = ScreenOf(name);
+        int tw = Math.Clamp(maxWidth, 160, s.W) & ~1; // even width: RGB565 rows then need no stride padding
+        int th = Math.Max(2, (int)Math.Round((double)s.H * tw / s.W)) & ~1;
+        try
+        {
+            using var bmp = Thumbnail(s.Settings, tw, th);
+            using var ms = new MemoryStream();
+            using var quality = new EncoderParameters(1);
+            quality.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 80L);
+            bmp.Save(ms, JpegCodec, quality);
+            return ms.ToArray();
+        }
+        catch
+        {
+            lock (screens) screens.Remove(name);
+            s.System.Get();
+            if (StateName(Convert.ToInt32(s.System["EnabledState"])) != "running") throw new InvalidOperationException("VM is not running");
+            throw;
+        }
+    }
+
+    Screen ScreenOf(string name)
+    {
+        lock (screens)
+        {
+            if (screens.TryGetValue(name, out var s) && DateTime.UtcNow - s.ResolvedAt < TimeSpan.FromSeconds(5)) return s;
+            if (s is null)
+            {
+                var system = Query($"SELECT * FROM Msvm_ComputerSystem WHERE ElementName='{name}'").SingleOrDefault()
+                    ?? throw new KeyNotFoundException($"no VM named {name}");
+                if (StateName(Convert.ToInt32(system["EnabledState"])) != "running") throw new InvalidOperationException("VM is not running");
+                var settings = Query($"ASSOCIATORS OF {{{system.Path.RelativePath}}} WHERE ResultClass=Msvm_VirtualSystemSettingData")
+                    .First(x => (string)x["VirtualSystemType"] == "Microsoft:Hyper-V:System:Realized");
+                s = new Screen { System = system, Settings = settings.Path.Path };
+            }
+            (s.W, s.H) = Resolution(s.System);
+            s.ResolvedAt = DateTime.UtcNow;
+            screens[name] = s;
+            return s;
+        }
     }
 
     static string StateName(int s) => s switch
@@ -246,13 +291,11 @@ sealed partial class HyperV(Guid observerService)
             : (Convert.ToInt32(head["CurrentHorizontalResolution"]), Convert.ToInt32(head["CurrentVerticalResolution"]));
     }
 
-    static Bitmap Thumbnail(ManagementObject system, int w, int h)
+    static Bitmap Thumbnail(string settingsPath, int w, int h)
     {
-        var settings = Query($"ASSOCIATORS OF {{{system.Path.RelativePath}}} WHERE ResultClass=Msvm_VirtualSystemSettingData")
-            .First(s => (string)s["VirtualSystemType"] == "Microsoft:Hyper-V:System:Realized");
-        var svc = Query("SELECT * FROM Msvm_VirtualSystemManagementService").Single();
+        var svc = Service.Value!; // one per thread: overlapping captures don't share a WMI object
         var inParams = svc.GetMethodParameters("GetVirtualSystemThumbnailImage");
-        inParams["TargetSystem"] = settings.Path.Path; // a REF parameter: the object path
+        inParams["TargetSystem"] = settingsPath; // a REF parameter: the object path
         inParams["WidthPixels"] = (ushort)w;
         inParams["HeightPixels"] = (ushort)h;
         var outParams = svc.InvokeMethod("GetVirtualSystemThumbnailImage", inParams, null);

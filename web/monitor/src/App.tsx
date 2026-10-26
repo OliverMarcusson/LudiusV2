@@ -103,7 +103,7 @@ export default function App() {
           </div>
           {focusVm ? (
             <div className="mx-auto w-full max-w-[min(100%,calc((100svh-12rem)*16/9))]">
-              <Feed vm={focusVm} now={now} paused={paused} maxWidth={1920} intervalMs={250} large />
+              <Feed vm={focusVm} now={now} paused={paused} maxWidth={1280} large />
             </div>
           ) : (
             loaded && <p className="text-sm text-muted-foreground">No VM named {focused} on this host.</p>
@@ -122,7 +122,7 @@ export default function App() {
                   aria-label={`Open ${vm.name}`}
                   className="group block rounded-lg outline-offset-4 focus-visible:outline-2 focus-visible:outline-ring"
                 >
-                  <Feed vm={vm} now={now} paused={paused} maxWidth={1280} intervalMs={1000} />
+                  <Feed vm={vm} now={now} paused={paused} maxWidth={960} />
                 </a>
               </li>
             ))}

@@ -2,12 +2,15 @@ using Google.Protobuf;
 using Grpc.Core;
 using Ludius.HostAgent;
 using Ludius.V1;
+using System.Net.WebSockets;
+using System.Text;
+using System.Threading.Channels;
 using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddGrpc();
 builder.Services.AddSingleton(new HyperV(Guid.Parse(builder.Configuration["Agent:ObserverService"]!)));
-builder.Services.AddSingleton<FrameCache>();
+builder.Services.AddSingleton<FeedHub>();
 var app = builder.Build();
 app.MapGrpcService<AgentService>();
 Monitor.Map(app);
@@ -46,40 +49,122 @@ static class Monitor
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         var api = app.MapGroup("/api").RequireHost(onMonitor);
         api.MapGet("/vms", (HyperV hv) => hv.ListVms().Where(v => include.IsMatch(v.Name)));
-        api.MapGet("/vms/{name}/frame", (string name, int? w, HyperV hv, FrameCache cache, HttpResponse res) =>
+
+        // A 12 fps feed per VM: binary messages are JPEG frames, text messages report why there is no frame.
+        app.UseWebSockets();
+        api.MapGet("/vms/{name}/stream", async (HttpContext ctx, string name, int? w, FeedHub hub) =>
         {
-            if (!include.IsMatch(name)) return Results.NotFound();
+            if (!include.IsMatch(name) || !HyperV.ValidName(name)) return Results.NotFound();
+            if (!ctx.WebSockets.IsWebSocketRequest) return Results.BadRequest("WebSocket only");
+            // WebSockets ignore CORS: without this any page in an operator's browser could watch the desktops.
+            var origin = ctx.Request.Headers.Origin.ToString();
+            if (origin.Length > 0 && !Uri.TryCreate(origin, UriKind.Absolute, out var o) | (o?.Authority != ctx.Request.Host.Value))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+            var ct = ctx.RequestAborted;
+            using var feed = hub.Subscribe(name, Math.Clamp(w ?? 640, 160, 1920));
+            var closed = ws.ReceiveAsync(new byte[16], ct); // view only: any client message ends the feed
             try
             {
-                var jpeg = cache.Get(name, Math.Clamp(w ?? 640, 160, 3840), hv);
-                res.Headers.CacheControl = "no-store";
-                return Results.File(jpeg, "image/jpeg");
+                while (true)
+                {
+                    var next = feed.Reader.ReadAsync(ct).AsTask();
+                    if (await Task.WhenAny(next, closed) == closed) break;
+                    var frame = await next;
+                    if (frame.Jpeg is { } jpeg) await ws.SendAsync(jpeg, WebSocketMessageType.Binary, true, ct);
+                    else await ws.SendAsync(Encoding.UTF8.GetBytes(frame.Error!), WebSocketMessageType.Text, true, ct);
+                }
+                if (ws.State == WebSocketState.Open) await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, ct);
             }
-            catch (ArgumentException e) { return Results.BadRequest(e.Message); }
-            catch (KeyNotFoundException e) { return Results.NotFound(e.Message); }
-            catch (InvalidOperationException e) { return Results.Conflict(e.Message); }
+            catch (Exception e) when (e is OperationCanceledException or WebSocketException) { }
+            return Results.Empty;
         });
     }
 }
 
-// Frames are shared between viewers: at most one thumbnail per VM and size every 400 ms.
-sealed class FrameCache
+// One capture loop per VM and size, shared by every viewer and stopped with the last one. A tick every
+// 1/12 s starts a capture unless three are already running; frames go out in order, older ones are dropped.
+sealed class FeedHub(HyperV hv)
 {
-    readonly Dictionary<(string, int), (DateTime At, byte[] Jpeg)> frames = [];
-    readonly Dictionary<(string, int), object> locks = [];
+    const int Fps = 12;
+    const int MaxInFlight = 3;
 
-    public byte[] Get(string vm, int width, HyperV hv)
+    public readonly record struct Frame(byte[]? Jpeg, string? Error);
+
+    sealed class Feed
+    {
+        public readonly List<Channel<Frame>> Viewers = [];
+        public readonly CancellationTokenSource Stop = new();
+        public long Sent;
+        public DateTime QuietUntil; // after an error (VM off): one attempt per second, not twelve
+    }
+
+    public sealed class Subscription(ChannelReader<Frame> reader, Action leave) : IDisposable
+    {
+        public ChannelReader<Frame> Reader => reader;
+        public void Dispose() => leave();
+    }
+
+    readonly Dictionary<(string, int), Feed> feeds = [];
+
+    public Subscription Subscribe(string vm, int width)
     {
         var key = (vm, width);
-        object gate;
-        lock (locks) gate = locks.TryGetValue(key, out var g) ? g : locks[key] = new object();
-        lock (gate)
+        var ch = Channel.CreateBounded<Frame>(new BoundedChannelOptions(2) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
+        lock (feeds)
         {
-            lock (frames)
-                if (frames.TryGetValue(key, out var f) && DateTime.UtcNow - f.At < TimeSpan.FromMilliseconds(400)) return f.Jpeg;
-            var jpeg = hv.Frame(vm, width);
-            lock (frames) frames[key] = (DateTime.UtcNow, jpeg);
-            return jpeg;
+            if (!feeds.TryGetValue(key, out var feed))
+            {
+                feeds[key] = feed = new Feed();
+                _ = Run(vm, width, feed);
+            }
+            feed.Viewers.Add(ch);
+            return new Subscription(ch.Reader, () =>
+            {
+                lock (feeds)
+                {
+                    feed.Viewers.Remove(ch);
+                    if (feed.Viewers.Count > 0) return;
+                    feed.Stop.Cancel();
+                    feeds.Remove(key);
+                }
+            });
+        }
+    }
+
+    async Task Run(string vm, int width, Feed feed)
+    {
+        using var slots = new SemaphoreSlim(MaxInFlight);
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1.0 / Fps));
+        long seq = 0;
+        try
+        {
+            while (await timer.WaitForNextTickAsync(feed.Stop.Token))
+            {
+                if (DateTime.UtcNow < feed.QuietUntil || !slots.Wait(0)) continue; // host slower than 12 fps: skip a tick
+                var n = ++seq;
+                _ = Task.Run(() =>
+                {
+                    try { Publish(feed, n, new Frame(hv.Frame(vm, width), null)); }
+                    catch (Exception e)
+                    {
+                        feed.QuietUntil = DateTime.UtcNow.AddSeconds(1);
+                        Publish(feed, n, new Frame(null, e is InvalidOperationException or KeyNotFoundException ? e.Message : "capture failed"));
+                    }
+                    finally { slots.Release(); }
+                });
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    void Publish(Feed feed, long n, Frame frame)
+    {
+        lock (feeds)
+        {
+            if (n <= feed.Sent) return; // a slower, older capture finished after a newer one
+            feed.Sent = n;
+            foreach (var v in feed.Viewers) v.Writer.TryWrite(frame);
         }
     }
 }

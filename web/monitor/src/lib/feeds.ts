@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { type RefObject, useEffect, useState } from "react"
 
 // Read-only views of the host agent's monitor API. Nothing here can send input to a VM.
 
@@ -9,12 +9,6 @@ export interface Vm {
   state: VmState
   width: number
   height: number
-}
-
-export interface Frame {
-  url: string | null
-  at: number | null // ms epoch of the last frame received
-  error: string | null
 }
 
 export const STALE_MS = 5000
@@ -52,44 +46,91 @@ export function useVms(intervalMs = 5000): { vms: Vm[]; error: string | null; lo
   return { vms, error, loaded }
 }
 
-// Polls one VM's console frame. The next request starts only after the previous one finished, so a slow
-// host never queues work; polling pauses while the tab is hidden.
-export function useFrame(vm: string, width: number, intervalMs: number, enabled: boolean): Frame {
-  const [frame, setFrame] = useState<Frame>({ url: null, at: null, error: null })
-  const urls = useRef<string[]>([])
+export interface Stream {
+  at: number | null // ms epoch of the last frame drawn
+  fps: number // frames drawn during the last second
+  error: string | null
+}
+
+// A VM's 12 fps feed over a WebSocket: each binary message is a JPEG, drawn straight onto the canvas so the
+// page doesn't re-render per frame. Stats update once a second. Closed while paused or the tab is hidden;
+// reconnects after 2 s when the connection drops.
+export function useStream(
+  vm: string,
+  width: number,
+  enabled: boolean,
+  canvas: RefObject<HTMLCanvasElement | null>,
+  onFrame: () => void, // must be stable (useCallback)
+): Stream {
+  const [stats, setStats] = useState<Stream>({ at: null, fps: 0, error: null })
   const visible = usePageVisible()
 
   useEffect(() => {
     if (!enabled || !visible || width <= 0) return
-    const ctrl = new AbortController()
-    let timer: number | undefined
-    const tick = async () => {
-      try {
-        const res = await fetch(`/api/vms/${encodeURIComponent(vm)}/frame?w=${width}`, {
-          cache: "no-store",
-          signal: ctrl.signal,
-        })
-        if (!res.ok) throw new Error(res.status === 409 ? "VM is not running" : `frame request failed (${res.status})`)
-        const url = URL.createObjectURL(await res.blob())
-        // Keep the previous URL alive until this one has replaced it on screen.
-        urls.current.push(url)
-        while (urls.current.length > 2) URL.revokeObjectURL(urls.current.shift()!)
-        setFrame({ url, at: Date.now(), error: null })
-      } catch (e) {
-        if (ctrl.signal.aborted) return
-        setFrame((f) => ({ ...f, error: e instanceof Error ? e.message : String(e) }))
-      }
-      if (!ctrl.signal.aborted) timer = window.setTimeout(tick, intervalMs)
-    }
-    void tick()
-    return () => {
-      ctrl.abort()
-      window.clearTimeout(timer)
-    }
-  }, [vm, width, intervalMs, enabled, visible])
+    let ws: WebSocket | null = null
+    let retry: number | undefined
+    let stopped = false
+    let drawing = false
+    let count = 0
+    let last: number | null = null
+    let error: string | null = null
 
-  useEffect(() => () => urls.current.forEach((u) => URL.revokeObjectURL(u)), [])
-  return frame
+    const open = () => {
+      const scheme = window.location.protocol === "https:" ? "wss" : "ws"
+      ws = new WebSocket(`${scheme}://${window.location.host}/api/vms/${encodeURIComponent(vm)}/stream?w=${width}`)
+      ws.binaryType = "blob"
+      ws.onmessage = async (e: MessageEvent<Blob | string>) => {
+        if (typeof e.data === "string") {
+          error = e.data
+          return
+        }
+        if (drawing) return // still decoding the previous frame: drop this one rather than queue
+        drawing = true
+        try {
+          const bmp = await createImageBitmap(e.data)
+          const c = canvas.current
+          if (c) {
+            if (c.width !== bmp.width || c.height !== bmp.height) {
+              c.width = bmp.width
+              c.height = bmp.height
+            }
+            c.getContext("2d")?.drawImage(bmp, 0, 0)
+          }
+          bmp.close()
+          count++
+          last = Date.now()
+          error = null
+          onFrame()
+        } catch {
+          // a corrupt frame: skip it
+        } finally {
+          drawing = false
+        }
+      }
+      ws.onclose = () => {
+        if (stopped) return
+        error ??= "connection lost"
+        retry = window.setTimeout(open, 2000)
+      }
+    }
+    open()
+
+    let since = Date.now()
+    const tick = window.setInterval(() => {
+      const now = Date.now()
+      setStats({ at: last, fps: Math.round((count * 1000) / (now - since)), error })
+      count = 0
+      since = now
+    }, 1000)
+    return () => {
+      stopped = true
+      window.clearTimeout(retry)
+      window.clearInterval(tick)
+      ws?.close()
+    }
+  }, [vm, width, enabled, visible, canvas, onFrame])
+
+  return stats
 }
 
 export function useNow(intervalMs = 1000): number {
@@ -111,16 +152,16 @@ function usePageVisible(): boolean {
   return visible
 }
 
-// Request widths in 160 px steps so viewers of the same size share the agent's frame cache.
+// Request widths in 160 px steps so viewers of the same size share one capture loop on the agent.
 export function frameWidth(cssWidth: number, max: number): number {
   const px = Math.round(cssWidth * (window.devicePixelRatio || 1))
   return Math.min(max, Math.max(320, Math.ceil(px / 160) * 160))
 }
 
-export function age(at: number | null, now: number): string {
+export function age(at: number | null, now: number, fps: number): string {
   if (at === null) return "no frame yet"
   const s = Math.max(0, Math.round((now - at) / 1000))
-  if (s < 2) return "live"
+  if (s < 2) return `${fps} fps`
   if (s < 60) return `${s} s ago`
   return `${Math.floor(s / 60)} min ago`
 }
