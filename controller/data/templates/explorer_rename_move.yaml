@@ -8,9 +8,9 @@ params: [file_name, new_name, folder_name]
 about: "Rename an existing file in Documents and move it into an existing folder there with Cut and Paste. file_name: the file's current name as Explorer shows it (no extension); new_name: its new name without extension; folder_name: an existing folder in Documents."
 example: {file_name: admission test note, new_name: admission test note old, folder_name: admission test folder}
 variants:
-  - [open_explorer_keys, go_documents, rename_keys, cut_keys, open_folder, paste_keys, close_explorer]
-  - [open_explorer_taskbar, go_documents, rename_menu, cut_menu, open_folder, paste_menu, close_explorer]
-  - [open_explorer_keys, go_documents, rename_menu, cut_keys, open_folder, paste_menu, close_explorer]
+  - [open_explorer_keys, go_documents, rename_keys, move_keys, close_explorer]
+  - [open_explorer_taskbar, go_documents, rename_menu, move_menu, close_explorer]
+  - [open_explorer_keys, go_documents, rename_menu, move_keys, close_explorer]
 budget_steps: 40
 budget_minutes: 7
 subgoals:
@@ -36,24 +36,21 @@ subgoals:
     text: new_name
     keys: [Enter]
     done: {element: {role: list item, name: '^{new_name}(\.\w+)?$'}}
-  cut_keys:
-    # Open-ended: a cut file only looks faded, which UIA does not expose; paste below verifies it.
-    goal: "Select the file {new_name} and cut it with Ctrl+X"
-    keys: [Ctrl+X]
-    steps: 4
-  cut_menu:
-    goal: "Right-click the file {new_name} and choose Cut, then confirm it still shows in Documents"
-    done: {element: {role: list item, name: '^{new_name}(\.\w+)?$'}}
-  open_folder:
-    goal: "Open the folder {folder_name} by double-clicking it"
-    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: '^{folder_name}$'}}
-  paste_keys:
-    goal: "Paste the file into this folder with Ctrl+V"
-    keys: [Ctrl+V]
-    done: {element: {role: list item, name: '^{new_name}(\.\w+)?$'}}
-  paste_menu:
-    goal: "Right-click an empty area of this folder and choose Paste"
-    done: {element: {role: list item, name: '^{new_name}(\.\w+)?$'}}
+  # Cut, open the folder and paste are one subgoal: a cut file only looks faded (not in UIA), so the only
+  # checkable point is the file listed inside the folder.
+  move_keys:
+    goal: "Cut the file {new_name} with Ctrl+X, open the folder {folder_name} and paste it there with Ctrl+V"
+    keys: [Ctrl+X, Ctrl+V]
+    steps: 14
+    done:
+      foreground: {process: explorer.exe, class_name: CabinetWClass, title: '^{folder_name}$'}
+      element: {role: list item, name: '^{new_name}(\.\w+)?$'}
+  move_menu:
+    goal: "Right-click the file {new_name} and choose Cut, open the folder {folder_name}, then right-click an empty area there and choose Paste"
+    steps: 14
+    done:
+      foreground: {process: explorer.exe, class_name: CabinetWClass, title: '^{folder_name}$'}
+      element: {role: list item, name: '^{new_name}(\.\w+)?$'}
   close_explorer:
     goal: "Close File Explorer"
     done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}
