@@ -177,6 +177,13 @@ sealed partial class HyperV(Guid observerService, string oneVmScript)
         $env:LUDIUS_VM = $env:LUDIUS_TARGET
         """;
 
+    // Checkpoint: never under an existing name. Hyper-V accepts duplicates, and a second "clean" makes every later
+    // Restore-VMSnapshot -Name clean fail as ambiguous; a baseline is never replaced either (provision.ps1 alike).
+    const string CheckpointScript = """
+        if (Get-VMSnapshot -VMName $env:LUDIUS_VM -Name $env:LUDIUS_CP -ErrorAction SilentlyContinue) { throw "checkpoint '$env:LUDIUS_CP' exists on $env:LUDIUS_VM and is never duplicated or replaced: use a new name" }
+        Checkpoint-VM -Name $env:LUDIUS_VM -SnapshotName $env:LUDIUS_CP
+        """;
+
     // Delete: merge checkpoints, unregister, then remove the VM's current disks. Only ludius-* VMs, only with the
     // name repeated as confirmation.
     const string DeleteScript = """
@@ -199,6 +206,8 @@ sealed partial class HyperV(Guid observerService, string oneVmScript)
             throw new ArgumentException("invalid name");
         if (op == Ludius.V1.LifecycleRequest.Types.Op.Clone && (checkpoint == "" || !target.StartsWith("ludius-")))
             throw new ArgumentException("clone needs a checkpoint and a target named ludius-*");
+        if (op is Ludius.V1.LifecycleRequest.Types.Op.Checkpoint or Ludius.V1.LifecycleRequest.Types.Op.Restore && checkpoint == "")
+            throw new ArgumentException("checkpoint and restore need a checkpoint name");
         if (op == Ludius.V1.LifecycleRequest.Types.Op.Delete && (!vm.StartsWith("ludius-") || target != vm))
             throw new ArgumentException("delete is limited to ludius-* VMs and needs the VM name repeated as confirmation");
         // Stop: a failing cmdlet (e.g. Restore-VMSnapshot of a checkpoint that doesn't exist) must fail the call;
@@ -207,7 +216,7 @@ sealed partial class HyperV(Guid observerService, string oneVmScript)
         {
             Ludius.V1.LifecycleRequest.Types.Op.Start => OneVm("Start-VM -Name $env:LUDIUS_VM"),
             Ludius.V1.LifecycleRequest.Types.Op.Stop => "Stop-VM -Name $env:LUDIUS_VM -Force",
-            Ludius.V1.LifecycleRequest.Types.Op.Checkpoint => "Checkpoint-VM -Name $env:LUDIUS_VM -SnapshotName $env:LUDIUS_CP",
+            Ludius.V1.LifecycleRequest.Types.Op.Checkpoint => CheckpointScript,
             Ludius.V1.LifecycleRequest.Types.Op.Restore => OneVm("Restore-VMSnapshot -VMName $env:LUDIUS_VM -Name $env:LUDIUS_CP -Confirm:$false"),
             Ludius.V1.LifecycleRequest.Types.Op.Clone => CloneScript,
             Ludius.V1.LifecycleRequest.Types.Op.Delete => DeleteScript,
