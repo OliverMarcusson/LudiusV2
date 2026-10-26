@@ -129,6 +129,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-26">26 Oct 2026</time><span>Owner away: Office installation and all manual-input-dependent work deferred until return; independent implementation and authorized DC/NTP setup continue. Office clone is saved with unique computer name WS-OFFICE01. Visual slice 76d6452 supplies tested PP-OCR text rows and screenshot observation; icon detector, CLI wiring and safe task execution remain incomplete. Test-build-only watchdog fault seam c897cee enables real watchdog-path smoke; live verification pending.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Owner deferred Proxmox for now; its requirements remain incomplete, outside active work queues. Watchdog guest smoke confirms three task triggers, synthetic crash-event relaunch in 32 s with uiAccess retained, and idle daily takeover. Actual observer watchdog failure and takeover during a live request remain untested. Server ISO downloaded (8152356864 bytes); Office clone unique-name setup and isolated DC/NTP provisioning continue.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>cff875c loads scenario-reserved path/mailbox policy into planning and run/validate/day; red-herring exemptions retained, suite 43 passed/5 skipped. Live policy verification and keyboard-only target gap remain. 083f080 adds virtualized-list range hints and offline scroll-option coverage; live scroll/clipping/retry checks pending. 6d6ae51 clone verified live into separate Office VM; guarded deletion refusals verified, actual deletion not run. Clone retains Windows identity; no concurrent domain use. Server evaluation ISO download started; DC/NTP provisioning pending capacity-safe setup.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Planning state 78fbf0a rebuilds documents, colleague messages, next-working-day follow-ups and persona calendar briefs from completed day-log items and narrative events. Due follow-ups must be scheduled by id and close only on logged completion; offline suite 40 passed, 5 skipped. This is derived planning data: no mail/calendar UI, shared storage or invite-response integration yet. Scenario-reserved path loading is next.</span></li>
@@ -180,12 +181,12 @@ const SECTIONS = [
     ["Virtualized lists (WPF, WinUI, Explorer)", "partial", "083f080 reports top-page item ranges, estimated ranges when GridPattern total/scroll data exist, otherwise visible count. Real hint method passes seven offline cases; scroll-option seam tested. Existing Explorer runs read list/tree items. Live scrolling, off-screen clipping and cold Chrome retry still unverified."],
     ["Legacy Win32 fallback", "done", "LegacyIAccessible name, value, state and default action."],
     ["Java Access Bridge", "todo", ""],
-    ["No usable tree → visual fallback", "todo", "Windows are flagged <code>no_tree</code>; screenshots aren't sent."],
+    ["No usable tree → visual fallback", "partial", "615fc2e/76d6452 add optional PP-OCR ONNX text rows from host-side full-resolution crops of visible no_tree windows, stable ids and mask filtering; recorded Save As control centers match UIA bounds. Icon-only detector and CLI/live integration pending. Host cropping accepted as implementation choice; observer sends no pixels."],
     ["Stable IDs, ranking, ~200 cap, context lines", "done", "Hash of control type, automation id, name and ancestor path, mapped to short ids for the observer's lifetime."],
     ["Settle detection", "done", "UIA events + DXGI dirty rects, 300 ms quiet, 5 s timeout, busy cursor and indeterminate progress reported. ~0.3–0.5 s per settled snapshot."],
     ["Footprint: one process, no disk, no network", "done", "WinExe, no console, Hyper-V socket only, neutral name (<code>uiprobe.exe</code> under RangeAssist)."],
     ["Daily restart and watchdog", "partial", "15e9a85 detects requests over 60 s or five failures. Offline clock/task checks pass. Guest confirms three triggers; synthetic uiprobe crash-event relaunch in 32 s retains session/uiAccess; idle takeover passes. General PowerShell FailFast emits event 1000. Actual uiprobe watchdog failure and under-load takeover remain unverified; synthetic evidence is not claimed as those tests."],
-    ["Pixels-only mode", "todo", ""],
+    ["Pixels-only mode", "partial", "76d6452 builds screenshot-only snapshots and settles on identical frames with timeout. Tested offline; cannot yet execute tasks end to end because process-based task scope/checks need an explicit safe visual path. No guessed process identity is accepted as verification."],
   ]},
   { id: "host", title: "4. Host agent and hypervisor abstraction", items: [
     ["Same gRPC API on both hypervisors", "partial", "API defined in <code>proto/</code>; Hyper-V only."],
@@ -254,7 +255,7 @@ const SECTIONS = [
     ["gRPC + protobuf", "done", ""],
     ["Python 3.12+, Pydantic, strict pyright", "done", "Synchronous for now; asyncio comes with orchestration."],
     ["Temporal, PostgreSQL, MinIO", "todo", ""],
-    ["Visual fallback (ONNX detector, PaddleOCR)", "todo", ""],
+    ["Visual fallback (ONNX detector, PaddleOCR)", "partial", "PP-OCR text-detection/recognition runs on ONNX Runtime; recorded screenshot and pixel-coordinate tests pass. UI/icon detector, CLI wiring, live custom-drawn-app and dense/dark-UI checks remain. Public Microsoft MIT icon_detect_v3 model identified for pinned download/export; implementation and runtime verification pending."],
     ["Analysis (Plaso, DuckDB, Polars, LightGBM)", "partial", "Offline psort CSV ingestion and coverage/survival metrics in controller; no artifact collection or Plaso execution yet. Filterability uses single-feature rules; DuckDB, Polars and LightGBM are not integrated."],
     ["Repository layout", "partial", "proto, guest, host, controller (planner and offline artifact analysis), fixtures, infra and web monitor. No separate analysis service."],
     ["CI", "done", "GitHub Actions: ruff, pyright and pytest on Linux; .NET build on Windows."],
