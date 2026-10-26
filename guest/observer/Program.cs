@@ -50,12 +50,14 @@ var uia = (IUIAutomation2)new CUIAutomation8();
 uia.ConnectionTimeout = 2000;  // a hung app becomes an unresponsive window,
 uia.TransactionTimeout = 3000; // not a frozen observer
 bool uiAccess = Native.SelfUiAccess();
+JavaBridge.Start(); // no JRE: Java windows stay UIA-only
 var settle = new Settle(uia);
 var snapper = new Snapshotter(uia, uiAccess);
 
 if (args.Contains("--once"))
 {
     Console.OutputEncoding = System.Text.Encoding.UTF8;
+    if (Arg("--title") is { } title) Snapshotter.Foreground = Native.FindWindow(null, title);
     Console.WriteLine(JsonFormatter.Default.Format(Observe(new SnapshotRequest { WaitSettle = true })));
     return 0;
 }

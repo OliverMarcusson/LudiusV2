@@ -134,9 +134,12 @@ sealed partial class Snapshotter
         return snap;
     }
 
+    // Dev only (--once --title): read this window as if it were in front, without taking focus on the dev machine.
+    public static IntPtr Foreground;
+
     static List<(IntPtr, Window.Types.Kind)> CollectWindows()
     {
-        var fg = Native.GetForegroundWindow();
+        var fg = Foreground != 0 ? Foreground : Native.GetForegroundWindow();
         Native.GetWindowThreadProcessId(fg, out var fgPid);
         Native.GetWindowRect(fg, out var fgRect);
         var owned = new List<(IntPtr, Window.Types.Kind)>();
@@ -218,6 +221,7 @@ sealed partial class Snapshotter
     {
         for (int attempt = 0; ; attempt++)
         {
+            if (JavaBridge.IsJava(hwnd)) return ReadJava(hwnd, w, index, keys);
             var found = new List<Raw>();
             try
             {
@@ -340,20 +344,141 @@ sealed partial class Snapshotter
 
     static void Hints(IUIAutomationElement c, Element e, Window w)
     {
+        CommonHints(e, w);
+        if ((Int(c, UIA_LegacyIAccessibleStatePropertyId) & 0x100) != 0) e.Hints.Add("Enter triggers this"); // STATE_SYSTEM_DEFAULT
+        if (Lists.Contains(e.Role) && Bool(c, UIA_ScrollVerticallyScrollablePropertyId) &&
+            c.GetCachedPropertyValue(UIA_ScrollVerticalScrollPercentPropertyId) is double pct && pct < 99.5)
+            e.Hints.Add(ListShown(c.GetCachedChildren()?.Length ?? 0, pct, Int(c, UIA_GridRowCountPropertyId)));
+    }
+
+    // Hints from the element's own fields, shared by UIA and Java rows.
+    static void CommonHints(Element e, Window w)
+    {
         var label = e.Name.Replace("&", "").Trim();
         if (e.Actions.Contains("expand") && e.Role != "tree item") e.Hints.Add("opens list/menu");
         if (e.Role == "hyperlink") e.Hints.Add(e.Value != "" ? $"link to {Trim(e.Value, 120)}" : "link");
-        bool dialog = w.Kind == Window.Types.Kind.Owned || w.ClassName == "#32770";
+        bool dialog = w.Kind == Window.Types.Kind.Owned || w.ClassName is "#32770" or "SunAwtDialog";
         if (dialog && e.Role is "button" or "split button")
         {
             if (Submits().IsMatch(label)) e.Hints.Add("submits");
             else if (Closes().IsMatch(label)) e.Hints.Add("closes dialog");
         }
         if (Destructive().IsMatch(label)) e.Hints.Add("destructive");
-        if ((Int(c, UIA_LegacyIAccessibleStatePropertyId) & 0x100) != 0) e.Hints.Add("Enter triggers this"); // STATE_SYSTEM_DEFAULT
-        if (Lists.Contains(e.Role) && Bool(c, UIA_ScrollVerticallyScrollablePropertyId) &&
-            c.GetCachedPropertyValue(UIA_ScrollVerticalScrollPercentPropertyId) is double pct && pct < 99.5)
-            e.Hints.Add(ListShown(c.GetCachedChildren()?.Length ?? 0, pct, Int(c, UIA_GridRowCountPropertyId)));
+    }
+
+    // Java windows (Swing, AWT) read through the Access Bridge: same element format, framework "Java".
+    List<Raw> ReadJava(IntPtr hwnd, Window w, uint index, HashSet<string> keys)
+    {
+        var found = new List<Raw>();
+        w.FrameworkId = "Java";
+        if (!JavaBridge.Root(hwnd, out var vm, out var root)) return found;
+        try
+        {
+            int budget = 3000; // nodes per window: a runaway tree never stalls the snapshot
+            if (JavaBridge.Info(vm, root, out var info))
+                WalkJava(vm, JavaBridge.Children(vm, root, info.ChildrenCount, false), "", "", w.Bounds, w, index, found, keys, ref budget);
+        }
+        finally { JavaBridge.Release(vm, root); }
+        return found;
+    }
+
+    // Each child in `kids` is released here, walked or not.
+    void WalkJava(int vm, List<long> kids, string parentRole, string path, Rect clip, Window w, uint index, List<Raw> found, HashSet<string> keys, ref int budget)
+    {
+        string lastText = "";
+        int sibling = 0;
+        foreach (var c in kids)
+        {
+            try
+            {
+                if (--budget < 0 || !JavaBridge.Info(vm, c, out var info)) continue;
+                var states = info.StatesEnUs.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+                if (!states.Contains("showing")) continue;
+                var bounds = Clip(new Rect { X = info.X, Y = info.Y, Width = info.Width, Height = info.Height }, clip);
+                var role = JavaRole(info.RoleEnUs, states);
+                if (parentRole == "list" && role == "text") role = "list item"; // JList rows report "label"
+                bool listLike = role is "list" or "table" or "tree";
+                // Long lists and tables: only the rows on screen. Scroll bars: their arrow buttons say nothing.
+                var grand = info.RoleEnUs == "scroll bar" ? [] : JavaBridge.Children(vm, c, info.ChildrenCount, listLike);
+                if (role is not null)
+                {
+                    var raw = DescribeJava(vm, c, info, role, states, path, bounds, w, index, lastText, sibling, keys);
+                    if (listLike && grand.Count > 0 && grand.Count < info.ChildrenCount)
+                    {
+                        int first = JavaBridge.Info(vm, grand[0], out var a) ? a.IndexInParent + 1 : 1;
+                        raw.E.Hints.Add($"items {first}–{first + grand.Count - 1} shown of {info.ChildrenCount}, list continues");
+                        raw.Actionable = raw.E.Enabled;
+                    }
+                    if (bounds.Width > 0 || raw.E.Focused) found.Add(raw);
+                    if (role == "text" && raw.E.Name != "") lastText = raw.E.Name;
+                }
+                // A scroll pane's viewport shows part of its content: clip to it, like a Chromium document.
+                var childClip = info.RoleEnUs == "viewport" ? bounds : clip;
+                WalkJava(vm, grand, role ?? "", path == "" ? info.RoleEnUs : $"{path}/{info.RoleEnUs}", childClip, w, index, found, keys, ref budget);
+            }
+            finally { JavaBridge.Release(vm, c); sibling++; }
+        }
+    }
+
+    static string? JavaRole(string role, HashSet<string> states) => role switch
+    {
+        "push button" or "toggle button" => "button",
+        "check box" or "radio button" or "combo box" or "list item" or "menu item" or "scroll bar" or "slider"
+            or "hyperlink" or "menu bar" or "tool bar" or "progress bar" or "status bar" or "list" or "table" or "tree" => role,
+        "check box menu item" or "radio button menu item" or "menu" => "menu item",
+        "text" => states.Contains("editable") ? "edit" : "text",
+        "password text" => "edit",
+        "label" => "text",
+        "page tab" => "tab item",
+        "spinbox" => "spinner",
+        _ => null, // panes, panels, fillers: structure only
+    };
+
+    Raw DescribeJava(int vm, long c, JavaBridge.ContextInfo info, string role, HashSet<string> s, string path, Rect bounds, Window w, uint index, string lastText, int sibling, HashSet<string> keys)
+    {
+        var e = new Element
+        {
+            Role = role,
+            ClassName = info.RoleEnUs,
+            FrameworkId = "Java",
+            AncestorPath = path,
+            Enabled = s.Contains("enabled"),
+            Focused = s.Contains("focused"),
+            KeyboardFocusable = s.Contains("focusable"),
+            Password = info.RoleEnUs == "password text",
+            Selected = s.Contains("selected"),
+            Expanded = s.Contains("expanded"),
+            Window = index,
+            Bounds = bounds,
+        };
+        e.Name = Trim(info.Name != "" ? info.Name : role is "edit" or "combo box" or "spinner" && lastText != "" ? lastText : info.Description, 200);
+
+        bool editable = s.Contains("editable");
+        if (info.AccessibleAction != 0 && role is not ("edit" or "text" or "list" or "table" or "tree")) e.Actions.Add("invoke");
+        if (role == "edit") { e.ReadOnly = !editable; if (editable) e.Actions.Add("value"); }
+        if (info.RoleEnUs is "check box" or "toggle button" or "check box menu item") e.Actions.Add("toggle");
+        if (role is "radio button" or "list item" or "tab item") e.Actions.Add("select");
+        if (role == "combo box" || info.RoleEnUs == "menu") e.Actions.Add("expand");
+
+        // Password text is never read: only whether it has any.
+        if (e.Password) e.Value = JavaBridge.TextLength(vm, c) > 0 ? "filled" : "empty";
+        else if (e.Actions.Contains("toggle")) e.Value = s.Contains("checked") ? "on" : "off";
+        else if (role is "edit" or "combo box" && info.AccessibleText != 0) e.Value = Trim(JavaBridge.Text(vm, c, MaxValue + 1), MaxValue);
+
+        var key = Hash($"{role}||{e.Name}|{path}");
+        if (!keys.Add(key)) { key = Hash($"{key}#{sibling}"); keys.Add(key); }
+        e.Key = key;
+        if (!ids.TryGetValue(key, out var id)) ids[key] = id = nextId++;
+        e.Id = id;
+
+        CommonHints(e, w);
+        bool actionable = e.Actions.Count > 0 || (e.KeyboardFocusable && Interactive.Contains(role));
+        if (role is "list" or "tree" or "table") actionable = e.Focused;
+        var raw = new Raw { E = e, Kind = w.Kind, Actionable = actionable && e.Enabled };
+        if (!raw.Actionable && e.Name != "" && role is "text" or "status bar")
+            raw.Context = $"{role}: {Trim(e.Name, 160)}";
+        raw.Busy = role == "progress bar" && s.Contains("indeterminate");
+        return raw;
     }
 
     // Spec: virtualized lists report "items 1–14 shown, list continues". The cached children are the visible

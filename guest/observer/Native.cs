@@ -58,6 +58,7 @@ static partial class Native
 
     public static string ClassName(IntPtr hwnd) { var sb = new StringBuilder(256); GetClassName(hwnd, sb, sb.Capacity); return sb.ToString(); }
     public static string Title(IntPtr hwnd) { var sb = new StringBuilder(512); GetWindowText(hwnd, sb, sb.Capacity); return sb.ToString(); }
+    [LibraryImport("user32.dll", EntryPoint = "FindWindowW", StringMarshalling = StringMarshalling.Utf16)] public static partial IntPtr FindWindow(string? cls, string title);
     public static bool Cloaked(IntPtr hwnd) => DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out var v, 4) == 0 && v != 0;
     public static IntPtr Owner(IntPtr hwnd) => GetWindow(hwnd, GW_OWNER);
 
