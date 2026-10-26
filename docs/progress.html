@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ludius V2 – progress against the spec</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb;
+    --surface-2: #f3f2ef;
+    --rule: #e2e1dc;
+    --text: #0b0b0b;
+    --text-2: #52514e;
+    --text-3: #6f6e69;
+    --done: #184f95;
+    --partial: #3987e5;
+    --todo: #86b6ef;
+    --link: #1c5cab;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface: #1a1a19;
+      --surface-2: #242422;
+      --rule: #383835;
+      --text: #f0efec;
+      --text-2: #c3c2b7;
+      --text-3: #9e9d95;
+      --done: #cde2fb;
+      --partial: #5598e7;
+      --todo: #1c5cab;
+      --link: #86b6ef;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--surface);
+    color: var(--text);
+    font: 15px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  main { max-width: 1040px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 28px; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 18px; font-weight: 620; margin: 0; }
+  a { color: var(--link); }
+  .meta { color: var(--text-2); margin: 0 0 28px; }
+  .meta span + span::before { content: "·"; margin: 0 8px; color: var(--text-3); }
+
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 28px; }
+  .tile { border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; }
+  .tile .n { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .tile .l { color: var(--text-2); font-size: 13px; }
+
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; color: var(--text-2); font-size: 13px; margin: 0 0 10px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+  .controls { display: flex; gap: 0; margin: 0 0 24px; border: 1px solid var(--rule); border-radius: 6px; width: fit-content; overflow: hidden; }
+  .controls label { padding: 6px 14px; font-size: 13px; cursor: pointer; color: var(--text-2); border-right: 1px solid var(--rule); }
+  .controls label:last-child { border-right: 0; }
+  .controls input { position: absolute; opacity: 0; pointer-events: none; }
+  .controls input:checked + span { color: var(--text); font-weight: 600; }
+  .controls label:has(input:checked) { background: var(--surface-2); }
+  .controls label:has(input:focus-visible) { outline: 2px solid var(--partial); outline-offset: -2px; }
+
+  .overview { display: grid; grid-template-columns: minmax(150px, 230px) 1fr 70px; gap: 8px 14px; align-items: center; margin-bottom: 36px; }
+  .overview .name { font-size: 14px; }
+  .overview .name a { color: var(--text); text-decoration: none; }
+  .overview .name a:hover { text-decoration: underline; }
+  .overview .pct { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; text-align: right; }
+  .bar { display: flex; gap: 2px; height: 14px; }
+  .bar span { height: 100%; min-width: 4px; cursor: default; }
+  .bar span:first-child { border-radius: 4px 0 0 4px; }
+  .bar span:last-child { border-radius: 0 4px 4px 0; }
+  .bar span:only-child { border-radius: 4px; }
+  .bar span:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+
+  section { border-top: 1px solid var(--rule); padding: 22px 0 10px; }
+  section header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 4px; }
+  section header .count { color: var(--text-2); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  section > p { color: var(--text-2); margin: 4px 0 12px; font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-weight: 600; font-size: 12px; color: var(--text-3); padding: 6px 10px 6px 0; border-bottom: 1px solid var(--rule); }
+  td { padding: 8px 10px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  td.item { width: 34%; }
+  td.status { width: 120px; white-space: nowrap; }
+  td.note { color: var(--text-2); }
+  .st { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+  .st i { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  tr[hidden] { display: none; }
+  code { font: 12.5px/1.4 ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--surface-2); padding: 1px 4px; border-radius: 3px; }
+
+  .log { list-style: none; padding: 0; margin: 8px 0 0; }
+  .log li { padding: 8px 0; border-bottom: 1px solid var(--rule); font-size: 14px; display: grid; grid-template-columns: 110px 1fr; gap: 12px; }
+  .log time { color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+  #tip { position: fixed; pointer-events: none; background: var(--text); color: var(--surface); font-size: 12.5px; padding: 6px 9px; border-radius: 4px; white-space: nowrap; opacity: 0; transition: opacity 80ms; z-index: 10; }
+  @media (prefers-reduced-motion: reduce) { #tip { transition: none; } }
+  @media (max-width: 640px) {
+    .overview { grid-template-columns: 1fr 56px; }
+    .overview .bar { grid-column: 1 / -1; order: 3; }
+    td.item { width: auto; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Ludius V2: progress against the spec</h1>
+  <p class="meta"><span>Updated 26 Oct 2026</span><span>Commit <code>454374a</code></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
+
+  <div class="summary" id="summary"></div>
+
+  <div class="legend" aria-hidden="true">
+    <span><i style="background:var(--done)"></i>Done</span>
+    <span><i style="background:var(--partial)"></i>Partial</span>
+    <span><i style="background:var(--todo)"></i>Not started</span>
+  </div>
+  <div class="overview" id="overview" role="list" aria-label="Progress per spec section"></div>
+
+  <div class="controls" role="radiogroup" aria-label="Show items">
+    <label><input type="radio" name="f" value="all" checked><span>All items</span></label>
+    <label><input type="radio" name="f" value="done"><span>Done</span></label>
+    <label><input type="radio" name="f" value="partial"><span>Partial</span></label>
+    <label><input type="radio" name="f" value="todo"><span>Not started</span></label>
+  </div>
+
+  <div id="sections"></div>
+
+  <section>
+    <header><h2>Change log</h2></header>
+    <ul class="log">
+      <li><time datetime="2026-10-26">26 Oct 2026</time><span>First vertical slice on local Hyper-V: observer, host agent and controller working end to end. Contract test passes. All 4 Notepad variants complete from the <code>clean</code> checkpoint in 9–12 Jev steps, with byte-exact file content. 22 tests pass, including live Jev replay on 5 fixtures. Published to GitHub.</span></li>
+    </ul>
+  </section>
+</main>
+<div id="tip" role="tooltip"></div>
+
+<script>
+// Status: "done" | "partial" | "todo". Update this list as work lands.
+const SECTIONS = [
+  { id: "principles", title: "1. Purpose and principles", items: [
+    ["Human interface only for actions", "done", "All input goes through Hyper-V's synthetic keyboard and mouse (WMI). The observer never acts."],
+    ["Privileged, minimal reading", "done", "Read-only UIA observer with uiAccess, signed by the range CA."],
+    ["Each layer has one owner", "partial", "Code owns structure, policy and verification, and Jev owns steps. No LLM planner yet: task instances are written by hand."],
+    ["No LLM in the step loop", "done", "One Jev call per step, nothing else in the loop."],
+    ["Coherent, varied, non-destructive noise", "partial", "One full template with 4 variants plus code-enforced policy. Variety across tasks needs the planner."],
+    ["Hypervisor-agnostic", "partial", "The controller only talks to the host agent's API. Only the Hyper-V backend exists."],
+  ]},
+  { id: "architecture", title: "2. Architecture", items: [
+    ["Guest, host, decision layers", "done", "Observer (C#), host agent (C#), controller (Python) connected and verified live."],
+    ["Planning layer", "todo", "Not built."],
+  ]},
+  { id: "observer", title: "3. Guest observer", items: [
+    ["Interactive session at logon, never a service", "done", "Logon scheduled task in the persona's session (session 1)."],
+    ["Signed with range CA, uiAccess=true", "done", "Range root distributed by the provisioning script, not GPO yet. Task Scheduler can't start uiAccess binaries (error 740), so explorer.exe launches it."],
+    ["Medium-integrity fallback", "done", "Build without uiAccess (<code>-NoUiAccess</code>); elevated windows flagged <code>elevated_unreadable</code>."],
+    ["UAC prompt reported as \"blocked: elevation required\"", "todo", "The secure desktop shows up as <code>locked</code>; there is no specific report yet."],
+    ["UIA3 COM API, Per-Monitor-V2 DPI", "done", "Interop.UIAutomationClient (IUIAutomation2) and a PerMonitorV2 manifest."],
+    ["Snapshot covers foreground, owned, popups, shell", "done", "Menus, same-process popups, taskbar, tray overflow, Start/search, desktop."],
+    ["One cached request per window, control view, on-screen only", "done", "BuildUpdatedCache with a subtree cache request (instead of FindAllBuildCache) to keep the ancestor path."],
+    ["Connection and transaction timeouts", "done", "Hung windows become <code>unresponsive</code>; one unreadable window no longer fails the snapshot."],
+    ["Events only trigger snapshots and settle", "done", "The table is always rebuilt."],
+    ["Element schema and name fallbacks", "done", "Name → LabeledBy → LegacyIAccessible → preceding text → HelpText."],
+    ["Password fields expose only empty/filled", "done", ""],
+    ["Hints", "done", "Opens list/menu, link target, submits / closes dialog, destructive, default button, list continues."],
+    ["Chromium/Electron/WebView2 handling", "partial", "Lazy-tree re-snapshot and viewport clipping implemented; verified on a host Electron app, not yet in the guest."],
+    ["Virtualized lists (WPF, WinUI, Explorer)", "partial", "\"List continues, N visible\" hint implemented; not exercised in a test."],
+    ["Legacy Win32 fallback", "done", "LegacyIAccessible name, value, state and default action."],
+    ["Java Access Bridge", "todo", ""],
+    ["No usable tree → visual fallback", "todo", "Windows are flagged <code>no_tree</code>; screenshots aren't sent."],
+    ["Stable IDs, ranking, ~200 cap, context lines", "done", "Hash of control type, automation id, name and ancestor path, mapped to short ids for the observer's lifetime."],
+    ["Settle detection", "done", "UIA events + DXGI dirty rects, 300 ms quiet, 5 s timeout, busy cursor and indeterminate progress reported. ~0.3–0.5 s per settled snapshot."],
+    ["Footprint: one process, no disk, no network", "done", "WinExe, no console, Hyper-V socket only, neutral name (<code>uiprobe.exe</code> under RangeAssist)."],
+    ["Daily restart and watchdog", "partial", "Daily trigger plus single-instance takeover; no health watchdog yet."],
+    ["Pixels-only mode", "todo", ""],
+  ]},
+  { id: "host", title: "4. Host agent and hypervisor abstraction", items: [
+    ["Same gRPC API on both hypervisors", "partial", "API defined in <code>proto/</code>; Hyper-V only."],
+    ["Input: move, click, keys, type, Ctrl+Alt+Del", "done", "Plus scroll. Uses virtual-key codes (the WMI API), not scancodes."],
+    ["Guest channel relay", "partial", "Unary Observe over the Hyper-V socket instead of a bidirectional stream; reconnects after restores."],
+    ["Lifecycle", "partial", "Start, stop, checkpoint, restore, state. Clone and delete not built."],
+    ["Hyper-V backend", "done", "WMI synthetic mouse and keyboard verified on this Windows 11 host. Not yet checked on the target Windows Server version."],
+    ["Proxmox backend (QMP, USB tablet, vsock, API)", "todo", ""],
+    ["Fixed resolution in VM config", "done", "<code>Set-VMVideo</code> 1920×1080."],
+    ["Mapping recheck on resolution change", "todo", ""],
+    ["Click jitter, movement paths, persona timing", "done", "Eased curved paths; Gaussian point inside the element box; heavy-tailed typing delays."],
+    ["Contract test", "partial", "<code>ludius contract</code> passes on Hyper-V (pointer within 1 px, exact typing). No CI, no Proxmox."],
+  ]},
+  { id: "controller", title: "5. Controller and Jev decision loop", items: [
+    ["Step loop: observe, decide, policy, act, verify", "done", ""],
+    ["Jev state built in code", "done", "Only ids, roles, names, values, states and hints reach Jev."],
+    ["Three questions per step", "done", "action (choice), subgoal_done and off_track (noul), via OpenRouter."],
+    ["Option generation", "partial", "Click, double-click, type content into an element or the focus, keys, scroll, rescan. Copying on-screen text (<code>type:copy[..]</code>) isn't built yet."],
+    ["Choosing", "partial", "Top option only; no sampling among equivalent near-ties."],
+    ["Policy", "done", "Destructive allowlist, never-list, password fields, reserved paths, step and time budgets. Reserved paths aren't loaded from scenarios yet."],
+    ["Failure ladder steps 1–3", "done", "Rescan, restricted in-app recovery, human-like abandonment."],
+    ["Failure ladder steps 4–8", "todo", "Logged as an escalation only."],
+    ["Logon and unlock", "todo", "Lock state is reported; the unlock flow isn't built."],
+  ]},
+  { id: "planning", title: "6. Planning layer", items: [
+    ["Company narrative and world state", "todo", ""],
+    ["Nightly day plans", "todo", ""],
+    ["Task instances from the planner", "todo", "Written by hand in YAML for now."],
+    ["Personas", "partial", "Name, role, typing, think time and pointer timing. No style sheet, schedule, file habits or risk profile."],
+    ["Task templates with variants", "partial", "One template (Notepad) with 4 variants and structured completion checks."],
+    ["Template growth and admission", "todo", ""],
+    ["Task stack and interruptions", "todo", ""],
+    ["Content generation and near-duplicate check", "todo", "OpenRouter is the chosen LLM provider."],
+    ["Cross-persona interaction", "todo", ""],
+    ["Variety by filter dimension", "partial", "Launch method (Start search vs Run) and UI path (shortcut vs menu) only."],
+    ["Legitimate activity that resembles signal", "todo", ""],
+    ["LLM fallback and end-of-task verification", "todo", ""],
+  ]},
+  { id: "clock", title: "7. Clock modes, range lifecycle and provisioning", items: [
+    ["Realtime and compressed modes", "partial", "Pacing switch only; no scheduler or logical timeline."],
+    ["Time-jump mode", "todo", ""],
+    ["Seeded runs", "done", "Seed fixes variant choice and jitter."],
+    ["Range lifecycle (build, age, inject, snapshot, deliver, reset)", "partial", "Per-VM checkpoint and restore only."],
+    ["Persistent-VM hygiene and drift canaries", "todo", ""],
+    ["Golden image (Packer + Ansible)", "partial", "Stand-in: unattended ISO build and <code>provision.ps1</code> (CA, observer, base settings, autologon)."],
+  ]},
+  { id: "testing", title: "8. Testing and quality", items: [
+    ["Fixture replay", "done", "5 recorded screens; offline option/policy checks and live Jev replay (5/5)."],
+    ["Contract tests", "partial", "Hyper-V only, run by hand."],
+    ["Template validation in compressed mode", "partial", "All 4 Notepad variants run by hand; no admission gate."],
+    ["Range test runs and metrics", "todo", ""],
+    ["Filterability test", "todo", ""],
+    ["Ground-truth step log", "done", "JSONL with host and guest time, persona, window, element, action, Jev answer and result."],
+    ["Instructor timeline export", "todo", ""],
+  ]},
+  { id: "stack", title: "9. Tech stack, repository and CI", items: [
+    ["Guest observer: C#, single self-contained exe", "done", ".NET 10 instead of 9 (only SDK installed; .NET 9 support ends Nov 2026)."],
+    ["DXGI settle via Vortice", "done", ""],
+    ["Host agent: C# on Windows", "done", ""],
+    ["Host agent on Linux (Proxmox)", "todo", ""],
+    ["gRPC + protobuf", "done", ""],
+    ["Python 3.12+, Pydantic, strict pyright", "done", "Synchronous for now; asyncio comes with orchestration."],
+    ["Temporal, PostgreSQL, MinIO", "todo", ""],
+    ["Visual fallback (ONNX detector, PaddleOCR)", "todo", ""],
+    ["Analysis (Plaso, DuckDB, Polars, LightGBM)", "todo", ""],
+    ["Repository layout", "partial", "proto, guest, host, controller, fixtures, infra. No planner or analysis yet."],
+    ["CI", "partial", "uv, ruff, pyright, pytest and dotnet build all pass locally; no CI workflow."],
+    ["Open question: Hyper-V WMI input methods", "partial", "Verified on a Windows 11 host. Not yet checked on Windows Server."],
+    ["Open question: FlaUI under NativeAOT", "done", "Sidestepped: COM interop via Interop.UIAutomationClient, single-file self-contained, no AOT."],
+  ]},
+];
+
+const LABEL = { done: "Done", partial: "Partial", todo: "Not started" };
+const ORDER = ["done", "partial", "todo"];
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const counts = items => Object.fromEntries(ORDER.map(s => [s, items.filter(i => i[1] === s).length]));
+// Partial items count half toward the percentage.
+const pct = c => Math.round(100 * (c.done + c.partial / 2) / (c.done + c.partial + c.todo));
+
+const all = SECTIONS.flatMap(s => s.items);
+const total = counts(all);
+document.getElementById("summary").innerHTML = [
+  [pct(total) + "%", "Overall (partial counts half)"],
+  [total.done, "Done"], [total.partial, "Partial"], [total.todo, "Not started"],
+].map(([n, l]) => `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+
+const bar = c => {
+  const n = c.done + c.partial + c.todo;
+  return `<div class="bar">` + ORDER.filter(s => c[s]).map(s =>
+    `<span tabindex="0" style="flex:${c[s]};background:var(--${s})" data-tip="${LABEL[s]}: ${c[s]} of ${n}" aria-label="${LABEL[s]}: ${c[s]} of ${n}"></span>`
+  ).join("") + `</div>`;
+};
+document.getElementById("overview").innerHTML = SECTIONS.map(s => {
+  const c = counts(s.items);
+  return `<div class="name" role="listitem"><a href="#${s.id}">${esc(s.title)}</a></div>${bar(c)}<div class="pct">${pct(c)}%</div>`;
+}).join("");
+
+document.getElementById("sections").innerHTML = SECTIONS.map(s => {
+  const c = counts(s.items);
+  const rows = s.items.map(([item, st, note]) =>
+    `<tr data-status="${st}"><td class="item">${item}</td><td class="status"><span class="st"><i style="background:var(--${st})"></i>${LABEL[st]}</span></td><td class="note">${note}</td></tr>`
+  ).join("");
+  return `<section id="${s.id}"><header><h2>${esc(s.title)}</h2><span class="count">${c.done} done · ${c.partial} partial · ${c.todo} not started</span></header>
+    <table><thead><tr><th>Spec item</th><th>Status</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+}).join("");
+
+document.querySelectorAll('.controls input').forEach(r => r.addEventListener("change", () => {
+  const f = r.value;
+  document.querySelectorAll("tr[data-status]").forEach(tr => tr.hidden = f !== "all" && tr.dataset.status !== f);
+}));
+
+const tip = document.getElementById("tip");
+const show = (el, x, y) => { tip.textContent = el.dataset.tip; tip.style.left = (x + 12) + "px"; tip.style.top = (y - 34) + "px"; tip.style.opacity = 1; };
+document.querySelectorAll("[data-tip]").forEach(el => {
+  el.addEventListener("mousemove", e => show(el, e.clientX, e.clientY));
+  el.addEventListener("focus", () => { const r = el.getBoundingClientRect(); show(el, r.left, r.top); });
+  ["mouseleave", "blur"].forEach(ev => el.addEventListener(ev, () => tip.style.opacity = 0));
+});
+</script>
+</body>
+</html>

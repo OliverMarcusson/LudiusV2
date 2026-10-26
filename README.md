@@ -2,6 +2,8 @@
 
 Background user activity (noise) for Windows VMs in DFIR training ranges. See [the system specification](Ludius%20–%20System%20Specification.md).
 
+Progress against the spec is tracked in [`docs/progress.html`](docs/progress.html), published at https://marcusson.dev/ludius-progress. Update its `SECTIONS` list and change log whenever work lands, then republish.
+
 This is the first vertical slice, built on local Hyper-V. A persona completes a whole Notepad task through the hypervisor's virtual keyboard and mouse: launch, write, save and close. The guest reads the screen through UI Automation, and Jev (TypeSafe, via OpenRouter) chooses one action per step.
 
 ## Layout
