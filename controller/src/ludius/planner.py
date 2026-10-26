@@ -54,6 +54,7 @@ class PlanItem(TaskInstance):
     at: str  # HH:MM on the plan's logical timeline
     minutes: int = 0  # breaks: how long the persona is away
     interrupt: bool = False  # cuts into the task running at that time, at its next subgoal boundary
+    handoff: str = ""  # colleague's account: the result lands on their later plan as a thread to pick up
 
     @field_validator("at")
     @classmethod
@@ -120,6 +121,7 @@ def plan_day(
 ) -> tuple[DayPlan, list[str]]:
     """Draft, validate, ask once to replace rejected items, drop what still fails. Returns the plan and rejects."""
     policy = policy or Policy()
+    colleagues = {p.user for p in narrative.people if p.user and p.user != persona.user}
     user = (
         f"Company story:\n{narrative.model_dump_json(indent=1)}\n\n"
         f"Persona: {persona.name}, {persona.role} ({persona.department}). Usual hours {persona.hours[0]}-"
@@ -134,15 +136,22 @@ def plan_day(
         "context (one sentence: why the persona does this now), and for breaks minutes instead of params. "
         "Include a lunch break. Mark at most one short item interrupt: true when it plausibly cuts into the "
         "task before it (a quick lookup prompted by that work)."
+        + (
+            f" Colleagues with accounts: {', '.join(sorted(colleagues))}. When an item produces something one of "
+            "them should act on (a note or folder for them, a lookup they asked for), set handoff to their account. "
+            "Pick up threads colleagues handed to this persona."
+            if colleagues
+            else ""
+        )
     )
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
-    rejects = validate(draft.items, templates, history, policy)
+    rejects = validate(draft.items, templates, history, policy, colleagues)
     if rejects:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
             f"- item {i} ({draft.items[i].template} at {draft.items[i].at}): {why}" for i, why in rejects
         )
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
-        rejects = validate(draft.items, templates, history, policy)
+        rejects = validate(draft.items, templates, history, policy, colleagues)
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     return DayPlan(persona=persona.user, date=date.isoformat(), items=items), [
@@ -154,12 +163,18 @@ def plan_day(
 
 
 def validate(
-    items: list[PlanItem], templates: dict[str, Template], history: list[str], policy: Policy
+    items: list[PlanItem],
+    templates: dict[str, Template],
+    history: list[str],
+    policy: Policy,
+    colleagues: set[str] | None = None,
 ) -> list[tuple[int, str]]:
     rejects: list[tuple[int, str]] = []
     seen = list(history)
     for i, it in enumerate(items):
         why = _check_item(it, templates, seen, policy)
+        if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
+            why = f"handoff {it.handoff!r} is not a colleague's account"
         if why:
             rejects.append((i, why))
         else:
@@ -272,7 +287,39 @@ class World:
                     out.append(
                         f"- {day} {r['at']} {r['template']} {r['status']}: {r.get('context', '')} {detail}".rstrip()
                     )
-        return "\n".join(out[-12 * days :])
+        threads = self.threads(user, before, days)
+        return "\n".join(
+            out[-12 * days :] + (["Threads colleagues handed to this persona:", *threads] if threads else [])
+        )
+
+    def threads(self, user: str, before: dt.date, days: int = 3) -> list[str]:
+        """Cross-persona threads (spec section 6): colleagues' completed items handed off to this user.
+
+        Joins other personas' plans (handoff) with their day logs (item_end done), so an item that failed or
+        never ran creates no thread.
+        """
+        # ponytail: a thread stays visible for `days` days and is not marked answered; track replies explicitly
+        # once templates with real round trips (mail, shared documents) exist.
+        start = (before - dt.timedelta(days=days)).isoformat()
+        out: list[str] = []
+        for path in sorted(self.root.glob("plans/*.yaml")):
+            date, who = path.stem[:10], path.stem[11:]
+            if who == user or not start <= date < before.isoformat():
+                continue
+            mine = [it for it in load_plan(path).items if it.handoff == user]
+            log = self.day_log(who, date)
+            if not mine or not log.exists():
+                continue
+            done: set[tuple[str, str]] = set()
+            for line in log.read_text(encoding="utf-8").splitlines():
+                r: dict[str, Any] = json.loads(line)
+                if r.get("event") == "item_end" and r.get("status") == "done":
+                    done.add((r["at"], r["template"]))
+            for it in mine:
+                if (it.at, it.template) in done:
+                    detail = ", ".join(f"{k}={v[:60]}" for k, v in it.params.items() if k != "body")
+                    out.append(f"- {date} {it.at} from {who}, {it.template}: {it.context} {detail}".rstrip())
+        return out
 
 
 def load_plan(path: Path) -> DayPlan:
