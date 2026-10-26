@@ -1,0 +1,103 @@
+"""Pixels-only scope and completion (tasks.Pixels). Row names are OCR readings from the recorded fixtures."""
+
+from __future__ import annotations
+
+import random
+from typing import Any
+
+import pydantic
+import pytest
+
+from ludius.cli import load_templates
+from ludius.options import build_options, view
+from ludius.policy import Policy
+from ludius.tasks import Task, TaskInstance, Template, check_done
+from ludius.v1 import observation_pb2 as obs
+
+DESKTOP = ["Recycle Bin", "ype here to search"]
+NOTEPAD_EMPTY = ["Untitled-Notepad", "FileEdit Format View Help", "Ln 1, Col 1", "ype here to search"]
+SAVE_AS = ["*Untitled -Notepad", "File Edit Format View Help", "Save As", "File name:", "Save as type:", "Save"]
+UNSAVED_PROMPT = ["*Untitled -Notepad", "Do you want to save changes to Untitled?", "Save", "Don't Save", "Cancel"]
+
+
+def screen(names: list[str]) -> obs.Snapshot:
+    """A pixels-only snapshot: one whole-screen window, no process identity, OCR rows."""
+    w = obs.Window(title="screen", framework_id="visual", kind=obs.Window.FOREGROUND, no_tree=True)
+    rows = [obs.Element(id=n + 1, key=f"v{n}", role="text", name=name, framework_id="visual", window=0,
+                        bounds=obs.Rect(x=10, y=20 * n, width=60, height=14))
+            for n, name in enumerate(names)]  # fmt: skip
+    return obs.Snapshot(windows=[w], elements=rows)
+
+
+def task(name: str = "notepad_write_note", **params: str) -> Task:
+    t = load_templates()[name]
+    return Task(t, TaskInstance(template=t.task, params=params or t.example, variant=0), random.Random(0))
+
+
+def clicks(snap: obs.Snapshot, t: Task, sg: str, policy: Policy | None = None) -> list[str]:
+    p = policy or Policy()
+    s = t.subgoal(sg)
+    return [o.text for o in build_options(view(snap, t, s, p), t, s, p) if o.kind == "click"]
+
+
+def test_scope_needs_title_and_structural_anchor() -> None:
+    t = task()
+    assert clicks(screen(DESKTOP), t, "write_body") == []
+    assert clicks(screen(["Untitled-Notepad", "Recycle Bin"]), t, "write_body") == []  # title alone: out
+    assert clicks(screen(["notes", "FileEdit Format View Help"]), t, "write_body") == []  # anchor alone: out
+    for rows in (NOTEPAD_EMPTY, SAVE_AS, UNSAVED_PROMPT):
+        assert clicks(screen(rows), t, "close_app")  # all three Notepad screens are in scope
+    assert any("Don't Save" in c for c in clicks(screen(UNSAVED_PROMPT), t, "close_app"))
+    # Launching gets no shell rows from pixels: keys only.
+    assert clicks(screen(DESKTOP), t, "open_from_start") == []
+
+
+def test_template_without_pixels_block_gets_nothing() -> None:
+    t = task("explorer_new_folder")
+    assert t.template.pixels is None
+    assert clicks(screen(["New folder", "This PC", "File Home Share View"]), t, "go_documents") == []
+
+
+def test_policy_still_refuses_rows_in_scope() -> None:
+    p = Policy(reserved_names=["Don't Save"])
+    assert not any("Don't Save" in c for c in clicks(screen(UNSAVED_PROMPT), task(), "close_app", p))
+
+
+def test_completion_is_visible_text_and_fails_closed() -> None:
+    t = task(file_name="meeting notes", body="x")
+
+    def done(sg: str, rows: list[str]) -> bool | None:
+        return check_done(t.subgoal(sg).done, screen(rows), t, typed_ok=True)
+
+    assert done("save_shortcut", SAVE_AS) is True
+    assert done("save_shortcut", NOTEPAD_EMPTY) is False
+    assert done("confirm_save", ["meeting notes.txt - Notepad", "File Edit Format View Help"]) is True
+    assert done("confirm_save", ["meeting notes2.txt - Notepad"]) is False
+    assert done("close_app", DESKTOP) is True
+    assert done("close_app", [*DESKTOP, "Untitled-Notepad"]) is False
+    for sg in ("open_from_start", "save_shortcut", "confirm_save", "close_app"):
+        assert done(sg, []) is False  # empty or failed OCR never completes anything
+    # With an accessibility tree the pixels check is ignored: the usual process checks apply.
+    tree = obs.Snapshot(windows=[obs.Window(title="Untitled - Notepad", process_name="notepad.exe",
+                                            kind=obs.Window.FOREGROUND)])  # fmt: skip
+    assert check_done(t.subgoal("close_app").done, tree, t, typed_ok=True) is False
+
+
+def test_schema_enforces_title_anchors_and_present() -> None:
+    base = load_templates()["notepad_write_note"].model_dump(exclude={"pixels"})
+    cases: list[dict[str, Any]] = [
+        {"title": "-Notepad$", "anchors": []},  # no structural anchor
+        {"anchors": ["^FileEdit"]},  # no title
+        {
+            "title": "-Notepad$",
+            "anchors": ["^FileEdit"],
+            "done": {"close_app": {"absent": ["-Notepad$"]}},
+        },  # no present
+    ]
+    for bad in cases:
+        with pytest.raises(pydantic.ValidationError):
+            Template.model_validate(base | {"pixels": bad})
+    with pytest.raises(pydantic.ValidationError, match="unknown subgoal"):
+        Template.model_validate(
+            base | {"pixels": {"title": "x", "anchors": ["y"], "done": {"nope": {"present": ["z"]}}}}
+        )

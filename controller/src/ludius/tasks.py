@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ludius.v1 import observation_pb2 as obs
 
@@ -34,13 +34,42 @@ class ElementCheck(Strict):
     value: str | None = None  # regex
 
 
+class PixelsCheck(Strict):
+    """Completion read from pixels: every `present` text is visible and every `absent` text is gone.
+
+    `present` is required: an empty or failed OCR read must never pass, which an absent-only check would.
+    """
+
+    present: list[str] = Field(min_length=1)
+    absent: list[str] = Field(default_factory=list[str])
+
+
+class Pixels(Strict):
+    """A template's explicit opt-in for pixels-only mode (spec section 3).
+
+    Regexes are searched case-insensitively in a row's name with all whitespace removed (OCR spacing is
+    unreliable: "FileEdit Format View"), so write them without spaces; {param} is the value, escaped and
+    compacted the same way. A pixels window is in the task's scope only while `title` and every structural
+    anchor are visible in it: a file name alone can't bring the app into scope. No process, class or title
+    identity is ever inferred from pixels. Launch subgoals get no shell rows in pixels mode: keys only.
+    """
+
+    title: str
+    anchors: list[str] = Field(min_length=1)
+    done: dict[str, PixelsCheck] = Field(default_factory=dict[str, PixelsCheck])  # subgoal -> visible completion
+
+
 class Done(Strict):
-    """All given conditions must hold. `typed` means the content landed in the target element."""
+    """All given conditions must hold. `typed` means the content landed in the target element.
+
+    `pixels` applies only to pixels-only snapshots and comes from the template's pixels block.
+    """
 
     window: WindowCheck | None = None
     foreground: WindowCheck | None = None
     element: ElementCheck | None = None
     typed: bool = False
+    pixels: PixelsCheck | None = None
 
 
 class Subgoal(Strict):
@@ -69,6 +98,17 @@ class Template(Strict):
     about: str = ""  # one line for the planner's capability catalog
     example: dict[str, str] = Field(default_factory=dict[str, str])  # parameters for admission test runs
     resembles: str = ""  # signal type this legitimate work looks like (powershell, rdp, macro); spec section 6
+    pixels: Pixels | None = None  # pixels-only mode opt-in; without it the task gets no rows in that mode
+
+    @model_validator(mode="after")
+    def _pixels_done(self) -> Template:
+        """Each pixels completion becomes part of its subgoal's done check (used only on pixels snapshots)."""
+        for name, check in (self.pixels.done if self.pixels else {}).items():
+            if name not in self.subgoals:
+                raise ValueError(f"{self.task}: pixels done for unknown subgoal {name!r}")
+            sg = self.subgoals[name]
+            sg.done = (sg.done or Done()).model_copy(update={"pixels": check})
+        return self
 
     def check(self) -> None:
         for v in self.variants:
@@ -126,6 +166,10 @@ class Task:
     def fmt_re(self, s: str) -> str:
         return s.format_map({k: re.escape(v) for k, v in self.values.items()})
 
+    def pixels_re(self, s: str) -> str:
+        """A pixels regex with {param} as the compacted, escaped value; other braces stay regex syntax."""
+        return re.sub(r"\{(\w+)\}", lambda m: re.escape(compact(self.values[m[1]])) if m[1] in self.values else m[0], s)
+
     def subgoal(self, name: str) -> Subgoal:
         sg = self.template.subgoals[name]
         return sg.model_copy(update={"goal": self.fmt(sg.goal)})
@@ -173,12 +217,38 @@ def pixels_window(w: obs.Window) -> bool:
     return w.framework_id == "visual" and w.process_name == ""
 
 
+def compact(s: str) -> str:
+    return re.sub(r"\s+", "", s)
+
+
+def visible(pattern: str, rows: list[obs.Element], task: Task) -> bool:
+    rx = task.pixels_re(pattern)
+    return any(re.search(rx, compact(e.name), re.I) for e in rows)
+
+
+def pixels_in_scope(snap: obs.Snapshot, window: int, task: Task) -> bool:
+    """The task's title and every structural anchor are visible in this pixels window."""
+    px = task.template.pixels
+    if px is None:
+        return False
+    rows = [e for e in snap.elements if e.window == window]
+    return visible(px.title, rows, task) and all(visible(a, rows, task) for a in px.anchors)
+
+
 def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool) -> bool | None:
     """True/False when the subgoal has a code check, None when it has none (Jev decides)."""
     if done is None:
         return None
+    on_pixels = any(pixels_window(w) for w in snap.windows)
+    if done.pixels and not on_pixels and not (done.window or done.foreground or done.element or done.typed):
+        return None  # a completion only pixels mode checks: with an accessibility tree, Jev decides as before
     if done.typed and not typed_ok:
         return False
+    if done.pixels and on_pixels:
+        rows = [e for e in snap.elements if e.window < len(snap.windows) and pixels_window(snap.windows[e.window])]
+        return all(visible(p, rows, task) for p in done.pixels.present) and not any(
+            visible(p, rows, task) for p in done.pixels.absent
+        )
     # Pixels carry no process identity, so a window or foreground check can never pass on them.
     if (done.window or done.foreground) and any(pixels_window(w) for w in snap.windows):
         return False

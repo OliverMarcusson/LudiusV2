@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ludius.policy import SHELL_PROCESSES, Policy, alt_f4_safe
-from ludius.tasks import Subgoal, Task
+from ludius.tasks import Subgoal, Task, pixels_in_scope, pixels_window
 from ludius.v1 import observation_pb2 as obs
 
 CLICKABLE = {
@@ -62,10 +62,18 @@ def window_line(w: obs.Window) -> str:
 
 
 def view(snap: obs.Snapshot, task: Task, sg: Subgoal, policy: Policy) -> StepView:
-    """Elements the task may touch: its apps' windows, the shell when launching, never refused elements."""
+    """Elements the task may touch: its apps' windows, the shell when launching, never refused elements.
+
+    A window read from pixels has no process to match: it is in scope only while the template's pixels title and
+    structural anchors are visible in it (tasks.Pixels), and never as the shell.
+    """
     v = StepView(snapshot=snap)
     apps = {p.lower() for p in task.template.processes}
     for i, w in enumerate(snap.windows):
+        if pixels_window(w):
+            if pixels_in_scope(snap, i, task):
+                v.windows[i] = w
+            continue
         proc = w.process_name.lower()
         dialog_of_app = w.kind in (obs.Window.OWNED, obs.Window.POPUP)  # common dialogs and menus of the app
         shell = w.kind == obs.Window.SHELL or proc in SHELL_PROCESSES
