@@ -10,7 +10,7 @@ namespace Ludius.HostAgent;
 // Hyper-V backend: synthetic keyboard and mouse through WMI (root\virtualization\v2),
 // lifecycle through the Hyper-V PowerShell module, console frames through the
 // thumbnail API. Coordinates are guest physical pixels.
-sealed partial class HyperV(Guid observerService)
+sealed partial class HyperV(Guid observerService, string oneVmScript)
 {
     static readonly ManagementScope Scope = new(@"\\.\root\virtualization\v2");
 
@@ -188,11 +188,10 @@ sealed partial class HyperV(Guid observerService)
         'Deleted'
         """;
 
-    // Owner's cap: at most one running Ludius VM on this host; anything not Off or Saved counts (Paused, Starting).
-    // Start, and restore (a checkpoint of a running VM comes back running), refuse while another ludius-* VM is
-    // up; save that one first.
-    const string OneVm = "$other = @(Get-VM -Name 'ludius-*' | Where-Object { $_.State -notin 'Off', 'Saved' -and $_.Name -ne $env:LUDIUS_VM }); "
-        + "if ($other) { throw \"one-VM cap: $($other.Name -join ', ') is running; save it before starting $env:LUDIUS_VM\" }; ";
+    // Owner's cap: at most one Ludius VM up. Start and restore (a checkpoint of a running VM comes back running) go
+    // through infra/hyperv/one-vm.ps1, which rechecks and activates under a host-wide lock shared with the scripts.
+    // A missing script fails the call: no activation without the lock.
+    static string OneVm(string activate) => $". $env:LUDIUS_ONEVM; Invoke-OneVm $env:LUDIUS_VM {{ {activate} }}";
 
     public async Task<string> Lifecycle(string vm, Ludius.V1.LifecycleRequest.Types.Op op, string checkpoint, string target, CancellationToken ct)
     {
@@ -206,10 +205,10 @@ sealed partial class HyperV(Guid observerService)
         // otherwise the trailing state query exits 0 and a run silently continues on the unrestored VM.
         var script = "$ErrorActionPreference = 'Stop'; " + op switch
         {
-            Ludius.V1.LifecycleRequest.Types.Op.Start => OneVm + "Start-VM -Name $env:LUDIUS_VM",
+            Ludius.V1.LifecycleRequest.Types.Op.Start => OneVm("Start-VM -Name $env:LUDIUS_VM"),
             Ludius.V1.LifecycleRequest.Types.Op.Stop => "Stop-VM -Name $env:LUDIUS_VM -Force",
             Ludius.V1.LifecycleRequest.Types.Op.Checkpoint => "Checkpoint-VM -Name $env:LUDIUS_VM -SnapshotName $env:LUDIUS_CP",
-            Ludius.V1.LifecycleRequest.Types.Op.Restore => OneVm + "Restore-VMSnapshot -VMName $env:LUDIUS_VM -Name $env:LUDIUS_CP -Confirm:$false",
+            Ludius.V1.LifecycleRequest.Types.Op.Restore => OneVm("Restore-VMSnapshot -VMName $env:LUDIUS_VM -Name $env:LUDIUS_CP -Confirm:$false"),
             Ludius.V1.LifecycleRequest.Types.Op.Clone => CloneScript,
             Ludius.V1.LifecycleRequest.Types.Op.Delete => DeleteScript,
             _ => "",
@@ -218,7 +217,7 @@ sealed partial class HyperV(Guid observerService)
         var psi = new ProcessStartInfo("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script])
         {
             RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
-            Environment = { ["LUDIUS_VM"] = vm, ["LUDIUS_CP"] = checkpoint, ["LUDIUS_TARGET"] = target },
+            Environment = { ["LUDIUS_VM"] = vm, ["LUDIUS_CP"] = checkpoint, ["LUDIUS_TARGET"] = target, ["LUDIUS_ONEVM"] = oneVmScript },
         };
         using var p = Process.Start(psi)!;
         var stdout = p.StandardOutput.ReadToEndAsync(ct);

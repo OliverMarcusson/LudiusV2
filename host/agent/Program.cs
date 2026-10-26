@@ -11,7 +11,8 @@ using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddGrpc();
-builder.Services.AddSingleton(new HyperV(Guid.Parse(builder.Configuration["Agent:ObserverService"]!)));
+builder.Services.AddSingleton(new HyperV(Guid.Parse(builder.Configuration["Agent:ObserverService"]!),
+    Path.GetFullPath(builder.Configuration["Agent:OneVmScript"] ?? "../../infra/hyperv/one-vm.ps1", builder.Environment.ContentRootPath)));
 builder.Services.AddSingleton<FeedHub>();
 var app = builder.Build();
 app.MapGrpcService<AgentService>();

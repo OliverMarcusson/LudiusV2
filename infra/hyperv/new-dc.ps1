@@ -13,7 +13,7 @@ $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $build = Join-Path $PSScriptRoot 'build'
 $envFile = Join-Path $root '.env'
 if (Get-VM $VMName -ErrorAction SilentlyContinue) { throw "$VMName already exists" }
-# Owner's cap: at most one running Ludius VM on this host. This script starts the new VM, so refuse while another runs.
+# Owner's cap (one-vm.ps1): fail early, before minutes of creation; the start below rechecks under the lock.
 $running = @(Get-VM -Name 'ludius-*' | Where-Object { $_.State -notin 'Off', 'Saved' })
 if ($running) { throw "one-VM cap: $($running.Name -join ', ') is running; save it first (Save-VM)" }
 if (-not (Test-Path $Iso)) { throw "no Server ISO at $Iso" }
@@ -49,7 +49,8 @@ Set-VMFirmware $VMName -FirstBootDevice (Get-VMDvdDrive $VMName | Where-Object P
 Enable-VMIntegrationService $VMName -Name 'Guest Service Interface'
 # The DC is the range's time source: its clock is set directly (time-jump), never pulled from the host.
 Disable-VMIntegrationService $VMName -Name 'Time Synchronization'
-Start-VM $VMName
+. (Join-Path $PSScriptRoot 'one-vm.ps1')
+Invoke-OneVm $VMName { Start-VM $VMName }  # recheck under the host-wide lock: creation took minutes
 
 # "Press any key to boot from CD or DVD": answer it through the synthetic keyboard.
 $cs = Get-CimInstance -Namespace root\virtualization\v2 -ClassName Msvm_ComputerSystem -Filter "ElementName='$VMName'"
