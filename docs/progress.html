@@ -129,6 +129,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-26">26 Oct 2026</time><span>Admission gate and LLM template growth (a proposed WordPad template passed 8/8 and joined the catalog). Near-tie choice, <code>type:copy</code>, rare LLM assist for open-ended subgoals, UAC prompts reported and cancelled. Range metrics and filterability check from ground-truth logs. Operator monitor with 12 fps desktop feeds.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>CI on GitHub Actions. Session hygiene, lock detection, blind unlock and failure-ladder steps 4–8. Explorer and Edge templates. LLM planner (narrative, day plans, content, near-duplicate check), day runner with clock modes, breaks and interruptions, and the instructor timeline export. A planned day (8 items: 3 notes, 2 web lookups, a folder, 2 breaks, one interruption) ran 8/8 in compressed mode on the VM; the interrupted Notepad task resumed and finished. Fixes: an observer race when a window closes mid-snapshot, and actions that change nothing are withdrawn until the screen changes.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>First vertical slice on local Hyper-V: observer, host agent and controller working end to end. Contract test passes. All 4 Notepad variants complete from the <code>clean</code> checkpoint in 9–12 Jev steps, with byte-exact file content. 22 tests pass, including live Jev replay on 5 fixtures. Published to GitHub.</span></li>
     </ul>
@@ -155,7 +156,7 @@ const SECTIONS = [
     ["Interactive session at logon, never a service", "done", "Logon scheduled task in the persona's session (session 1)."],
     ["Signed with range CA, uiAccess=true", "done", "Range root distributed by the provisioning script, not GPO yet. Task Scheduler can't start uiAccess binaries (error 740), so explorer.exe launches it."],
     ["Medium-integrity fallback", "done", "Build without uiAccess (<code>-NoUiAccess</code>); elevated windows flagged <code>elevated_unreadable</code>."],
-    ["UAC prompt reported as \"blocked: elevation required\"", "todo", "The secure desktop shows up as <code>locked</code>; there is no specific report yet."],
+    ["UAC prompt reported as \"blocked: elevation required\"", "done", "The observer flags the secure desktop separately from the lock (WTS flag); the loop cancels the prompt with Esc and fails the task as <code>blocked: elevation required</code>, and normalize cancels leftovers. Verified live."],
     ["UIA3 COM API, Per-Monitor-V2 DPI", "done", "Interop.UIAutomationClient (IUIAutomation2) and a PerMonitorV2 manifest."],
     ["Snapshot covers foreground, owned, popups, shell", "done", "Menus, same-process popups, taskbar, tray overflow, Start/search, desktop."],
     ["One cached request per window, control view, on-screen only", "done", "BuildUpdatedCache with a subtree cache request (instead of FindAllBuildCache) to keep the ancestor path."],
@@ -179,6 +180,7 @@ const SECTIONS = [
     ["Same gRPC API on both hypervisors", "partial", "API defined in <code>proto/</code>; Hyper-V only."],
     ["Input: move, click, keys, type, Ctrl+Alt+Del", "done", "Plus scroll. Uses virtual-key codes (the WMI API), not scancodes."],
     ["Guest channel relay", "partial", "Unary Observe over the Hyper-V socket instead of a bidirectional stream; reconnects after restores."],
+    ["Operator monitor (beyond the spec)", "done", "View-only web page served by the host agent: 12 fps WebSocket feed per range VM from the Hyper-V console thumbnail (nothing in the guest), shared capture loop per VM, origin and host checks. No authentication: localhost only."],
     ["Lifecycle", "partial", "Start, stop, checkpoint, restore, state. Clone and delete not built."],
     ["Hyper-V backend", "done", "WMI synthetic mouse and keyboard verified on this Windows 11 host. Not yet checked on the target Windows Server version."],
     ["Proxmox backend (QMP, USB tablet, vsock, API)", "todo", ""],
@@ -191,8 +193,8 @@ const SECTIONS = [
     ["Step loop: observe, decide, policy, act, verify", "done", ""],
     ["Jev state built in code", "done", "Only ids, roles, names, values, states and hints reach Jev."],
     ["Three questions per step", "done", "action (choice), subgoal_done and off_track (noul), via OpenRouter."],
-    ["Option generation", "partial", "Click, double-click, type content into an element or the focus, keys, scroll, rescan. Copying on-screen text (<code>type:copy[..]</code>) isn't built yet."],
-    ["Choosing", "partial", "Top option only; no sampling among equivalent near-ties."],
+    ["Option generation", "done", "Click, double-click, type content into an element or the focus, keys, scroll, rescan, and <code>type:copy</code> of visible text (element names and text lines) into the focused field, verified live."],
+    ["Choosing", "done", "Top option; samples among near-ties (within 0.05) only when code confirms they're equivalent (same control kind and name). Unit-tested; real ties are rare."],
     ["Policy", "done", "Destructive allowlist, never-list, password fields, reserved paths, step and time budgets. Reserved paths aren't loaded from scenarios yet."],
     ["Failure ladder steps 1–3", "done", "Rescan, restricted in-app recovery, human-like abandonment."],
     ["Failure ladder steps 4–8", "done", "Restart app, harder normalize, sign out and back in, reboot through the host agent, then mark unhealthy. Verified up to step 6 live."],
@@ -203,29 +205,29 @@ const SECTIONS = [
     ["Nightly day plans", "done", "<code>ludius plan day</code>: one LLM call per persona and day, validated in code, one repair round, rejects dropped."],
     ["Task instances from the planner", "done", "Plan items are task instances: template, parameters, content and a one-line reason."],
     ["Personas", "partial", "Role, department, working hours, style sheet (writing, file naming, habits), typing, think time, pointer timing. No risk profile."],
-    ["Task templates with variants", "partial", "Notepad (4 variants), Explorer new folder (4), Edge web lookup (2); all complete live. No Outlook or Office yet."],
-    ["Template growth and admission", "todo", ""],
+    ["Task templates with variants", "partial", "Notepad (4 variants), Explorer new folder (2), Edge web lookup (2), WordPad formatted note (4, LLM-proposed); all complete live. No Outlook or Office."],
+    ["Template growth and admission", "done", "<code>ludius plan template</code>: the LLM proposes a template from the capability catalog; code checks catalog processes, placeholders, regexes, policy and a closing check; <code>ludius validate</code> admits variants passing 2/3 runs from <code>clean</code>. The WordPad proposal passed 8/8."],
     ["Task stack and interruptions", "done", "Interrupt items are pushed at the running task's next subgoal boundary, run to completion, and the task resumes; its time budget pauses meanwhile."],
     ["Content generation and near-duplicate check", "done", "All text written at plan time in the persona's style; ASCII, file-name and policy checks; SequenceMatcher ≥ 0.85 against the persona's earlier content is rejected."],
     ["Cross-persona interaction", "todo", ""],
     ["Variety by filter dimension", "partial", "Launch method (Start search, Run, taskbar, Win+E), UI path (shortcut vs menu/ribbon), content and timing from the plan."],
     ["Legitimate activity that resembles signal", "todo", ""],
-    ["LLM fallback and end-of-task verification", "todo", ""],
+    ["LLM fallback and end-of-task verification", "done", "The LLM confirms Jev's open-ended completions (at most twice per subgoal) and proposes one intermediate subgoal when Jev is stuck. Both calls verified against the live screen; no catalog template is open-ended yet, so neither has fired in a real task."],
   ]},
   { id: "clock", title: "7. Clock modes, range lifecycle and provisioning", items: [
     ["Realtime and compressed modes", "done", "Day runner plays the plan on its logical timeline: realtime waits for each item (late items run at once), compressed runs back to back. Breaks lock the screen."],
     ["Time-jump mode", "todo", ""],
     ["Seeded runs", "done", "Seed fixes variant choice and jitter."],
     ["Range lifecycle (build, age, inject, snapshot, deliver, reset)", "partial", "Per-VM checkpoint and restore only."],
-    ["Persistent-VM hygiene and drift canaries", "partial", "Normalize before and after every task (dismiss dialogs, close strays, confirm unlocked desktop); side effects logged. No drift canaries."],
+    ["Persistent-VM hygiene and drift canaries", "partial", "Normalize before and after every task (dismiss dialogs and UAC prompts, close strays, confirm an unlocked desktop); side effects logged. No drift canaries."],
     ["Golden image (Packer + Ansible)", "partial", "Stand-in: unattended ISO build and <code>provision.ps1</code> (CA, observer, base settings, autologon)."],
   ]},
   { id: "testing", title: "8. Testing and quality", items: [
     ["Fixture replay", "done", "5 recorded screens; offline option/policy checks and live Jev replay (5/5)."],
     ["Contract tests", "partial", "Hyper-V only, run by hand."],
-    ["Template validation in compressed mode", "partial", "Every variant of all 3 templates run live from <code>clean</code>; no automatic admission gate."],
-    ["Range test runs and metrics", "todo", ""],
-    ["Filterability test", "todo", ""],
+    ["Template validation in compressed mode", "done", "Admission gate: every variant N times from the <code>clean</code> checkpoint, results in <code>data/admission.yaml</code>."],
+    ["Range test runs and metrics", "partial", "<code>ludius metrics &lt;logs&gt;</code> computes coherence (completion per template, orphan steps), guardrails (blocked, failure rate per app), volume per persona-hour, repetition (sequence repeats, launch-method mix, step-gap CV) from ground-truth logs. Artifact coverage and survival need a Plaso super-timeline; not built."],
+    ["Filterability test", "partial", "<code>ludius metrics --human &lt;logs&gt;</code> fits the best single-feature rule per feature (steps, gap mean/CV, hour, launch, first action, process) and passes if balanced accuracy ≤ 0.6. Decision stumps stand in for LightGBM; no human baseline recorded yet."],
     ["Ground-truth step log", "done", "JSONL with host and guest time, persona, window, element, action, Jev answer and result."],
     ["Instructor timeline export", "done", "<code>ludius timeline</code>: CSV with guest time, persona, VM, task, subgoal, action, target, window and result."],
   ]},
