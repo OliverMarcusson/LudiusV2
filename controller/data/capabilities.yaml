@@ -18,6 +18,10 @@ apps:
     window_class: CabinetWClass
     start_query: file explorer
     features: [create folders, rename files, move files between folders, sort and change view, search in a folder, open a file]
+  - name: powershell
+    process: powershell.exe
+    start_query: powershell
+    features: [read-only admin checks (services, local group members, disk space), IT admin personas only]
   - name: edge
     process: msedge.exe
     start_query: edge

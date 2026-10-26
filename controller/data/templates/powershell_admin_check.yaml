@@ -1,0 +1,54 @@
+# An IT administrator's routine read-only check in Windows PowerShell (not elevated). Legitimate work that
+# looks like the PowerShell signal: powershell.exe launched from Start or Run, 4103/4104 script block and
+# PSReadLine history artifacts. Commands are fixed defaults, never planner text.
+task: powershell_admin_check
+app: powershell
+processes: [powershell.exe]
+resembles: powershell
+params: []
+about: "IT admin only: open Windows PowerShell and run a read-only health check (stopped services, local admins, free disk), then close it."
+defaults:
+  launch_query: powershell
+  services_cmd: "Get-Service | Where-Object Status -eq 'Stopped' | Select-Object -First 10\n"
+  admins_cmd: "Get-LocalGroupMember Administrators\n"
+  disk_cmd: "Get-PSDrive C\n"
+  exit_cmd: "exit\n"
+example: {}
+variants:
+  - [open_from_start, check_services, check_disk, exit_shell]
+  - [open_from_run, check_admins, check_disk, exit_shell]
+  - [open_from_start, check_admins, check_services, close_window]
+budget_steps: 30
+budget_minutes: 6
+subgoals:
+  open_from_start:
+    goal: "Open Windows PowerShell by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    done: {foreground: {process: powershell.exe}}
+  open_from_run:
+    goal: "Open Windows PowerShell through the Run dialog (Win+R)"
+    launch: true
+    keys: [Win+R]
+    text: launch_query
+    done: {foreground: {process: powershell.exe}}
+  check_services:
+    goal: "List the stopped services in PowerShell"
+    text: services_cmd
+    done: {typed: true}
+  check_admins:
+    goal: "List the members of the local Administrators group in PowerShell"
+    text: admins_cmd
+    done: {typed: true}
+  check_disk:
+    goal: "Show the free space on drive C in PowerShell"
+    text: disk_cmd
+    done: {typed: true}
+  exit_shell:
+    goal: "Close PowerShell with the exit command"
+    text: exit_cmd
+    done: {window: {process: powershell.exe, absent: true}}
+  close_window:
+    goal: "Close the PowerShell window"
+    done: {window: {process: powershell.exe, absent: true}}

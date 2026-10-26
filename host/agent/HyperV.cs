@@ -71,7 +71,14 @@ sealed partial class HyperV(Guid observerService)
 
     static void Call(ManagementObject o, string method, params object[] args)
     {
-        var rc = o.InvokeMethod(method, args);
+        object rc;
+        // WMI occasionally fails a call with a bare COM status (0xC0000002 seen mid-TypeText). A failed call sent
+        // nothing to the guest, so retrying it can't double a keystroke.
+        for (int attempt = 1; ; attempt++)
+        {
+            try { rc = o.InvokeMethod(method, args); break; }
+            catch (System.Runtime.InteropServices.COMException) when (attempt < 3) { Thread.Sleep(200); }
+        }
         if (rc is uint code && code != 0) throw new InvalidOperationException($"{method} returned {code}");
         if (rc is bool ok && !ok) throw new InvalidOperationException($"{method} failed");
     }
