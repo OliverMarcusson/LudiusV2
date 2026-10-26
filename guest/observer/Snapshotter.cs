@@ -24,7 +24,7 @@ sealed partial class Snapshotter
         UIA_IsEnabledPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_IsKeyboardFocusablePropertyId, UIA_IsPasswordPropertyId,
         UIA_LabeledByPropertyId, UIA_ValueValuePropertyId, UIA_ValueIsReadOnlyPropertyId, UIA_ToggleToggleStatePropertyId,
         UIA_SelectionItemIsSelectedPropertyId, UIA_RangeValueValuePropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-        UIA_ScrollVerticallyScrollablePropertyId, UIA_ScrollVerticalScrollPercentPropertyId,
+        UIA_ScrollVerticallyScrollablePropertyId, UIA_ScrollVerticalScrollPercentPropertyId, UIA_GridRowCountPropertyId,
         UIA_IsInvokePatternAvailablePropertyId, UIA_IsValuePatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
         UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
         UIA_IsScrollPatternAvailablePropertyId, UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsTextPatternAvailablePropertyId,
@@ -353,7 +353,21 @@ sealed partial class Snapshotter
         if ((Int(c, UIA_LegacyIAccessibleStatePropertyId) & 0x100) != 0) e.Hints.Add("Enter triggers this"); // STATE_SYSTEM_DEFAULT
         if (Lists.Contains(e.Role) && Bool(c, UIA_ScrollVerticallyScrollablePropertyId) &&
             c.GetCachedPropertyValue(UIA_ScrollVerticalScrollPercentPropertyId) is double pct && pct < 99.5)
-            e.Hints.Add($"list continues, {c.GetCachedChildren()?.Length ?? 0} visible");
+            e.Hints.Add(ListShown(c.GetCachedChildren()?.Length ?? 0, pct, Int(c, UIA_GridRowCountPropertyId)));
+    }
+
+    // Spec: virtualized lists report "items 1–14 shown, list continues". The cached children are the visible
+    // items; the first one's index is exact at the top and estimated from the scroll position when the list
+    // reports its row count (GridPattern, e.g. Explorer's item view). Otherwise only the count is known.
+    internal static string ListShown(int visible, double pct, int rows)
+    {
+        if (visible > 0 && pct <= 0.5) return $"items 1–{visible} shown, list continues";
+        if (visible > 0 && rows > visible)
+        {
+            var first = (int)Math.Round(pct / 100 * (rows - visible)) + 1;
+            return $"items {first}–{first + visible - 1} shown of {rows}, list continues";
+        }
+        return $"{visible} items shown, list continues";
     }
 
     static Rect Bounds(IUIAutomationElement c) =>
