@@ -1,18 +1,18 @@
 # Make a quick sketch in Paint and save it as .png in Pictures (Paint's default save folder and type).
-# Variants cover launch method (Start search vs Run), content (shape plus caption vs caption only)
-# and UI path (Ctrl+S vs File menu).
+# Variants cover launch method (Start search vs Run) and UI path (Ctrl+S vs File menu). No shapes: drawing
+# one needs a drag, which the agent can't do (3/3 admission runs ran out of steps on it).
 task: paint_quick_sketch
 app: paint
 processes: [mspaint.exe]
 params: [file_name, caption]
-about: "Make a quick sketch in Paint (a shape and/or a text caption) and save it as .png in Pictures. file_name: without extension; caption: one short line of text on the image (ASCII)."
-defaults: {launch_query: paint}
+about: "Make a quick sketch in Paint (a text caption) and save it as .png in Pictures. file_name: without extension; caption: one short line of text on the image (ASCII)."
+defaults: {launch_query: paint, run_query: mspaint}  # Run doesn't know "paint"
 example: {file_name: admission test sketch, caption: room 2 layout}
 variants:
-  - [open_from_start, draw_shape, add_caption, save_shortcut, name_file, confirm_save, close_app]
-  - [open_from_run, add_caption, save_menu, name_file, confirm_save, close_app]
-  - [open_from_run, draw_shape, add_caption, save_menu, name_file, confirm_save, close_app]
   - [open_from_start, add_caption, save_shortcut, name_file, confirm_save, close_app]
+  - [open_from_run, add_caption, save_menu, name_file, confirm_save, close_app]
+  - [open_from_start, add_caption, save_menu, name_file, confirm_save, close_app]
+  - [open_from_run, add_caption, save_shortcut, name_file, confirm_save, close_app]
 budget_steps: 40
 budget_minutes: 8
 on_abandon: close_without_saving
@@ -27,12 +27,8 @@ subgoals:
     goal: "Open Paint through the Run dialog (Win+R)"
     launch: true
     keys: [Win+R]
-    text: launch_query
+    text: run_query
     done: {foreground: {process: mspaint.exe}}
-  draw_shape:
-    # Open-ended: the canvas has no UIA state to check; Jev decides when the shape is drawn.
-    goal: "Pick a rectangle or oval from the Shapes group on the Home tab and drag it out on the canvas"
-    steps: 8
   add_caption:
     goal: "Click the Text tool (A) on the Home tab, click an empty spot on the canvas and type: {caption}"
     text: caption
