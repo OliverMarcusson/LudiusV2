@@ -50,6 +50,20 @@ static class Monitor
         var api = app.MapGroup("/api").RequireHost(onMonitor);
         api.MapGet("/vms", (HyperV hv) => hv.ListVms().Where(v => include.IsMatch(v.Name)));
 
+        // OpenRouter request counts the controller writes (counts and timestamps only). Shared read so the
+        // controller can still replace the file while it is open here.
+        var calls = Path.GetFullPath(app.Configuration["Monitor:Calls"] ?? "../../runs/openrouter-calls.json", app.Environment.ContentRootPath);
+        api.MapGet("/calls", () =>
+        {
+            try
+            {
+                using var f = new FileStream(calls, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                return Results.Text(new StreamReader(f).ReadToEnd(), "application/json");
+            }
+            catch (FileNotFoundException) { return Results.Json(new { jev = 0, llm = 0 }); }
+            catch (DirectoryNotFoundException) { return Results.Json(new { jev = 0, llm = 0 }); }
+        });
+
         // A 12 fps feed per VM: binary messages are JPEG frames, text messages report why there is no frame.
         app.UseWebSockets();
         api.MapGet("/vms/{name}/stream", async (HttpContext ctx, string name, int? w, FeedHub hub) =>

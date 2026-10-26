@@ -4,7 +4,7 @@ import { ArrowLeft, Pause, Play } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Feed } from "@/components/feed"
-import { useNow, useVms } from "@/lib/feeds"
+import { useCalls, useNow, useVms } from "@/lib/feeds"
 
 const COLUMNS = ["1", "2", "3", "4"] as const
 const GRID: Record<string, string> = {
@@ -32,6 +32,7 @@ function useFocused(): [string | null, (name: string | null) => void] {
 export default function App() {
   const { vms, error, loaded } = useVms()
   const now = useNow()
+  const calls = useCalls()
   const [paused, setPaused] = useState(false)
   const [columns, setColumns] = useState(() => localStorage.getItem("monitor.columns") ?? "3")
   const [focused, setFocused] = useFocused()
@@ -53,6 +54,21 @@ export default function App() {
             {loaded ? `${vms.length} VM${vms.length === 1 ? "" : "s"}, ${running} running` : "Connecting"} · view
             only
           </p>
+          {calls && (
+            <dl
+              className="flex items-baseline gap-3 text-sm text-muted-foreground tabular-nums"
+              title={calls.since ? `OpenRouter requests since ${new Date(calls.since).toLocaleString()}` : undefined}
+            >
+              <div className="flex gap-1.5">
+                <dt>Jev calls</dt>
+                <dd className="font-medium text-foreground">{calls.jev.toLocaleString()}</dd>
+              </div>
+              <div className="flex gap-1.5">
+                <dt>LLM calls</dt>
+                <dd className="font-medium text-foreground">{calls.llm.toLocaleString()}</dd>
+              </div>
+            </dl>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {!focusVm && (

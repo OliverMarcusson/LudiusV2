@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from ludius import calls
+
 ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 DEFAULT_MODEL = "typesafe/jev-1.14"
 MAX_OPTIONS = 255
@@ -139,6 +141,7 @@ class JevClient:
         body = build_request(self.model, state, options, ask_progress=ask_progress)
         last: Exception | None = None
         for _ in range(2):  # one retry on transport errors and 5xx
+            calls.count("jev")
             try:
                 res = self._http.post(self._endpoint, json=body)
             except httpx.TransportError as e:

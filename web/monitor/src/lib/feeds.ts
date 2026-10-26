@@ -46,6 +46,38 @@ export function useVms(intervalMs = 5000): { vms: Vm[]; error: string | null; lo
   return { vms, error, loaded }
 }
 
+// OpenRouter requests the controller has sent, cumulative across runs (runs/openrouter-calls.json).
+// Polling only reads the totals; it never makes a request of its own to OpenRouter.
+export interface Calls {
+  jev: number
+  llm: number
+  since?: string
+}
+
+export function useCalls(intervalMs = 2000): Calls | null {
+  const [calls, setCalls] = useState<Calls | null>(null)
+  useEffect(() => {
+    let stop = false
+    let timer: number | undefined
+    const tick = async () => {
+      try {
+        const res = await fetch("/api/calls", { cache: "no-store" })
+        if (res.ok && !stop) setCalls((await res.json()) as Calls)
+      } catch {
+        // keep the last totals; useVms already reports an unreachable agent
+      } finally {
+        if (!stop) timer = window.setTimeout(tick, intervalMs)
+      }
+    }
+    void tick()
+    return () => {
+      stop = true
+      window.clearTimeout(timer)
+    }
+  }, [intervalMs])
+  return calls
+}
+
 export interface Stream {
   at: number | null // ms epoch of the last frame drawn
   fps: number // frames drawn during the last second

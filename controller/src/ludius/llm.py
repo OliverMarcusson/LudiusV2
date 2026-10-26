@@ -9,6 +9,8 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from ludius import calls
+
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "anthropic/claude-sonnet-5.5"
 
@@ -57,6 +59,7 @@ class LlmClient:
             "temperature": temperature,
             "usage": {"include": True},
         }
+        calls.count("llm")
         r = self._http.post(ENDPOINT, json=body)
         if r.status_code != 200:
             raise LlmError(f"OpenRouter {r.status_code}: {r.text[:300]}")

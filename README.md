@@ -61,6 +61,8 @@ bun run dev                                    # development, proxies /api to th
 
 The monitor runs on its own HTTP/1.1 endpoint (`Kestrel:Endpoints:Monitor`, default `127.0.0.1:7452`) with GET routes only: it cannot send input or change VM state. Only VMs whose names match `Monitor:Include` (default `^ludius-`) are listed or served. The stream rejects WebSocket connections from other origins, and the agent only answers to the host names in `AllowedHosts` (DNS rebinding). It has no authentication, so keep it on localhost, or bind it to an operator network only behind a reverse proxy with auth.
 
+The header also shows two OpenRouter counters, **Jev calls** (Decisions API) and **LLM calls** (chat completions). Each counts one HTTP request sent to OpenRouter, so a retry or validation re-ask that sends another request counts again. Every controller process adds to the same totals in `runs/openrouter-calls.json` (`Monitor:Calls`). The totals survive restarts and keep growing until you delete that file; the page polls them every 2 s.
+
 ## Checks
 
 ```powershell
