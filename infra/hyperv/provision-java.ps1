@@ -34,11 +34,14 @@ try {
         param($msi, $persona)
         $ErrorActionPreference = 'Stop'
         # JAVA_HOME and the JavaSoft key are how the observer finds WindowsAccessBridge-64.dll.
-        $p = Start-Process msiexec -Wait -PassThru -ArgumentList '/i', "C:\Windows\Temp\$msi", '/qn', '/norestart',
-            'ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJavaHome,FeatureOracleJavaSoft'
-        if ($p.ExitCode -notin 0, 3010) { throw "JRE install failed: $($p.ExitCode)" }
-        Remove-Item "C:\Windows\Temp\$msi"
         $jhome = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
+        if (-not ($jhome -and (Test-Path "$jhome\bin\WindowsAccessBridge-64.dll"))) {
+            $p = Start-Process msiexec -Wait -PassThru -ArgumentList '/i', "C:\Windows\Temp\$msi", '/qn', '/norestart',
+                'ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJavaHome,FeatureOracleJavaSoft'
+            if ($p.ExitCode -notin 0, 3010) { throw "JRE install failed: $($p.ExitCode)" }
+            $jhome = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
+        }
+        Remove-Item "C:\Windows\Temp\$msi"
         if (-not (Test-Path "$jhome\bin\WindowsAccessBridge-64.dll")) { throw "no Access Bridge under JAVA_HOME=$jhome" }
 
         # What `jabswitch -enable` writes, but into the persona's profile rather than the admin's.
@@ -48,7 +51,11 @@ try {
 
         $app = 'C:\Program Files\Timesheet'
         New-Item -ItemType Directory -Force $app | Out-Null
-        Move-Item -Force 'C:\Windows\Temp\Timesheet.jar' $app
+        # Copy, not move: a moved file keeps Temp's admin-only ACL and the persona cannot read it.
+        # icacls /reset also repairs a jar an earlier run moved in.
+        Copy-Item -Force 'C:\Windows\Temp\Timesheet.jar' $app
+        Remove-Item 'C:\Windows\Temp\Timesheet.jar'
+        icacls "$app\Timesheet.jar" /reset /q | Out-Null
         $shell = New-Object -ComObject WScript.Shell
         $link = $shell.CreateShortcut('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Timesheet.lnk')
         $link.TargetPath = "$jhome\bin\javaw.exe"

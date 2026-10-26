@@ -40,6 +40,21 @@ static unsafe class JavaBridge
     [DllImport("user32.dll")] static extern int GetMessageW(out MSG msg, IntPtr hwnd, uint min, uint max);
     [DllImport("user32.dll")] static extern int TranslateMessage(ref MSG msg);
     [DllImport("user32.dll")] static extern IntPtr DispatchMessageW(ref MSG msg);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterWindowMessageW(string name);
+    [DllImport("user32.dll")] static extern int ChangeWindowMessageFilter(uint msg, uint flag);
+
+    // A uiAccess observer sits above the JVMs for UIPI, which drops their replies to the bridge's window. Let
+    // exactly the bridge's messages through (OpenJDK AccessBridgeMessages.h/.cpp), nothing else.
+    static void AllowBridgeMessages()
+    {
+        const uint WM_USER = 0x0400, WM_COPYDATA = 0x004A, MSGFLT_ADD = 1;
+        uint[] msgs =
+        [
+            WM_COPYDATA, WM_USER + 0x1000, WM_USER + 0x1001, WM_USER + 0x1002, WM_USER + 0x1003,
+            RegisterWindowMessageW("AccessBridge-FromJava-Hello"), RegisterWindowMessageW("AccessBridge-FromWindows-Hello"),
+        ];
+        foreach (var m in msgs) if (m != 0) ChangeWindowMessageFilter(m, MSGFLT_ADD);
+    }
 
     static delegate* unmanaged<void> windowsRun;
     static delegate* unmanaged<IntPtr, int> isJavaWindow;
@@ -70,6 +85,7 @@ static unsafe class JavaBridge
             release = (delegate* unmanaged<int, long, void>)NativeLibrary.GetExport(dll, "releaseJavaObject");
         }
         catch (EntryPointNotFoundException) { return; }
+        AllowBridgeMessages();
         using var started = new ManualResetEventSlim();
         new Thread(() =>
         {
