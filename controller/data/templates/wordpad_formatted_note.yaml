@@ -1,0 +1,120 @@
+task: wordpad_formatted_note
+app: wordpad
+processes:
+- wordpad.exe
+variants:
+- - open_from_start
+  - bold_keys_heading
+  - bullets_body
+  - save_shortcut
+  - name_file
+  - confirm_save
+  - close_app
+- - open_from_run
+  - bold_ribbon_heading
+  - bullets_body
+  - save_menu
+  - name_file
+  - confirm_save
+  - close_app
+- - open_from_start
+  - bold_ribbon_heading
+  - bullets_body
+  - save_menu
+  - name_file
+  - confirm_save
+  - close_app
+- - open_from_run
+  - bold_keys_heading
+  - bullets_body
+  - save_shortcut
+  - name_file
+  - confirm_save
+  - close_app
+subgoals:
+  open_from_start:
+    goal: Open WordPad by searching for it in the Start menu
+    text: launch_query
+    keys:
+    - Win
+    launch: true
+    done:
+      foreground:
+        process: wordpad.exe
+  open_from_run:
+    goal: Open WordPad through the Run dialog (Win+R)
+    text: launch_query
+    keys:
+    - Win+R
+    launch: true
+    done:
+      foreground:
+        process: wordpad.exe
+  bold_keys_heading:
+    goal: 'Press Ctrl+B to turn bold on in the document, then type the heading: {heading}'
+    text: heading
+    done:
+      typed: true
+  bold_ribbon_heading:
+    goal: 'Click the Bold button on the Home tab, then type the heading: {heading}'
+    text: heading
+    done:
+      typed: true
+  bullets_body:
+    goal: Start a new line, turn bold off, click the Bullets button on the Home tab and type the list items
+    text: body
+    done:
+      typed: true
+  save_shortcut:
+    goal: Open the Save As dialog with the keyboard shortcut
+    keys:
+    - Ctrl+S
+    done:
+      window:
+        process: wordpad.exe
+        title: ^Save As$
+  save_menu:
+    goal: Open the Save As dialog from WordPad's File menu
+    done:
+      window:
+        process: wordpad.exe
+        title: ^Save As$
+  name_file:
+    goal: Enter {file_name} as the file name in the Save As dialog
+    text: file_name
+    done:
+      element:
+        name: ^File name
+        value: ^{file_name}(\.rtf)?$
+      typed: true
+  confirm_save:
+    goal: Save the document as {file_name}
+    keys:
+    - Enter
+    done:
+      window:
+        process: wordpad.exe
+        title: ^{file_name}(\.rtf)? - WordPad$
+  close_app:
+    goal: Close WordPad
+    done:
+      window:
+        process: wordpad.exe
+        absent: true
+budget_minutes: 7.0
+params:
+- file_name
+- heading
+- body
+defaults:
+  launch_query: wordpad
+about: 'Write a short formatted document in WordPad (bold heading plus a bulleted list) and save it as .rtf in Documents.
+  file_name: without extension; heading: one-line heading typed in bold; body: the list items, one per line (ASCII).'
+example:
+  file_name: admission test list
+  heading: Admission test checklist
+  body: 'bring photo ID
+
+    bring pencils
+
+    arrive at 8:30'

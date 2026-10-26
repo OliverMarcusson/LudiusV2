@@ -7,6 +7,7 @@ processes: [notepad.exe]
 params: [file_name, body]
 about: "Write a short plain-text note in Notepad and save it to Documents. file_name: without extension; body: the note text (ASCII, several lines)."
 defaults: {launch_query: notepad}
+example: {file_name: admission test note, body: "admission test\nsecond line"}
 variants:
   - [open_from_start, write_body, save_shortcut, name_file, confirm_save, close_app]
   - [open_from_run, write_body, save_menu, name_file, confirm_save, close_app]

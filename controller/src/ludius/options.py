@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,6 +18,9 @@ EDITABLE = {"edit", "document", "combo box"}
 OPENABLE = {"list item", "data item"}  # double-click opens files and shell items
 BASE_KEYS = ["Enter", "Esc", "Tab", "Shift+Tab", "Up", "Down", "Left", "Right", "Alt+F4"]
 MAX_ELEMENT_LINES = 120
+COPY_SOURCES = {"text", "hyperlink", "list item", "data item", "heading", "tree item"}
+MAX_COPY = 12
+_ASCII = re.compile(r"^[\x20-\x7e]{3,200}$")  # the virtual keyboard types ASCII only
 
 
 @dataclass
@@ -27,6 +31,7 @@ class Option:
     element: obs.Element | None = None
     keys: str = ""
     content: str = ""  # content key for type
+    literal: str = ""  # type:copy - text read from an on-screen element, not planner content
     notches: int = 0
 
 
@@ -123,6 +128,12 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
     if content is not None and policy.text_allowed(content, None) is None:
         # Where focus already is (Start search, a field without a usable tree).
         add("type", "type the text to enter at the keyboard focus", content=sg.text or "")
+    focus = next((e for e in v.allowed if e.focused and e.role in EDITABLE and not e.read_only), None)
+    if sg.copy_text and focus is not None:
+        sources = [e for e in v.allowed if e.role in COPY_SOURCES and e.key != focus.key and _ASCII.match(e.name)]
+        for e in sources[:MAX_COPY]:
+            if policy.text_allowed(e.name, focus) is None:
+                add("type", f"type:copy [{e.id}] '{e.name[:60]}' into [{focus.id}]", element=focus, literal=e.name)
     for k in [*BASE_KEYS, *sg.keys]:
         if k == "Win" and not sg.launch:
             continue

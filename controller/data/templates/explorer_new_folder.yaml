@@ -5,6 +5,7 @@ app: explorer
 processes: [explorer.exe]
 params: [folder_name]
 about: "Create a new folder in Documents with File Explorer. folder_name: the folder's name in the persona's naming habit."
+example: {folder_name: admission test folder}
 variants:
   - [open_explorer_keys, go_documents, new_folder_shortcut, name_folder, close_explorer]
   - [open_explorer_taskbar, go_documents, new_folder_button, name_folder, close_explorer]

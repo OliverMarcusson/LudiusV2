@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from ludius import keys
+from ludius.assist import Assist
 from ludius.jev import Decision
 from ludius.options import Option, StepView, build_options, build_state, describe, view
 from ludius.policy import Policy
@@ -26,6 +27,7 @@ from ludius.v1 import observation_pb2 as obs
 Clock = Literal["realtime", "compressed"]
 DONE_THRESHOLD = 0.85
 OFF_TRACK_THRESHOLD = 0.8
+NEAR_TIE = 0.05  # probability gap within which equivalent options may be sampled
 
 
 class Agent(Protocol):
@@ -87,8 +89,10 @@ class Runner:
         clock: Clock = "compressed",
         policy: Policy | None = None,
         seed: int | None = None,
+        assist: Assist | None = None,
     ) -> None:
         self.agent = agent
+        self.assist = assist  # rare LLM help for open-ended subgoals; None disables it
         self.jev = jev
         self.persona = persona
         self.log = log
@@ -133,7 +137,7 @@ class Runner:
             self._move_to(e)
             self.agent.click(count=2 if o.kind == "double_click" else 1)
         elif o.kind == "type":
-            text = task.values[o.content]
+            text = o.literal or task.values[o.content]
             if e is not None and not e.focused:
                 self._move_to(e)
                 self.agent.click()
@@ -165,10 +169,18 @@ class Runner:
             variant=task.variant,
             subgoals=task.subgoal_names,
         )
+        assisted = False
         for name in task.subgoal_names:
             sg = task.subgoal(name)
             result = self._subgoal(task, name, sg, budget=min(sg.steps, task.template.budget_steps - steps), t0=t0)
             steps += result[1]
+            if result[0] != "done" and result[2] == "step budget" and sg.done is None and self.assist and not assisted:
+                # Jev is stuck in an open-ended subgoal: one LLM call proposes an intermediate subgoal.
+                assisted = True
+                steps += self._assisted(task, name, sg, t0, steps)
+                left = task.template.budget_steps - steps
+                result = self._subgoal(task, name, sg, budget=min(sg.steps // 2 + 2, left), t0=t0)
+                steps += result[1]
             if result[0] != "done":
                 reason = result[2]
                 self.abandon(task, reason)
@@ -190,8 +202,19 @@ class Runner:
         self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status="done", steps=steps)
         return Outcome("done", steps, "", done)
 
+    def _assisted(self, task: Task, name: str, sg: Subgoal, t0: float, steps: int) -> int:
+        assert self.assist is not None
+        v = view(self.observe(), task, sg, self.policy)
+        proposal = self.assist.next_subgoal(build_state(v, task, sg, [], "stuck: step budget used up"))
+        self.log.write(event="llm_subgoal", host_ms=_now(), task=task.template.task, subgoal=name, goal=proposal.goal)
+        helper = Subgoal(goal=proposal.goal, keys=sg.keys, launch=sg.launch, text=sg.text,
+                         allow_destructive=sg.allow_destructive, steps=6)  # fmt: skip
+        budget = min(helper.steps, task.template.budget_steps - steps)
+        return self._subgoal(task, f"{name}/assist", helper, budget=budget, t0=t0)[1]
+
     def _subgoal(self, task: Task, name: str, sg: Subgoal, budget: int, t0: float) -> tuple[str, int, str]:
         history: list[str] = []
+        verifications = 0
         last_result = "start of subgoal"
         no_change = 0
         typed_ok = False
@@ -222,18 +245,29 @@ class Runner:
             decision = self.jev.decide(state, {o.key: o.text for o in options}, ask_progress=not recovering)
             chosen = self._choose(decision, options)
 
-            if code_done is None and decision.subgoal_done >= DONE_THRESHOLD and not recovering:
-                self.log.write(
-                    event="subgoal_done",
-                    host_ms=_now(),
-                    guest_ms=snap.guest_time_ms,
-                    task=task.template.task,
-                    subgoal=name,
-                    by="jev",
-                    p=decision.subgoal_done,
-                    steps=step - 1,
-                )
-                return "done", step - 1, ""
+            jev_done = code_done is None and decision.subgoal_done >= DONE_THRESHOLD and not recovering
+            if jev_done:
+                if self.assist is not None and verifications < 2:
+                    # Open-ended completion: the LLM confirms Jev's judgment (at most twice per subgoal).
+                    verifications += 1
+                    verdict = self.assist.verify(state)
+                    self.log.write(event="llm_verify", host_ms=_now(), task=task.template.task, subgoal=name,
+                                   done=verdict.done, reason=verdict.reason)  # fmt: skip
+                    if not verdict.done:
+                        last_result = f"not done yet: {verdict.reason}"
+                        jev_done = False
+                if jev_done:
+                    self.log.write(
+                        event="subgoal_done",
+                        host_ms=_now(),
+                        guest_ms=snap.guest_time_ms,
+                        task=task.template.task,
+                        subgoal=name,
+                        by="jev",
+                        p=decision.subgoal_done,
+                        steps=step - 1,
+                    )
+                    return "done", step - 1, ""
             if not recovering and decision.off_track >= OFF_TRACK_THRESHOLD:
                 # Ladder step 2: in-app recovery with a restricted choice next step.
                 recovering = True
@@ -279,9 +313,14 @@ class Runner:
         return "failed", budget, "step budget"
 
     def _choose(self, d: Decision, options: list[Option]) -> Option:
-        """Top option; variety comes from the planning layer, not step-level randomness."""
+        """Top option. Small variation only among near-ties that code confirms are equivalent
+        (two Save buttons, a menu item and a toolbar button with the same name); variety comes from planning."""
         by_key = {o.key: o for o in options}
-        return by_key[d.choice]
+        top = by_key[d.choice]
+        p_top = d.probabilities.get(d.choice, 0.0)
+        ties = [o for k, p in d.probabilities.items() if (o := by_key.get(k)) is not None
+                and p >= p_top - NEAR_TIE and _equivalent(o, top)]  # fmt: skip
+        return self.rng.choice(ties) if len(ties) > 1 else top
 
     def _post_check(self, o: Option, sg: Subgoal, task: Task) -> str | None:
         """Defense in depth: re-check the chosen option against policy."""
@@ -290,7 +329,7 @@ class Runner:
             if r:
                 return r
         if o.kind == "type":
-            return self.policy.text_allowed(task.values[o.content], o.element)
+            return self.policy.text_allowed(o.literal or task.values[o.content], o.element)
         return None
 
     def _recovery_options(self, v: StepView) -> list[Option]:
@@ -368,6 +407,13 @@ def _typed_landed(snap: obs.Snapshot, o: Option, _task: Task) -> bool:
         return True  # typed at the focus: the subgoal's own check decides
     target = next((e for e in snap.elements if e.key == o.element.key), None)
     return target is not None and target.value != o.element.value
+
+
+def _equivalent(a: Option, b: Option) -> bool:
+    if a.kind != b.kind or a.element is None or b.element is None or a.kind not in ("click", "double_click"):
+        return a is b
+    name = re.sub(r"[&.\s]+", " ", a.element.name).strip().lower()
+    return bool(name) and name == re.sub(r"[&.\s]+", " ", b.element.name).strip().lower()
 
 
 def _ident(o: Option) -> tuple[str, str]:

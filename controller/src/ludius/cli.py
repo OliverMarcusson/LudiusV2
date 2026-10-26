@@ -14,9 +14,11 @@ import sys
 import time
 from pathlib import Path
 
+import yaml
 from google.protobuf import json_format
 
-from ludius import keys, planner, timeline
+from ludius import admission, growth, keys, planner, timeline
+from ludius.assist import Assist
 from ludius.day import DayRunner, run_task
 from ludius.hostagent import HostAgent
 from ludius.jev import DEFAULT_MODEL, JevClient
@@ -58,7 +60,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     log_path = Path(args.log or RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-{template.task}.jsonl")
     log = GroundTruth(log_path)
     try:
-        runner = Runner(agent, jev, persona, log, clock=args.clock, seed=seed)
+        runner = Runner(agent, jev, persona, log, clock=args.clock, seed=seed, assist=make_assist())
         out = run_task(runner, make_session(agent, log), task)
     finally:
         log.close()
@@ -75,10 +77,38 @@ def cmd_run(args: argparse.Namespace) -> int:
 def start_agent(args: argparse.Namespace) -> HostAgent:
     agent = agent_from(args)
     if args.restore:
-        agent.lifecycle(pb.LifecycleRequest.RESTORE, args.restore)
-        agent.lifecycle(pb.LifecycleRequest.START)
-        _wait_for_observer(agent)
+        restore(agent, args.restore)
     return agent
+
+
+def restore(agent: HostAgent, checkpoint: str) -> None:
+    agent.lifecycle(pb.LifecycleRequest.RESTORE, checkpoint)
+    agent.lifecycle(pb.LifecycleRequest.START)
+    _wait_for_observer(agent)
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    """Admission gate: every variant `--runs` times from the checkpoint; reliable variants are admitted."""
+    source = Path(args.template)
+    if not source.exists():
+        source = next(p for p in (DATA / "templates" / f"{args.template}.yaml",
+                                  DATA / "templates" / "proposed" / f"{args.template}.yaml") if p.exists())  # fmt: skip
+    template = load_template(source)
+    agent = agent_from(args)
+    jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
+    log = GroundTruth(RUNS / "admission" / f"{time.strftime('%Y%m%d-%H%M%S')}-{template.task}.jsonl")
+    try:
+        runner = Runner(agent, jev, load_persona(args.persona), log, clock="compressed", seed=0, assist=make_assist())
+        results = admission.validate(template, args.runs, lambda: restore(agent, args.restore), runner,
+                                     make_session(agent, log))  # fmt: skip
+    finally:
+        log.close()
+        jev.close()
+        agent.close()
+    ok = admission.admit(template, results, source, DATA / "templates", DATA / "admission.yaml")
+    print(f"{template.task}: {'admitted' if ok else 'rejected'} " + ", ".join(
+        f"v{v} {st.count('done')}/{len(st)}" for v, st in results.items()))  # fmt: skip
+    return 0 if ok else 1
 
 
 def load_persona(path: str | None) -> Persona:
@@ -91,12 +121,18 @@ def load_templates() -> dict[str, Template]:
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
-    """Narrative once per range; one validated day plan per persona and day (spec section 6)."""
+    """Narrative once per range; one validated day plan per persona and day; template proposals (spec section 6)."""
     world = planner.World(RUNS)
     date = dt.date.fromisoformat(args.date) if args.date else dt.date.today()
     llm = LlmClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
     try:
-        if args.what == "narrative":
+        if args.what == "template":
+            caps = yaml.safe_load((DATA / "capabilities.yaml").read_text(encoding="utf-8"))
+            t, raw = growth.propose(llm, caps, load_templates(), args.idea or "")
+            path = growth.save(raw, DATA / "templates" / "proposed")
+            print(f"proposed {t.task} ({len(t.variants)} variants): {t.about}\n  -> {path}")
+            print(f"  admit with: ludius validate {t.task}")
+        elif args.what == "narrative":
             personas = [load_yaml(Persona, p) for p in sorted((DATA / "personas").glob("*.yaml"))]
             n = planner.make_narrative(llm, personas, date)
             print(
@@ -130,7 +166,7 @@ def cmd_day(args: argparse.Namespace) -> int:
     jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
     log = GroundTruth(log_path)
     try:
-        runner = Runner(agent, jev, persona, log, clock=args.clock, seed=seed)
+        runner = Runner(agent, jev, persona, log, clock=args.clock, seed=seed, assist=make_assist())
         results = DayRunner(runner, make_session(agent, log), load_templates(), log, args.clock, seed).run(plan)
     finally:
         log.close()
@@ -160,6 +196,8 @@ def _wait_for_observer(agent: HostAgent, seconds: float = 180) -> None:
         except Exception:
             if time.monotonic() > deadline:
                 raise
+        if time.monotonic() > deadline:
+            raise TimeoutError("observer did not report an unlocked desktop")
         time.sleep(2)
 
 
@@ -230,6 +268,12 @@ def cmd_contract(args: argparse.Namespace) -> int:
     return 0 if failures == 0 else 1
 
 
+def make_assist() -> Assist | None:
+    """Rare LLM help for open-ended subgoals; its HTTP client lives as long as the process."""
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    return Assist(LlmClient(key, model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))) if key else None
+
+
 def make_session(agent: HostAgent, log: GroundTruth) -> Session:
     return Session(agent, log, os.environ.get("LUDIUS_PERSONA_PASSWORD", ""), lifecycle=lambda op: agent.lifecycle(op))
 
@@ -284,7 +328,8 @@ def main(argv: list[str] | None = None) -> int:
     r.set_defaults(fn=cmd_run)
 
     pl = sub.add_parser("plan", help="LLM planner: company narrative or a persona's day plan")
-    pl.add_argument("what", choices=["narrative", "day"])
+    pl.add_argument("what", choices=["narrative", "day", "template"])
+    pl.add_argument("--idea", help="template growth: what kind of task to propose")
     pl.add_argument("--persona", help="persona YAML (day plans)")
     pl.add_argument("--date", help="YYYY-MM-DD (default today)")
     pl.add_argument("--model", default=PLANNER_MODEL)
@@ -304,6 +349,14 @@ def main(argv: list[str] | None = None) -> int:
     tl.add_argument("logs", nargs="+")
     tl.add_argument("--out", default=str(RUNS / "timeline.csv"))
     tl.set_defaults(fn=cmd_timeline)
+
+    va = sub.add_parser("validate", help="admission gate: run every template variant from a clean checkpoint")
+    va.add_argument("template", help="template name (catalog or proposed) or YAML path")
+    va.add_argument("--runs", type=int, default=2, help="runs per variant")
+    va.add_argument("--persona")
+    va.add_argument("--model", default=DEFAULT_MODEL)
+    va.add_argument("--restore", default="clean", metavar="CHECKPOINT")
+    va.set_defaults(fn=cmd_validate)
 
     o = sub.add_parser("observe", help="print a snapshot or record a fixture")
     o.add_argument("--record", metavar="NAME")

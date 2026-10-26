@@ -132,3 +132,35 @@ def test_plan_validation() -> None:
         PlanItem(at="16:00", template="edge_web_lookup", params={"search_query": "moms på tjänster"}),
     ]
     assert [i for i, _ in validate(items, load_templates(), [], Policy())] == [2, 3, 4, 5, 6]
+
+
+def test_growth_checker_accepts_catalog_templates() -> None:
+    import yaml
+
+    from ludius import growth
+    from ludius.cli import load_templates
+
+    caps = yaml.safe_load((DATA / "capabilities.yaml").read_text(encoding="utf-8"))
+    templates = load_templates()
+    for name, t in templates.items():
+        others = {k: v for k, v in templates.items() if k != name}
+        assert growth.check(t, caps, others) == [], name
+    bad = templates["explorer_new_folder"].model_copy(update={"processes": ["regedit.exe"]})
+    assert any("outside the catalog" in p for p in growth.check(bad, caps, {}))
+
+
+def test_near_tie_only_between_equivalent_options() -> None:
+    from ludius.jev import Decision
+    from ludius.loop import Runner
+    from ludius.options import Option
+
+    def el(i: int, name: str) -> obs.Element:
+        return obs.Element(id=i, key=f"k{i}", role="button", name=name)
+
+    opts = [Option("o1", "click", "a", element=el(1, "Save")), Option("o2", "click", "b", element=el(2, "&Save")),
+            Option("o3", "click", "c", element=el(3, "Cancel"))]  # fmt: skip
+    d = Decision("o1", 0.5, {"o1": 0.45, "o2": 0.42, "o3": 0.44}, 0, 0, "m")
+    runner = Runner.__new__(Runner)
+    runner.rng = random.Random(1)
+    picks = {runner._choose(d, opts).key for _ in range(40)}  # pyright: ignore[reportPrivateUsage]
+    assert picks == {"o1", "o2"}

@@ -48,6 +48,7 @@ class Subgoal(Strict):
     text: str | None = None  # content key whose value may be typed
     keys: list[str] = Field(default_factory=list[str])  # extra shortcuts worth offering
     launch: bool = False  # may use the shell (Start, taskbar, Run) to open apps
+    copy_text: bool = False  # may copy text visible on screen into the focused field (type:copy[n])
     allow_destructive: list[str] = Field(default_factory=list[str])  # element names (regex) allowed despite the hint
     done: Done | None = None
     steps: int = 12
@@ -66,6 +67,7 @@ class Template(Strict):
     params: list[str] = Field(default_factory=list[str])  # the planner fills these
     defaults: dict[str, str] = Field(default_factory=dict[str, str])  # fixed values, e.g. the Start search query
     about: str = ""  # one line for the planner's capability catalog
+    example: dict[str, str] = Field(default_factory=dict[str, str])  # parameters for admission test runs
 
     def check(self) -> None:
         for v in self.variants:
