@@ -214,6 +214,8 @@ def cmd_day(args: argparse.Namespace) -> int:
         day = DayRunner(runner, make_session(agent, log), load_templates(), log, args.clock, seed, set_clock=set_clock)
         results = day.run(plan)
     finally:
+        if args.clock == "time-jump":
+            set_clock(None)  # an exception or Ctrl+C mid-day must not leave the range on a jumped clock
         log.close()
         jev.close()
         agent.close()
