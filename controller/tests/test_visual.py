@@ -123,3 +123,64 @@ def test_fallback_reads_only_the_on_screen_part_of_a_window() -> None:
     assert seen == [(w.width - 300, w.height)]
     row = next(e for e in snap.elements if e.framework_id == "visual")
     assert (row.bounds.x, row.bounds.y) == (0, w.y)  # the crop's origin is the screen edge, not the window's
+
+
+def _letterboxed(rows: list[list[float]], box: tuple[int, int, int, int], score: float) -> None:
+    r, px, py = visual.letterbox(1920, 1080)
+    x, y, w, h = box
+    for k, v in enumerate([(x + w / 2) * r + px, (y + h / 2) * r + py, w * r, h * r, score]):
+        rows[k].append(v)
+
+
+def test_detector_output_decodes_to_image_pixels_with_duplicates_suppressed() -> None:
+    assert visual.letterbox(1920, 1080) == (1 / 3, 0, 140)
+    rows: list[list[float]] = [[] for _ in range(5)]  # cx, cy, w, h, one class score
+    _letterboxed(rows, (300, 600, 90, 30), 0.9)  # a control
+    _letterboxed(rows, (303, 602, 90, 30), 0.8)  # the same control again: suppressed
+    _letterboxed(rows, (1500, 90, 36, 36), 0.5)  # an icon
+    _letterboxed(rows, (800, 800, 40, 40), 0.1)  # below confidence
+    r, px, py = visual.letterbox(1920, 1080)
+    got = visual.decode(rows, r, px, py)
+    assert [(b.x, b.y, b.width, b.height, b.control) for b in got] == [
+        (300, 600, 90, 30, True),
+        (1500, 90, 36, 36, True),
+    ]
+
+
+def test_words_inside_a_control_name_it_and_icons_keep_their_place() -> None:
+    controls = [visual.Box(100, 100, 120, 30, "", 0.9, control=True), visual.Box(400, 100, 30, 30, "", 0.8, True)]
+    words = [visual.Box(110, 108, 40, 14, "Save", 0.99), visual.Box(155, 108, 40, 14, "copy", 0.99)]
+    words.append(visual.Box(100, 300, 60, 14, "Status: ready", 0.95))
+    rows = visual.elements(visual.merge(words, controls), window=0)
+    assert [(e.role, e.name) for e in rows] == [("button", "Save copy"), ("button", ""), ("text", "Status: ready")]
+    assert "icon without text" in rows[1].hints
+    moved = visual.elements(visual.merge([], [visual.Box(402, 101, 30, 30, "", 0.8, True)]), window=0)
+    assert moved[0].key == rows[1].key  # same 16 px cell: same icon across snapshots
+
+
+def test_cli_agent_adds_visual_rows_only_in_fallback_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ludius.hostagent import HostAgent
+
+    snap = obs.Snapshot(screen_width=100, screen_height=50)
+    w = snap.windows.add(process_name="mspaint.exe", kind=obs.Window.FOREGROUND, no_tree=True)
+    w.bounds.width, w.bounds.height = 100, 50
+
+    def observe(self: HostAgent, *args: object) -> pb.ObserveResult:
+        return pb.ObserveResult(snapshot=snap)
+
+    def screenshot(self: HostAgent) -> bytes:
+        return _png(100, 50, b"x")
+
+    def whole(png: bytes, x: int, y: int, width: int, height: int) -> bytes:
+        return png
+
+    monkeypatch.setattr(HostAgent, "observe", observe)
+    monkeypatch.setattr(HostAgent, "screenshot", screenshot)
+    monkeypatch.setattr(visual, "crop", whole)
+
+    assert type(visual.host_agent("127.0.0.1:1", "vm", "")) is HostAgent
+    with pytest.raises(visual.VisualUnavailable, match="pixels-only"):
+        visual.host_agent("127.0.0.1:1", "vm", "pixels")
+    agent = visual.VisualHostAgent("127.0.0.1:1", "vm", read=lambda png: [visual.Box(5, 5, 20, 10, "Colours", 0.9)])
+    rows = agent.observe().snapshot.elements
+    assert [(e.name, e.window, e.framework_id) for e in rows] == [("Colours", 0, "visual")]

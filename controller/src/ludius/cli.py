@@ -19,7 +19,7 @@ from pathlib import Path
 import yaml
 from google.protobuf import json_format
 
-from ludius import admission, artifacts, growth, keys, metrics, planner, revision, timeline, world_state
+from ludius import admission, artifacts, growth, keys, metrics, planner, revision, timeline, visual, world_state
 from ludius.assist import Assist
 from ludius.day import DayRunner, run_task
 from ludius.hostagent import HostAgent
@@ -47,7 +47,8 @@ def load_env() -> None:
 
 
 def agent_from(args: argparse.Namespace) -> HostAgent:
-    return HostAgent(args.agent or os.environ.get("LUDIUS_AGENT", "127.0.0.1:7451"), args.vm or os.environ["LUDIUS_VM"])
+    address = args.agent or os.environ.get("LUDIUS_AGENT", "127.0.0.1:7451")
+    return visual.host_agent(address, args.vm or os.environ["LUDIUS_VM"], os.environ.get("LUDIUS_VISUAL", ""))
 
 
 def cmd_run(args: argparse.Namespace) -> int:
