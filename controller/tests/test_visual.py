@@ -185,8 +185,8 @@ def test_cli_agent_adds_visual_rows_only_in_fallback_mode(monkeypatch: pytest.Mo
     monkeypatch.setattr(visual, "crop", whole)
 
     assert type(visual.host_agent("127.0.0.1:1", "vm", "")) is HostAgent
-    with pytest.raises(visual.VisualUnavailable, match="pixels-only"):
-        visual.host_agent("127.0.0.1:1", "vm", "pixels")
+    with pytest.raises(visual.VisualUnavailable, match="expected fallback or pixels"):
+        visual.host_agent("127.0.0.1:1", "vm", "pixel")
     agent = visual.VisualHostAgent("127.0.0.1:1", "vm", read=lambda png: [visual.Box(5, 5, 20, 10, "Colours", 0.9)])
     rows = agent.observe().snapshot.elements
     assert [(e.name, e.window, e.framework_id) for e in rows] == [("Colours", 0, "visual")]
@@ -268,3 +268,41 @@ def test_custom_drawn_dark_dense_window_reads_icons_buttons_and_table() -> None:
     names = {e.name for e in rows}
     cells = [f"2026-10-{d:02d}" for d in range(1, 25)] + [f"Invoice {4100 + r * 7}" for r in range(24)]
     assert sum(c in names for c in cells) >= 46  # 8 pt grey-on-dark table
+
+
+def test_pixels_factory_reads_only_screenshots_and_rows_need_the_template_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import random
+
+    from ludius.cli import load_templates
+    from ludius.hostagent import HostAgent
+    from ludius.options import build_options, view
+    from ludius.policy import Policy
+    from ludius.tasks import Task, TaskInstance
+
+    def no_observer(self: HostAgent, *args: object) -> pb.ObserveResult:
+        raise AssertionError("pixels mode never asks the observer")
+
+    def screenshot(self: HostAgent) -> bytes:
+        return _png(1920, 1080, b"n")
+
+    def read(png: bytes) -> list[visual.Box]:  # OCR readings from the notepad-empty fixture
+        names = ["Untitled-Notepad", "FileEdit Format View Help", "New folder"]
+        return [visual.Box(10, 10 + 30 * i, 200, 20, n, 0.99) for i, n in enumerate(names)]
+
+    monkeypatch.setattr(HostAgent, "observe", no_observer)
+    monkeypatch.setattr(HostAgent, "screenshot", screenshot)
+    monkeypatch.setattr(visual, "reader", lambda: read)
+    agent = visual.host_agent("127.0.0.1:1", "vm", "pixels")
+    snap = agent.observe(quiet_ms=1).snapshot
+    assert snap.windows[0].process_name == "" and snap.windows[0].framework_id == "visual"
+
+    def clicks(name: str, sg: str) -> list[str]:
+        t = load_templates()[name]
+        task = Task(t, TaskInstance(template=t.task, params=t.example, variant=0), random.Random(0))
+        s, p = task.subgoal(sg), Policy()
+        return [o.text for o in build_options(view(snap, task, s, p), task, s, p) if o.kind == "click"]
+
+    assert clicks("explorer_new_folder", "go_documents") == []  # no pixels block: nothing, even "New folder"
+    assert clicks("notepad_write_note", "write_body")  # opted in, title and anchor visible

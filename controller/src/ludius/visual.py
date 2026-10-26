@@ -366,20 +366,23 @@ class _Plain:
 
 
 class VisualHostAgent(HostAgent):
-    """A host agent whose snapshots get visual rows for windows without a usable tree (LUDIUS_VISUAL=fallback)."""
+    """A host agent whose snapshots come through the visual pipeline. "fallback": the observer's snapshot plus visual
+    rows for windows without a usable tree. "pixels": console screenshots only, the observer is never asked."""
 
-    def __init__(self, address: str, vm: str, read: Reader | None = None) -> None:
+    def __init__(self, address: str, vm: str, read: Reader | None = None, mode: str = "fallback") -> None:
         super().__init__(address, vm)
-        self._visual = VisualAgent(_Plain(self), "fallback", read)
+        self._visual = VisualAgent(_Plain(self), mode, read)
 
     def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
         return self._visual.observe(wait_settle, quiet_ms, timeout_ms)
 
 
 def host_agent(address: str, vm: str, mode: str) -> HostAgent:
-    """The CLI's agent for LUDIUS_VISUAL: unset is the plain agent, "fallback" adds visual rows."""
+    """The CLI's agent for LUDIUS_VISUAL: unset is the plain agent, "fallback" adds visual rows, "pixels" reads only
+    screenshots. Pixels snapshots carry no process identity, so only templates with a pixels block get rows
+    (options.view) and only their pixels checks can complete a subgoal (tasks.check_done)."""
     if mode == "":
         return HostAgent(address, vm)
-    if mode == "fallback":
-        return VisualHostAgent(address, vm)
-    raise VisualUnavailable(f"LUDIUS_VISUAL={mode!r}: only 'fallback' is wired; pixels-only needs the visual task path")
+    if mode in ("fallback", "pixels"):
+        return VisualHostAgent(address, vm, mode=mode)
+    raise VisualUnavailable(f"LUDIUS_VISUAL={mode!r}: expected fallback or pixels")
