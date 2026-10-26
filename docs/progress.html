@@ -106,7 +106,7 @@
 <body>
 <main>
   <h1>Ludius V2: progress against the spec</h1>
-  <p class="meta"><span>Updated 26 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/e34f130"><code>e34f130</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
+  <p class="meta"><span>Updated 26 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/4435773"><code>4435773</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
 
   <div class="summary" id="summary"></div>
 
@@ -129,6 +129,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-26">26 Oct 2026</time><span>1dd84e6 integrates DC-first/direct-guest clock setting and local cmd_day reset in finally; live success and missing-template exception reset verified without Jev calls. Integrated NTP-follow and Temporal cleanup remain pending. 4435773 adds pinned MIT OmniParser icon_detect_v3 ONNX inference: export parity2.4e-5, five-screen UIA recall171/186 with unnamed-icon filtering, OCR+detector1.9–2.3 s. Resident memory after arena fix peaks371 MiB; transient Windows peak working set still~3 GiB. Live no-tree/dark/dense and pixels-only tasks remain incomplete.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>e34f130 records live workgroup NTP: UDP123 response, member following DC+3 h within0.6 s, reset within1 s of host and six4616 events. Rollback verified temporary NIC removal and Hyper-V time sync restored; host/LAN untouched. Manual resync, not NT5DS/natural polling; day integration pending. New clean-watchdog baseline contains normalized production0.1.0/uiAccess and three task triggers; original checkpoints preserved. 727f331 fixes leading-interrupt logical order with realtime/time-jump regressions.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Workers resumed after quota reset. Watchdog verification accepted: injected real observer hang/failure paths emit crash events and relaunch in about 31 s with uiAccess retained; under-load takeover had 160 calls/0 errors and quiet-gap takeover 35 calls/0 errors. Faulty initial PID-watcher observation retracted. Production observer 0.1.0 reinstalled and test-hook string absent; clean-watchdog checkpoint authorized while preserving clean/clean-files. Member NTP checks next; Office/manual steps and Proxmox remain deferred.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Claude workers reached their provider quota (reported reset 22:10 Stockholm); unfinished edits are preserved and not claimed complete. Actual test-build observer watchdog hang/failure crashes and relaunch with uiAccess were exercised; final takeover grading and production-observer reinstall remain pending. Office VM stays saved, DC and source test VM running. Manual owner steps and Proxmox remain deferred.</span></li>
@@ -186,7 +187,7 @@ const SECTIONS = [
     ["Virtualized lists (WPF, WinUI, Explorer)", "partial", "083f080 reports top-page item ranges, estimated ranges when GridPattern total/scroll data exist, otherwise visible count. Real hint method passes seven offline cases; scroll-option seam tested. Existing Explorer runs read list/tree items. Live scrolling, off-screen clipping and cold Chrome retry still unverified."],
     ["Legacy Win32 fallback", "done", "LegacyIAccessible name, value, state and default action."],
     ["Java Access Bridge", "todo", ""],
-    ["No usable tree → visual fallback", "partial", "615fc2e/76d6452 add PP-OCR text rows from full-resolution host crops, stable ids and mask filtering; recorded Save As centers match UIA bounds. 91ab112 wires LUDIUS_VISUAL=fallback into CLI and adds optional detector decode/merge. Real icon-detector and live fallback-task verification remain pending. Host cropping accepted; observer sends no pixels."],
+    ["No usable tree → visual fallback", "partial", "PP-OCR plus4435773 pinned MIT OmniParser ONNX icon detector, full-resolution host crops, stable ids/mask filtering; LUDIUS_VISUAL=fallback wired. Recorded UIA-control recall171/186 with bounded unnamed icons, coordinate/parity tests pass. Real no-tree/custom-drawn-app and dark/dense live task validation pending. Host cropping accepted; observer sends no pixels."],
     ["Stable IDs, ranking, ~200 cap, context lines", "done", "Hash of control type, automation id, name and ancestor path, mapped to short ids for the observer's lifetime."],
     ["Settle detection", "done", "UIA events + DXGI dirty rects, 300 ms quiet, 5 s timeout, busy cursor and indeterminate progress reported. ~0.3–0.5 s per settled snapshot."],
     ["Footprint: one process, no disk, no network", "done", "WinExe, no console, Hyper-V socket only, neutral name (<code>uiprobe.exe</code> under RangeAssist)."],
@@ -236,7 +237,7 @@ const SECTIONS = [
   ]},
   { id: "clock", title: "7. Clock modes, range lifecycle and provisioning", items: [
     ["Realtime and compressed modes", "done", "Day runner plays the plan on its logical timeline: realtime waits for each item (late items run at once), compressed runs back to back. Breaks lock the screen."],
-    ["Time-jump mode", "partial", "Single-VM day8/8 previously verified. e34f130 live check proves UDP123, workgroup member follows DC+3 h within0.6 s and resets within1 s of host, six4616 events; temporary NIC/time-sync rollback verified. Manual peer/resync, no NT5DS or natural polling. DC-first day/Temporal wiring and failure-safe cleanup remain pending; DC restores require clock initialization."],
+    ["Time-jump mode", "partial", "e34f130 proves UDP123/manual NTP convergence and reset. 1dd84e6 local day adapter sets DC then guest directly over PowerShell Direct; finally resets success, exception and Ctrl+C paths (live missing-template test verified). Host/LAN untouched; guest sync restored/DC stays source. Integrated NTP-follow range mode, NT5DS/natural polling and Temporal crash/cancellation cleanup remain pending. DC restores need initialization."],
     ["Seeded runs", "done", "Seed fixes variant choice and jitter."],
     ["Range lifecycle (build, age, inject, snapshot, deliver, reset)", "partial", "Per-VM checkpoint and restore only."],
     ["Persistent-VM hygiene and drift canaries", "partial", "Normalize before and after every task (dismiss dialogs and UAC prompts, close strays, confirm an unlocked desktop); side effects logged. No drift canaries."],
@@ -260,7 +261,7 @@ const SECTIONS = [
     ["gRPC + protobuf", "done", ""],
     ["Python 3.12+, Pydantic, strict pyright", "done", "Synchronous for now; asyncio comes with orchestration."],
     ["Temporal, PostgreSQL, MinIO", "todo", ""],
-    ["Visual fallback (ONNX detector, PaddleOCR)", "partial", "PP-OCR text-detection/recognition runs on ONNX Runtime; recorded screenshot and pixel-coordinate tests pass. UI/icon detector, CLI wiring, live custom-drawn-app and dense/dark-UI checks remain. Public Microsoft MIT icon_detect_v3 model identified for pinned download/export; implementation and runtime verification pending."],
+    ["Visual fallback (ONNX detector, PaddleOCR)", "partial", "4435773 runs PP-OCR and pinned Microsoft MIT icon_detect_v3 on ONNX Runtime; export parity2.4e-5, eight visual tests pass. Five1920x1080 screens:171/186 UIA controls recalled; OCR+detector1.9–2.3 s. Arena fix cuts resident peak to371 MiB, but transient Windows peak remains~3 GiB. Real no-tree, dense/dark and safe pixels-only task validation still pending; inverted screenshots are proxies only."],
     ["Analysis (Plaso, DuckDB, Polars, LightGBM)", "partial", "Offline psort CSV ingestion and coverage/survival metrics in controller; no artifact collection or Plaso execution yet. Filterability uses single-feature rules; DuckDB, Polars and LightGBM are not integrated."],
     ["Repository layout", "partial", "proto, guest, host, controller (planner and offline artifact analysis), fixtures, infra and web monitor. No separate analysis service."],
     ["CI", "done", "GitHub Actions: ruff, pyright and pytest on Linux; .NET build on Windows."],
