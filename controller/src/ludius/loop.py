@@ -304,11 +304,11 @@ class Runner:
                 # Ladder step 2: in-app recovery with a restricted choice next step.
                 recovering = True
                 last_result = "screen looked unrelated to the goal"
-                self._log_step(task, name, snap, chosen, decision, "off_track -> recovery", step)
+                self._log_step(task, name, snap, chosen, decision, "off_track -> recovery", step, options=options)
                 continue
             reason = self._post_check(chosen, sg, task)
             if reason:
-                self._log_step(task, name, snap, chosen, decision, f"blocked: {reason}", step)
+                self._log_step(task, name, snap, chosen, decision, f"blocked: {reason}", step, options=options)
                 last_result = f"that action is not allowed ({reason})"
                 continue
 
@@ -326,7 +326,7 @@ class Runner:
             if not snap.settled:
                 last_result += " (screen still busy)"
             history.append(f"{_short(chosen)} -> {outcome}")
-            self._log_step(task, name, snap, chosen, decision, last_result, step, host_ms=host_ms)
+            self._log_step(task, name, snap, chosen, decision, last_result, step, host_ms=host_ms, options=options)
             recovering = False
 
             progress = changed and not revisit
@@ -405,9 +405,26 @@ class Runner:
         self.log.write(event="ladder", step=4, action="restart app (operator)", host_ms=_now(), task=task.template.task)
 
     def _log_step(
-        self, task: Task, sg: str, snap: obs.Snapshot, o: Option, d: Decision, result: str, step: int, host_ms: int = 0
+        self,
+        task: Task,
+        sg: str,
+        snap: obs.Snapshot,
+        o: Option,
+        d: Decision,
+        result: str,
+        step: int,
+        host_ms: int = 0,
+        options: list[Option] | None = None,
     ) -> None:
         fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
+        pixels = fg is not None and pixels_window(fg)
+        # Pixels steps: which option keys were offered as what (kinds only, never option text or content), so
+        # Jev's top-3 keys can be read back. Clicks are counted, not listed.
+        offered = (
+            {"clicks": sum(x.kind == "click" for x in options), **{x.key: x.kind for x in options if x.kind != "click"}}
+            if pixels and options
+            else None
+        )
         e = o.element
         self.log.write(
             event="step",
@@ -420,7 +437,8 @@ class Runner:
             step=step,
             window=fg.title if fg else "",
             process=fg.process_name if fg else "",
-            **({"trust": "pixels"} if fg is not None and pixels_window(fg) else {}),
+            **({"trust": "pixels"} if pixels else {}),
+            **({"offered": offered} if offered else {}),
             element={"id": e.id, "key": e.key, "role": e.role, "name": e.name} if e else None,
             action=o.kind,
             option=o.text,
