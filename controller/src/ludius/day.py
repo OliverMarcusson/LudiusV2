@@ -40,6 +40,20 @@ def run_task(
     return out
 
 
+def slots(plan: DayPlan) -> list[tuple[PlanItem, list[PlanItem]]]:
+    """Each regular item with the interrupts due in its slot, then interrupts before the first regular item."""
+    items = sorted(plan.items, key=lambda i: i.at)
+    regular = [i for i in items if not i.interrupt]
+    pending = [i for i in items if i.interrupt]
+    out: list[tuple[PlanItem, list[PlanItem]]] = []
+    for n, item in enumerate(regular):
+        slot_end = regular[n + 1].at if n + 1 < len(regular) else "24:00"
+        mine = [i for i in pending if item.at <= i.at < slot_end]
+        pending = [i for i in pending if i not in mine]
+        out.append((item, mine))
+    return out + [(late, []) for late in pending]
+
+
 @dataclass
 class ItemResult:
     item: PlanItem
@@ -72,59 +86,77 @@ class DayRunner:
 
     def run(self, plan: DayPlan) -> list[ItemResult]:
         day = dt.date.fromisoformat(plan.date)
-        items = sorted(plan.items, key=lambda i: i.at)
-        regular = [i for i in items if not i.interrupt]
-        pending = [i for i in items if i.interrupt]
+        self.start(plan)
+        for item, interrupts in slots(plan):
+            if not item.interrupt:
+                self._wait_for(day, item.at)
+            self.slot(day, item, interrupts)
+        self.finish(plan, self.results)
+        return self.results
+
+    def start(self, plan: DayPlan) -> None:
         self.log.write(event="day_start", host_ms=_now(), persona=plan.persona, date=plan.date, clock=self.clock,
-                       items=len(items))  # fmt: skip
-        for n, item in enumerate(regular):
-            slot_end = regular[n + 1].at if n + 1 < len(regular) else "24:00"
-            mine = [i for i in pending if item.at <= i.at < slot_end]
-            pending = [i for i in pending if i not in mine]
-            self._wait_for(day, item.at)
-            self._jump(day, item.at)
-            self._item(item, day, mine)
-            for late in mine:  # the task had no boundary left: run them after it
-                self._item(late, day, [])
-        for late in pending:  # interrupts before the first regular item
-            self._item(late, day, [])
+                       items=len(plan.items))  # fmt: skip
+
+    def finish(self, plan: DayPlan, results: list[ItemResult]) -> None:
         if self.clock == "time-jump" and self.set_clock:
             self.set_clock(None)
         self.log.write(event="day_end", host_ms=_now(), persona=plan.persona, date=plan.date,
-                       done=sum(r.status == "done" for r in self.results), items=len(self.results))  # fmt: skip
-        return self.results
+                       done=sum(r.status == "done" for r in results), items=len(results))  # fmt: skip
+
+    def slot(self, day: dt.date, item: PlanItem, interrupts: list[PlanItem]) -> list[ItemResult]:
+        """One slot: the item (regular ones at their logical time), then interrupts it had no boundary left for."""
+        first = len(self.results)
+        if not item.interrupt:
+            self._jump(day, item.at)
+        self._item(item, day, interrupts)
+        for late in interrupts:
+            self._item(late, day, [])
+        return self.results[first:]
 
     def _item(self, item: PlanItem, day: dt.date, interrupts: list[PlanItem], nested: bool = False) -> None:
-        logical = f"{day.isoformat()}T{item.at}"
-        self.log.write(event="item_start", host_ms=_now(), logical=logical, at=item.at, template=item.template,
-                       context=item.context, interrupt=item.interrupt)  # fmt: skip
         if item.template == BREAK:
-            status = self._break(item)
-        else:
-            task = Task(self.templates[item.template], item, self.rng)
+            self.begin_break(day, item)
+            self.sleep(self.away_s(item))
+            self.end_break(day, item)
+            return
+        self._started(day, item)
+        task = Task(self.templates[item.template], item, self.rng)
 
-            def between() -> None:
-                due = [i for i in interrupts if self.clock != "realtime" or self._clock_reached(day, i.at)]
-                for i in due:
-                    interrupts.remove(i)
-                    self.log.write(event="interrupt", host_ms=_now(), task=item.template, by=i.template, at=i.at)
-                    self._item(i, day, [], nested=True)
-                    self.log.write(event="resume", host_ms=_now(), task=item.template)
+        def between() -> None:
+            due = [i for i in interrupts if self.clock != "realtime" or self._clock_reached(day, i.at)]
+            for i in due:
+                interrupts.remove(i)
+                self.log.write(event="interrupt", host_ms=_now(), task=item.template, by=i.template, at=i.at)
+                self._item(i, day, [], nested=True)
+                self.log.write(event="resume", host_ms=_now(), task=item.template)
 
-            status = run_task(self.runner, self.session, task, between, hygiene=not nested).status
+        status = run_task(self.runner, self.session, task, between, hygiene=not nested).status
+        self._ended(day, item, status)
+
+    def _started(self, day: dt.date, item: PlanItem) -> None:
+        self.log.write(event="item_start", host_ms=_now(), logical=f"{day.isoformat()}T{item.at}", at=item.at,
+                       template=item.template, context=item.context, interrupt=item.interrupt)  # fmt: skip
+
+    def _ended(self, day: dt.date, item: PlanItem, status: str) -> ItemResult:
         self.results.append(ItemResult(item, status))
-        self.log.write(event="item_end", host_ms=_now(), logical=logical, at=item.at, template=item.template,
-                       context=item.context, params=item.params, status=status)  # fmt: skip
+        self.log.write(event="item_end", host_ms=_now(), logical=f"{day.isoformat()}T{item.at}", at=item.at,
+                       template=item.template, context=item.context, params=item.params, status=status)  # fmt: skip
+        return self.results[-1]
 
-    def _break(self, item: PlanItem) -> str:
-        """Away from the desk: lock the screen, come back, unlock (real lock/unlock logon events)."""
+    def away_s(self, item: PlanItem) -> int:
+        return item.minutes * 60 if self.clock == "realtime" else 5
+
+    def begin_break(self, day: dt.date, item: PlanItem) -> None:
+        """Away from the desk: lock the screen (a real lock logon event); end_break comes back and unlocks."""
+        self._started(day, item)
         if not self.session.normalize():
             self.session.escalate()
         self.runner.agent.chord(keys.chord("Win+L"))
-        away = item.minutes * 60 if self.clock == "realtime" else 5
-        self.log.write(event="break", host_ms=_now(), minutes=item.minutes, away_s=away)
-        self.sleep(away)
-        return "done" if self.session.unlock() else "failed"
+        self.log.write(event="break", host_ms=_now(), minutes=item.minutes, away_s=self.away_s(item))
+
+    def end_break(self, day: dt.date, item: PlanItem) -> ItemResult:
+        return self._ended(day, item, "done" if self.session.unlock() else "failed")
 
     def _jump(self, day: dt.date, at: str) -> None:
         if self.clock != "time-jump" or not self.set_clock:
