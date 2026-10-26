@@ -19,13 +19,16 @@ dev = ["pytest>=8", "ruff>=0.9", "pyright>=1.1.390", "grpcio-tools>=1.70", "type
 durable = [
     "temporalio>=1.34.0",
 ]
+state = [
+    "psycopg[binary]>=3.2",
+]
 visual = [
     "rapidocr-onnxruntime>=1.4.4",
 ]
 
 [tool.uv]
-# durable (Temporal) is light and fully typed: install it by default so CI typechecks and tests it.
-default-groups = ["dev", "durable"]
+# durable (Temporal) and state (PostgreSQL) are light and typed: installed by default so CI typechecks and tests them.
+default-groups = ["dev", "durable", "state"]
 
 [build-system]
 requires = ["hatchling"]
