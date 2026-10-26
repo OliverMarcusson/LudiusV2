@@ -281,3 +281,83 @@ async def _canary_day(tmp_path: Path) -> None:
         events = (tmp_path / "day.jsonl").read_text(encoding="utf-8")
         assert '"skipped_drift"' in events and events.count('"canary"') == 2
         assert canary.drifted(health) == {"notepad"}
+
+
+class Range:
+    """The range clock as a fake: set_clock moves it, a lease sweep puts it back on host time (None)."""
+
+    def __init__(self, calls: list[str], fail_at: str = "") -> None:
+        self.calls, self.fail_at, self.now = calls, fail_at, None
+
+    def set_clock(self, t: dt.datetime | None) -> None:
+        if t is not None and f"{t:%H:%M}" == self.fail_at:
+            raise RuntimeError("set-clock.ps1 failed")
+        self.now = None if t is None else f"{t:%H:%M}"
+        self.calls.append(f"clock {self.now or 'reset'}")
+
+
+class ClockedRunner(FakeRunner):
+    range: Range
+
+    def run(self, task: Task, between: Any = None) -> Outcome:
+        self.calls.append(f"run {task.inst.params['file_name']} @ {self.range.now}")
+        return Outcome("done", 1)
+
+
+class SweptSession(FakeSession):
+    """While the persona is away, the controller died and the lease sweeper put the range back on host time."""
+
+    range: Range
+
+    def unlock(self) -> bool:
+        self.calls.append(f"unlock @ {self.range.now}")
+        self.range.now = None
+        self.calls.append("sweeper reset")
+        return True
+
+
+BREAK_DAY = DayPlan(persona="aberg", date="2026-11-04", items=[
+    note("09:00"), PlanItem(at="12:00", template="break", minutes=30), note("12:05", interrupt=True),
+])  # fmt: skip
+
+
+def _break_day(tmp_path: Path, calls: list[str], fail_at: str = "") -> DayRunner:
+    rng = Range(calls, fail_at)
+    gt = durable.HeartbeatLog(tmp_path / "day.jsonl")
+    runner, session = ClockedRunner(gt, calls), SweptSession(calls)
+    runner.range = session.range = rng
+    return DayRunner(runner, session, load_templates(), gt, "time-jump", 0, set_clock=rng.set_clock)  # type: ignore[arg-type]
+
+
+def test_every_desktop_step_of_a_time_jump_day_sets_the_clock_first(tmp_path: Path) -> None:
+    asyncio.run(_reassert(tmp_path))
+
+
+async def _reassert(tmp_path: Path) -> None:
+    async with await _env(local=False) as env:
+        calls: list[str] = []
+        done = await durable.play(env.client, _break_day(tmp_path, calls), BREAK_DAY, "time-jump", tmp_path / "d.lock")
+        assert [(d.at, d.status) for d in done] == [("09:00", "done"), ("12:00", "done"), ("12:05", "done")]
+        # Break start and end set the clock themselves; the interrupt that came due while away runs at the
+        # break's logical end even though a sweep reset the clock in between.
+        assert calls == [
+            "clock 09:00", "normalize", "run note 0900 @ 09:00",
+            "clock 12:00", "normalize", "lock",
+            "clock 12:30", "unlock @ 12:30", "sweeper reset",
+            "clock 12:30", "normalize", "run note 1205 @ 12:30",
+            "clock reset",
+        ]  # fmt: skip
+
+
+def test_a_failed_clock_set_stops_the_step_before_it_touches_the_desktop(tmp_path: Path) -> None:
+    asyncio.run(_fail_closed(tmp_path))
+
+
+async def _fail_closed(tmp_path: Path) -> None:
+    async with await _env(local=False) as env:
+        calls: list[str] = []
+        day = _break_day(tmp_path, calls, fail_at="12:30")
+        with pytest.raises(RuntimeError, match="failed"):
+            await durable.play(env.client, day, BREAK_DAY, "time-jump", tmp_path / "d.lock", retry_s=1)
+        assert not any(c.startswith(("unlock", "run note 1205")) for c in calls)  # no GUI step on an unknown clock
+        assert calls[-1] == "clock reset"  # the failed day still puts the range back on host time

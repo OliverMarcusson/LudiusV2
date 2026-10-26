@@ -106,11 +106,14 @@ class DayRunner:
         self.log.write(event="day_end", host_ms=_now(), persona=plan.persona, date=plan.date,
                        done=sum(r.status == "done" for r in results), items=len(results))  # fmt: skip
 
-    def slot(self, day: dt.date, item: PlanItem, interrupts: list[PlanItem], jump: bool = True) -> list[ItemResult]:
-        """One slot: the item at its logical time, then the interrupts it had no subgoal boundary left for."""
+    def slot(
+        self, day: dt.date, item: PlanItem, interrupts: list[PlanItem], jump_at: str | None = None
+    ) -> list[ItemResult]:
+        """One slot: the item at its logical time (or `jump_at`), then the interrupts it had no subgoal boundary
+        left for. Time-jump sets the clock every slot: a resumed day can't know its clock survived (clocklease)."""
         first = len(self.results)
-        if jump:
-            self._jump(day, item.at)
+        if item.template != BREAK:  # a break sets its own clock, at both ends
+            self._jump(day, jump_at or item.at)
         self._item(item, day, interrupts)
         for late in interrupts:
             self._item(late, day, [])
@@ -151,6 +154,7 @@ class DayRunner:
 
     def begin_break(self, day: dt.date, item: PlanItem) -> None:
         """Away from the desk: lock the screen (a real lock logon event); end_break comes back and unlocks."""
+        self._jump(day, item.at)
         self._started(day, item)
         if not self.session.normalize():
             self.session.escalate()
@@ -158,6 +162,9 @@ class DayRunner:
         self.log.write(event="break", host_ms=_now(), minutes=item.minutes, away_s=self.away_s(item))
 
     def end_break(self, day: dt.date, item: PlanItem) -> ItemResult:
+        # Back at the desk at the break's logical end; set first, so a clock reset while away can't leak into the
+        # unlock (a set_clock failure fails the break: no acting on an unknown clock).
+        self._jump(day, f"{back_at(day, item):%H:%M}")
         return self._ended(day, item, "done" if self.session.unlock() else "failed")
 
     def _jump(self, day: dt.date, at: str) -> None:
@@ -177,6 +184,11 @@ class DayRunner:
         target = dt.datetime.combine(day, dt.time.fromisoformat(at)) + dt.timedelta(seconds=self.rng.uniform(0, 120))
         while (left := (target - self.now()).total_seconds()) > 0:
             self.sleep(min(left, 60))
+
+
+def back_at(day: dt.date, brk: PlanItem) -> dt.datetime:
+    """A break's logical end: when the persona is back at the desk."""
+    return dt.datetime.combine(day, dt.time.fromisoformat(brk.at)) + dt.timedelta(minutes=brk.minutes)
 
 
 def _now() -> int:

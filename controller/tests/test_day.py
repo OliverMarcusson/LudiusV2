@@ -74,13 +74,36 @@ def test_time_jump_day_keeps_order_breaks_and_interrupts(tmp_path: Path) -> None
     assert calls == [
         "clock 08:55", "normalize", "run note 0855", "clock 09:00", "normalize", "run note 0900", "run note 0910",
         "clock 10:00", "normalize", "run note 1000",
-        "clock 12:00", "normalize", "lock", "sleep 5", "unlock", "normalize", "run note 1205",
+        "clock 12:00", "normalize", "lock", "sleep 5", "clock 12:30", "unlock", "normalize", "run note 1205",
         "clock reset",
     ]  # fmt: skip
     assert [(r.item.at, r.status) for r in results] == [
         ("08:55", "done"), ("09:10", "done"), ("09:00", "done"), ("10:00", "done"), ("12:00", "failed"),
         ("12:05", "done")]  # fmt: skip
     assert day.slot(dt.date(2026, 11, 2), note("13:00"), [])[0].item.at == "13:00"
+    # A late interrupt resumed after a break: the clock is set to the break's end, not left to chance.
+    calls.clear()
+    day.slot(dt.date(2026, 11, 2), note("12:05"), [], jump_at="12:30")
+    assert calls[:2] == ["clock 12:30", "normalize"]
+    log.close()
+
+
+def test_break_end_fails_closed_when_the_clock_cannot_be_set(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def set_clock(t: dt.datetime | None) -> None:
+        raise RuntimeError("set-clock failed")
+
+    log = GroundTruth(tmp_path / "day.jsonl")
+    day = DayRunner(FakeRunner(log, calls), FakeSession(calls), load_templates(), log, "time-jump", 0,  # type: ignore[arg-type]
+                    sleep=lambda s: None, set_clock=set_clock)  # fmt: skip
+    brk = PlanItem(at="12:00", template="break", minutes=30)
+    try:
+        day.end_break(dt.date(2026, 11, 2), brk)
+        raise AssertionError("end_break acted on an unknown clock")
+    except RuntimeError:
+        pass
+    assert "unlock" not in calls
     log.close()
 
 

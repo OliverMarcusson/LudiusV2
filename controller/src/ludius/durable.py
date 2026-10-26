@@ -40,7 +40,7 @@ from temporalio.worker import Worker
 from temporalio.workflow import ActivityCancellationType
 
 with workflow.unsafe.imports_passed_through():
-    from ludius.day import DayRunner, ItemResult, slots
+    from ludius.day import DayRunner, ItemResult, back_at, slots
     from ludius.loop import GroundTruth
     from ludius.planner import BREAK, DayPlan, PlanItem
 
@@ -62,7 +62,7 @@ class SlotInput(BaseModel):
     date: str
     item: PlanItem
     interrupts: list[PlanItem] = []
-    jump: bool = True
+    jump_at: str | None = None  # time-jump: logical HH:MM to set first; None means the item's own time
 
 
 class Done(BaseModel):
@@ -136,7 +136,7 @@ class DayActivities:
 
     @activity.defn(name="slot")
     def slot(self, s: SlotInput) -> list[Done]:
-        return [_done(r) for r in self.day.slot(self._attempt(s), s.item, s.interrupts, jump=s.jump)]
+        return [_done(r) for r in self.day.slot(self._attempt(s), s.item, s.interrupts, jump_at=s.jump_at)]
 
     @activity.defn(name="break_start")
     def break_start(self, s: SlotInput) -> None:
@@ -200,8 +200,11 @@ class PersonaDay:
                     self.done.append(await workflow.execute_activity(
                         "break_end", s, result_type=Done, start_to_close_timeout=QUICK, retry_policy=retry,
                     ))  # fmt: skip
-                    for late in interrupts:  # they came due while away: run them on return, no clock set
-                        self.done += await slot(SlotInput(date=plan.date, item=late, jump=False))
+                    # They came due while away: run them on return, at the break's logical end. The clock is set
+                    # again, since a lease sweep may have reset it while this worker was gone.
+                    back = back_at(day, item)
+                    for late in interrupts:
+                        self.done += await slot(SlotInput(date=plan.date, item=late, jump_at=f"{back:%H:%M}"))
                 else:
                     self.done += await slot(s)
         except (Exception, asyncio.CancelledError):  # failed or cancelled mid-day: do not leave a jumped clock
