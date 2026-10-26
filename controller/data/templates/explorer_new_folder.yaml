@@ -9,6 +9,9 @@ example: {folder_name: admission test folder}
 variants:
   - [open_explorer_keys, go_documents, new_folder_shortcut, name_folder, close_explorer]
   - [open_explorer_taskbar, go_documents, new_folder_button, name_folder, close_explorer]
+  # Mistake: the folder is named with a stray key, then renamed with F2.
+  - [open_explorer_keys, go_documents, new_folder_shortcut, name_folder_typo, rename_folder, close_explorer]
+weights: [1, 1, 0.3]
 budget_steps: 35
 budget_minutes: 6
 subgoals:
@@ -35,6 +38,16 @@ subgoals:
     goal: "Name the new folder {folder_name} and confirm the name"
     text: folder_name
     keys: [Enter]
+    done: {element: {role: list item, name: '^{folder_name}$'}}
+  name_folder_typo:
+    goal: "Name the new folder {folder_name_typo} and confirm the name"
+    text: folder_name_typo
+    keys: [Enter]
+    done: {element: {role: list item, name: '^{folder_name_typo}$'}}
+  rename_folder:
+    goal: "Rename the folder {folder_name_typo} to {folder_name}: select it, press F2, type the name, press Enter"
+    text: folder_name
+    keys: [F2, Enter]
     done: {element: {role: list item, name: '^{folder_name}$'}}
   close_explorer:
     goal: "Close File Explorer"

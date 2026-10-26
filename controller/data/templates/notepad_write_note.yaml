@@ -12,7 +12,9 @@ variants:
   - [open_from_start, write_body, save_shortcut, name_file, confirm_save, close_app]
   - [open_from_run, write_body, save_menu, name_file, confirm_save, close_app]
   - [open_from_start, write_body, save_menu, name_file, confirm_save, close_app]
-  - [open_from_run, write_body, save_shortcut, name_file, confirm_save, close_app]
+  # Mistake: a stray key at the end of the file name, removed with Backspace before saving.
+  - [open_from_run, write_body, save_shortcut, name_file_typo, fix_file_name, confirm_save, close_app]
+weights: [1, 1, 1, 0.5]
 budget_steps: 40
 budget_minutes: 8
 on_abandon: close_without_saving
@@ -44,6 +46,14 @@ subgoals:
     goal: "Enter {file_name} as the file name in the Save As dialog"
     text: file_name
     done: {typed: true, element: {name: "^File name", value: '^{file_name}(\.txt)?$'}}
+  name_file_typo:
+    goal: "Enter {file_name_typo} as the file name in the Save As dialog"
+    text: file_name_typo
+    done: {typed: true, element: {name: "^File name", value: '^{file_name_typo}$'}}
+  fix_file_name:
+    goal: "The file name ends with a stray character; press Backspace once so it reads {file_name}"
+    keys: [Backspace]
+    done: {element: {name: "^File name", value: '^{file_name}(\.txt)?$'}}
   confirm_save:
     goal: "Save the file as {file_name}"
     # Explorer hides known extensions by default, so the title may lack ".txt".

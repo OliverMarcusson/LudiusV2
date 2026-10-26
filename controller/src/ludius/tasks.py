@@ -116,7 +116,9 @@ class Task:
         )
         self.variant = idx
         self.subgoal_names = template.variants[idx]
-        self.values = have
+        # Mistake variants (spec section 6): `{p}_typo` is the value with one stray neighbouring key at the end,
+        # typed first and then fixed (Backspace, rename) by a later subgoal.
+        self.values = have | {f"{k}_typo": v + _neighbour(v[-1]) for k, v in have.items() if v and "\n" not in v}
 
     def fmt(self, s: str) -> str:
         return s.format_map(self.values)
@@ -130,6 +132,18 @@ class Task:
 
     def text(self, sg: Subgoal) -> str | None:
         return self.values.get(sg.text) if sg.text else None
+
+
+_ROWS = ["qwertyuiop", "asdfghjkl", "zxcvbnm"]
+
+
+def _neighbour(c: str) -> str:
+    """The key right of `c` on a QWERTY row (a fat-finger slip); other characters are pressed twice."""
+    row = next((r for r in _ROWS if c.lower() in r), None)
+    if row is None:
+        return c
+    n = row[(row.index(c.lower()) + 1) % len(row)]
+    return n.upper() if c.isupper() else n
 
 
 def load_template(path: Path) -> Template:
