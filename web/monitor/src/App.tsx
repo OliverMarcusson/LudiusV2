@@ -4,7 +4,8 @@ import { ArrowLeft, Pause, Play } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Feed } from "@/components/feed"
-import { useCalls, useNow, useVms } from "@/lib/feeds"
+import { type CallsState, useCalls, useNow, useVms } from "@/lib/feeds"
+import { cn } from "@/lib/utils"
 
 const COLUMNS = ["1", "2", "3", "4"] as const
 const GRID: Record<string, string> = {
@@ -27,6 +28,42 @@ function useFocused(): [string | null, (name: string | null) => void] {
     return () => window.removeEventListener("hashchange", on)
   }, [])
   return [focused, (name) => (window.location.hash = name ? `#/vm/${encodeURIComponent(name)}` : "")]
+}
+
+// The two OpenRouter totals. Only an "ok" answer is shown as current; last known totals are kept but marked.
+function CallCounters({ state, now }: { state: CallsState; now: number }) {
+  const { status, calls, at, error } = state
+  const value = (n: number | undefined) => (n === undefined ? "–" : n.toLocaleString())
+  const title =
+    status === "ok"
+      ? calls?.since && `OpenRouter requests since ${calls.since.toLocaleString()}`
+      : status === "stale"
+        ? `Last update failed (${error}); totals from ${at === null ? "unknown" : new Date(at).toLocaleTimeString()}`
+        : status === "unavailable"
+          ? `Counters unavailable: ${error}`
+          : "Loading counters"
+  return (
+    <dl
+      className="flex items-baseline gap-3 text-sm text-muted-foreground tabular-nums"
+      title={title || undefined}
+      aria-busy={status === "loading"}
+    >
+      <div className="flex gap-1.5">
+        <dt>Jev calls</dt>
+        <dd className={cn("font-medium", status === "ok" && "text-foreground")}>{value(calls?.jev)}</dd>
+      </div>
+      <div className="flex gap-1.5">
+        <dt>LLM calls</dt>
+        <dd className={cn("font-medium", status === "ok" && "text-foreground")}>{value(calls?.llm)}</dd>
+      </div>
+      {status === "stale" && at !== null && (
+        <div className="text-stale">stale, {Math.max(0, Math.round((now - at) / 1000))} s old</div>
+      )}
+      {status === "unavailable" && (
+        <div className="text-lost">unavailable</div>
+      )}
+    </dl>
+  )
 }
 
 export default function App() {
@@ -54,21 +91,7 @@ export default function App() {
             {loaded ? `${vms.length} VM${vms.length === 1 ? "" : "s"}, ${running} running` : "Connecting"} · view
             only
           </p>
-          {calls && (
-            <dl
-              className="flex items-baseline gap-3 text-sm text-muted-foreground tabular-nums"
-              title={calls.since ? `OpenRouter requests since ${new Date(calls.since).toLocaleString()}` : undefined}
-            >
-              <div className="flex gap-1.5">
-                <dt>Jev calls</dt>
-                <dd className="font-medium text-foreground">{calls.jev.toLocaleString()}</dd>
-              </div>
-              <div className="flex gap-1.5">
-                <dt>LLM calls</dt>
-                <dd className="font-medium text-foreground">{calls.llm.toLocaleString()}</dd>
-              </div>
-            </dl>
-          )}
+          <CallCounters state={calls} now={now} />
         </div>
         <div className="flex items-center gap-3">
           {!focusVm && (

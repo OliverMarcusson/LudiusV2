@@ -51,21 +51,54 @@ export function useVms(intervalMs = 5000): { vms: Vm[]; error: string | null; lo
 export interface Calls {
   jev: number
   llm: number
-  since?: string
+  since: Date | null // when counting started; null before the first call
 }
 
-export function useCalls(intervalMs = 2000): Calls | null {
-  const [calls, setCalls] = useState<Calls | null>(null)
+// loading: no answer yet. ok: `calls` is current. stale: the last poll failed, `calls` is the last good answer
+// from `at`. unavailable: no good answer yet, `error` says why.
+export type CallsStatus = "loading" | "ok" | "stale" | "unavailable"
+
+export interface CallsState {
+  status: CallsStatus
+  calls: Calls | null
+  at: number | null // ms epoch of the last good answer
+  error: string | null
+}
+
+const CALLS_TIMEOUT_MS = 5000
+
+const count = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0
+
+// Accept only what the counters can show truthfully: two non-negative integers and an optional valid date.
+export function parseCalls(data: unknown): Calls {
+  if (typeof data !== "object" || data === null) throw new Error("malformed counter data")
+  const { jev, llm, since } = data as Record<string, unknown>
+  if (!count(jev) || !count(llm)) throw new Error("malformed counter data")
+  const at = typeof since === "string" ? new Date(since) : null
+  return { jev, llm, since: at && !Number.isNaN(at.getTime()) ? at : null }
+}
+
+export function useCalls(intervalMs = 2000): CallsState {
+  const [state, setState] = useState<CallsState>({ status: "loading", calls: null, at: null, error: null })
   useEffect(() => {
     let stop = false
     let timer: number | undefined
+    let inflight: AbortController | null = null
     const tick = async () => {
+      const ctl = (inflight = new AbortController())
+      const deadline = window.setTimeout(() => ctl.abort(), CALLS_TIMEOUT_MS)
       try {
-        const res = await fetch("/api/calls", { cache: "no-store" })
-        if (res.ok && !stop) setCalls((await res.json()) as Calls)
-      } catch {
-        // keep the last totals; useVms already reports an unreachable agent
+        const res = await fetch("/api/calls", { cache: "no-store", signal: ctl.signal })
+        if (!res.ok) throw new Error(`host agent answered ${res.status}`)
+        const calls = parseCalls(await res.json())
+        if (!stop) setState({ status: "ok", calls, at: Date.now(), error: null })
+      } catch (e) {
+        if (stop) return
+        const error = ctl.signal.aborted ? "no answer within 5 s" : e instanceof Error ? e.message : String(e)
+        // Keep good totals through a failure, marked stale so they don't read as current.
+        setState((s) => ({ ...s, status: s.calls ? "stale" : "unavailable", error }))
       } finally {
+        window.clearTimeout(deadline)
         if (!stop) timer = window.setTimeout(tick, intervalMs)
       }
     }
@@ -73,9 +106,10 @@ export function useCalls(intervalMs = 2000): Calls | null {
     return () => {
       stop = true
       window.clearTimeout(timer)
+      inflight?.abort()
     }
   }, [intervalMs])
-  return calls
+  return state
 }
 
 export interface Stream {
