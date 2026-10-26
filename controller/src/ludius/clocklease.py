@@ -5,6 +5,10 @@ RENEW_S. A reset drops it. If the controller is killed the renewals stop; the ho
 (infra/hyperv/clock-sweep.ps1) treats a lease not renewed for STALE_S as orphaned, resets the range clocks through
 set-clock.ps1 -Reset and only then deletes the lease. Heartbeats rather than pids: a reused pid can't keep a dead
 controller's lease alive. Host and LAN time are never touched; the reset is the same one a finishing day runs.
+
+Limit: a lease proves who may hold a jumped clock, not that the clock is still jumped. After a sweep, a resumed day
+is on host time until its next set_clock; durable break_end and a break's late interrupts (slot jump=False) don't
+call it today, so they would act on host time (open item with the day/durable seam, not covered by a test yet).
 """
 
 from __future__ import annotations
