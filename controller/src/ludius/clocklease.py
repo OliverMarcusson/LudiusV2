@@ -5,6 +5,8 @@ RENEW_S. A reset drops it. If the controller is killed the renewals stop; the ho
 (infra/hyperv/clock-sweep.ps1) treats a lease not renewed for STALE_S as orphaned, resets the range clocks through
 set-clock.ps1 -Reset and only then deletes the lease. Heartbeats rather than pids: a reused pid can't keep a dead
 controller's lease alive. Host and LAN time are never touched; the reset is the same one a finishing day runs.
+The guarantee is bounded by the sweeper: an orphaned jump lasts up to STALE_S plus one 60 s sweep after the last
+renewal while the host agent runs, and until the agent is back (or the VM is up again) when it isn't.
 
 A lease proves who may hold a jumped clock, not that the clock is still jumped, so the day never relies on it:
 since efbb23e every time-jump step that acts on the desktop sets the clock first (each slot, both ends of a break,
