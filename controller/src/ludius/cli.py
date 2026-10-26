@@ -11,6 +11,7 @@ import datetime as dt
 import json
 import os
 import random
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -80,6 +81,13 @@ def start_agent(args: argparse.Namespace) -> HostAgent:
     if args.restore:
         restore(agent, args.restore)
     return agent
+
+
+def set_clock(at: dt.datetime | None) -> None:
+    """Time-jump: the guest clock to a logical time (test VM only, via infra/hyperv/set-clock.ps1)."""
+    script = str(ROOT / "infra" / "hyperv" / "set-clock.ps1")
+    extra = ["-Reset"] if at is None else ["-Time", at.isoformat(timespec="seconds")]
+    subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", script, *extra], check=True, capture_output=True)
 
 
 def restore(agent: HostAgent, checkpoint: str) -> None:
@@ -168,8 +176,10 @@ def cmd_day(args: argparse.Namespace) -> int:
     jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
     log = GroundTruth(log_path)
     try:
-        runner = Runner(agent, jev, persona, log, clock=args.clock, seed=seed, assist=make_assist())
-        results = DayRunner(runner, make_session(agent, log), load_templates(), log, args.clock, seed).run(plan)
+        pacing = "compressed" if args.clock == "time-jump" else args.clock
+        runner = Runner(agent, jev, persona, log, clock=pacing, seed=seed, assist=make_assist())
+        day = DayRunner(runner, make_session(agent, log), load_templates(), log, args.clock, seed, set_clock=set_clock)
+        results = day.run(plan)
     finally:
         log.close()
         jev.close()
@@ -347,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
     d = sub.add_parser("day", help="play a day plan on its logical timeline")
     d.add_argument("plan", help="day plan YAML (runs/plans/...)")
     d.add_argument("--persona")
-    d.add_argument("--clock", choices=["realtime", "compressed"], default="compressed")
+    d.add_argument("--clock", choices=["realtime", "compressed", "time-jump"], default="compressed")
     d.add_argument("--seed", type=int)
     d.add_argument("--model", default=DEFAULT_MODEL)
     d.add_argument("--log")

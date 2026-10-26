@@ -24,7 +24,7 @@ from ludius.tasks import Persona, Subgoal, Task, check_done
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
-Clock = Literal["realtime", "compressed"]
+Clock = Literal["realtime", "compressed", "time-jump"]
 DONE_THRESHOLD = 0.85
 OFF_TRACK_THRESHOLD = 0.8
 NEAR_TIE = 0.05  # probability gap within which equivalent options may be sampled

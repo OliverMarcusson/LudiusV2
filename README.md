@@ -43,7 +43,7 @@ uv run ludius session lock|unlock|normalize
 
 uv run ludius plan narrative --date 2026-10-26     # once per range -> runs/world/narrative.yaml
 uv run ludius plan day --date 2026-10-27           # per persona and day -> runs/plans/<date>-<user>.yaml
-uv run ludius day ..\runs\plans\2026-10-27-aberg.yaml --restore clean [--clock realtime]
+uv run ludius day ..\runs\plans\2026-10-27-aberg.yaml --restore clean [--clock realtime|time-jump]
 uv run ludius timeline ..\runs\days\*.jsonl --out ..\runs\timeline.csv
 ```
 
@@ -89,4 +89,4 @@ cd web\monitor; bun run lint; bun run build
 
 ## Not built yet
 
-Cross-persona threads, Outlook/Office templates, template growth, time-jump mode, Temporal/Postgres, Proxmox backend and vsock, visual fallback (OCR/detector), clone/delete lifecycle, non-ASCII typing, and the analysis/filterability pipeline.
+Cross-persona threads, Outlook/Office templates, template growth, Temporal/Postgres, Proxmox backend and vsock, visual fallback (OCR/detector), clone/delete lifecycle, non-ASCII typing, and the analysis/filterability pipeline.

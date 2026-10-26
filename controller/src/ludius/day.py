@@ -1,6 +1,7 @@
 """Day runner (spec sections 6 and 7): plays a day plan on its logical timeline through a clock adapter.
 
 Realtime waits for each item's wall-clock time (delivery). Compressed runs items back to back (testing).
+Time-jump is compressed plus the guest clock set to each regular item's logical time (testing only).
 Interrupt items form the task stack: they are pushed onto the task running in their slot at its next
 subgoal boundary (realtime: once their time has come), run to completion, and the task resumes.
 """
@@ -56,6 +57,7 @@ class DayRunner:
         seed: int,
         sleep: Callable[[float], None] = time.sleep,
         now: Callable[[], dt.datetime] = dt.datetime.now,
+        set_clock: Callable[[dt.datetime | None], None] | None = None,  # None resets to host time
     ) -> None:
         self.runner = runner
         self.session = session
@@ -65,6 +67,7 @@ class DayRunner:
         self.rng = random.Random(seed)
         self.sleep = sleep
         self.now = now
+        self.set_clock = set_clock
         self.results: list[ItemResult] = []
 
     def run(self, plan: DayPlan) -> list[ItemResult]:
@@ -79,11 +82,14 @@ class DayRunner:
             mine = [i for i in pending if item.at <= i.at < slot_end]
             pending = [i for i in pending if i not in mine]
             self._wait_for(day, item.at)
+            self._jump(day, item.at)
             self._item(item, day, mine)
             for late in mine:  # the task had no boundary left: run them after it
                 self._item(late, day, [])
         for late in pending:  # interrupts before the first regular item
             self._item(late, day, [])
+        if self.clock == "time-jump" and self.set_clock:
+            self.set_clock(None)
         self.log.write(event="day_end", host_ms=_now(), persona=plan.persona, date=plan.date,
                        done=sum(r.status == "done" for r in self.results), items=len(self.results))  # fmt: skip
         return self.results
@@ -98,7 +104,7 @@ class DayRunner:
             task = Task(self.templates[item.template], item, self.rng)
 
             def between() -> None:
-                due = [i for i in interrupts if self.clock == "compressed" or self._clock_reached(day, i.at)]
+                due = [i for i in interrupts if self.clock != "realtime" or self._clock_reached(day, i.at)]
                 for i in due:
                     interrupts.remove(i)
                     self.log.write(event="interrupt", host_ms=_now(), task=item.template, by=i.template, at=i.at)
@@ -119,6 +125,13 @@ class DayRunner:
         self.log.write(event="break", host_ms=_now(), minutes=item.minutes, away_s=away)
         self.sleep(away)
         return "done" if self.session.unlock() else "failed"
+
+    def _jump(self, day: dt.date, at: str) -> None:
+        if self.clock != "time-jump" or not self.set_clock:
+            return
+        logical = dt.datetime.combine(day, dt.time.fromisoformat(at))
+        self.set_clock(logical)
+        self.log.write(event="clock_set", host_ms=_now(), logical=logical.isoformat(timespec="seconds"))
 
     def _clock_reached(self, day: dt.date, at: str) -> bool:
         return self.now() >= dt.datetime.combine(day, dt.time.fromisoformat(at))
