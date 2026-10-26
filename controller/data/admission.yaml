@@ -9,6 +9,17 @@ explorer_new_folder:
     0: 3/3
     1: 3/3
     2: 3/3
+explorer_rename_move:
+  admitted: true
+  admitted_variants:
+  - 0
+  - 1
+  - 2
+  date: '2026-10-26'
+  variants:
+    0: 3/3
+    1: 3/3
+    2: 3/3
 notepad_write_note:
   admitted: true
   admitted_variants:
