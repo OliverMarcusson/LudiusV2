@@ -4,7 +4,9 @@
 # eventlogs, ux_noise). Ends with a new checkpoint (-Checkpoint, default "clean"); an
 # existing checkpoint is never replaced, so re-runs pass -NoCheckpoint or a new name.
 # Stand-in for the Packer + Ansible build (spec section 7) on local Hyper-V.
-param([switch]$NoUiAccess, [switch]$NoCheckpoint, [string]$Checkpoint = 'clean')
+# -RolesOnly: only the guest roles ($roles below) and a read-back of their named settings, on the already running
+# VM. No build, observer, task, certificate, DVD, start, restore or checkpoint.
+param([switch]$NoUiAccess, [switch]$NoCheckpoint, [string]$Checkpoint = 'clean', [switch]$RolesOnly)
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $cfg = @{}
@@ -12,6 +14,87 @@ foreach ($line in Get-Content (Join-Path $root '.env')) { if ($line -match '^\s*
 $vm = $cfg.LUDIUS_VM
 $admin = [pscredential]::new("$($cfg.LUDIUS_ADMIN_USER)", (ConvertTo-SecureString $cfg.LUDIUS_ADMIN_PASSWORD -AsPlainText -Force))
 $installDir = 'C:\Program Files\RangeAssist'
+
+# Golden-image roles inside the guest (base, eventlogs, ux_noise, accessibility cues). The one copy both paths run.
+$roles = {
+    param($persona, $personaPassword)
+    $ErrorActionPreference = 'Stop'
+    # base: never sleep, Windows Update paused (updates belong in the image).
+    powercfg /change standby-timeout-ac 0; powercfg /change monitor-timeout-ac 0; powercfg /change hibernate-timeout-ac 0
+    Set-Service wuauserv -StartupType Disabled; Stop-Service wuauserv -Force -ErrorAction SilentlyContinue
+    New-Item -Force 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' | Out-Null
+    Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' NoAutoUpdate 1 -Type DWord
+    # eventlogs: large enough that a scenario's events survive a day of noise (Sysmon's log: not installed yet).
+    foreach ($l in @{ Security = 1GB; System = 256MB; Application = 256MB }.GetEnumerator()) {
+        wevtutil sl $l.Key /ms:$($l.Value); if ($LASTEXITCODE) { throw "wevtutil $($l.Key): $LASTEXITCODE" }
+    }
+    # ux_noise, in the persona's hive: no minimize/taskbar animations, 100% scaling (96 dpi), no toasts over
+    # tasks (focus assist's effect); accessibility: keyboard cues (access-key underlines always shown).
+    # Read at logon: they apply from the persona's next logon.
+    $sid = ([Security.Principal.NTAccount]$persona).Translate([Security.Principal.SecurityIdentifier]).Value
+    $loaded = Test-Path "Registry::HKEY_USERS\$sid"
+    $hive = if ($loaded) { "Registry::HKEY_USERS\$sid" } else { 'Registry::HKEY_USERS\LudiusPersona' }
+    if (-not $loaded) { reg load 'HKU\LudiusPersona' "C:\Users\$persona\NTUSER.DAT" | Out-Null; if ($LASTEXITCODE) { throw 'reg load failed' } }
+    try {
+        $adv = "$hive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+        $push = "$hive\Software\Microsoft\Windows\CurrentVersion\PushNotifications"
+        $cues = "$hive\Control Panel\Accessibility\Keyboard Preference"
+        foreach ($k in "$hive\Control Panel\Desktop\WindowMetrics", $adv, $push, $cues) { if (-not (Test-Path $k)) { New-Item $k | Out-Null } }
+        Set-ItemProperty "$hive\Control Panel\Desktop\WindowMetrics" MinAnimate '0'
+        Set-ItemProperty $adv TaskbarAnimations 0 -Type DWord
+        Set-ItemProperty "$hive\Control Panel\Desktop" LogPixels 96 -Type DWord
+        Set-ItemProperty "$hive\Control Panel\Desktop" Win8DpiScaling 1 -Type DWord
+        Set-ItemProperty $push ToastEnabled 0 -Type DWord
+        Set-ItemProperty $cues On '1'
+    } finally {
+        if (-not $loaded) { [gc]::Collect(); reg unload 'HKU\LudiusPersona' | Out-Null }
+    }
+    # Autologon for the persona stays on (the unattend count runs out).
+    $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    Set-ItemProperty $wl AutoAdminLogon '1'; Set-ItemProperty $wl DefaultUserName $persona; Set-ItemProperty $wl DefaultPassword $personaPassword
+    Remove-ItemProperty $wl AutoLogonCount -ErrorAction SilentlyContinue
+    # No first-run tips or consumer content popping up over tasks.
+    New-Item -Force 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' | Out-Null
+    Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' DisableWindowsConsumerFeatures 1 -Type DWord
+    Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' DisableSoftLanding 1 -Type DWord
+    # Edge: no first-run wizard, sign-in or default-browser prompts over tasks.
+    $edge = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+    New-Item -Force $edge | Out-Null
+    foreach ($p in @{ HideFirstRunExperience = 1; BrowserSignin = 0; DefaultBrowserSettingEnabled = 0; ShowRecommendationsEnabled = 0; StartupBoostEnabled = 0 }.GetEnumerator()) {
+        Set-ItemProperty $edge $p.Key $p.Value -Type DWord
+    }
+}
+
+if ($RolesOnly) {
+    $conflict = @('Checkpoint', 'NoUiAccess') | Where-Object { $PSBoundParameters.ContainsKey($_) }
+    if ($conflict) { throw "-RolesOnly never checkpoints or builds; drop -$($conflict -join ', -')" }
+    if ((Get-VM -Name $vm).State -ne 'Running') { throw "$vm is not running; -RolesOnly never starts or restores it" }
+    # Named, non-secret settings only (never DefaultPassword).
+    $readback = {
+        param($persona)
+        $sid = ([Security.Principal.NTAccount]$persona).Translate([Security.Principal.SecurityIdentifier]).Value
+        $h = "Registry::HKEY_USERS\$sid"
+        function V($path, $name) { (Get-ItemProperty $path -Name $name -ErrorAction SilentlyContinue).$name }
+        foreach ($l in 'Security', 'System', 'Application') { "eventlog $l max $((Get-WinEvent -ListLog $l).MaximumSizeInBytes / 1MB) MB" }
+        "persona hive loaded: $(Test-Path $h)"
+        "MinAnimate=$(V "$h\Control Panel\Desktop\WindowMetrics" MinAnimate)"
+        "TaskbarAnimations=$(V "$h\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" TaskbarAnimations)"
+        "LogPixels=$(V "$h\Control Panel\Desktop" LogPixels) Win8DpiScaling=$(V "$h\Control Panel\Desktop" Win8DpiScaling)"
+        "ToastEnabled=$(V "$h\Software\Microsoft\Windows\CurrentVersion\PushNotifications" ToastEnabled)"
+        "KeyboardCues On=$(V "$h\Control Panel\Accessibility\Keyboard Preference" On)"
+        "wuauserv=$((Get-Service wuauserv).StartType) NoAutoUpdate=$(V 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' NoAutoUpdate)"
+        $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+        "AutoAdminLogon=$(V $wl AutoAdminLogon) DefaultUserName=$(V $wl DefaultUserName)"
+    }
+    $s = New-PSSession -VMName $vm -Credential $admin
+    try {
+        Invoke-Command $s $roles -ArgumentList $cfg.LUDIUS_PERSONA_USER, $cfg.LUDIUS_PERSONA_PASSWORD
+        Invoke-Command $s $readback -ArgumentList $cfg.LUDIUS_PERSONA_USER
+    }
+    finally { Remove-PSSession $s }
+    return
+}
+
 if (-not $NoCheckpoint -and (Get-VMSnapshot $vm -Name $Checkpoint -ErrorAction SilentlyContinue)) {
     throw "checkpoint '$Checkpoint' exists and is never replaced: pass -NoCheckpoint or -Checkpoint <new name>"
 }
@@ -46,58 +129,17 @@ try {
     Invoke-Command $s { param($dir) Get-Process uiprobe -ErrorAction SilentlyContinue | Stop-Process -Force; New-Item -ItemType Directory -Force $dir | Out-Null } -ArgumentList $installDir
     Copy-Item -ToSession $s $exe, $caFile -Destination $installDir -Force
     Invoke-Command $s {
-        param($dir, $persona, $personaPassword)
+        param($dir)
         $ErrorActionPreference = 'Stop'
         # Import-Certificate is denied over PowerShell Direct; certutil is not.
         certutil -f -addstore Root "$dir\range-root-ca.cer" | Out-Null
         if ($LASTEXITCODE) { throw "certutil failed: $LASTEXITCODE" }
         Remove-Item "$dir\range-root-ca.cer"
-
-        # base: never sleep, Windows Update paused (updates belong in the image).
-        powercfg /change standby-timeout-ac 0; powercfg /change monitor-timeout-ac 0; powercfg /change hibernate-timeout-ac 0
-        Set-Service wuauserv -StartupType Disabled; Stop-Service wuauserv -Force -ErrorAction SilentlyContinue
-        New-Item -Force 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' | Out-Null
-        Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' NoAutoUpdate 1 -Type DWord
-        # eventlogs: large enough that a scenario's events survive a day of noise (Sysmon's log: not installed yet).
-        foreach ($l in @{ Security = 1GB; System = 256MB; Application = 256MB }.GetEnumerator()) {
-            wevtutil sl $l.Key /ms:$($l.Value); if ($LASTEXITCODE) { throw "wevtutil $($l.Key): $LASTEXITCODE" }
-        }
-        # ux_noise, in the persona's hive: no minimize/taskbar animations, 100% scaling (96 dpi), no toasts over
-        # tasks (focus assist's effect); accessibility: keyboard cues (access-key underlines always shown).
-        # Read at logon: they apply from the persona's next logon.
-        $sid = ([Security.Principal.NTAccount]$persona).Translate([Security.Principal.SecurityIdentifier]).Value
-        $loaded = Test-Path "Registry::HKEY_USERS\$sid"
-        $hive = if ($loaded) { "Registry::HKEY_USERS\$sid" } else { 'Registry::HKEY_USERS\LudiusPersona' }
-        if (-not $loaded) { reg load 'HKU\LudiusPersona' "C:\Users\$persona\NTUSER.DAT" | Out-Null; if ($LASTEXITCODE) { throw 'reg load failed' } }
-        try {
-            $adv = "$hive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-            $push = "$hive\Software\Microsoft\Windows\CurrentVersion\PushNotifications"
-            $cues = "$hive\Control Panel\Accessibility\Keyboard Preference"
-            foreach ($k in "$hive\Control Panel\Desktop\WindowMetrics", $adv, $push, $cues) { if (-not (Test-Path $k)) { New-Item $k | Out-Null } }
-            Set-ItemProperty "$hive\Control Panel\Desktop\WindowMetrics" MinAnimate '0'
-            Set-ItemProperty $adv TaskbarAnimations 0 -Type DWord
-            Set-ItemProperty "$hive\Control Panel\Desktop" LogPixels 96 -Type DWord
-            Set-ItemProperty "$hive\Control Panel\Desktop" Win8DpiScaling 1 -Type DWord
-            Set-ItemProperty $push ToastEnabled 0 -Type DWord
-            Set-ItemProperty $cues On '1'
-        } finally {
-            if (-not $loaded) { [gc]::Collect(); reg unload 'HKU\LudiusPersona' | Out-Null }
-        }
-        # Autologon for the persona stays on (the unattend count runs out).
-        $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
-        Set-ItemProperty $wl AutoAdminLogon '1'; Set-ItemProperty $wl DefaultUserName $persona; Set-ItemProperty $wl DefaultPassword $personaPassword
-        Remove-ItemProperty $wl AutoLogonCount -ErrorAction SilentlyContinue
-        # No first-run tips or consumer content popping up over tasks.
-        New-Item -Force 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' | Out-Null
-        Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' DisableWindowsConsumerFeatures 1 -Type DWord
-        Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' DisableSoftLanding 1 -Type DWord
-        # Edge: no first-run wizard, sign-in or default-browser prompts over tasks.
-        $edge = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
-        New-Item -Force $edge | Out-Null
-        foreach ($p in @{ HideFirstRunExperience = 1; BrowserSignin = 0; DefaultBrowserSettingEnabled = 0; ShowRecommendationsEnabled = 0; StartupBoostEnabled = 0 }.GetEnumerator()) {
-            Set-ItemProperty $edge $p.Key $p.Value -Type DWord
-        }
-
+    } -ArgumentList $installDir
+    Invoke-Command $s $roles -ArgumentList $cfg.LUDIUS_PERSONA_USER, $cfg.LUDIUS_PERSONA_PASSWORD
+    Invoke-Command $s {
+        param($dir, $persona)
+        $ErrorActionPreference = 'Stop'
         # Observer: in the persona's interactive session at logon, never a service;
         # restarted daily (it swaps between requests) and after a crash or watchdog fault (UIA client leaks).
         # uiAccess binaries only start through ShellExecute (AppInfo), not the
@@ -122,7 +164,7 @@ try {
         $p = Get-Process uiprobe -ErrorAction SilentlyContinue
         if (-not $p) { throw "observer did not start (task result $((Get-ScheduledTaskInfo RangeAssist).LastTaskResult))" }
         "observer running, pid $($p.Id), session $($p.SessionId)"
-    } -ArgumentList $installDir, $cfg.LUDIUS_PERSONA_USER, $cfg.LUDIUS_PERSONA_PASSWORD
+    } -ArgumentList $installDir, $cfg.LUDIUS_PERSONA_USER
 }
 finally { Remove-PSSession $s }
 
