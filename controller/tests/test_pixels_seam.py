@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import random
+from pathlib import Path
 from typing import Any
 
 import pydantic
@@ -17,6 +19,7 @@ from ludius.v1 import observation_pb2 as obs
 DESKTOP = ["Recycle Bin", "ype here to search"]
 NOTEPAD_EMPTY = ["Untitled-Notepad", "FileEdit Format View Help", "Ln 1, Col 1", "ype here to search"]
 SAVE_AS = ["*Untitled -Notepad", "File Edit Format View Help", "Save As", "File name:", "Save as type:", "Save"]
+BOUNDS = Path(__file__).parents[2] / "fixtures" / "pixels-rows-bounds.json"
 UNSAVED_PROMPT = ["*Untitled -Notepad", "Do you want to save changes to Untitled?", "Save", "Don't Save", "Cancel"]
 
 
@@ -26,7 +29,17 @@ def screen(names: list[str]) -> obs.Snapshot:
     rows = [obs.Element(id=n + 1, key=f"v{n}", role="text", name=name, framework_id="visual", window=0,
                         bounds=obs.Rect(x=10, y=20 * n, width=60, height=14))
             for n, name in enumerate(names)]  # fmt: skip
-    return obs.Snapshot(windows=[w], elements=rows)
+    return obs.Snapshot(screen_width=1920, screen_height=1080, dpi=96, windows=[w], elements=rows)
+
+
+def real(name: str) -> obs.Snapshot:
+    """A fixture screen as the production reader (OCR + detector) emits it, with bounds."""
+    sc = json.loads(BOUNDS.read_text(encoding="utf-8"))["screens"][name]
+    w = obs.Window(title="screen", framework_id="visual", kind=obs.Window.FOREGROUND, no_tree=True)
+    rows = [obs.Element(id=n + 1, key=f"v{n}", role=r["role"], name=r["name"], framework_id="visual", window=0,
+                        bounds=obs.Rect(x=r["x"], y=r["y"], width=r["w"], height=r["h"]))
+            for n, r in enumerate(sc["rows"])]  # fmt: skip
+    return obs.Snapshot(screen_width=sc["screen"][0], screen_height=sc["screen"][1], dpi=96, windows=[w], elements=rows)
 
 
 def task(name: str = "notepad_write_note", **params: str) -> Task:
@@ -116,3 +129,39 @@ def test_unsaved_prompt_stays_in_scope_when_the_detector_merges_its_title_into_t
     # Production reader (OCR + detector) on notepad-unsaved-prompt: one control box holds the dialog title and question.
     merged = ["*Untitled -Notepad", "Notepad Do you want to save changes to Untitled?", "Save", "Don't Save", "Cancel"]
     assert any("Don't Save" in c for c in clicks(screen(merged), task(), "close_app"))
+
+
+def test_region_keeps_the_notepad_rows_and_drops_desktop_and_taskbar() -> None:
+    t = task()
+    shell = ["RecycleBin", "Recycle Bin", "Edge", "Microsoft", "Type here to search", "ENG", "12:51 26/10/2026"]
+    need = {
+        "notepad-empty": ["FileEdit Format View Help", "Ln 1, Col 1"],
+        "notepad-unsaved-prompt": ["Save", "Don't Save", "Cancel"],
+        "notepad-save-as": ["File name:", "Save as type:", "Save", "Cancel", "26/10/2026 12:42", "q3 close call notes"],
+    }
+    for name, rows in need.items():
+        got = clicks(real(name), t, "close_app")
+        assert all(any(r in c for c in got) for r in rows), (name, got)
+        assert not any(any(x in c for x in shell) for c in got), (name, got)
+    assert len(view(real("notepad-empty"), t, t.subgoal("close_app"), Policy()).allowed) == 17
+    assert len(view(real("notepad-save-as"), t, t.subgoal("close_app"), Policy()).allowed) == 63
+    for name in ("desktop", "start-menu"):
+        assert clicks(real(name), t, "close_app") == []
+    # Without the search row the taskbar is assumed to be its 96 dpi height (48 px) at the bottom of the screen.
+    empty = real("notepad-empty")
+    bar = [e for e in empty.elements if "search" in e.name]
+    for e in bar:
+        empty.elements.remove(e)
+    assert not any("12:51" in c for c in clicks(empty, t, "close_app"))
+
+
+def test_completion_on_real_rows_reads_the_whole_screen() -> None:
+    t = task(file_name="meeting notes", body="x")
+
+    def done(sg: str, name: str) -> bool | None:
+        return check_done(t.subgoal(sg).done, real(name), t, typed_ok=True)
+
+    assert done("save_shortcut", "notepad-save-as") is True
+    assert done("save_shortcut", "notepad-empty") is False
+    assert done("close_app", "desktop") is True
+    assert done("close_app", "notepad-empty") is False

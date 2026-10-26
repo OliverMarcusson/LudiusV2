@@ -1,0 +1,2069 @@
+{
+ "note": "Production reader (PP-OCR + OmniParser icon_detect_v3, ICON_CONF/MAX_ICONS as committed) on the recorded fixture screenshots; rows exactly as visual.elements emits them (pixels mode, whole screen = window 0).",
+ "screens": {
+  "desktop": {
+   "screen": [
+    1920,
+    1080
+   ],
+   "rows": [
+    {
+     "name": "RecycleBin",
+     "role": "button",
+     "x": 9,
+     "y": 59,
+     "w": 62,
+     "h": 15
+    },
+    {
+     "name": "Edge",
+     "role": "button",
+     "x": 14,
+     "y": 108,
+     "w": 51,
+     "h": 83
+    },
+    {
+     "name": "Microsoft",
+     "role": "button",
+     "x": 14,
+     "y": 160,
+     "w": 51,
+     "h": 14
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": -133,
+     "y": 1040,
+     "w": 145,
+     "h": 40
+    },
+    {
+     "name": "8",
+     "role": "button",
+     "x": 3,
+     "y": 1040,
+     "w": 47,
+     "h": 40
+    },
+    {
+     "name": "Q Type here to search",
+     "role": "button",
+     "x": 50,
+     "y": 1040,
+     "w": 343,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 50,
+     "y": 1040,
+     "w": 37,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 316,
+     "y": 1040,
+     "w": 74,
+     "h": 39
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 395,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 444,
+     "y": 1040,
+     "w": 48,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 493,
+     "y": 1040,
+     "w": 50,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 543,
+     "y": 1040,
+     "w": 47,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 590,
+     "y": 1040,
+     "w": 50,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 642,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "OMXSPI index +0,67%",
+     "role": "button",
+     "x": 1463,
+     "y": 1040,
+     "w": 191,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1664,
+     "y": 1041,
+     "w": 27,
+     "h": 37
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1692,
+     "y": 1040,
+     "w": 23,
+     "h": 39
+    },
+    {
+     "name": ">ENG",
+     "role": "button",
+     "x": 1717,
+     "y": 1040,
+     "w": 21,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1741,
+     "y": 1040,
+     "w": 22,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1764,
+     "y": 1040,
+     "w": 35,
+     "h": 40
+    },
+    {
+     "name": "12:51 26/10/2026",
+     "role": "button",
+     "x": 1801,
+     "y": 1040,
+     "w": 67,
+     "h": 39
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1869,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1693,
+     "y": 1049,
+     "w": 21,
+     "h": 23
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1717,
+     "y": 1051,
+     "w": 19,
+     "h": 20
+    }
+   ]
+  },
+  "notepad-empty": {
+   "screen": [
+    1920,
+    1080
+   ],
+   "rows": [
+    {
+     "name": "RecycleBin",
+     "role": "button",
+     "x": 10,
+     "y": 59,
+     "w": 61,
+     "h": 15
+    },
+    {
+     "name": "Edge",
+     "role": "button",
+     "x": 7,
+     "y": 107,
+     "w": 69,
+     "h": 88
+    },
+    {
+     "name": "Microsoft",
+     "role": "button",
+     "x": 14,
+     "y": 160,
+     "w": 51,
+     "h": 14
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1511,
+     "y": 209,
+     "w": 34,
+     "h": 31
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1555,
+     "y": 209,
+     "w": 34,
+     "h": 30
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1566,
+     "y": 215,
+     "w": 14,
+     "h": 16
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1603,
+     "y": 209,
+     "w": 33,
+     "h": 30
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1612,
+     "y": 214,
+     "w": 14,
+     "h": 18
+    },
+    {
+     "name": "Untitled-Notepad",
+     "role": "button",
+     "x": 245,
+     "y": 216,
+     "w": 101,
+     "h": 15
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 253,
+     "y": 239,
+     "w": 31,
+     "h": 19
+    },
+    {
+     "name": "FileEdit Format View Help",
+     "role": "button",
+     "x": 288,
+     "y": 239,
+     "w": 46,
+     "h": 18
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 376,
+     "y": 239,
+     "w": 37,
+     "h": 19
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 223,
+     "y": 240,
+     "w": 25,
+     "h": 18
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 256,
+     "y": 240,
+     "w": 22,
+     "h": 17
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 339,
+     "y": 240,
+     "w": 34,
+     "h": 18
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 381,
+     "y": 241,
+     "w": 28,
+     "h": 17
+    },
+    {
+     "name": "Ln 1, Col 1",
+     "role": "button",
+     "x": 1211,
+     "y": 936,
+     "w": 140,
+     "h": 23
+    },
+    {
+     "name": "100%",
+     "role": "button",
+     "x": 1352,
+     "y": 937,
+     "w": 49,
+     "h": 23
+    },
+    {
+     "name": "Windows (CRLF)",
+     "role": "button",
+     "x": 1401,
+     "y": 937,
+     "w": 103,
+     "h": 22
+    },
+    {
+     "name": "8-1n",
+     "role": "button",
+     "x": 1521,
+     "y": 937,
+     "w": 121,
+     "h": 23
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": -130,
+     "y": 1040,
+     "w": 143,
+     "h": 40
+    },
+    {
+     "name": "8",
+     "role": "button",
+     "x": 3,
+     "y": 1040,
+     "w": 47,
+     "h": 40
+    },
+    {
+     "name": "Q Type here to search",
+     "role": "button",
+     "x": 50,
+     "y": 1040,
+     "w": 343,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 316,
+     "y": 1040,
+     "w": 74,
+     "h": 39
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 395,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 444,
+     "y": 1040,
+     "w": 49,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 493,
+     "y": 1040,
+     "w": 50,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 543,
+     "y": 1040,
+     "w": 47,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 590,
+     "y": 1040,
+     "w": 50,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 640,
+     "y": 1040,
+     "w": 49,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 690,
+     "y": 1040,
+     "w": 48,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1663,
+     "y": 1042,
+     "w": 28,
+     "h": 36
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1691,
+     "y": 1041,
+     "w": 23,
+     "h": 37
+    },
+    {
+     "name": ">ENG",
+     "role": "button",
+     "x": 1717,
+     "y": 1041,
+     "w": 21,
+     "h": 39
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1740,
+     "y": 1040,
+     "w": 23,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1764,
+     "y": 1040,
+     "w": 35,
+     "h": 40
+    },
+    {
+     "name": "12:51 26/10/2026",
+     "role": "button",
+     "x": 1801,
+     "y": 1040,
+     "w": 67,
+     "h": 39
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1869,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1692,
+     "y": 1048,
+     "w": 21,
+     "h": 25
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1717,
+     "y": 1051,
+     "w": 19,
+     "h": 20
+    }
+   ]
+  },
+  "notepad-unsaved-prompt": {
+   "screen": [
+    1920,
+    1080
+   ],
+   "rows": [
+    {
+     "name": "RecycleBin",
+     "role": "button",
+     "x": 10,
+     "y": 59,
+     "w": 61,
+     "h": 15
+    },
+    {
+     "name": "Edge",
+     "role": "button",
+     "x": 9,
+     "y": 108,
+     "w": 63,
+     "h": 88
+    },
+    {
+     "name": "Microsoft",
+     "role": "button",
+     "x": 14,
+     "y": 160,
+     "w": 51,
+     "h": 14
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1513,
+     "y": 209,
+     "w": 33,
+     "h": 30
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1555,
+     "y": 209,
+     "w": 35,
+     "h": 29
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1561,
+     "y": 210,
+     "w": 24,
+     "h": 27
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1612,
+     "y": 215,
+     "w": 14,
+     "h": 18
+    },
+    {
+     "name": "*Untitled -Notepad",
+     "role": "button",
+     "x": 247,
+     "y": 216,
+     "w": 105,
+     "h": 15
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1567,
+     "y": 216,
+     "w": 12,
+     "h": 13
+    },
+    {
+     "name": "Short note for the fixture.",
+     "role": "text",
+     "x": 221,
+     "y": 260,
+     "w": 218,
+     "h": 17
+    },
+    {
+     "name": "Notepad Do you want to save changes to Untitled?",
+     "role": "button",
+     "x": 780,
+     "y": 415,
+     "w": 350,
+     "h": 142
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1098,
+     "y": 417,
+     "w": 32,
+     "h": 32
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1106,
+     "y": 424,
+     "w": 16,
+     "h": 16
+    },
+    {
+     "name": "Save",
+     "role": "button",
+     "x": 872,
+     "y": 520,
+     "w": 70,
+     "h": 20
+    },
+    {
+     "name": "Don't Save",
+     "role": "button",
+     "x": 950,
+     "y": 520,
+     "w": 90,
+     "h": 21
+    },
+    {
+     "name": "Cancel",
+     "role": "button",
+     "x": 1048,
+     "y": 520,
+     "w": 70,
+     "h": 21
+    },
+    {
+     "name": "Ln 1, Col 28",
+     "role": "button",
+     "x": 1212,
+     "y": 936,
+     "w": 140,
+     "h": 23
+    },
+    {
+     "name": "100%",
+     "role": "button",
+     "x": 1352,
+     "y": 936,
+     "w": 49,
+     "h": 23
+    },
+    {
+     "name": "Windows (CRLF)",
+     "role": "button",
+     "x": 1400,
+     "y": 937,
+     "w": 117,
+     "h": 23
+    },
+    {
+     "name": "8-1n",
+     "role": "button",
+     "x": 1521,
+     "y": 937,
+     "w": 121,
+     "h": 24
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": -130,
+     "y": 1040,
+     "w": 143,
+     "h": 40
+    },
+    {
+     "name": "8",
+     "role": "button",
+     "x": 3,
+     "y": 1040,
+     "w": 47,
+     "h": 40
+    },
+    {
+     "name": "Q Type here to search r",
+     "role": "button",
+     "x": 50,
+     "y": 1040,
+     "w": 343,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 316,
+     "y": 1040,
+     "w": 74,
+     "h": 39
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 395,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 444,
+     "y": 1040,
+     "w": 48,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 493,
+     "y": 1040,
+     "w": 50,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 543,
+     "y": 1040,
+     "w": 47,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 590,
+     "y": 1040,
+     "w": 50,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 640,
+     "y": 1040,
+     "w": 49,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 690,
+     "y": 1040,
+     "w": 48,
+     "h": 40
+    },
+    {
+     "name": "Vad gor Wolfgangsee..",
+     "role": "button",
+     "x": 1470,
+     "y": 1040,
+     "w": 188,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1664,
+     "y": 1041,
+     "w": 27,
+     "h": 38
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1691,
+     "y": 1040,
+     "w": 23,
+     "h": 39
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1692,
+     "y": 1047,
+     "w": 21,
+     "h": 26
+    },
+    {
+     "name": ">ENG",
+     "role": "button",
+     "x": 1716,
+     "y": 1040,
+     "w": 22,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1740,
+     "y": 1040,
+     "w": 23,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1763,
+     "y": 1040,
+     "w": 35,
+     "h": 40
+    },
+    {
+     "name": "12:51 26/10/2026",
+     "role": "button",
+     "x": 1801,
+     "y": 1040,
+     "w": 67,
+     "h": 39
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1869,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1717,
+     "y": 1051,
+     "w": 19,
+     "h": 19
+    }
+   ]
+  },
+  "notepad-save-as": {
+   "screen": [
+    1920,
+    1080
+   ],
+   "rows": [
+    {
+     "name": "Recycle Bin",
+     "role": "button",
+     "x": 10,
+     "y": 59,
+     "w": 61,
+     "h": 16
+    },
+    {
+     "name": "Edge",
+     "role": "button",
+     "x": 4,
+     "y": 107,
+     "w": 74,
+     "h": 85
+    },
+    {
+     "name": "Microsoft",
+     "role": "button",
+     "x": 14,
+     "y": 160,
+     "w": 52,
+     "h": 14
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1514,
+     "y": 209,
+     "w": 31,
+     "h": 29
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1555,
+     "y": 209,
+     "w": 34,
+     "h": 29
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1561,
+     "y": 210,
+     "w": 24,
+     "h": 27
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1612,
+     "y": 215,
+     "w": 14,
+     "h": 18
+    },
+    {
+     "name": "*Untitled -Notepad",
+     "role": "button",
+     "x": 238,
+     "y": 216,
+     "w": 114,
+     "h": 16
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1567,
+     "y": 216,
+     "w": 12,
+     "h": 13
+    },
+    {
+     "name": "File Edit Format View Help",
+     "role": "button",
+     "x": 288,
+     "y": 239,
+     "w": 46,
+     "h": 20
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 340,
+     "y": 239,
+     "w": 34,
+     "h": 20
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 376,
+     "y": 238,
+     "w": 39,
+     "h": 23
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 225,
+     "y": 241,
+     "w": 19,
+     "h": 16
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 257,
+     "y": 241,
+     "w": 21,
+     "h": 17
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 342,
+     "y": 241,
+     "w": 27,
+     "h": 15
+    },
+    {
+     "name": "Save As",
+     "role": "button",
+     "x": 229,
+     "y": 261,
+     "w": 914,
+     "h": 31
+    },
+    {
+     "name": "×",
+     "role": "button",
+     "x": 1146,
+     "y": 267,
+     "w": 17,
+     "h": 15
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 228,
+     "y": 294,
+     "w": 32,
+     "h": 25
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 260,
+     "y": 295,
+     "w": 32,
+     "h": 24
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 262,
+     "y": 297,
+     "w": 24,
+     "h": 20
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 289,
+     "y": 298,
+     "w": 18,
+     "h": 19
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 312,
+     "y": 299,
+     "w": 14,
+     "h": 17
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 333,
+     "y": 297,
+     "w": 16,
+     "h": 19
+    },
+    {
+     "name": ">This PC>Documents",
+     "role": "button",
+     "x": 355,
+     "y": 296,
+     "w": 569,
+     "h": 21
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 923,
+     "y": 296,
+     "w": 21,
+     "h": 22
+    },
+    {
+     "name": "Search Documents",
+     "role": "button",
+     "x": 956,
+     "y": 296,
+     "w": 203,
+     "h": 22
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1135,
+     "y": 296,
+     "w": 23,
+     "h": 21
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1070,
+     "y": 325,
+     "w": 46,
+     "h": 27
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1137,
+     "y": 327,
+     "w": 19,
+     "h": 26
+    },
+    {
+     "name": "Organise",
+     "role": "button",
+     "x": 244,
+     "y": 332,
+     "w": 62,
+     "h": 15
+    },
+    {
+     "name": "New folder",
+     "role": "button",
+     "x": 334,
+     "y": 332,
+     "w": 60,
+     "h": 15
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1073,
+     "y": 329,
+     "w": 41,
+     "h": 20
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1138,
+     "y": 331,
+     "w": 17,
+     "h": 17
+    },
+    {
+     "name": "Name",
+     "role": "button",
+     "x": 396,
+     "y": 355,
+     "w": 261,
+     "h": 27
+    },
+    {
+     "name": "Date modified",
+     "role": "button",
+     "x": 657,
+     "y": 356,
+     "w": 144,
+     "h": 26
+    },
+    {
+     "name": "Type",
+     "role": "button",
+     "x": 801,
+     "y": 356,
+     "w": 121,
+     "h": 26
+    },
+    {
+     "name": "Size",
+     "role": "button",
+     "x": 922,
+     "y": 356,
+     "w": 79,
+     "h": 26
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1002,
+     "y": 356,
+     "w": 162,
+     "h": 25
+    },
+    {
+     "name": "Quick access",
+     "role": "button",
+     "x": 241,
+     "y": 373,
+     "w": 144,
+     "h": 24
+    },
+    {
+     "name": "q3 close call notes",
+     "role": "button",
+     "x": 401,
+     "y": 383,
+     "w": 253,
+     "h": 32
+    },
+    {
+     "name": "26/10/2026 12:42",
+     "role": "button",
+     "x": 656,
+     "y": 385,
+     "w": 142,
+     "h": 26
+    },
+    {
+     "name": "Text Document",
+     "role": "button",
+     "x": 800,
+     "y": 384,
+     "w": 119,
+     "h": 26
+    },
+    {
+     "name": "1KB",
+     "role": "button",
+     "x": 965,
+     "y": 384,
+     "w": 36,
+     "h": 27
+    },
+    {
+     "name": "Desktop",
+     "role": "button",
+     "x": 237,
+     "y": 396,
+     "w": 148,
+     "h": 24
+    },
+    {
+     "name": "Downloads",
+     "role": "button",
+     "x": 238,
+     "y": 420,
+     "w": 146,
+     "h": 24
+    },
+    {
+     "name": "Documents",
+     "role": "button",
+     "x": 238,
+     "y": 444,
+     "w": 146,
+     "h": 24
+    },
+    {
+     "name": "Pictures",
+     "role": "button",
+     "x": 237,
+     "y": 468,
+     "w": 147,
+     "h": 24
+    },
+    {
+     "name": "Music",
+     "role": "button",
+     "x": 231,
+     "y": 492,
+     "w": 154,
+     "h": 24
+    },
+    {
+     "name": "Videos",
+     "role": "button",
+     "x": 228,
+     "y": 516,
+     "w": 156,
+     "h": 27
+    },
+    {
+     "name": "OneDrive",
+     "role": "button",
+     "x": 227,
+     "y": 544,
+     "w": 156,
+     "h": 32
+    },
+    {
+     "name": "This PC",
+     "role": "button",
+     "x": 227,
+     "y": 580,
+     "w": 156,
+     "h": 24
+    },
+    {
+     "name": "Network",
+     "role": "button",
+     "x": 228,
+     "y": 607,
+     "w": 155,
+     "h": 35
+    },
+    {
+     "name": "*.txt",
+     "role": "button",
+     "x": 352,
+     "y": 684,
+     "w": 797,
+     "h": 20
+    },
+    {
+     "name": "File name:",
+     "role": "text",
+     "x": 288,
+     "y": 688,
+     "w": 61,
+     "h": 21
+    },
+    {
+     "name": "Save as type:",
+     "role": "text",
+     "x": 275,
+     "y": 711,
+     "w": 77,
+     "h": 24
+    },
+    {
+     "name": "Text Documents (*.txt)",
+     "role": "text",
+     "x": 349,
+     "y": 714,
+     "w": 126,
+     "h": 17
+    },
+    {
+     "name": "Encoding:",
+     "role": "button",
+     "x": 745,
+     "y": 758,
+     "w": 52,
+     "h": 16
+    },
+    {
+     "name": "-1",
+     "role": "button",
+     "x": 803,
+     "y": 754,
+     "w": 150,
+     "h": 23
+    },
+    {
+     "name": "Save",
+     "role": "button",
+     "x": 966,
+     "y": 754,
+     "w": 86,
+     "h": 24
+    },
+    {
+     "name": "Cancel",
+     "role": "button",
+     "x": 1066,
+     "y": 754,
+     "w": 86,
+     "h": 24
+    },
+    {
+     "name": "^ Hide Folders",
+     "role": "button",
+     "x": 244,
+     "y": 761,
+     "w": 79,
+     "h": 16
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 345,
+     "y": 935,
+     "w": 867,
+     "h": 25
+    },
+    {
+     "name": "Ln 1, Col 28",
+     "role": "button",
+     "x": 1212,
+     "y": 936,
+     "w": 140,
+     "h": 23
+    },
+    {
+     "name": "100%",
+     "role": "button",
+     "x": 1352,
+     "y": 937,
+     "w": 49,
+     "h": 23
+    },
+    {
+     "name": "Windows (CRLF)",
+     "role": "button",
+     "x": 1400,
+     "y": 937,
+     "w": 117,
+     "h": 23
+    },
+    {
+     "name": "8-1n",
+     "role": "button",
+     "x": 1521,
+     "y": 937,
+     "w": 121,
+     "h": 24
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": -131,
+     "y": 1040,
+     "w": 144,
+     "h": 40
+    },
+    {
+     "name": "8",
+     "role": "button",
+     "x": 3,
+     "y": 1040,
+     "w": 47,
+     "h": 40
+    },
+    {
+     "name": "Type here to search",
+     "role": "button",
+     "x": 50,
+     "y": 1040,
+     "w": 343,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 316,
+     "y": 1040,
+     "w": 74,
+     "h": 39
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 395,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 444,
+     "y": 1040,
+     "w": 49,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 493,
+     "y": 1040,
+     "w": 50,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 543,
+     "y": 1040,
+     "w": 47,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 590,
+     "y": 1040,
+     "w": 50,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 640,
+     "y": 1040,
+     "w": 49,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 690,
+     "y": 1040,
+     "w": 48,
+     "h": 40
+    },
+    {
+     "name": "Vad gor Wolfgangsee..",
+     "role": "button",
+     "x": 1470,
+     "y": 1040,
+     "w": 188,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1664,
+     "y": 1041,
+     "w": 27,
+     "h": 38
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1691,
+     "y": 1040,
+     "w": 23,
+     "h": 39
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1692,
+     "y": 1047,
+     "w": 21,
+     "h": 26
+    },
+    {
+     "name": "ENG",
+     "role": "button",
+     "x": 1716,
+     "y": 1040,
+     "w": 22,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1740,
+     "y": 1040,
+     "w": 23,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1763,
+     "y": 1040,
+     "w": 35,
+     "h": 40
+    },
+    {
+     "name": "12:51 26/10/2026",
+     "role": "button",
+     "x": 1801,
+     "y": 1040,
+     "w": 67,
+     "h": 39
+    },
+    {
+     "name": "司",
+     "role": "button",
+     "x": 1869,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1717,
+     "y": 1051,
+     "w": 19,
+     "h": 19
+    }
+   ]
+  },
+  "start-menu": {
+   "screen": [
+    1920,
+    1080
+   ],
+   "rows": [
+    {
+     "name": "RecycleBin",
+     "role": "button",
+     "x": 9,
+     "y": 59,
+     "w": 62,
+     "h": 15
+    },
+    {
+     "name": "Edge",
+     "role": "button",
+     "x": 14,
+     "y": 108,
+     "w": 51,
+     "h": 82
+    },
+    {
+     "name": "Microsoft",
+     "role": "button",
+     "x": 14,
+     "y": 160,
+     "w": 51,
+     "h": 14
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 19,
+     "y": 419,
+     "w": 17,
+     "h": 17
+    },
+    {
+     "name": "Productivity",
+     "role": "text",
+     "x": 321,
+     "y": 417,
+     "w": 72,
+     "h": 24
+    },
+    {
+     "name": "3D Viewer",
+     "role": "button",
+     "x": 65,
+     "y": 444,
+     "w": 238,
+     "h": 35
+    },
+    {
+     "name": "Office",
+     "role": "button",
+     "x": 326,
+     "y": 449,
+     "w": 100,
+     "h": 101
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 429,
+     "y": 449,
+     "w": 101,
+     "h": 101
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 431,
+     "y": 449,
+     "w": 33,
+     "h": 32
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 464,
+     "y": 449,
+     "w": 31,
+     "h": 32
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 496,
+     "y": 449,
+     "w": 34,
+     "h": 32
+    },
+    {
+     "name": "We speak Gmail Mail",
+     "role": "button",
+     "x": 533,
+     "y": 449,
+     "w": 101,
+     "h": 101
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 67,
+     "y": 482,
+     "w": 235,
+     "h": 33
+    },
+    {
+     "name": "Alarms & Clock",
+     "role": "button",
+     "x": 65,
+     "y": 517,
+     "w": 238,
+     "h": 34
+    },
+    {
+     "name": "Microsoft Edge",
+     "role": "button",
+     "x": 326,
+     "y": 550,
+     "w": 101,
+     "h": 104
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 64,
+     "y": 554,
+     "w": 239,
+     "h": 33
+    },
+    {
+     "name": "Photos",
+     "role": "button",
+     "x": 429,
+     "y": 553,
+     "w": 101,
+     "h": 101
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 534,
+     "y": 553,
+     "w": 100,
+     "h": 100
+    },
+    {
+     "name": "Calculator",
+     "role": "button",
+     "x": 63,
+     "y": 588,
+     "w": 238,
+     "h": 34
+    },
+    {
+     "name": "Calendar",
+     "role": "button",
+     "x": 64,
+     "y": 623,
+     "w": 240,
+     "h": 35
+    },
+    {
+     "name": "Camera",
+     "role": "button",
+     "x": 63,
+     "y": 660,
+     "w": 242,
+     "h": 35
+    },
+    {
+     "name": "Explore",
+     "role": "text",
+     "x": 324,
+     "y": 665,
+     "w": 46,
+     "h": 18
+    },
+    {
+     "name": "Microsoft Store",
+     "role": "button",
+     "x": 326,
+     "y": 693,
+     "w": 101,
+     "h": 102
+    },
+    {
+     "name": "Calculator",
+     "role": "button",
+     "x": 430,
+     "y": 693,
+     "w": 101,
+     "h": 102
+    },
+    {
+     "name": "Microsoft To...",
+     "role": "button",
+     "x": 532,
+     "y": 693,
+     "w": 102,
+     "h": 102
+    },
+    {
+     "name": "Copilot",
+     "role": "button",
+     "x": 65,
+     "y": 696,
+     "w": 235,
+     "h": 35
+    },
+    {
+     "name": "Cortana",
+     "role": "button",
+     "x": 65,
+     "y": 733,
+     "w": 234,
+     "h": 34
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 66,
+     "y": 770,
+     "w": 235,
+     "h": 31
+    },
+    {
+     "name": "Movies & TV",
+     "role": "button",
+     "x": 326,
+     "y": 796,
+     "w": 101,
+     "h": 102
+    },
+    {
+     "name": "Microsoft Solitaire Collection",
+     "role": "button",
+     "x": 430,
+     "y": 797,
+     "w": 101,
+     "h": 101
+    },
+    {
+     "name": "Play",
+     "role": "button",
+     "x": 532,
+     "y": 796,
+     "w": 102,
+     "h": 101
+    },
+    {
+     "name": "Feedback Hub",
+     "role": "button",
+     "x": 65,
+     "y": 804,
+     "w": 234,
+     "h": 36
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 17,
+     "y": 814,
+     "w": 20,
+     "h": 20
+    },
+    {
+     "name": "G",
+     "role": "button",
+     "x": 66,
+     "y": 844,
+     "w": 234,
+     "h": 29
+    },
+    {
+     "name": "口",
+     "role": "button",
+     "x": 18,
+     "y": 862,
+     "w": 18,
+     "h": 19
+    },
+    {
+     "name": "Get Help System",
+     "role": "button",
+     "x": 68,
+     "y": 874,
+     "w": 232,
+     "h": 37
+    },
+    {
+     "name": "Groove Music",
+     "role": "button",
+     "x": 98,
+     "y": 917,
+     "w": 203,
+     "h": 26
+    },
+    {
+     "name": "M",
+     "role": "button",
+     "x": 15,
+     "y": 949,
+     "w": 285,
+     "h": 36
+    },
+    {
+     "name": "Mail",
+     "role": "button",
+     "x": 65,
+     "y": 987,
+     "w": 236,
+     "h": 25
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 66,
+     "y": 991,
+     "w": 55,
+     "h": 20
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 68,
+     "y": 1024,
+     "w": 21,
+     "h": 16
+    },
+    {
+     "name": "Manc",
+     "role": "button",
+     "x": 99,
+     "y": 1029,
+     "w": 29,
+     "h": 13
+    },
+    {
+     "name": "8",
+     "role": "button",
+     "x": 2,
+     "y": 1040,
+     "w": 49,
+     "h": 40
+    },
+    {
+     "name": "O ype here to search",
+     "role": "button",
+     "x": 52,
+     "y": 1041,
+     "w": 339,
+     "h": 37
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 315,
+     "y": 1041,
+     "w": 78,
+     "h": 38
+    },
+    {
+     "name": "诚",
+     "role": "button",
+     "x": 396,
+     "y": 1040,
+     "w": 45,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 444,
+     "y": 1040,
+     "w": 48,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 493,
+     "y": 1040,
+     "w": 50,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 543,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 591,
+     "y": 1040,
+     "w": 49,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 641,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "OMXSPI index +0,67%",
+     "role": "button",
+     "x": 1463,
+     "y": 1040,
+     "w": 191,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1664,
+     "y": 1041,
+     "w": 27,
+     "h": 37
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1692,
+     "y": 1040,
+     "w": 23,
+     "h": 39
+    },
+    {
+     "name": ">ENG",
+     "role": "button",
+     "x": 1717,
+     "y": 1040,
+     "w": 21,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1741,
+     "y": 1040,
+     "w": 22,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1764,
+     "y": 1040,
+     "w": 35,
+     "h": 40
+    },
+    {
+     "name": "12:51 26/10/2026",
+     "role": "button",
+     "x": 1801,
+     "y": 1040,
+     "w": 67,
+     "h": 39
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1869,
+     "y": 1040,
+     "w": 46,
+     "h": 40
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1693,
+     "y": 1049,
+     "w": 21,
+     "h": 23
+    },
+    {
+     "name": "",
+     "role": "button",
+     "x": 1717,
+     "y": 1051,
+     "w": 19,
+     "h": 20
+    }
+   ]
+  }
+ }
+}

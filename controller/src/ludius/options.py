@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ludius.policy import SHELL_PROCESSES, Policy, alt_f4_safe
-from ludius.tasks import Subgoal, Task, pixels_in_scope, pixels_window
+from ludius.tasks import Subgoal, Task, pixels_region, pixels_window
 from ludius.v1 import observation_pb2 as obs
 
 CLICKABLE = {
@@ -65,14 +65,17 @@ def view(snap: obs.Snapshot, task: Task, sg: Subgoal, policy: Policy) -> StepVie
     """Elements the task may touch: its apps' windows, the shell when launching, never refused elements.
 
     A window read from pixels has no process to match: it is in scope only while the template's pixels title and
-    structural anchors are visible in it (tasks.Pixels), and never as the shell.
+    structural anchors are visible in it (tasks.Pixels), never as the shell, and then only its rows inside the
+    title-to-taskbar region (tasks.pixels_region).
     """
     v = StepView(snapshot=snap)
+    region: set[int] = set()
     apps = {p.lower() for p in task.template.processes}
     for i, w in enumerate(snap.windows):
         if pixels_window(w):
-            if pixels_in_scope(snap, i, task):
+            if rows := pixels_region(snap, i, task):
                 v.windows[i] = w
+                region.update(e.id for e in rows)
             continue
         proc = w.process_name.lower()
         dialog_of_app = w.kind in (obs.Window.OWNED, obs.Window.POPUP)  # common dialogs and menus of the app
@@ -80,7 +83,8 @@ def view(snap: obs.Snapshot, task: Task, sg: Subgoal, policy: Policy) -> StepVie
         if proc in apps or (dialog_of_app and _owner_is_app(snap, apps)) or (sg.launch and shell):
             v.windows[i] = w
     for e in snap.elements:
-        if e.window in v.windows and policy.element_allowed(e, sg.allow_destructive) is None:
+        in_region = e.window in v.windows and (e.id in region or not pixels_window(v.windows[e.window]))
+        if in_region and policy.element_allowed(e, sg.allow_destructive) is None:
             v.allowed.append(e)
     return v
 

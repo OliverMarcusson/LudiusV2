@@ -226,13 +226,32 @@ def visible(pattern: str, rows: list[obs.Element], task: Task) -> bool:
     return any(re.search(rx, compact(e.name), re.I) for e in rows)
 
 
-def pixels_in_scope(snap: obs.Snapshot, window: int, task: Task) -> bool:
-    """The task's title and every structural anchor are visible in this pixels window."""
+TASKBAR = "ypeheretosearch"  # the taskbar search box; the clock row merges with the date, so it can't mark the bar
+
+
+def pixels_region(snap: obs.Snapshot, window: int, task: Task) -> list[obs.Element]:
+    """The rows of a pixels window the task may click: none unless the title and every structural anchor are
+    visible, then those whose centre is right of and below the title row and above the taskbar.
+
+    This is visible geometry, not process identity: it keeps the desktop icons and the taskbar out.
+    """
+    # ponytail: fixed margins from the 1920x1080 fixtures (a dialog more than 48 px left of the title loses its
+    # rows, keys still work); the fallback taskbar height scales with dpi, which pixels mode reports as 96.
     px = task.template.pixels
     if px is None:
-        return False
+        return []
     rows = [e for e in snap.elements if e.window == window]
-    return visible(px.title, rows, task) and all(visible(a, rows, task) for a in px.anchors)
+    if not (visible(px.title, rows, task) and all(visible(a, rows, task) for a in px.anchors)):
+        return []
+    rx = task.pixels_re(px.title)
+    title = min((e for e in rows if re.search(rx, compact(e.name), re.I)), key=lambda e: e.bounds.y)  # topmost
+    bar = [e.bounds.y for e in rows if re.search(TASKBAR, compact(e.name), re.I)]
+    bottom = min(bar) - 4 if bar else snap.screen_height - 48 * (snap.dpi or 96) // 96
+    return [
+        e for e in rows
+        if e.bounds.x + e.bounds.width / 2 >= title.bounds.x - 48
+        and title.bounds.y - 12 <= e.bounds.y + e.bounds.height / 2 < bottom
+    ]  # fmt: skip
 
 
 def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool) -> bool | None:
