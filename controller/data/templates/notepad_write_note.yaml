@@ -66,13 +66,25 @@ subgoals:
 # screens in. Matching ignores case and whitespace. confirm_save is from a real saved title on the guest
 # (runs/visual/20261026-223919-saved-title.txt): OCR reads Notepad's title icon as a leading glyph
 # ("I pixels-title-... - Notepad"), so up to two characters may precede the file name.
+# write_body: the body's first line ({body_head}: its first 24 characters) as its own row, as typed text reads on
+# the guest (runs/visual/20261026-230211-pixels-walk.txt: 'pixels walk'@221,261). The unsaved star only supplements
+# it, since any edit sets it. This proves a visible prefix of the body, not that the whole body landed intact.
+# File name rows: the field's value reads as its own row beside 'File name:' (same walk: the typed path
+# 'C:\Users\aberg\Documents\pixels-walk-...'@352,683; '*.txt' before typing). A same-named file listed in the
+# folder would also match; the saved-title check of confirm_save still fails closed then.
 pixels:
   title: '-Notepad$'
   anchors: ['^FileEditFormatView|Doyouwanttosavechanges']
   done:
     open_from_start: {present: ['-Notepad$']}
     open_from_run: {present: ['-Notepad$']}
+    write_body: {present: ['^{body_head}', '^.{0,2}\*.*-Notepad$']}
     save_shortcut: {present: ['^SaveAs$', '^Filename:', '^Saveastype:']}
     save_menu: {present: ['^SaveAs$', '^Filename:', '^Saveastype:']}
+    name_file: {present: ['^Filename:', '(^|\\){file_name}(\.txt)?$']}
+    name_file_typo: {present: ['^Filename:', '(^|\\){file_name_typo}$']}
+    fix_file_name: {present: ['^Filename:', '(^|\\){file_name}(\.txt)?$'], absent: ['(^|\\){file_name_typo}$']}
     confirm_save: {present: ['^.{0,2}{file_name}(\.txt)?-Notepad$']}
     close_app: {absent: ['-Notepad$'], present: ['ypeheretosearch|RecycleBin']}
+  hints:
+    write_body: "If nothing else was clicked since Notepad opened, try typing at the keyboard focus."

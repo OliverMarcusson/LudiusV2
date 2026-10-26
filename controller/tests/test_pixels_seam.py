@@ -209,3 +209,42 @@ def test_head_of_a_multi_line_value_is_its_first_visible_line() -> None:
     assert done("   \n ") is False  # no visible line: no head, the check can't match
     assert done("Short note for the fixture.", real("notepad-empty")) is False
     assert done("Short note for the fixture.", screen([])) is False  # empty OCR read
+
+
+def test_notepad_template_pixels_checks_for_body_and_file_name_on_real_rows() -> None:
+    def rows(name: str, value: str | None = None, drop: str = "") -> obs.Snapshot:
+        s = real(name)
+        for e in [e for e in s.elements if e.name == drop]:
+            s.elements.remove(e)
+        for e in s.elements:
+            if value is not None and e.name == "*.txt":
+                e.name = value  # the field's value row, as read live (runs/visual/20261026-230211-pixels-walk.txt)
+        return s
+
+    def done(t: Task, sg: str, snap: obs.Snapshot) -> bool | None:
+        return check_done(t.subgoal(sg).done, snap, t, typed_ok=True)
+
+    empty_ocr = real("notepad-empty")
+    del empty_ocr.elements[:]
+    body = task(file_name="x", body="Short note for the fixture.\nline 2")
+    assert done(body, "write_body", real("notepad-unsaved-prompt")) is True
+    assert done(task(file_name="x", body="Another note\nline 2"), "write_body", real("notepad-unsaved-prompt")) is False
+    assert done(task(file_name="x", body="  \n "), "write_body", real("notepad-unsaved-prompt")) is False
+    star_only = rows("notepad-unsaved-prompt", drop="Short note for the fixture.")
+    assert done(body, "write_body", star_only) is False
+    assert done(body, "write_body", real("notepad-empty")) is False
+    assert done(body, "write_body", empty_ocr) is False
+
+    name = "pixels-walk-20261026-230211"
+    t = task(file_name=name, body="x")
+    typo = t.values["file_name_typo"]
+    assert done(t, "name_file", rows("notepad-save-as", rf"C:\Users\aberg\Documents\{name}")) is True
+    assert done(t, "name_file", rows("notepad-save-as", name)) is True
+    assert done(t, "name_file", real("notepad-save-as")) is False  # '*.txt' before typing
+    assert done(task(file_name=name + "-other", body="x"), "name_file", rows("notepad-save-as", name)) is False
+    assert done(t, "name_file", empty_ocr) is False
+    assert done(t, "name_file_typo", rows("notepad-save-as", typo)) is True
+    assert done(t, "fix_file_name", rows("notepad-save-as", typo)) is False
+    assert done(t, "fix_file_name", rows("notepad-save-as", name)) is True
+    assert done(t, "name_file_typo", rows("notepad-save-as", name)) is False
+    assert done(t, "fix_file_name", empty_ocr) is False
