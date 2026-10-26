@@ -297,6 +297,20 @@ def cmd_canary(args: argparse.Namespace) -> int:
     return 1 if "drift" in states.values() else 0
 
 
+def cmd_store(args: argparse.Namespace) -> int:
+    """Mirror the run directory (ground-truth traces, world and plan files) into PostgreSQL."""
+    from ludius import store  # needs the state dependency group
+
+    dsn = args.dsn or os.environ.get("LUDIUS_PG", "")
+    if not dsn:
+        print("no database: pass --dsn or set LUDIUS_PG", file=sys.stderr)
+        return 2
+    with store.connect(dsn) as conn:
+        done = store.sync(conn, RUNS)
+    print(f"{done.lines} trace lines, {done.docs} world/plan files synced from {RUNS}")
+    return 0
+
+
 def cmd_timeline(args: argparse.Namespace) -> int:
     out = Path(args.out)
     print(f"{timeline.export([Path(p) for p in args.logs], out)} rows -> {out}")
@@ -496,6 +510,11 @@ def main(argv: list[str] | None = None) -> int:
     ca.add_argument("--model", default=DEFAULT_MODEL)
     ca.add_argument("--restore", metavar="CHECKPOINT", help="restore this checkpoint first")
     ca.set_defaults(fn=cmd_canary)
+
+    st = sub.add_parser("store", help="mirror runs/ (traces, world, plans) into PostgreSQL")
+    st.add_argument("action", choices=["sync"])
+    st.add_argument("--dsn", help="PostgreSQL connection string (default LUDIUS_PG)")
+    st.set_defaults(fn=cmd_store)
 
     tl = sub.add_parser("timeline", help="export ground-truth logs as an instructor timeline CSV")
     tl.add_argument("logs", nargs="+")
