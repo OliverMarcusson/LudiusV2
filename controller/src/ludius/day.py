@@ -41,7 +41,10 @@ def run_task(
 
 
 def slots(plan: DayPlan) -> list[tuple[PlanItem, list[PlanItem]]]:
-    """Each regular item with the interrupts due in its slot, then interrupts before the first regular item."""
+    """The day's slots in logical-time order: each regular item with the interrupts due while it runs.
+
+    An interrupt before the first regular item has no task to cut into: it is a slot of its own at its time.
+    """
     items = sorted(plan.items, key=lambda i: i.at)
     regular = [i for i in items if not i.interrupt]
     pending = [i for i in items if i.interrupt]
@@ -51,7 +54,7 @@ def slots(plan: DayPlan) -> list[tuple[PlanItem, list[PlanItem]]]:
         mine = [i for i in pending if item.at <= i.at < slot_end]
         pending = [i for i in pending if i not in mine]
         out.append((item, mine))
-    return out + [(late, []) for late in pending]
+    return sorted(out + [(orphan, []) for orphan in pending], key=lambda s: s[0].at)
 
 
 @dataclass
@@ -88,8 +91,7 @@ class DayRunner:
         day = dt.date.fromisoformat(plan.date)
         self.start(plan)
         for item, interrupts in slots(plan):
-            if not item.interrupt:
-                self._wait_for(day, item.at)
+            self._wait_for(day, item.at)
             self.slot(day, item, interrupts)
         self.finish(plan, self.results)
         return self.results
@@ -104,10 +106,10 @@ class DayRunner:
         self.log.write(event="day_end", host_ms=_now(), persona=plan.persona, date=plan.date,
                        done=sum(r.status == "done" for r in results), items=len(results))  # fmt: skip
 
-    def slot(self, day: dt.date, item: PlanItem, interrupts: list[PlanItem]) -> list[ItemResult]:
-        """One slot: the item (regular ones at their logical time), then interrupts it had no boundary left for."""
+    def slot(self, day: dt.date, item: PlanItem, interrupts: list[PlanItem], jump: bool = True) -> list[ItemResult]:
+        """One slot: the item at its logical time, then the interrupts it had no subgoal boundary left for."""
         first = len(self.results)
-        if not item.interrupt:
+        if jump:
             self._jump(day, item.at)
         self._item(item, day, interrupts)
         for late in interrupts:

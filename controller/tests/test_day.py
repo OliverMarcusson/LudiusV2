@@ -69,14 +69,39 @@ def test_time_jump_day_keeps_order_breaks_and_interrupts(tmp_path: Path) -> None
                     set_clock=lambda t: calls.append(f"clock {t:%H:%M}" if t else "clock reset"))  # fmt: skip
     results = day.run(PLAN)
     assert [(i.at, [x.at for x in m]) for i, m in slots(PLAN)] == [
-        ("09:00", ["09:10"]), ("10:00", []), ("12:00", ["12:05"]), ("08:55", [])]  # fmt: skip
+        ("08:55", []), ("09:00", ["09:10"]), ("10:00", []), ("12:00", ["12:05"])]  # fmt: skip
+    # The 08:55 interrupt has no task to cut into: it runs on its own, first, at its logical time.
     assert calls == [
-        "clock 09:00", "normalize", "run note 0900", "run note 0910", "clock 10:00", "normalize", "run note 1000",
+        "clock 08:55", "normalize", "run note 0855", "clock 09:00", "normalize", "run note 0900", "run note 0910",
+        "clock 10:00", "normalize", "run note 1000",
         "clock 12:00", "normalize", "lock", "sleep 5", "unlock", "normalize", "run note 1205",
-        "normalize", "run note 0855", "clock reset",
+        "clock reset",
     ]  # fmt: skip
     assert [(r.item.at, r.status) for r in results] == [
-        ("09:10", "done"), ("09:00", "done"), ("10:00", "done"), ("12:00", "failed"), ("12:05", "done"),
-        ("08:55", "done")]  # fmt: skip
+        ("08:55", "done"), ("09:10", "done"), ("09:00", "done"), ("10:00", "done"), ("12:00", "failed"),
+        ("12:05", "done")]  # fmt: skip
     assert day.slot(dt.date(2026, 11, 2), note("13:00"), [])[0].item.at == "13:00"
     log.close()
+
+
+def test_realtime_day_waits_for_each_slot_in_logical_order(tmp_path: Path) -> None:
+    calls: list[str] = []
+    t = [dt.datetime(2026, 11, 2, 8, 0)]
+
+    def sleep(s: float) -> None:
+        t[0] += dt.timedelta(seconds=s)
+
+    class Timed(FakeRunner):
+        def run(self, task: Task, between: Any = None) -> Outcome:
+            self.calls.append(f"{t[0]:%H:%M}")
+            return super().run(task, between)
+
+    log = GroundTruth(tmp_path / "day.jsonl")
+    day = DayRunner(Timed(log, calls), FakeSession(calls), load_templates(), log, "realtime", 0,  # type: ignore[arg-type]
+                    sleep=sleep, now=lambda: t[0])  # fmt: skip
+    plan = DayPlan(persona="aberg", date="2026-11-02", items=[note("09:00"), note("08:55", interrupt=True)])
+    day.run(plan)
+    log.close()
+    runs = [c for c in calls if c != "normalize"]
+    assert runs[0] in ("08:55", "08:56", "08:57") and runs[1] == "run note 0855"  # its time, plus human slack
+    assert runs[2] >= "09:00" and runs[3] == "run note 0900"
