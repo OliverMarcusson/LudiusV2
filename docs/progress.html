@@ -106,7 +106,7 @@
 <body>
 <main>
   <h1>Ludius V2: progress against the spec</h1>
-  <p class="meta"><span>Updated 26 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/78fbf0a"><code>78fbf0a</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
+  <p class="meta"><span>Updated 26 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/cff875c"><code>cff875c</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
 
   <div class="summary" id="summary"></div>
 
@@ -129,6 +129,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-26">26 Oct 2026</time><span>cff875c loads scenario-reserved path/mailbox policy into planning and run/validate/day; red-herring exemptions retained, suite 43 passed/5 skipped. Live policy verification and keyboard-only target gap remain. 083f080 adds virtualized-list range hints and offline scroll-option coverage; live scroll/clipping/retry checks pending. 6d6ae51 clone verified live into separate Office VM; guarded deletion refusals verified, actual deletion not run. Clone retains Windows identity; no concurrent domain use. Server evaluation ISO download started; DC/NTP provisioning pending capacity-safe setup.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Planning state 78fbf0a rebuilds documents, colleague messages, next-working-day follow-ups and persona calendar briefs from completed day-log items and narrative events. Due follow-ups must be scheduled by id and close only on logged completion; offline suite 40 passed, 5 skipped. This is derived planning data: no mail/calendar UI, shared storage or invite-response integration yet. Scenario-reserved path loading is next.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Observer watchdog implemented in 15e9a85: fail-fast on a request over 60 s or five consecutive request failures, event-triggered interactive relaunch after 30 s, and daily takeover between requests. Session 0 refused; observer adds no child processes or disk writes. Build, eleven fake-clock cases and scheduled-task construction pass. Guest crash-event delivery, relaunch/uiAccess and takeover timing remain unverified; Miso owns the smoke test.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Weekly narrative revision e9d1fba preserves company/history, validates dated changes, adds current personas and archives revisions; real 2026-11-02 revision retained all 11 old events and added lnord ($0.0086). b2a5346 makes failed lifecycle commands terminate correctly and adds central LUDIUS_RUNS for worktrees. Controlled live tests verified admission stops on a missing checkpoint and rejects a Jev error. Original rename 9/9 JSONL was deleted with its worktree; stdout and committed admission record remain, and no log was recreated. Human baseline recording deferred by owner; Windows Server/DC/NTP provisioning authorized.</span></li>
@@ -175,7 +176,7 @@ const SECTIONS = [
     ["Password fields expose only empty/filled", "done", ""],
     ["Hints", "done", "Opens list/menu, link target, submits / closes dialog, destructive, default button, list continues."],
     ["Chromium/Electron/WebView2 handling", "partial", "Lazy-tree re-snapshot and viewport clipping implemented; verified on a host Electron app, not yet in the guest."],
-    ["Virtualized lists (WPF, WinUI, Explorer)", "partial", "\"List continues, N visible\" hint implemented; not exercised in a test."],
+    ["Virtualized lists (WPF, WinUI, Explorer)", "partial", "083f080 reports top-page item ranges, estimated ranges when GridPattern total/scroll data exist, otherwise visible count. Real hint method passes seven offline cases; scroll-option seam tested. Existing Explorer runs read list/tree items. Live scrolling, off-screen clipping and cold Chrome retry still unverified."],
     ["Legacy Win32 fallback", "done", "LegacyIAccessible name, value, state and default action."],
     ["Java Access Bridge", "todo", ""],
     ["No usable tree → visual fallback", "todo", "Windows are flagged <code>no_tree</code>; screenshots aren't sent."],
@@ -190,7 +191,7 @@ const SECTIONS = [
     ["Input: move, click, keys, type, Ctrl+Alt+Del", "done", "Plus scroll. Uses virtual-key codes (the WMI API), not scancodes."],
     ["Guest channel relay", "partial", "Unary Observe over the Hyper-V socket instead of a bidirectional stream; reconnects after restores. a726e75 retries gRPC UNAVAILABLE; subsequent Paint, Notepad and Explorer admissions completed (33 runs)."],
     ["Operator monitor (beyond the spec)", "done", "View-only 12 fps desktop feeds, shared capture loops, origin/host checks; localhost only, no authentication. Persistent Jev/LLM counters and admission summaries expose loading/stale/error states without raw typed text. Live /api/calls and /api/admission confirmed. Admission evidence comes from central runs; lost worktree logs are not reconstructed."],
-    ["Lifecycle", "partial", "Start, stop, checkpoint, restore, state. Clone and delete not built."],
+    ["Lifecycle", "partial", "Start/stop/checkpoint/restore/state plus clone and guarded delete API in 6d6ae51. Live clone creates new VM id and disk; source checkpoints preserved. Delete refuses missing confirmation/non-ludius names; no real delete run. Clone retains Windows computer name/SID; sysprep/domain-safe cloning and Proxmox remain pending."],
     ["Hyper-V backend", "done", "WMI synthetic mouse and keyboard verified on this Windows 11 host. Single-key COM calls retry transient 0xC0000002 failures up to 3 times; PowerShell admission passed 9/9 with the fix. Not yet checked on the target Windows Server version."],
     ["Proxmox backend (QMP, USB tablet, vsock, API)", "todo", ""],
     ["Fixed resolution in VM config", "done", "<code>Set-VMVideo</code> 1920×1080."],
@@ -204,7 +205,7 @@ const SECTIONS = [
     ["Three questions per step", "done", "action (choice), subgoal_done and off_track (noul), via OpenRouter."],
     ["Option generation", "done", "Click, double-click, type content into an element or the focus, keys, scroll, rescan, and <code>type:copy</code> of visible text (element names and text lines) into the focused field, verified live."],
     ["Choosing", "done", "Top option; samples among near-ties (within 0.05) only when code confirms they're equivalent (same control kind and name). Unit-tested; real ties are rare."],
-    ["Policy", "done", "Destructive allowlist, never-list, password fields, reserved paths, step and time budgets. Reserved paths aren't loaded from scenarios yet."],
+    ["Policy", "partial", "cff875c strictly loads LUDIUS_SCENARIO reserved Windows path globs/mailboxes with red-herring exemptions into planning and run/validate/day. Visible names/values and typed text are filtered; existing destructive/password/budget rules retained. Offline checks pass (43 passed, 5 skipped). Live verification and keyboard-only reserved-target coverage remain pending."],
     ["Desktop and shell shutdown guards", "partial", "2edafb3 blocks Alt+F4 on desktop/taskbar for Jev and the ladder; shell-owned dialogs use Esc. Offline regression passes; rename/move subsequently recorded 9/9 without shutdown. Its original JSONL was lost; stdout and admission record remain. Dedicated live Alt+F4 guard smoke is still pending."],
     ["Failure ladder steps 1–3", "done", "Rescan, restricted in-app recovery, human-like abandonment."],
     ["Ineffective action cycles", "partial", "9c1ad10 tracks screens within a subgoal: revisits count as no progress; withdrawals persist per screen. Offline regressions pass (suite 32 passed, 5 skipped); no step-budget cycles in 33 live admission runs. One Paint caption timeout remains. Exact fingerprints can miss cycles on independently changing screens; legitimate revisits also count as no progress."],
