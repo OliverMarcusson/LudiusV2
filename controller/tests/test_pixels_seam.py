@@ -101,3 +101,12 @@ def test_schema_enforces_title_anchors_and_present() -> None:
         Template.model_validate(
             base | {"pixels": {"title": "x", "anchors": ["y"], "done": {"nope": {"present": ["z"]}}}}
         )
+
+
+def test_confirm_save_matches_the_real_saved_title_reading() -> None:
+    # Guest OCR of a saved note (runs/visual/20261026-223919-saved-title.txt): the title icon reads as "I".
+    real = ["I pixels-title-20261026-223919 - Notepad", "File   Edit  Format   View  Help", "Type here to search"]
+    done = task(file_name="pixels-title-20261026-223919", body="x").subgoal("confirm_save").done
+    assert check_done(done, screen(real), task(file_name="pixels-title-20261026-223919", body="x"), True) is True
+    other = task(file_name="pixels-title-20261026-223919-other", body="x")
+    assert check_done(other.subgoal("confirm_save").done, screen(real), other, True) is False

@@ -63,8 +63,9 @@ subgoals:
     done: {window: {process: notepad.exe, absent: true}}
 # Pixels-only mode (agreed with Mochi). Values come from real OCR on the recorded fixtures
 # (runs/visual/20261026-222911-pixels-anchor-inputs.txt): desktop and Start out of scope, all three Notepad
-# screens in. Matching ignores case and whitespace. confirm_save is derived from the title pattern and not
-# yet observed: it needs the live pixels run.
+# screens in. Matching ignores case and whitespace. confirm_save is from a real saved title on the guest
+# (runs/visual/20261026-223919-saved-title.txt): OCR reads Notepad's title icon as a leading glyph
+# ("I pixels-title-... - Notepad"), so up to two characters may precede the file name.
 pixels:
   title: '-Notepad$'
   anchors: ['^FileEditFormatView|^Doyouwanttosavechanges']
@@ -73,5 +74,5 @@ pixels:
     open_from_run: {present: ['-Notepad$']}
     save_shortcut: {present: ['^SaveAs$', '^Filename:', '^Saveastype:']}
     save_menu: {present: ['^SaveAs$', '^Filename:', '^Saveastype:']}
-    confirm_save: {present: ['^{file_name}(\.txt)?-Notepad$']}
+    confirm_save: {present: ['^.{0,2}{file_name}(\.txt)?-Notepad$']}
     close_app: {absent: ['-Notepad$'], present: ['ypeheretosearch|RecycleBin']}
