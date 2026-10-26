@@ -125,26 +125,25 @@ def test_fallback_reads_only_the_on_screen_part_of_a_window() -> None:
     assert (row.bounds.x, row.bounds.y) == (0, w.y)  # the crop's origin is the screen edge, not the window's
 
 
-def _letterboxed(rows: list[list[float]], box: tuple[int, int, int, int], score: float) -> None:
-    r, px, py = visual.letterbox(1920, 1080)
-    x, y, w, h = box
-    for k, v in enumerate([(x + w / 2) * r + px, (y + h / 2) * r + py, w * r, h * r, score]):
-        rows[k].append(v)
+def _head(grid: int, stride: int, cells: dict[tuple[int, int], tuple[float, list[float]]]) -> visual.Head:
+    logits = [[-20.0] * grid for _ in range(grid)]
+    box = [[[0.0] * grid for _ in range(grid)] for _ in range(4)]
+    for (i, j), (logit, ltrb) in cells.items():
+        logits[i][j] = logit
+        for k in range(4):
+            box[k][i][j] = ltrb[k]
+    return logits, box, stride
 
 
-def test_detector_output_decodes_to_image_pixels_with_duplicates_suppressed() -> None:
-    assert visual.letterbox(1920, 1080) == (1 / 3, 0, 140)
-    rows: list[list[float]] = [[] for _ in range(5)]  # cx, cy, w, h, one class score
-    _letterboxed(rows, (300, 600, 90, 30), 0.9)  # a control
-    _letterboxed(rows, (303, 602, 90, 30), 0.8)  # the same control again: suppressed
-    _letterboxed(rows, (1500, 90, 36, 36), 0.5)  # an icon
-    _letterboxed(rows, (800, 800, 40, 40), 0.1)  # below confidence
-    r, px, py = visual.letterbox(1920, 1080)
-    got = visual.decode(rows, r, px, py)
-    assert [(b.x, b.y, b.width, b.height, b.control) for b in got] == [
-        (300, 600, 90, 30, True),
-        (1500, 90, 36, 36, True),
-    ]
+def test_raw_detector_head_decodes_to_image_pixels_with_duplicates_suppressed() -> None:
+    r = visual.letterbox(1920, 1080)
+    assert r == 1280 / 1920  # top-left letterbox: the width fills the input
+    # Stride 8, cell (row 50, col 40): centre (324, 404) in input pixels; 2 cells left/up, 3 right/down.
+    s8 = _head(160, 8, {(50, 40): (2.0, [2, 2, 3, 3]), (50, 41): (1.0, [3, 2, 2, 3]), (10, 10): (-4.0, [1, 1, 1, 1])})
+    s32 = _head(40, 32, {(5, 30): (0.0, [0.5, 0.5, 0.5, 0.5])})  # an icon, score 0.5
+    got = visual.decode([s8, s32], r)
+    assert [(b.x, b.y, b.width, b.height) for b in got] == [(462, 582, 60, 60), (1440, 240, 48, 48)]
+    assert all(b.control for b in got) and abs(got[0].score - 0.8808) < 1e-3  # sigmoid(2); the 0.73 twin suppressed
 
 
 def test_words_inside_a_control_name_it_and_icons_keep_their_place() -> None:
@@ -156,6 +155,9 @@ def test_words_inside_a_control_name_it_and_icons_keep_their_place() -> None:
     assert "icon without text" in rows[1].hints
     moved = visual.elements(visual.merge([], [visual.Box(402, 101, 30, 30, "", 0.8, True)]), window=0)
     assert moved[0].key == rows[1].key  # same 16 px cell: same icon across snapshots
+    faint = [visual.Box(10 * i, 500, 8, 8, "", 0.15 if i == 0 else 0.5, True) for i in range(visual.MAX_ICONS + 2)]
+    kept = visual.merge([], faint)
+    assert len(kept) == visual.MAX_ICONS and faint[0] not in kept  # unnamed icons: likely ones only, capped
 
 
 def test_cli_agent_adds_visual_rows_only_in_fallback_mode(monkeypatch: pytest.MonkeyPatch) -> None:

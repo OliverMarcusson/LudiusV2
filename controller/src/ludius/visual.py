@@ -5,9 +5,10 @@ the observer's format with framework_id "visual" and a hint that they were read 
 no accessibility data behind them. Fallback mode fills windows the observer marked no_tree; pixels-only mode builds
 the whole snapshot from screenshots, settling when two frames a quiet period apart are identical.
 
-Controls without text (icons, custom-drawn buttons) need a UI-element detector: an ONNX model with YOLOv8-style
-output ([1, 4 + classes, candidates], boxes as centre/size in the letterboxed input) at LUDIUS_UI_DETECTOR.
-Without one, only text is perceived. OCR words inside a detected control become its name.
+Controls without text (icons, custom-drawn buttons) come from a UI-element detector at LUDIUS_UI_DETECTOR: the
+OmniParser v2 icon detector (icon_detect_v3, MIT, Microsoft) exported to ONNX by scripts/export_detector.py.
+Without it, only text is perceived. OCR words inside a detected control become its name; a control without words
+stays an unnamed icon, never a guessed name.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import io
+import math
 import os
 import time
 from collections.abc import Callable
@@ -29,6 +31,12 @@ FRAMEWORK = "visual"
 HINT = "read from pixels, no accessibility data"
 ID_BASE = 50_000  # above observer ids, so visual and UIA elements never share one
 MIN_SCORE = 0.6
+DETECT_SIZE = 1280
+DETECT_CONF, DETECT_IOU = 0.05, 0.7  # OmniParser's own demo defaults
+# A detection that OCR words name is kept from DETECT_CONF; one with no words is only a place, so it needs a higher
+# score and the count is capped, or dense screens flood the options. On the five recorded screens, 0.2 and 40 keep
+# 171/186 UIA controls (181 with every detection) with at most 39 unnamed icons per screen (up to 112 before).
+ICON_CONF, MAX_ICONS = 0.2, 40
 MASK = set("•●*·∙")  # password masking: never a usable name, and never forwarded
 
 
@@ -70,10 +78,10 @@ def ocr_reader() -> Reader:
     return read
 
 
-def letterbox(width: int, height: int, size: int = 640) -> tuple[float, int, int]:
-    """Scale and padding that fit an image into the detector's square input without distortion."""
-    r = min(size / width, size / height)
-    return r, (size - round(width * r)) // 2, (size - round(height * r)) // 2
+def letterbox(width: int, height: int, size: int = DETECT_SIZE) -> float:
+    """Scale that fits an image into the detector's square input; the image sits at the top left, padded below
+    and to the right (the OmniParser v2 detector's own preprocessing)."""
+    return min(size / width, size / height)
 
 
 def _iou(a: Box, b: Box) -> float:
@@ -84,16 +92,24 @@ def _iou(a: Box, b: Box) -> float:
     return inter / union if union else 0.0
 
 
-def decode(rows: list[list[float]], r: float, pad_x: int, pad_y: int, conf: float = 0.3, iou: float = 0.5) -> list[Box]:
-    """YOLOv8-style output (rows: cx, cy, w, h, then one score per class; columns: candidates) to control boxes
-    in image pixels, after confidence filtering and non-maximum suppression."""
+Head = tuple[list[list[float]], list[list[list[float]]], int]  # class logits [H][W], box [4][H][W], stride
+
+
+def decode(heads: list[Head], r: float, conf: float = DETECT_CONF, iou: float = DETECT_IOU) -> list[Box]:
+    """Raw detector head to control boxes in image pixels: per cell, sigmoid(logit) is the score and the box spans
+    left/top/right/bottom cells around the cell centre; then non-maximum suppression."""
+    cut = math.log(conf / (1 - conf))
     found: list[Box] = []
-    for i in range(len(rows[0]) if rows else 0):
-        score = max(rows[k][i] for k in range(4, len(rows)))
-        if score < conf:
-            continue
-        cx, cy, w, h = ((rows[0][i] - pad_x) / r, (rows[1][i] - pad_y) / r, rows[2][i] / r, rows[3][i] / r)
-        found.append(Box(round(cx - w / 2), round(cy - h / 2), round(w), round(h), "", score, control=True))
+    for logits, box, stride in heads:
+        for i, row in enumerate(logits):
+            for j, logit in enumerate(row):
+                if logit < cut:
+                    continue
+                cx, cy = (j + 0.5) * stride, (i + 0.5) * stride
+                x0, y0 = (cx - box[0][i][j] * stride) / r, (cy - box[1][i][j] * stride) / r
+                x1, y1 = (cx + box[2][i][j] * stride) / r, (cy + box[3][i][j] * stride) / r
+                score = 1 / (1 + math.exp(-logit))
+                found.append(Box(round(x0), round(y0), round(x1 - x0), round(y1 - y0), "", score, control=True))
     kept: list[Box] = []
     for b in sorted(found, key=lambda b: -b.score):
         if all(_iou(b, k) < iou for k in kept):
@@ -101,7 +117,8 @@ def decode(rows: list[list[float]], r: float, pad_x: int, pad_y: int, conf: floa
     return kept
 
 
-def detector_reader(path: str, size: int = 640) -> Reader:
+def detector_reader(path: str) -> Reader:
+    """The OmniParser v2 icon detector exported to ONNX (scripts/export_detector.py): raw head, three strides."""
     try:
         ort: Any = importlib.import_module("onnxruntime")
         np: Any = importlib.import_module("numpy")
@@ -110,22 +127,30 @@ def detector_reader(path: str, size: int = 640) -> Reader:
         raise VisualUnavailable(f"needs the visual group (cd controller; uv sync --group visual): {e}") from e
     if not os.path.isfile(path):
         raise VisualUnavailable(f"LUDIUS_UI_DETECTOR: no model file at {path}")
-    session: Any = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+    opts: Any = ort.SessionOptions()
+    # The default memory arena keeps every 1280x1280 activation buffer: about 5.9 GB resident after a few screens.
+    # Without it the process stays near 320 MB, at no measurable cost per screen.
+    opts.enable_cpu_mem_arena = False
+    opts.enable_mem_pattern = False
+    session: Any = ort.InferenceSession(path, opts, providers=["CPUExecutionProvider"])
     name = session.get_inputs()[0].name
 
     def read(png: bytes) -> list[Box]:
         img: Any = image_mod.open(io.BytesIO(png)).convert("RGB")
-        r, px, py = letterbox(img.width, img.height, size)
-        canvas: Any = image_mod.new("RGB", (size, size), (114, 114, 114))
-        canvas.paste(img.resize((round(img.width * r), round(img.height * r))), (px, py))
+        r = letterbox(img.width, img.height)
+        canvas: Any = image_mod.new("RGB", (DETECT_SIZE, DETECT_SIZE), (114, 114, 114))
+        canvas.paste(img.resize((round(img.width * r), round(img.height * r))), (0, 0))
         x = np.asarray(canvas, dtype=np.float32).transpose(2, 0, 1)[None] / 255.0
-        return decode(session.run(None, {name: x})[0][0].tolist(), r, px, py)
+        out: list[Any] = session.run(None, {name: x})
+        heads: list[Head] = [(out[k][0][0].tolist(), out[k + 1][0].tolist(), s) for k, s in ((0, 8), (2, 16), (4, 32))]
+        return decode(heads, r)
 
     return read
 
 
 def merge(texts: list[Box], controls: list[Box]) -> list[Box]:
-    """Words whose centre lies in a detected control name it; the rest stay text rows."""
+    """Words whose centre lies in a detected control name it; the rest stay text rows. Unnamed controls are kept
+    only from ICON_CONF, the MAX_ICONS likeliest."""
     left = list(texts)
     for c in controls:
         inside = [
@@ -133,7 +158,8 @@ def merge(texts: list[Box], controls: list[Box]) -> list[Box]:
         ]
         c.text = " ".join(t.text for t in sorted(inside, key=lambda t: (t.y // 8, t.x)))
         left = [t for t in left if t not in inside]
-    return controls + left
+    icons = sorted((c for c in controls if not c.text and c.score >= ICON_CONF), key=lambda c: -c.score)
+    return [c for c in controls if c.text] + icons[:MAX_ICONS] + left
 
 
 def reader() -> Reader:

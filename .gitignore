@@ -11,3 +11,4 @@ __pycache__/
 infra/hyperv/build/
 TASKS.md
 runs/
+models/
