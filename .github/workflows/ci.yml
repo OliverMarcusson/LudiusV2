@@ -28,3 +28,15 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet build Ludius.sln -c Release
+
+  monitor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/monitor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run build

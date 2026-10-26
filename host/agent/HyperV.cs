@@ -92,8 +92,10 @@ sealed partial class HyperV(Guid observerService)
             {
                 double dx = x - f.X, dy = y - f.Y;
                 double arc = Math.Sin(Math.PI * t) * bend;
-                px = (int)Math.Round(f.X + dx * e - dy * arc);
-                py = (int)Math.Round(f.Y + dy * e + dx * arc);
+                // Stay inside the box spanned by start and target: Hyper-V rejects off-screen points (32773)
+                // and ignores (0, 0).
+                px = Math.Max(1, Math.Clamp((int)Math.Round(f.X + dx * e - dy * arc), Math.Min(f.X, x), Math.Max(f.X, x)));
+                py = Math.Max(1, Math.Clamp((int)Math.Round(f.Y + dy * e + dx * arc), Math.Min(f.Y, y), Math.Max(f.Y, y)));
             }
             Call(vm.Mouse, "SetAbsolutePosition", px, py);
             if (i < steps) await Task.Delay((int)(durationMs / steps), ct);
@@ -182,10 +184,71 @@ sealed partial class HyperV(Guid observerService)
 
     public (byte[] Png, int Width, int Height) Screenshot(Vm vm)
     {
-        var head = Query($"ASSOCIATORS OF {{{vm.System.Path.RelativePath}}} WHERE ResultClass=Msvm_VideoHead").FirstOrDefault();
-        int w = head is null ? 1920 : Convert.ToInt32(head["CurrentHorizontalResolution"]);
-        int h = head is null ? 1080 : Convert.ToInt32(head["CurrentVerticalResolution"]);
-        var settings = Query($"ASSOCIATORS OF {{{vm.System.Path.RelativePath}}} WHERE ResultClass=Msvm_VirtualSystemSettingData")
+        var (w, h) = Resolution(vm.System);
+        using var bmp = Thumbnail(vm.System, w, h);
+        using var ms = new MemoryStream();
+        bmp.Save(ms, ImageFormat.Png);
+        return (ms.ToArray(), w, h);
+    }
+
+    // Monitoring (view only) ------------------------------------------------
+
+    public sealed record VmInfo(string Name, string State, int Width, int Height);
+
+    // Every VM on the host: Msvm_ComputerSystem rows named by GUID (the host's own row carries its computer name).
+    public List<VmInfo> ListVms() =>
+        Query("SELECT * FROM Msvm_ComputerSystem")
+            .Where(s => Guid.TryParse((string)s["Name"], out _))
+            .Select(s =>
+            {
+                var state = StateName(Convert.ToInt32(s["EnabledState"]));
+                var (w, h) = state == "running" ? Resolution(s) : (0, 0);
+                return new VmInfo((string)s["ElementName"], state, w, h);
+            })
+            .OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    // One console frame as JPEG, scaled by Hyper-V to at most maxWidth. Read-only: never touches input.
+    public byte[] Frame(string name, int maxWidth)
+    {
+        if (!SafeName().IsMatch(name)) throw new ArgumentException("invalid VM name");
+        var system = Query($"SELECT * FROM Msvm_ComputerSystem WHERE ElementName='{name}'").SingleOrDefault()
+            ?? throw new KeyNotFoundException($"no VM named {name}");
+        if (StateName(Convert.ToInt32(system["EnabledState"])) != "running") throw new InvalidOperationException("VM is not running");
+        var (w, h) = Resolution(system);
+        int tw = Math.Clamp(maxWidth, 160, w) & ~1; // even width: RGB565 rows then need no stride padding
+        int th = Math.Max(2, (int)Math.Round((double)h * tw / w)) & ~1;
+        using var bmp = Thumbnail(system, tw, th);
+        using var ms = new MemoryStream();
+        var jpeg = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
+        using var quality = new EncoderParameters(1);
+        quality.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 82L);
+        bmp.Save(ms, jpeg, quality);
+        return ms.ToArray();
+    }
+
+    static string StateName(int s) => s switch
+    {
+        2 => "running",
+        3 => "off",
+        6 or 32769 => "saved",
+        9 or 32768 => "paused",
+        10 or 32770 => "starting",
+        4 or 32771 => "stopping",
+        32773 or 32774 => "saving",
+        _ => "other",
+    };
+
+    static (int W, int H) Resolution(ManagementObject system)
+    {
+        var head = Query($"ASSOCIATORS OF {{{system.Path.RelativePath}}} WHERE ResultClass=Msvm_VideoHead").FirstOrDefault();
+        return head is null ? (1920, 1080)
+            : (Convert.ToInt32(head["CurrentHorizontalResolution"]), Convert.ToInt32(head["CurrentVerticalResolution"]));
+    }
+
+    static Bitmap Thumbnail(ManagementObject system, int w, int h)
+    {
+        var settings = Query($"ASSOCIATORS OF {{{system.Path.RelativePath}}} WHERE ResultClass=Msvm_VirtualSystemSettingData")
             .First(s => (string)s["VirtualSystemType"] == "Microsoft:Hyper-V:System:Realized");
         var svc = Query("SELECT * FROM Msvm_VirtualSystemManagementService").Single();
         var inParams = svc.GetMethodParameters("GetVirtualSystemThumbnailImage");
@@ -195,12 +258,10 @@ sealed partial class HyperV(Guid observerService)
         var outParams = svc.InvokeMethod("GetVirtualSystemThumbnailImage", inParams, null);
         if ((uint)outParams["ReturnValue"] != 0) throw new InvalidOperationException("thumbnail failed");
         var data = (byte[])outParams["ImageData"];
-        using var bmp = new Bitmap(w, h, PixelFormat.Format16bppRgb565);
+        var bmp = new Bitmap(w, h, PixelFormat.Format16bppRgb565);
         var bits = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, bmp.PixelFormat);
         Marshal.Copy(data, 0, bits.Scan0, Math.Min(data.Length, bits.Stride * h));
         bmp.UnlockBits(bits);
-        using var ms = new MemoryStream();
-        bmp.Save(ms, ImageFormat.Png);
-        return (ms.ToArray(), w, h);
+        return bmp;
     }
 }

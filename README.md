@@ -15,6 +15,7 @@ Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrati
 | `host/agent/` | C# host agent: gRPC on `127.0.0.1:7451`, Hyper-V WMI keyboard/mouse, observer relay, lifecycle, console frames |
 | `controller/` | Python: planner (narrative, day plans, content, near-duplicate check), day runner (clock modes, breaks, interruptions), Jev client, options, policy, completion checks, step loop, session hygiene, unlock, failure ladder 1–8, ground truth and instructor timeline, CLI |
 | `controller/data/` | Templates (Notepad, Explorer, Edge), personas, hand-written task instances |
+| `web/monitor/` | Operator monitor: view-only desktop feeds of the range VMs (React, shadcn/ui), served by the host agent |
 | `fixtures/` | Recorded snapshots + console frames + expected choices, used for offline replay |
 | `infra/hyperv/` | Unattended Win10 test VM, provisioning, screenshot helper |
 
@@ -48,6 +49,18 @@ uv run ludius timeline ..\runs\days\*.jsonl --out ..\runs\timeline.csv
 
 Each run writes a ground-truth JSONL file to `runs/` (gitignored); days go to `runs/days/`, and the planner reads them back as world state.
 
+## Operator monitor
+
+A view-only web page with every range VM's desktop, refreshed about once a second (a tile opens a larger, faster view).
+
+```powershell
+cd web\monitor; bun install; bun run build   # the host agent serves web/monitor/dist
+dotnet run --project hostgent              # then open http://127.0.0.1:7452
+bun run dev                                    # development, proxies /api to the agent
+```
+
+The monitor runs on its own HTTP/1.1 endpoint (`Kestrel:Endpoints:Monitor`, default `127.0.0.1:7452`) with GET routes only: it cannot send input or change VM state. Only VMs whose names match `Monitor:Include` (default `^ludius-`) are listed or served. It has no authentication, so keep it on localhost, or bind it to an operator network only behind a reverse proxy with auth.
+
 ## Checks
 
 ```powershell
@@ -55,6 +68,7 @@ cd controller
 uv run ruff check src tests; uv run ruff format --check src tests; uv run pyright; uv run pytest
 $env:LUDIUS_LIVE_JEV=1; uv run pytest -k jev_choice    # live Jev replay on fixtures
 dotnet build Ludius.sln
+cd web\monitor; bun run lint; bun run build
 ```
 
 ## Verified (2026-10-26, Win10 22H2 guest, 1920×1080)

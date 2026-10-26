@@ -2,13 +2,87 @@ using Google.Protobuf;
 using Grpc.Core;
 using Ludius.HostAgent;
 using Ludius.V1;
+using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddGrpc();
 builder.Services.AddSingleton(new HyperV(Guid.Parse(builder.Configuration["Agent:ObserverService"]!)));
+builder.Services.AddSingleton<FrameCache>();
 var app = builder.Build();
 app.MapGrpcService<AgentService>();
+Monitor.Map(app);
 app.Run();
+
+// Operator monitor: a view-only web page of the VMs' desktops on its own HTTP/1.1 endpoint.
+// GET routes only, and nothing here reaches input, the guest channel or lifecycle.
+static class Monitor
+{
+    public static void Map(WebApplication app)
+    {
+        var host = new Uri(app.Configuration["Kestrel:Endpoints:Monitor:Url"]!);
+        var onMonitor = $"*:{host.Port}";
+        app.Use(async (ctx, next) =>
+        {
+            if (ctx.Connection.LocalPort == host.Port)
+            {
+                var h = ctx.Response.Headers;
+                h.ContentSecurityPolicy = "default-src 'self'; img-src 'self' blob:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'";
+                h.XContentTypeOptions = "nosniff";
+                h["Referrer-Policy"] = "no-referrer";
+            }
+            await next();
+        });
+
+        var root = Path.GetFullPath(app.Configuration["Monitor:Root"] ?? "web", app.Environment.ContentRootPath);
+        if (Directory.Exists(root))
+        {
+            var files = new PhysicalFileProvider(root);
+            app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = files });
+            app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
+        }
+
+        // Only range VMs are shown; other VMs on the host stay invisible, also to direct frame requests.
+        var include = new System.Text.RegularExpressions.Regex(app.Configuration["Monitor:Include"] ?? "^ludius-",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var api = app.MapGroup("/api").RequireHost(onMonitor);
+        api.MapGet("/vms", (HyperV hv) => hv.ListVms().Where(v => include.IsMatch(v.Name)));
+        api.MapGet("/vms/{name}/frame", (string name, int? w, HyperV hv, FrameCache cache, HttpResponse res) =>
+        {
+            if (!include.IsMatch(name)) return Results.NotFound();
+            try
+            {
+                var jpeg = cache.Get(name, Math.Clamp(w ?? 640, 160, 3840), hv);
+                res.Headers.CacheControl = "no-store";
+                return Results.File(jpeg, "image/jpeg");
+            }
+            catch (ArgumentException e) { return Results.BadRequest(e.Message); }
+            catch (KeyNotFoundException e) { return Results.NotFound(e.Message); }
+            catch (InvalidOperationException e) { return Results.Conflict(e.Message); }
+        });
+    }
+}
+
+// Frames are shared between viewers: at most one thumbnail per VM and size every 400 ms.
+sealed class FrameCache
+{
+    readonly Dictionary<(string, int), (DateTime At, byte[] Jpeg)> frames = [];
+    readonly Dictionary<(string, int), object> locks = [];
+
+    public byte[] Get(string vm, int width, HyperV hv)
+    {
+        var key = (vm, width);
+        object gate;
+        lock (locks) gate = locks.TryGetValue(key, out var g) ? g : locks[key] = new object();
+        lock (gate)
+        {
+            lock (frames)
+                if (frames.TryGetValue(key, out var f) && DateTime.UtcNow - f.At < TimeSpan.FromMilliseconds(400)) return f.Jpeg;
+            var jpeg = hv.Frame(vm, width);
+            lock (frames) frames[key] = (DateTime.UtcNow, jpeg);
+            return jpeg;
+        }
+    }
+}
 
 sealed class AgentService(HyperV hv, ILogger<AgentService> log) : HostAgent.HostAgentBase
 {
