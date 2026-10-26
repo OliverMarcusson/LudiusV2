@@ -23,7 +23,10 @@ GROWTH_SYSTEM = (
     "Completion checks read UI Automation state and must be true only once the subgoal really is done. "
     "Variants are different human ways to do the same task (keyboard shortcut vs menu, Start search vs "
     "taskbar). Every variant ends by closing the app so the desktop is left clean. Never delete files, change "
-    "system settings, install software, or touch anything outside the persona's own documents."
+    "system settings, install software, or touch anything outside the persona's own documents. The agent can "
+    "click, double-click, type prepared text, press keys and scroll; it cannot drag or use the clipboard, and "
+    "copy_text only types text visible in the same window as the target field. A done check must be false "
+    "when its subgoal starts."
 )
 
 _NAME = re.compile(r"^[a-z][a-z0-9_]{2,40}$")

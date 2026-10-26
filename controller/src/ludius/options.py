@@ -130,10 +130,15 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
         add("type", "type the text to enter at the keyboard focus", content=sg.text or "")
     focus = next((e for e in v.allowed if e.focused and e.role in EDITABLE and not e.read_only), None)
     if sg.copy_text and focus is not None:
-        sources = [e for e in v.allowed if e.role in COPY_SOURCES and e.key != focus.key and _ASCII.match(e.name)]
-        for e in sources[:MAX_COPY]:
-            if policy.text_allowed(e.name, focus) is None:
-                add("type", f"type:copy [{e.id}] '{e.name[:60]}' into [{focus.id}]", element=focus, literal=e.name)
+        # Visible text: element names, and the observer's non-actionable text lines ("role: text").
+        sources = [(f"[{e.id}] ", e.name) for e in v.allowed if e.role in COPY_SOURCES and e.key != focus.key]
+        sources += [("", line.split(": ", 1)[-1]) for line in v.snapshot.context]
+        seen: set[str] = set()
+        for ref, text in sources:
+            if len(seen) >= MAX_COPY or text in seen or not _ASCII.match(text) or policy.text_allowed(text, focus):
+                continue
+            seen.add(text)
+            add("type", f"type:copy {ref}'{text[:60]}' into [{focus.id}]", element=focus, literal=text)
     for k in [*BASE_KEYS, *sg.keys]:
         if k == "Win" and not sg.launch:
             continue
