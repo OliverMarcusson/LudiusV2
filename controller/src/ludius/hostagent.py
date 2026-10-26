@@ -62,9 +62,9 @@ class HostAgent:
                 time.sleep(0.5 if code == grpc.StatusCode.INTERNAL else 3)
         raise AssertionError("unreachable")
 
-    def lifecycle(self, op: int, checkpoint: str = "") -> str:
-        req = pb.LifecycleRequest(vm=self.vm, op=op, checkpoint=checkpoint)  # pyright: ignore[reportArgumentType]
-        result: pb.LifecycleResult = self._stub.Lifecycle(req, timeout=600)
+    def lifecycle(self, op: int, checkpoint: str = "", target: str = "") -> str:
+        req = pb.LifecycleRequest(vm=self.vm, op=op, checkpoint=checkpoint, target=target)  # pyright: ignore[reportArgumentType]
+        result: pb.LifecycleResult = self._stub.Lifecycle(req, timeout=1800)  # a clone copies the whole disk
         return result.state
 
     def screenshot(self) -> bytes:

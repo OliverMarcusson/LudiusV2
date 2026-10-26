@@ -162,9 +162,40 @@ sealed partial class HyperV(Guid observerService)
 
     // Lifecycle (PowerShell, as in spec section 4) --------------------------
 
-    public async Task<string> Lifecycle(string vm, Ludius.V1.LifecycleRequest.Types.Op op, string checkpoint, CancellationToken ct)
+    // Clone: export the checkpoint into a scratch folder next to the new VM, import a copy with a new VM id, then
+    // remove only that scratch export. The source VM and its checkpoints are untouched.
+    const string CloneScript = """
+        if (Get-VM -Name $env:LUDIUS_TARGET -ErrorAction SilentlyContinue) { throw "a VM named $env:LUDIUS_TARGET exists" }
+        $dest = Join-Path (Get-VMHost).VirtualHardDiskPath $env:LUDIUS_TARGET
+        if (Test-Path $dest) { throw "$dest exists" }
+        $scratch = Join-Path $dest 'export'
+        Export-VMSnapshot -VMName $env:LUDIUS_VM -Name $env:LUDIUS_CP -Path $scratch
+        $vmcx = Get-ChildItem $scratch -Recurse -Filter *.vmcx | Where-Object FullName -like '*Virtual Machines*' | Select-Object -First 1
+        $new = Import-VM -Path $vmcx.FullName -Copy -GenerateNewId -VhdDestinationPath $dest -VirtualMachinePath $dest -SnapshotFilePath $dest -SmartPagingFilePath $dest
+        Rename-VM -VM $new -NewName $env:LUDIUS_TARGET
+        Remove-Item -LiteralPath $scratch -Recurse -Force
+        $env:LUDIUS_VM = $env:LUDIUS_TARGET
+        """;
+
+    // Delete: merge checkpoints, unregister, then remove the VM's current disks. Only ludius-* VMs, only with the
+    // name repeated as confirmation.
+    const string DeleteScript = """
+        Stop-VM -Name $env:LUDIUS_VM -TurnOff -Force
+        Get-VMSnapshot -VMName $env:LUDIUS_VM | Remove-VMSnapshot
+        $disks = (Get-VMHardDiskDrive -VMName $env:LUDIUS_VM).Path
+        Remove-VM -Name $env:LUDIUS_VM -Force
+        $disks | ForEach-Object { Remove-Item -LiteralPath $_ -Force }
+        'Deleted'
+        """;
+
+    public async Task<string> Lifecycle(string vm, Ludius.V1.LifecycleRequest.Types.Op op, string checkpoint, string target, CancellationToken ct)
     {
-        if (!SafeName().IsMatch(vm) || (checkpoint != "" && !SafeName().IsMatch(checkpoint))) throw new ArgumentException("invalid name");
+        if (!SafeName().IsMatch(vm) || (checkpoint != "" && !SafeName().IsMatch(checkpoint)) || (target != "" && !SafeName().IsMatch(target)))
+            throw new ArgumentException("invalid name");
+        if (op == Ludius.V1.LifecycleRequest.Types.Op.Clone && (checkpoint == "" || !target.StartsWith("ludius-")))
+            throw new ArgumentException("clone needs a checkpoint and a target named ludius-*");
+        if (op == Ludius.V1.LifecycleRequest.Types.Op.Delete && (!vm.StartsWith("ludius-") || target != vm))
+            throw new ArgumentException("delete is limited to ludius-* VMs and needs the VM name repeated as confirmation");
         // Stop: a failing cmdlet (e.g. Restore-VMSnapshot of a checkpoint that doesn't exist) must fail the call;
         // otherwise the trailing state query exits 0 and a run silently continues on the unrestored VM.
         var script = "$ErrorActionPreference = 'Stop'; " + op switch
@@ -173,13 +204,15 @@ sealed partial class HyperV(Guid observerService)
             Ludius.V1.LifecycleRequest.Types.Op.Stop => "Stop-VM -Name $env:LUDIUS_VM -Force",
             Ludius.V1.LifecycleRequest.Types.Op.Checkpoint => "Checkpoint-VM -Name $env:LUDIUS_VM -SnapshotName $env:LUDIUS_CP",
             Ludius.V1.LifecycleRequest.Types.Op.Restore => "Restore-VMSnapshot -VMName $env:LUDIUS_VM -Name $env:LUDIUS_CP -Confirm:$false",
+            Ludius.V1.LifecycleRequest.Types.Op.Clone => CloneScript,
+            Ludius.V1.LifecycleRequest.Types.Op.Delete => DeleteScript,
             _ => "",
-        } + "; (Get-VM -Name $env:LUDIUS_VM).State.ToString()";
+        } + (op == Ludius.V1.LifecycleRequest.Types.Op.Delete ? "" : "; (Get-VM -Name $env:LUDIUS_VM).State.ToString()");
         if (op != Ludius.V1.LifecycleRequest.Types.Op.State) Forget(vm);
         var psi = new ProcessStartInfo("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script])
         {
             RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
-            Environment = { ["LUDIUS_VM"] = vm, ["LUDIUS_CP"] = checkpoint },
+            Environment = { ["LUDIUS_VM"] = vm, ["LUDIUS_CP"] = checkpoint, ["LUDIUS_TARGET"] = target },
         };
         using var p = Process.Start(psi)!;
         var stdout = p.StandardOutput.ReadToEndAsync(ct);

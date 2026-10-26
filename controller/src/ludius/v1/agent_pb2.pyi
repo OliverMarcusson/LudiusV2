@@ -113,7 +113,7 @@ class ObserveResult(_message.Message):
     def __init__(self, snapshot: _Optional[_Union[_observation_pb2.Snapshot, _Mapping]] = ..., hello: _Optional[_Union[_observation_pb2.Hello, _Mapping]] = ..., host_time_ms: _Optional[int] = ...) -> None: ...
 
 class LifecycleRequest(_message.Message):
-    __slots__ = ("vm", "op", "checkpoint")
+    __slots__ = ("vm", "op", "checkpoint", "target")
     class Op(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         START: _ClassVar[LifecycleRequest.Op]
@@ -121,18 +121,24 @@ class LifecycleRequest(_message.Message):
         CHECKPOINT: _ClassVar[LifecycleRequest.Op]
         RESTORE: _ClassVar[LifecycleRequest.Op]
         STATE: _ClassVar[LifecycleRequest.Op]
+        CLONE: _ClassVar[LifecycleRequest.Op]
+        DELETE: _ClassVar[LifecycleRequest.Op]
     START: LifecycleRequest.Op
     STOP: LifecycleRequest.Op
     CHECKPOINT: LifecycleRequest.Op
     RESTORE: LifecycleRequest.Op
     STATE: LifecycleRequest.Op
+    CLONE: LifecycleRequest.Op
+    DELETE: LifecycleRequest.Op
     VM_FIELD_NUMBER: _ClassVar[int]
     OP_FIELD_NUMBER: _ClassVar[int]
     CHECKPOINT_FIELD_NUMBER: _ClassVar[int]
+    TARGET_FIELD_NUMBER: _ClassVar[int]
     vm: str
     op: LifecycleRequest.Op
     checkpoint: str
-    def __init__(self, vm: _Optional[str] = ..., op: _Optional[_Union[LifecycleRequest.Op, str]] = ..., checkpoint: _Optional[str] = ...) -> None: ...
+    target: str
+    def __init__(self, vm: _Optional[str] = ..., op: _Optional[_Union[LifecycleRequest.Op, str]] = ..., checkpoint: _Optional[str] = ..., target: _Optional[str] = ...) -> None: ...
 
 class LifecycleResult(_message.Message):
     __slots__ = ("state",)

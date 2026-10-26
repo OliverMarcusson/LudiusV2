@@ -307,7 +307,7 @@ sealed class AgentService(HyperV hv, ILogger<AgentService> log) : HostAgent.Host
     });
 
     public override async Task<LifecycleResult> Lifecycle(LifecycleRequest r, ServerCallContext ctx) => await Guard(async () =>
-        new LifecycleResult { State = await hv.Lifecycle(r.Vm, r.Op, r.Checkpoint, ctx.CancellationToken) });
+        new LifecycleResult { State = await hv.Lifecycle(r.Vm, r.Op, r.Checkpoint, r.Target, ctx.CancellationToken) });
 
     public override async Task<ScreenshotResult> Screenshot(ScreenshotRequest r, ServerCallContext ctx) => await Guard(() =>
     {

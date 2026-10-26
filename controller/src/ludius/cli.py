@@ -27,6 +27,7 @@ from ludius.jev import DEFAULT_MODEL, JevClient
 from ludius.llm import DEFAULT_MODEL as PLANNER_MODEL
 from ludius.llm import LlmClient
 from ludius.loop import GroundTruth, Runner
+from ludius.policy import Policy
 from ludius.session import Session
 from ludius.tasks import Persona, Task, TaskInstance, Template, load_template, load_yaml
 from ludius.v1 import agent_pb2 as pb
@@ -62,7 +63,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     log_path = Path(args.log or RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-{template.task}.jsonl")
     log = GroundTruth(log_path)
     try:
-        runner = Runner(agent, jev, persona, log, clock=args.clock, seed=seed, assist=make_assist())
+        runner = Runner(
+            agent, jev, persona, log, clock=args.clock, seed=seed, assist=make_assist(), policy=make_policy()
+        )
         out = run_task(runner, make_session(agent, log), task)
     finally:
         log.close()
@@ -110,7 +113,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     try:
         try:
             runner = Runner(agent, jev, load_persona(args.persona), log, clock="compressed", seed=0,
-                            assist=make_assist())  # fmt: skip
+                            assist=make_assist(), policy=make_policy())  # fmt: skip
             results, stopped = admission.validate(template, args.runs, lambda: restore(agent, args.restore), runner,
                                                   make_session(agent, log))  # fmt: skip
         finally:
@@ -181,7 +184,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
                                             world_state.brief(state, persona.user, date)) if x)  # fmt: skip
             plan, rejects = planner.plan_day(
                 llm, narrative, persona, date, templates, context, world.history(persona.user),
-                scenario=planner.Scenario.parse(args.scenario) if args.scenario else None,
+                policy=make_policy(), scenario=planner.Scenario.parse(args.scenario) if args.scenario else None,
                 followups={f.id: f.about for f in world_state.due(state, persona.user, date)},
             )  # fmt: skip
             path = world.save_plan(plan, templates)
@@ -206,7 +209,7 @@ def cmd_day(args: argparse.Namespace) -> int:
     log = GroundTruth(log_path)
     try:
         pacing = "compressed" if args.clock == "time-jump" else args.clock
-        runner = Runner(agent, jev, persona, log, clock=pacing, seed=seed, assist=make_assist())
+        runner = Runner(agent, jev, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=make_policy())
         day = DayRunner(runner, make_session(agent, log), load_templates(), log, args.clock, seed, set_clock=set_clock)
         results = day.run(plan)
     finally:
@@ -323,6 +326,12 @@ def cmd_contract(args: argparse.Namespace) -> int:
     return 0 if failures == 0 else 1
 
 
+def make_policy() -> Policy:
+    """Scenario-reserved paths and mailboxes from the scenario file in LUDIUS_SCENARIO (none when unset)."""
+    path = os.environ.get("LUDIUS_SCENARIO")
+    return Policy.load(Path(path)) if path else Policy()
+
+
 def make_assist() -> Assist | None:
     """Rare LLM help for open-ended subgoals; its HTTP client lives as long as the process."""
     key = os.environ.get("OPENROUTER_API_KEY", "")
@@ -358,8 +367,14 @@ def cmd_vm(args: argparse.Namespace) -> int:
         "checkpoint": pb.LifecycleRequest.CHECKPOINT,
         "restore": pb.LifecycleRequest.RESTORE,
         "state": pb.LifecycleRequest.STATE,
+        "clone": pb.LifecycleRequest.CLONE,
+        "delete": pb.LifecycleRequest.DELETE,
     }[args.op]
-    print(agent.lifecycle(op, args.checkpoint))
+    if args.op == "clone" and not (args.checkpoint and args.to):
+        raise SystemExit("clone needs a checkpoint and --to NEW_NAME")
+    if args.op == "delete" and args.confirm != agent.vm:
+        raise SystemExit(f"delete removes {agent.vm} and its disks: repeat its name with --confirm {agent.vm}")
+    print(agent.lifecycle(op, args.checkpoint, args.to if args.op == "clone" else args.confirm))
     agent.close()
     return 0
 
@@ -435,8 +450,10 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_session)
 
     v = sub.add_parser("vm", help="VM lifecycle through the host agent")
-    v.add_argument("op", choices=["start", "stop", "checkpoint", "restore", "state"])
+    v.add_argument("op", choices=["start", "stop", "checkpoint", "restore", "state", "clone", "delete"])
     v.add_argument("checkpoint", nargs="?", default="")
+    v.add_argument("--to", default="", help="clone: name of the new VM (ludius-*)")
+    v.add_argument("--confirm", default="", help="delete: the VM name again")
     v.set_defaults(fn=cmd_vm)
 
     args = p.parse_args(argv)

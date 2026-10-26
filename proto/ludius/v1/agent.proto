@@ -88,9 +88,12 @@ message LifecycleRequest {
     CHECKPOINT = 2;
     RESTORE = 3;
     STATE = 4;
+    CLONE = 5;   // full copy of `checkpoint` as a new VM named `target` (new VM id); the source is untouched
+    DELETE = 6;  // ludius-* VMs only; `target` must repeat the VM name as confirmation
   }
   Op op = 2;
   string checkpoint = 3;
+  string target = 4;
 }
 
 message LifecycleResult {
