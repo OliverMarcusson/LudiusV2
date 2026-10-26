@@ -106,7 +106,7 @@
 <body>
 <main>
   <h1>Ludius V2: progress against the spec</h1>
-  <p class="meta"><span>Updated 26 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/00dda7d"><code>00dda7d</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
+  <p class="meta"><span>Updated 26 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/5bc2e5a"><code>5bc2e5a</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
 
   <div class="summary" id="summary"></div>
 
@@ -129,6 +129,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-26">26 Oct 2026</time><span>5bc2e5a adds in-process Java Access Bridge with a message-pump thread. Host Swing fixture verifies editable values, password filled-only state, destructive hints, list viewport and100% pixel bounds; Debug/Release build clean. Guest JRE/persona enablement and live bridge tests remain pending. Local launcher account-access recovery was patched and installed; failed workers restarted, one-running-VM limit retained.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Owner authorization now permits only one running VM. DC01 was saved; verified ludius-win10-01 running, DC01 and Office clone saved. Workers use offline or sequential single-VM checks; simultaneous range verification is deferred and earlier multi-VM evidence remains historical. JAB work continues with an official pinned Temurin runtime and repo-owned Swing fixture, no host Java/profile changes.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>4a687e6 serializes detector inference with a thread lock plus OS file lock, and shares one ORT session per model/process. Cross-process waiting tested; suite57 passed/7 skipped. Real reader369 MiB resident, Windows peak working set3089 MiB. Lock defaults to the user temp directory, so fencing is across processes sharing that location, not proven across different user accounts. More VMs queue (about1.3 s detector time each); resident model memory still grows per controller process.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>e260d8a/00dda7d add ludius day --temporal: slot activities, durable realtime/break timers, at-most-three attempts, progress heartbeats and OS desktop lock. Four real SDK-server tests cover ordering, killed-controller resume without replaying completed slots, no overlap after hung-attempt cancellation, and cancellation clock reset. Full suite56 passed/7 skipped. At-least-once GUI effects may repeat. No VM Temporal run or deployed PostgreSQL-backed server yet; an unresumed killed controller can still leave jumped clocks.</span></li>
@@ -189,7 +190,7 @@ const SECTIONS = [
     ["Chromium/Electron/WebView2 handling", "partial", "Lazy-tree re-snapshot and viewport clipping implemented; verified on a host Electron app, not yet in the guest."],
     ["Virtualized lists (WPF, WinUI, Explorer)", "partial", "083f080 reports top-page item ranges, estimated ranges when GridPattern total/scroll data exist, otherwise visible count. Real hint method passes seven offline cases; scroll-option seam tested. Existing Explorer runs read list/tree items. Live scrolling, off-screen clipping and cold Chrome retry still unverified."],
     ["Legacy Win32 fallback", "done", "LegacyIAccessible name, value, state and default action."],
-    ["Java Access Bridge", "todo", ""],
+    ["Java Access Bridge", "partial", "5bc2e5a in-process bridge loads WindowsAccessBridge-64.dll via JAVA_HOME, JavaSoft registry or System32, with one message-pump thread and no observer children/disk/network. Host Temurin25 Swing fixture verifies values/password masking, destructive/menu/list hints and clipped100% bounds; builds clean. Guest runtime/per-persona jabswitch and live guest/mixed-DPI verification pending. Without JRE, UIA remains the fallback."],
     ["No usable tree → visual fallback", "partial", "PP-OCR plus4435773 pinned MIT OmniParser ONNX icon detector, full-resolution host crops, stable ids/mask filtering; LUDIUS_VISUAL=fallback wired. Recorded UIA-control recall171/186 with bounded unnamed icons, coordinate/parity tests pass. Real no-tree/custom-drawn-app and dark/dense live task validation pending. Host cropping accepted; observer sends no pixels."],
     ["Stable IDs, ranking, ~200 cap, context lines", "done", "Hash of control type, automation id, name and ancestor path, mapped to short ids for the observer's lifetime."],
     ["Settle detection", "done", "UIA events + DXGI dirty rects, 300 ms quiet, 5 s timeout, busy cursor and indeterminate progress reported. ~0.3–0.5 s per settled snapshot."],
