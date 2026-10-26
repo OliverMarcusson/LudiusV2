@@ -108,14 +108,13 @@ class StuckRunner(FakeRunner):
 
 
 PLAN_3 = DayPlan(persona="lnord", date="2026-11-02", items=[note("09:00"), note("10:00"), note("11:00")])
-FAST = {"heartbeat_s": 2, "retry_s": 1}
 
 
 def controller_a(address: str, tmp: str) -> None:
     """Entry point of the controller process that gets killed (run by the test in a subprocess)."""
     calls = Recorded(Path(tmp) / "calls_a.txt")
     durable.run(address, _day(StuckRunner, Path(tmp) / "day.jsonl", calls, "compressed"), PLAN_3, "compressed",
-                Path(tmp) / "desk.lock", **FAST)  # fmt: skip
+                Path(tmp) / "desk.lock", heartbeat_s=2, retry_s=1)  # fmt: skip
 
 
 def test_killed_controller_resumes_the_day_and_desktop_has_one_controller(tmp_path: Path) -> None:
@@ -139,12 +138,12 @@ async def _killed(tmp_path: Path) -> None:
             # While A lives, a second controller for the same desktop refuses to start.
             with pytest.raises(durable.DeskBusy):
                 await durable.play(env.client, _day(FakeRunner, log, second, "compressed"), PLAN_3, "compressed",
-                                   tmp_path / "desk.lock", **FAST)  # fmt: skip
+                                   tmp_path / "desk.lock", heartbeat_s=2, retry_s=1)  # fmt: skip
         finally:
             a.kill()  # mid-task: no completion, no failure report, no more heartbeats
             a.wait()
         done = await durable.play(env.client, _day(FakeRunner, log, second, "compressed"), PLAN_3, "compressed",
-                                  tmp_path / "desk.lock", **FAST)  # fmt: skip
+                                  tmp_path / "desk.lock", heartbeat_s=2, retry_s=1)  # fmt: skip
         assert marker.read_text(encoding="utf-8").splitlines() == ["normalize", "run note 0900", "normalize",
                                                                    "run note 1000"]  # fmt: skip
         assert second == ["normalize", "run note 1000", "normalize", "run note 1100"]  # 09:00 is not redone
@@ -188,7 +187,9 @@ async def _hung(tmp_path: Path) -> None:
         calls: list[str] = []
         day = _day(HungRunner, tmp_path / "day.jsonl", calls, "compressed")
         started = time.monotonic()
-        done = await durable.play(env.client, day, PLAN_3, "compressed", tmp_path / "desk.lock", **FAST)
+        done = await durable.play(
+            env.client, day, PLAN_3, "compressed", tmp_path / "desk.lock", heartbeat_s=2, retry_s=1
+        )
         runner: HungRunner = day.runner  # type: ignore[assignment]
         assert [(d.at, d.status) for d in done] == [("09:00", "done"), ("10:00", "done"), ("11:00", "done")]
         assert "cancelled attempt 1" in calls and "end 1000 attempt 1" not in calls  # timed out and stopped
@@ -227,7 +228,7 @@ async def _cancelled(tmp_path: Path) -> None:
 
         day = _day(BusyRunner, tmp_path / "day.jsonl", calls, "time-jump", set_clock=set_clock)
         running = asyncio.create_task(
-            durable.play(env.client, day, PLAN_3, "time-jump", tmp_path / "desk.lock", **FAST)
+            durable.play(env.client, day, PLAN_3, "time-jump", tmp_path / "desk.lock", heartbeat_s=2, retry_s=1)
         )
         for _ in range(300):
             if "start 1000" in calls:
@@ -239,3 +240,44 @@ async def _cancelled(tmp_path: Path) -> None:
         assert calls == ["clock 09:00", "normalize", "run note 0900", "clock 10:00", "normalize", "start 1000",
                          "cancelled 1000", "clock reset"]  # fmt: skip
         assert '"clock_reset"' in (tmp_path / "day.jsonl").read_text(encoding="utf-8")
+
+
+class CanaryRunner(FakeRunner):
+    """Notepad's UI has drifted: its tasks fail. Everything else works."""
+
+    def run(self, task: Task, between: Any = None) -> Outcome:
+        self.calls.append(f"run {task.template.task} {next(iter(task.inst.params.values()))}")
+        return Outcome("failed" if task.template.app.lower() == "notepad" else "done", 1)
+
+
+def test_day_starts_with_its_canaries_and_skips_drifted_apps(tmp_path: Path) -> None:
+    asyncio.run(_canary_day(tmp_path))
+
+
+async def _canary_day(tmp_path: Path) -> None:
+    from ludius import canary
+
+    async with await _env(local=False) as env:
+        admission = tmp_path / "admission.yaml"
+        record = "{admitted: true, admitted_variants: [0]}"
+        admission.write_text(f"notepad_write_note: {record}\nexplorer_new_folder: {record}\n", encoding="utf-8")
+        plan = DayPlan(persona="aberg", date="2026-11-03", items=[
+            note("09:00"), PlanItem(at="10:00", template="explorer_new_folder", params={"folder_name": "q4 drafts"}),
+        ])  # fmt: skip
+        calls: list[str] = []
+        day = _day(CanaryRunner, tmp_path / "day.jsonl", calls, "compressed")
+        health = tmp_path / "health.json"
+
+        def check(apps: set[str]) -> dict[str, str]:
+            return canary.run(day.templates, admission, day.runner, day.session, health, apps, report=lambda _: None)
+
+        done = await durable.play(env.client, day, plan, "compressed", tmp_path / "desk.lock", canary=check)
+        assert [(d.at, d.template, d.status) for d in done] == [
+            ("09:00", "notepad_write_note", "skipped_drift"), ("10:00", "explorer_new_folder", "done")]  # fmt: skip
+        # Canaries first, by app (notepad twice: one retry before drift), then only the explorer item of the day.
+        assert [c for c in calls if c.startswith("run")] == [
+            "run explorer_new_folder admission test folder", "run notepad_write_note admission test note",
+            "run notepad_write_note admission test note", "run explorer_new_folder q4 drafts"]  # fmt: skip
+        events = (tmp_path / "day.jsonl").read_text(encoding="utf-8")
+        assert '"skipped_drift"' in events and events.count('"canary"') == 2
+        assert canary.drifted(health) == {"notepad"}

@@ -55,6 +55,7 @@ class DayInput(BaseModel):
     utc_offset_s: int  # the plan's times are wall-clock times in this offset
     heartbeat_s: int = 300  # longest a slot may go without a ground-truth write before it counts as hung
     retry_s: int = 30  # first retry backoff; at most 3 attempts per slot
+    canary: bool = False  # run the day's apps' drift canaries first and skip the items of drifted apps
 
 
 class SlotInput(BaseModel):
@@ -91,8 +92,24 @@ class HeartbeatLog(GroundTruth):
 class DayActivities:
     """The desktop side: one DayRunner, one activity at a time (there is one keyboard and mouse)."""
 
-    def __init__(self, day: DayRunner) -> None:
+    def __init__(self, day: DayRunner, canary: Callable[[set[str]], dict[str, str]] | None = None) -> None:
         self.day = day
+        self.canary_run = canary  # apps -> state (ok, drift, unknown): canary.run bound to this desktop
+
+    @activity.defn(name="canary")
+    def canary(self, plan: DayPlan) -> list[Done]:
+        """Drift canaries for the plan's apps on this desktop; the items of drifted apps are skipped, and logged."""
+        if self.canary_run is None:
+            raise ValueError("this worker has no canary runner")
+        apps = {self.day.templates[i.template].app for i in plan.items if i.template in self.day.templates}
+        drift = {app for app, state in self.canary_run(apps).items() if state == "drift"}
+        skipped = [
+            i for i in plan.items if i.template in self.day.templates and self.day.templates[i.template].app in drift
+        ]
+        for i in skipped:
+            self.day.log.write(event="skipped_drift", host_ms=_now(), at=i.at, task=i.template,
+                               app=self.day.templates[i.template].app)  # fmt: skip
+        return [Done(at=i.at, template=i.template, status="skipped_drift") for i in skipped]
 
     def _attempt(self, s: SlotInput) -> dt.date:
         info = activity.info()
@@ -130,7 +147,7 @@ class DayActivities:
         return _done(self.day.end_break(self._attempt(s), s.item))
 
     def all(self) -> list[Callable[..., Any]]:
-        return [self.start, self.finish, self.clock_reset, self.slot, self.break_start, self.break_end]
+        return [self.start, self.finish, self.clock_reset, self.canary, self.slot, self.break_start, self.break_end]
 
 
 @workflow.defn
@@ -158,8 +175,18 @@ class PersonaDay:
             )  # fmt: skip
 
         await workflow.execute_activity("day_start", plan, start_to_close_timeout=QUICK)
+        if inp.canary:
+            skipped = await workflow.execute_activity(
+                "canary", plan, result_type=list[Done], start_to_close_timeout=ITEM_TIMEOUT,
+                heartbeat_timeout=dt.timedelta(seconds=inp.heartbeat_s), retry_policy=retry,
+            )  # fmt: skip
+            self.done += skipped
+            gone = {(d.at, d.template) for d in skipped}
+            todo = plan.model_copy(update={"items": [i for i in plan.items if (i.at, i.template) not in gone]})
+        else:
+            todo = plan
         try:
-            for item, interrupts in slots(plan):
+            for item, interrupts in slots(todo):
                 if inp.clock == "realtime":
                     # Late slots run at once (a late start); early ones wait, with a minute or two of human slack.
                     due = dt.datetime.combine(day, dt.time.fromisoformat(item.at), tz)
@@ -230,15 +257,21 @@ def desk_lock(path: Path) -> Generator[None]:
         os.close(fd)  # closing releases the lock
 
 
-async def play(client: Client, day: DayRunner, plan: DayPlan, clock: str, desk: Path, **timing: int) -> list[Done]:
-    """Run (or resume, or read back) the persona-day workflow, with this process as its desktop's only worker."""
+async def play(
+    client: Client, day: DayRunner, plan: DayPlan, clock: str, desk: Path,
+    *, canary: Callable[[set[str]], dict[str, str]] | None = None, **timing: int,
+) -> list[Done]:  # fmt: skip
+    """Run (or resume, or read back) the persona-day workflow, with this process as its desktop's only worker.
+
+    With `canary` (canary.run bound to this desktop), the day starts with its apps' drift canaries."""
     if not isinstance(day.log, HeartbeatLog):
         raise ValueError("durable days need a HeartbeatLog: slot heartbeats come from ground-truth writes")
     offset = dt.datetime.now().astimezone().utcoffset() or dt.timedelta()
-    inp = DayInput(plan=plan, clock=clock, utc_offset_s=int(offset.total_seconds()), **timing)
+    inp = DayInput(plan=plan, clock=clock, utc_offset_s=int(offset.total_seconds()), canary=canary is not None,
+                   **timing)  # fmt: skip
     with desk_lock(desk), ThreadPoolExecutor(max_workers=1) as pool:
         async with Worker(client, task_queue=task_queue(plan), workflows=[PersonaDay],
-                          activities=DayActivities(day).all(), activity_executor=pool,
+                          activities=DayActivities(day, canary).all(), activity_executor=pool,
                           max_concurrent_activities=1):  # fmt: skip
             try:
                 handle = await client.start_workflow(
@@ -253,9 +286,12 @@ async def play(client: Client, day: DayRunner, plan: DayPlan, clock: str, desk: 
                 raise RuntimeError(f"workflow {workflow_id(plan)} failed: {e.cause}") from e
 
 
-def run(address: str, day: DayRunner, plan: DayPlan, clock: str, desk: Path, **timing: int) -> list[Done]:
+def run(
+    address: str, day: DayRunner, plan: DayPlan, clock: str, desk: Path,
+    *, canary: Callable[[set[str]], dict[str, str]] | None = None, **timing: int,
+) -> list[Done]:  # fmt: skip
     async def main() -> list[Done]:
-        return await play(await connect(Target(address)), day, plan, clock, desk, **timing)
+        return await play(await connect(Target(address)), day, plan, clock, desk, canary=canary, **timing)
 
     return asyncio.run(main())
 

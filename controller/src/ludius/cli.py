@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import functools
 import json
 import os
 import random
@@ -19,7 +20,7 @@ from pathlib import Path
 import yaml
 from google.protobuf import json_format
 
-from ludius import admission, artifacts, canary, growth, keys, metrics, planner, revision, timeline, visual, world_state
+from ludius import admission, artifacts, canary, clocklease, growth, keys, metrics, planner, revision, timeline, visual, world_state
 from ludius.assist import Assist
 from ludius.day import DayRunner, run_task
 from ludius.hostagent import HostAgent
@@ -87,12 +88,22 @@ def start_agent(args: argparse.Namespace) -> HostAgent:
     return agent
 
 
+@functools.cache
+def _clock_lease() -> clocklease.Lease:
+    vm = os.environ["LUDIUS_VM"]  # set-clock.ps1 jumps .env's LUDIUS_VM
+    return clocklease.Lease(RUNS / "locks" / f"clock-{vm}.json", vm)
+
+
 def set_clock(at: dt.datetime | None) -> None:
     """Time-jump: the guest clock to a logical time (test VM only, via infra/hyperv/set-clock.ps1)."""
     script = str(ROOT / "infra" / "hyperv" / "set-clock.ps1")
     extra = ["-Reset"] if at is None else ["-Time", at.isoformat(timespec="seconds")]
     cmd = ["pwsh", "-NoProfile", "-NonInteractive", "-File", script, *extra]
+    if at is not None:
+        _clock_lease().hold()  # before the jump: a controller killed mid-jump still leaves a lease to sweep
     subprocess.run(cmd, check=True, capture_output=True, text=True)
+    if at is None:
+        _clock_lease().release()  # only after a reset that worked; a failed one leaves the lease to the sweeper
 
 
 def restore(agent: HostAgent, checkpoint: str) -> None:
@@ -202,6 +213,9 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 
 def cmd_day(args: argparse.Namespace) -> int:
+    if args.canary and not args.temporal:
+        print("--canary needs --temporal (without it, run `ludius canary` before the day)", file=sys.stderr)
+        return 2
     plan = planner.load_plan(Path(args.plan))
     persona = load_persona(args.persona or str(DATA / "personas" / f"{plan.persona}.yaml"))
     seed = args.seed if args.seed is not None else int(time.time())
@@ -231,7 +245,14 @@ def cmd_day(args: argparse.Namespace) -> int:
             from ludius import durable
 
             desk = RUNS / "locks" / f"{args.vm or os.environ['LUDIUS_VM']}.lock"
-            results = [(d.at, d.template, d.status) for d in durable.run(args.temporal, day, plan, args.clock, desk)]
+
+            def check(apps: set[str]) -> dict[str, str]:  # the day's drift canaries, on this desktop, first
+                return canary.run(
+                    templates, DATA / "admission.yaml", day.runner, day.session, RUNS / "health.json", apps
+                )
+
+            done = durable.run(args.temporal, day, plan, args.clock, desk, canary=check if args.canary else None)
+            results = [(d.at, d.template, d.status) for d in done]
         else:
             results = [(r.item.at, r.item.template, r.status) for r in day.run(plan)]
     finally:
@@ -465,6 +486,7 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--log")
     d.add_argument("--restore", metavar="CHECKPOINT", help="restore this checkpoint first")
     d.add_argument("--temporal", metavar="HOST:PORT", help="run as a durable Temporal workflow on this server")
+    d.add_argument("--canary", action="store_true", help="with --temporal: run the day's drift canaries first")
     d.set_defaults(fn=cmd_day)
 
     ca = sub.add_parser("canary", help="drift canaries: one admitted task per app, results to runs/health.json")
