@@ -90,6 +90,11 @@ class Session:
             if not self.unlock():
                 return False
             snap = self.observe()
+            if snap.secure_desktop:  # a UAC prompt left behind: cancel it, never answer it
+                self.agent.chord(keys.chord("Esc"))
+                closed.append("UAC prompt")
+                time.sleep(1.0)
+                continue
             fg = _fg(snap)
             popup = next((w for w in snap.windows if w.kind in (obs.Window.POPUP, obs.Window.OWNED)), None)
             strays = [

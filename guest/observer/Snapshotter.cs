@@ -77,6 +77,7 @@ sealed partial class Snapshotter
 
     public Snapshot Take()
     {
+        bool locked = Native.SessionLocked();
         var snap = new Snapshot
         {
             Seq = ++seq,
@@ -85,7 +86,10 @@ sealed partial class Snapshotter
             ScreenHeight = Native.GetSystemMetrics(1),
             Dpi = (int)Native.GetDpiForSystem(),
             User = Environment.UserName,
-            Locked = Native.SessionLocked() || !Native.InputDesktopIsDefault(),
+            // Locked: the WTS session flag (LockApp runs on the user's own desktop, so the input desktop can't
+            // tell). Unlocked but input elsewhere means the secure desktop: a UAC prompt, which noise never answers.
+            Locked = locked,
+            SecureDesktop = !locked && !Native.InputDesktopIsDefault(),
         };
         var ci = new Native.CURSORINFO { cbSize = Marshal.SizeOf<Native.CURSORINFO>() };
         if (Native.GetCursorInfo(ref ci))

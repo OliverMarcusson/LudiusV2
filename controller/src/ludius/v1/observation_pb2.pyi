@@ -104,7 +104,7 @@ class Window(_message.Message):
     def __init__(self, handle: _Optional[int] = ..., title: _Optional[str] = ..., class_name: _Optional[str] = ..., process_name: _Optional[str] = ..., pid: _Optional[int] = ..., framework_id: _Optional[str] = ..., bounds: _Optional[_Union[Rect, _Mapping]] = ..., kind: _Optional[_Union[Window.Kind, str]] = ..., modal: _Optional[bool] = ..., unresponsive: _Optional[bool] = ..., elevated_unreadable: _Optional[bool] = ..., no_tree: _Optional[bool] = ...) -> None: ...
 
 class Snapshot(_message.Message):
-    __slots__ = ("seq", "guest_time_ms", "screen_width", "screen_height", "dpi", "windows", "elements", "context", "settled", "settle_ms", "busy_cursor", "indeterminate_progress", "locked", "cursor_x", "cursor_y", "dropped_elements", "user", "apps")
+    __slots__ = ("seq", "guest_time_ms", "screen_width", "screen_height", "dpi", "windows", "elements", "context", "settled", "settle_ms", "busy_cursor", "indeterminate_progress", "locked", "cursor_x", "cursor_y", "dropped_elements", "user", "apps", "secure_desktop")
     SEQ_FIELD_NUMBER: _ClassVar[int]
     GUEST_TIME_MS_FIELD_NUMBER: _ClassVar[int]
     SCREEN_WIDTH_FIELD_NUMBER: _ClassVar[int]
@@ -123,6 +123,7 @@ class Snapshot(_message.Message):
     DROPPED_ELEMENTS_FIELD_NUMBER: _ClassVar[int]
     USER_FIELD_NUMBER: _ClassVar[int]
     APPS_FIELD_NUMBER: _ClassVar[int]
+    SECURE_DESKTOP_FIELD_NUMBER: _ClassVar[int]
     seq: int
     guest_time_ms: int
     screen_width: int
@@ -141,7 +142,8 @@ class Snapshot(_message.Message):
     dropped_elements: int
     user: str
     apps: _containers.RepeatedCompositeFieldContainer[Window]
-    def __init__(self, seq: _Optional[int] = ..., guest_time_ms: _Optional[int] = ..., screen_width: _Optional[int] = ..., screen_height: _Optional[int] = ..., dpi: _Optional[int] = ..., windows: _Optional[_Iterable[_Union[Window, _Mapping]]] = ..., elements: _Optional[_Iterable[_Union[Element, _Mapping]]] = ..., context: _Optional[_Iterable[str]] = ..., settled: _Optional[bool] = ..., settle_ms: _Optional[int] = ..., busy_cursor: _Optional[bool] = ..., indeterminate_progress: _Optional[bool] = ..., locked: _Optional[bool] = ..., cursor_x: _Optional[int] = ..., cursor_y: _Optional[int] = ..., dropped_elements: _Optional[int] = ..., user: _Optional[str] = ..., apps: _Optional[_Iterable[_Union[Window, _Mapping]]] = ...) -> None: ...
+    secure_desktop: bool
+    def __init__(self, seq: _Optional[int] = ..., guest_time_ms: _Optional[int] = ..., screen_width: _Optional[int] = ..., screen_height: _Optional[int] = ..., dpi: _Optional[int] = ..., windows: _Optional[_Iterable[_Union[Window, _Mapping]]] = ..., elements: _Optional[_Iterable[_Union[Element, _Mapping]]] = ..., context: _Optional[_Iterable[str]] = ..., settled: _Optional[bool] = ..., settle_ms: _Optional[int] = ..., busy_cursor: _Optional[bool] = ..., indeterminate_progress: _Optional[bool] = ..., locked: _Optional[bool] = ..., cursor_x: _Optional[int] = ..., cursor_y: _Optional[int] = ..., dropped_elements: _Optional[int] = ..., user: _Optional[str] = ..., apps: _Optional[_Iterable[_Union[Window, _Mapping]]] = ..., secure_desktop: _Optional[bool] = ...) -> None: ...
 
 class ObserverRequest(_message.Message):
     __slots__ = ("id", "snapshot", "ping")

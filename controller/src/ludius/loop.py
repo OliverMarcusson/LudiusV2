@@ -226,6 +226,12 @@ class Runner:
                 return "failed", step - 1, "time budget"
             if snap.locked:
                 return "failed", step - 1, "session locked"
+            if snap.secure_desktop:
+                # A UAC prompt: noise never elevates. Cancel it like a person would and give up the task.
+                self.agent.chord(keys.chord("Esc"))
+                self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
+                               reason="elevation required")  # fmt: skip
+                return "failed", step - 1, "blocked: elevation required"
             code_done = check_done(sg.done, snap, task, typed_ok)
             if code_done:
                 self.log.write(

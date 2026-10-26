@@ -76,6 +76,7 @@ message Snapshot {
   uint32 dropped_elements = 16;   // elements beyond the cap
   string user = 17;
   repeated Window apps = 18;      // all open top-level app windows (no elements), z-order
+  bool secure_desktop = 19;       // unlocked, but input is on the secure desktop: a UAC prompt
 }
 
 // Controller/host → observer, framed on the guest channel.
