@@ -98,13 +98,15 @@ def build_state(v: StepView, task: Task, sg: Subgoal, history: list[str], last_r
     snap = v.snapshot
     fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
     focused = next((e for e in snap.elements if e.focused), None)
+    on_pixels = fg is not None and pixels_window(fg)
     content = task.text(sg)
     state: dict[str, Any] = {
-        "goal": sg.goal,
+        "goal": f"{sg.goal} {task.fmt(sg.pixels_hint)}" if on_pixels and sg.pixels_hint else sg.goal,
         "task_context": task.inst.context or task.fmt(task.template.task.replace("_", " ")),
         "window": window_line(fg) if fg else "desktop",
         "other_windows": [window_line(w) for w in snap.windows if w.kind in (obs.Window.OWNED, obs.Window.POPUP)],
-        "focused": f"[{focused.id}]" if focused else "none",
+        # Pixels carry no focus: "none" would assert what nobody observed.
+        "focused": "unknown (read from pixels)" if on_pixels else f"[{focused.id}]" if focused else "none",
         "history": history[-8:],
         "last_result": last_result,
         "elements": [describe(e) for e in v.allowed[:MAX_ELEMENT_LINES]],

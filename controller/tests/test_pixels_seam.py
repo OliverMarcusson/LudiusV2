@@ -11,9 +11,9 @@ import pydantic
 import pytest
 
 from ludius.cli import load_templates
-from ludius.options import build_options, view
+from ludius.options import build_options, build_state, view
 from ludius.policy import Policy
-from ludius.tasks import Task, TaskInstance, Template, check_done
+from ludius.tasks import Done, PixelsCheck, Task, TaskInstance, Template, check_done
 from ludius.v1 import observation_pb2 as obs
 
 DESKTOP = ["Recycle Bin", "ype here to search"]
@@ -165,3 +165,47 @@ def test_completion_on_real_rows_reads_the_whole_screen() -> None:
     assert done("save_shortcut", "notepad-empty") is False
     assert done("close_app", "desktop") is True
     assert done("close_app", "notepad-empty") is False
+
+
+def test_pixels_focus_is_unknown_and_the_hint_is_pixels_only() -> None:
+    base = load_templates()["notepad_write_note"].model_dump()
+    hint = "If nothing else was clicked since opening, try typing at the keyboard focus."
+    raw = base | {"pixels": base["pixels"] | {"hints": {"write_body": hint}}}
+    t = Task(Template.model_validate(raw), TaskInstance(template="notepad_write_note", params=base["example"],
+                                                        variant=0), random.Random(0))  # fmt: skip
+    sg = t.subgoal("write_body")
+    snap = real("notepad-empty")
+    state = build_state(view(snap, t, sg, Policy()), t, sg, [], "")
+    assert state["focused"] == "unknown (read from pixels)"  # pixels carry no focus: never "none"
+    assert state["goal"].endswith(hint)
+    tree = obs.Snapshot(windows=[obs.Window(title="Untitled - Notepad", process_name="notepad.exe",
+                                            kind=obs.Window.FOREGROUND)])  # fmt: skip
+    state = build_state(view(tree, t, sg, Policy()), t, sg, [], "")
+    assert state["focused"] == "none" and hint not in state["goal"]
+    with pytest.raises(pydantic.ValidationError, match="unknown subgoal"):
+        Template.model_validate(base | {"pixels": base["pixels"] | {"hints": {"nope": hint}}})
+
+
+def test_pixels_never_pass_on_typed_alone() -> None:
+    # Typing at focus counts as landed with no element to read back: on pixels only a visible check can pass.
+    t = task(file_name="meeting notes", body="x")
+    assert check_done(Done(typed=True), real("notepad-empty"), t, typed_ok=True) is False
+    assert check_done(t.subgoal("name_file").done, real("notepad-save-as"), t, typed_ok=True) is False
+
+
+def test_head_of_a_multi_line_value_is_its_first_visible_line() -> None:
+    body = Done(typed=True, pixels=PixelsCheck(present=["^{body_head}"]))
+    prompt = real("notepad-unsaved-prompt")  # its body row reads "Short note for the fixture."
+
+    def done(value: str, snap: obs.Snapshot = prompt, typed_ok: bool = True) -> bool | None:
+        return check_done(body, snap, task(file_name="n", body=value), typed_ok)
+
+    head = task(file_name="n", body="Short note for the fixture, then a long tail\nline 2").values["body_head"]
+    assert head == "Short note for the fixtu"
+    assert done("Short note for the fixture.\nline 2") is True
+    assert done("\n\n  Short note for the fixture.") is True  # leading blank lines are skipped
+    assert done("Short note for the fixture.", typed_ok=False) is False  # the typing must have landed too
+    assert done("A different note\nline 2") is False
+    assert done("   \n ") is False  # no visible line: no head, the check can't match
+    assert done("Short note for the fixture.", real("notepad-empty")) is False
+    assert done("Short note for the fixture.", screen([])) is False  # empty OCR read

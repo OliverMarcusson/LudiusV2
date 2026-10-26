@@ -57,6 +57,8 @@ class Pixels(Strict):
     title: str
     anchors: list[str] = Field(min_length=1)
     done: dict[str, PixelsCheck] = Field(default_factory=dict[str, PixelsCheck])  # subgoal -> visible completion
+    # subgoal -> procedural advice added to its goal on pixels snapshots only; never a claim about what is observed
+    hints: dict[str, str] = Field(default_factory=dict[str, str])
 
 
 class Done(Strict):
@@ -81,6 +83,7 @@ class Subgoal(Strict):
     allow_destructive: list[str] = Field(default_factory=list[str])  # element names (regex) allowed despite the hint
     done: Done | None = None
     steps: int = 12
+    pixels_hint: str = ""  # from the template's pixels hints
 
 
 class Template(Strict):
@@ -108,6 +111,10 @@ class Template(Strict):
                 raise ValueError(f"{self.task}: pixels done for unknown subgoal {name!r}")
             sg = self.subgoals[name]
             sg.done = (sg.done or Done()).model_copy(update={"pixels": check})
+        for name, hint in (self.pixels.hints if self.pixels else {}).items():
+            if name not in self.subgoals:
+                raise ValueError(f"{self.task}: pixels hint for unknown subgoal {name!r}")
+            self.subgoals[name].pixels_hint = hint
         return self
 
     def check(self) -> None:
@@ -159,6 +166,10 @@ class Task:
         # Mistake variants (spec section 6): `{p}_typo` is the value with one stray neighbouring key at the end,
         # typed first and then fixed (Backspace, rename) by a later subgoal.
         self.values = have | {f"{k}_typo": v + _neighbour(v[-1]) for k, v in have.items() if v and "\n" not in v}
+        # Pixels read one row per line and a long line is cut at the window edge: `{p}_head` is the first
+        # non-blank line, capped, for visible-text checks. A blank value has none, so its check can't match.
+        self.values |= {f"{k}_head": next(x.strip() for x in v.splitlines() if x.strip())[:HEAD]
+                        for k, v in have.items() if v.strip()}  # fmt: skip
 
     def fmt(self, s: str) -> str:
         return s.format_map(self.values)
@@ -226,6 +237,7 @@ def visible(pattern: str, rows: list[obs.Element], task: Task) -> bool:
     return any(re.search(rx, compact(e.name), re.I) for e in rows)
 
 
+HEAD = 24  # characters of a value's first line that a pixels check may expect on one row
 TASKBAR = "ypeheretosearch"  # the taskbar search box; the clock row merges with the date, so it can't mark the bar
 
 
@@ -263,6 +275,8 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
         return None  # a completion only pixels mode checks: with an accessibility tree, Jev decides as before
     if done.typed and not typed_ok:
         return False
+    if on_pixels and not done.pixels:
+        return False  # typed/element/window checks can't be seen in pixels: without a visible check, never done
     if done.pixels and on_pixels:
         rows = [e for e in snap.elements if e.window < len(snap.windows) and pixels_window(snap.windows[e.window])]
         return all(visible(p, rows, task) for p in done.pixels.present) and not any(
