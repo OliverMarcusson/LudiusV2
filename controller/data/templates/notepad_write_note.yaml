@@ -68,7 +68,7 @@ subgoals:
 # ("I pixels-title-... - Notepad"), so up to two characters may precede the file name.
 pixels:
   title: '-Notepad$'
-  anchors: ['^FileEditFormatView|^Doyouwanttosavechanges']
+  anchors: ['^FileEditFormatView|Doyouwanttosavechanges']
   done:
     open_from_start: {present: ['-Notepad$']}
     open_from_run: {present: ['-Notepad$']}

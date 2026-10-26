@@ -110,3 +110,9 @@ def test_confirm_save_matches_the_real_saved_title_reading() -> None:
     assert check_done(done, screen(real), task(file_name="pixels-title-20261026-223919", body="x"), True) is True
     other = task(file_name="pixels-title-20261026-223919-other", body="x")
     assert check_done(other.subgoal("confirm_save").done, screen(real), other, True) is False
+
+
+def test_unsaved_prompt_stays_in_scope_when_the_detector_merges_its_title_into_the_question() -> None:
+    # Production reader (OCR + detector) on notepad-unsaved-prompt: one control box holds the dialog title and question.
+    merged = ["*Untitled -Notepad", "Notepad Do you want to save changes to Untitled?", "Save", "Don't Save", "Cancel"]
+    assert any("Don't Save" in c for c in clicks(screen(merged), task(), "close_app"))
