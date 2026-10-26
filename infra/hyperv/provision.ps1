@@ -70,11 +70,20 @@ try {
         }
 
         # Observer: in the persona's interactive session at logon, never a service;
-        # restarted daily and on failure (UIA client leaks).
+        # restarted daily (it swaps between requests) and after a crash or watchdog fault (UIA client leaks).
         # uiAccess binaries only start through ShellExecute (AppInfo), not the
         # scheduler's CreateProcess (error 740), so explorer launches it.
         $action = New-ScheduledTaskAction -Execute 'C:\Windows\explorer.exe' -Argument "`"$dir\uiprobe.exe`""
-        $triggers = @((New-ScheduledTaskTrigger -AtLogOn -User $persona), (New-ScheduledTaskTrigger -Daily -At 4am))
+        # The task's own process is explorer, which exits at once, so RestartCount never sees an observer crash.
+        # A crash (including the observer's own watchdog FailFast) raises Application Error 1000, which starts
+        # it again after 30 s; IgnoreNew and the delay bound a crash loop to one start per 30 s.
+        $crash = Get-CimClass MSFT_TaskEventTrigger root/Microsoft/Windows/TaskScheduler | New-CimInstance -ClientOnly
+        $crash.Enabled = $true
+        $crash.Delay = 'PT30S'
+        $crash.Subscription = '<QueryList><Query Id="0" Path="Application"><Select Path="Application">' +
+            "*[System[Provider[@Name='Application Error'] and EventID=1000]] and *[EventData[Data[1]='uiprobe.exe']]" +
+            '</Select></Query></QueryList>'
+        $triggers = @((New-ScheduledTaskTrigger -AtLogOn -User $persona), (New-ScheduledTaskTrigger -Daily -At 4am), $crash)
         $principal = New-ScheduledTaskPrincipal -UserId $persona -LogonType Interactive -RunLevel Limited
         $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
             -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries

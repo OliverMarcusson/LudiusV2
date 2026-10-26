@@ -11,16 +11,35 @@ using Ludius.V1;
 const string Version = "0.1.0";
 var service = Guid.Parse(Arg("--service") ?? "000011cb-facb-11e6-bd58-64006a7986d3");
 
-// One observer per session: a new instance (daily restart, watchdog) asks the
-// running one to quit and takes over.
+// Only in a user's interactive session: session 0 cannot see the desktop.
+Native.ProcessIdToSessionId((uint)Environment.ProcessId, out var ownSession);
+if (ownSession == 0 && !args.Contains("--once")) return 2;
+
+// One observer per session: a new instance (daily restart) asks the running one to quit and takes over. The
+// running one finishes its request and waits for a quiet link first, so the swap falls between tasks when it can.
+var dog = new Watchdog(() => Environment.TickCount64);
 using var quit = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\RangeAssistQuit");
 using var single = new Mutex(false, @"Local\RangeAssist");
 if (!args.Contains("--once"))
 {
     quit.Set();
-    try { if (!single.WaitOne(TimeSpan.FromSeconds(10))) return 1; } catch (AbandonedMutexException) { }
+    try { if (!single.WaitOne(TimeSpan.FromSeconds(150))) return 1; } catch (AbandonedMutexException) { }
     quit.Reset();
-    new Thread(() => { quit.WaitOne(); Environment.Exit(0); }) { IsBackground = true }.Start();
+    new Thread(() =>
+    {
+        quit.WaitOne();
+        for (var waited = 0; waited < 120_000 && !dog.Idle(10_000); waited += 250) Thread.Sleep(250);
+        Environment.Exit(0);
+    }) { IsBackground = true }.Start();
+    // A hang or a run of failures becomes a crash; the task's crash trigger starts a fresh observer.
+    new Thread(() =>
+    {
+        while (true)
+        {
+            Thread.Sleep(1000);
+            if (dog.Fault() is { } fault) Environment.FailFast("observer watchdog: " + fault);
+        }
+    }) { IsBackground = true }.Start();
 }
 
 var uia = (IUIAutomation2)new CUIAutomation8();
@@ -50,12 +69,11 @@ while (true)
 void Serve(Socket conn)
 {
     using var stream = new NetworkStream(conn);
-    Native.ProcessIdToSessionId((uint)Environment.ProcessId, out var session);
     Send(stream, new ObserverResponse
     {
         Hello = new Hello
         {
-            Version = Version, User = Environment.UserName, SessionId = session, UiAccess = uiAccess,
+            Version = Version, User = Environment.UserName, SessionId = ownSession, UiAccess = uiAccess,
             PixelSettle = settle.PixelSettle, Computer = Environment.MachineName,
         },
     });
@@ -63,6 +81,7 @@ void Serve(Socket conn)
     {
         var req = ObserverRequest.Parser.ParseFrom(Read(stream));
         var res = new ObserverResponse { Id = req.Id };
+        dog.Begin();
         try
         {
             switch (req.BodyCase)
@@ -73,8 +92,13 @@ void Serve(Socket conn)
                     break;
                 default: res.Error = "unknown request"; break;
             }
+            dog.End(ok: true);
         }
-        catch (Exception e) { res.Error = e.GetType().Name + ": " + e.Message; }
+        catch (Exception e)
+        {
+            res.Error = e.GetType().Name + ": " + e.Message;
+            dog.End(ok: false);
+        }
         Send(stream, res);
     }
 }
