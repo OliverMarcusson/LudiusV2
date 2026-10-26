@@ -109,7 +109,8 @@ sealed partial class Snapshotter
             snap.Windows.Add(w);
             if (w.Unresponsive || w.ElevatedUnreadable) continue;
             var found = ReadWindow(hwnd, w, (uint)(snap.Windows.Count - 1), keys);
-            if (found.Count == 0) w.NoTree = true;
+            // No usable tree: nothing beyond the title bar (canvas and custom-drawn apps still have one).
+            if (found.All(r => r.E.Role == "title bar" || r.E.AncestorPath.StartsWith("title bar"))) w.NoTree = true;
             raws.AddRange(found);
         }
         snap.IndeterminateProgress = raws.Any(r => r.Busy);

@@ -243,3 +243,28 @@ def test_pixels_snapshot_never_passes_window_checks_never_gets_alt_f4_and_normal
     s = Session(agent, GroundTruth(tmp_path / "gt.jsonl"), "pw")  # pyright: ignore[reportArgumentType]
     assert s.normalize(rounds=4)
     assert agent.chords == [keys.chord("Esc")]  # Esc for Shut Down, never Alt+F4, never a click
+
+
+DETECTOR = ROOT / "models" / "omniparser-v2.0" / "icon_detect_v3" / "model.onnx"
+
+
+@pytest.mark.skipif(
+    not HAS_OCR or not DETECTOR.exists(), reason="needs the visual group and the ignored detector model"
+)
+def test_custom_drawn_dark_dense_window_reads_icons_buttons_and_table() -> None:
+    # guest/drawnapp/Ledger.cs, client area captured with PrintWindow: all painted, UIA sees one empty pane.
+    png = (ROOT / "fixtures" / "ledger-drawn" / "client.png").read_bytes()
+    rows = visual.elements(visual.merge(visual.ocr_reader()(png), visual.detector_reader(str(DETECTOR))(png)), 0)
+
+    def inside(e: obs.Element, x: int, y: int, w: int, h: int) -> bool:
+        cx, cy = e.bounds.x + e.bounds.width / 2, e.bounds.y + e.bounds.height / 2
+        return x <= cx <= x + w and y <= cy <= y + h
+
+    tools = [(12 + i * 36, 10, 30, 30) for i in range(12)]
+    icons = [e for e in rows if any(inside(e, *t) for t in tools)]
+    assert sum(any(inside(e, *t) for e in icons) for t in tools) >= 11 and all(e.name == "" for e in icons)
+    for name, box in [("Save", (560, 560, 90, 30)), ("Cancel", (660, 560, 90, 30))]:
+        assert any(e.name == name and e.role == "button" and inside(e, *box) for e in rows), name
+    names = {e.name for e in rows}
+    cells = [f"2026-10-{d:02d}" for d in range(1, 25)] + [f"Invoice {4100 + r * 7}" for r in range(24)]
+    assert sum(c in names for c in cells) >= 46  # 8 pt grey-on-dark table
