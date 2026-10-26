@@ -106,7 +106,7 @@
 <body>
 <main>
   <h1>Ludius V2: progress against the spec</h1>
-  <p class="meta"><span>Updated 26 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/4435773"><code>4435773</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
+  <p class="meta"><span>Updated 26 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/00dda7d"><code>00dda7d</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
 
   <div class="summary" id="summary"></div>
 
@@ -129,6 +129,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-26">26 Oct 2026</time><span>e260d8a/00dda7d add ludius day --temporal: slot activities, durable realtime/break timers, at-most-three attempts, progress heartbeats and OS desktop lock. Four real SDK-server tests cover ordering, killed-controller resume without replaying completed slots, no overlap after hung-attempt cancellation, and cancellation clock reset. Full suite56 passed/7 skipped. At-least-once GUI effects may repeat. No VM Temporal run or deployed PostgreSQL-backed server yet; an unresumed killed controller can still leave jumped clocks.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>1dd84e6 integrates DC-first/direct-guest clock setting and local cmd_day reset in finally; live success and missing-template exception reset verified without Jev calls. Integrated NTP-follow and Temporal cleanup remain pending. 4435773 adds pinned MIT OmniParser icon_detect_v3 ONNX inference: export parity2.4e-5, five-screen UIA recall171/186 with unnamed-icon filtering, OCR+detector1.9–2.3 s. Resident memory after arena fix peaks371 MiB; transient Windows peak working set still~3 GiB. Live no-tree/dark/dense and pixels-only tasks remain incomplete.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>e34f130 records live workgroup NTP: UDP123 response, member following DC+3 h within0.6 s, reset within1 s of host and six4616 events. Rollback verified temporary NIC removal and Hyper-V time sync restored; host/LAN untouched. Manual resync, not NT5DS/natural polling; day integration pending. New clean-watchdog baseline contains normalized production0.1.0/uiAccess and three task triggers; original checkpoints preserved. 727f331 fixes leading-interrupt logical order with realtime/time-jump regressions.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Workers resumed after quota reset. Watchdog verification accepted: injected real observer hang/failure paths emit crash events and relaunch in about 31 s with uiAccess retained; under-load takeover had 160 calls/0 errors and quiet-gap takeover 35 calls/0 errors. Faulty initial PID-watcher observation retracted. Production observer 0.1.0 reinstalled and test-hook string absent; clean-watchdog checkpoint authorized while preserving clean/clean-files. Member NTP checks next; Office/manual steps and Proxmox remain deferred.</span></li>
@@ -222,7 +223,7 @@ const SECTIONS = [
   ]},
   { id: "planning", title: "6. Planning layer", items: [
     ["Company narrative and world state", "partial", "e9d1fba weekly revision preserves continuity and archives dated changes (offline and real-call verified). 78fbf0a derives documents, colleague messages, due follow-ups and calendar briefs from completed logs/narrative; offline suite 40 passed, 5 skipped. Automatic revision scheduling, actual mailbox/calendar observation and shared storage remain pending."],
-    ["Nightly day plans", "partial", "<code>ludius plan day</code> generates per-persona plans with code validation, one repair round and rejected-item reporting. Automatic nightly scheduling and durable restart/concurrency verification are in development; CLI generation alone does not establish nightly automation."],
+    ["Nightly day plans", "partial", "CLI per-persona generation validates content with one repair round. e260d8a/00dda7d add durable day execution, timers and restart/concurrency tests. Automatic nightly plan generation/scheduling and deployed execution remain pending; durable playback alone does not establish nightly automation."],
     ["Task instances from the planner", "done", "Plan items are task instances: template, parameters, content and a one-line reason."],
     ["Personas", "done", "Role, department, working hours, style, timing and risk profiles; IT admin lnord added. Real weekly revision in e9d1fba reconciled lnord into the company narrative while preserving prior people and events."],
     ["Task templates with variants", "partial", "Paint 11/12, Notepad 12/12, Explorer new folder 9/9 (698a1b6); PowerShell admin 9/9 as lnord. Explorer rename/move admitted 9/9 from clean-files (a48f892). Edge and WordPad previously completed live. All tested variants meet the admission threshold. Outlook/Office templates still missing."],
@@ -237,7 +238,7 @@ const SECTIONS = [
   ]},
   { id: "clock", title: "7. Clock modes, range lifecycle and provisioning", items: [
     ["Realtime and compressed modes", "done", "Day runner plays the plan on its logical timeline: realtime waits for each item (late items run at once), compressed runs back to back. Breaks lock the screen."],
-    ["Time-jump mode", "partial", "e34f130 proves UDP123/manual NTP convergence and reset. 1dd84e6 local day adapter sets DC then guest directly over PowerShell Direct; finally resets success, exception and Ctrl+C paths (live missing-template test verified). Host/LAN untouched; guest sync restored/DC stays source. Integrated NTP-follow range mode, NT5DS/natural polling and Temporal crash/cancellation cleanup remain pending. DC restores need initialization."],
+    ["Time-jump mode", "partial", "e34f130 proves manual NTP convergence/reset;1dd84e6 local day sets DC then guest directly and resets exceptions/Ctrl+C (live verified). Temporal uses same adapter; real-server cancellation test waits for stopped slot then clock_reset. Integrated NTP-follow range mode, NT5DS/natural polling, VM Temporal run and autonomous reset after an unresumed controller kill remain pending. Host/LAN untouched; DC restores need initialization."],
     ["Seeded runs", "done", "Seed fixes variant choice and jitter."],
     ["Range lifecycle (build, age, inject, snapshot, deliver, reset)", "partial", "Per-VM checkpoint and restore only."],
     ["Persistent-VM hygiene and drift canaries", "partial", "Normalize before and after every task (dismiss dialogs and UAC prompts, close strays, confirm an unlocked desktop); side effects logged. No drift canaries."],
@@ -260,7 +261,7 @@ const SECTIONS = [
     ["Host agent on Linux (Proxmox)", "todo", "Proxmox work deferred by owner for now; incomplete."],
     ["gRPC + protobuf", "done", ""],
     ["Python 3.12+, Pydantic, strict pyright", "done", "Synchronous for now; asyncio comes with orchestration."],
-    ["Temporal, PostgreSQL, MinIO", "todo", ""],
+    ["Temporal, PostgreSQL, MinIO", "partial", "e260d8a/00dda7d implement CLI Temporal days, durable timers, retries, ground-truth heartbeats, OS desktop lock and cancellation reset. Four real SDK-server tests cover timers/order/retry, SIGKILL resume, hung-attempt exclusion and cancellation; suite56 passed/7 skipped. At-least-once UI effects, not exactly-once. PostgreSQL/MinIO persistence, deployment and VM execution pending; Docker daemon unavailable."],
     ["Visual fallback (ONNX detector, PaddleOCR)", "partial", "4435773 runs PP-OCR and pinned Microsoft MIT icon_detect_v3 on ONNX Runtime; export parity2.4e-5, eight visual tests pass. Five1920x1080 screens:171/186 UIA controls recalled; OCR+detector1.9–2.3 s. Arena fix cuts resident peak to371 MiB, but transient Windows peak remains~3 GiB. Real no-tree, dense/dark and safe pixels-only task validation still pending; inverted screenshots are proxies only."],
     ["Analysis (Plaso, DuckDB, Polars, LightGBM)", "partial", "Offline psort CSV ingestion and coverage/survival metrics in controller; no artifact collection or Plaso execution yet. Filterability uses single-feature rules; DuckDB, Polars and LightGBM are not integrated."],
     ["Repository layout", "partial", "proto, guest, host, controller (planner and offline artifact analysis), fixtures, infra and web monitor. No separate analysis service."],
