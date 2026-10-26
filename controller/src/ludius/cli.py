@@ -19,7 +19,7 @@ from pathlib import Path
 import yaml
 from google.protobuf import json_format
 
-from ludius import admission, artifacts, growth, keys, metrics, planner, revision, timeline, visual, world_state
+from ludius import admission, artifacts, canary, growth, keys, metrics, planner, revision, timeline, visual, world_state
 from ludius.assist import Assist
 from ludius.day import DayRunner, run_task
 from ludius.hostagent import HostAgent
@@ -91,7 +91,8 @@ def set_clock(at: dt.datetime | None) -> None:
     """Time-jump: the guest clock to a logical time (test VM only, via infra/hyperv/set-clock.ps1)."""
     script = str(ROOT / "infra" / "hyperv" / "set-clock.ps1")
     extra = ["-Reset"] if at is None else ["-Time", at.isoformat(timespec="seconds")]
-    subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-File", script, *extra], check=True, capture_output=True)
+    cmd = ["pwsh", "-NoProfile", "-NonInteractive", "-File", script, *extra]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
 def restore(agent: HostAgent, checkpoint: str) -> None:
@@ -205,6 +206,10 @@ def cmd_day(args: argparse.Namespace) -> int:
     persona = load_persona(args.persona or str(DATA / "personas" / f"{plan.persona}.yaml"))
     seed = args.seed if args.seed is not None else int(time.time())
     log_path = Path(args.log) if args.log else planner.World(RUNS).day_log(plan.persona, plan.date)
+    templates = load_templates()
+    drift = canary.drifted(RUNS / "health.json")
+    skipped = [i for i in plan.items if i.template in templates and templates[i.template].app in drift]
+    plan = plan.model_copy(update={"items": [i for i in plan.items if i not in skipped]})
     agent = start_agent(args)
     jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
     if args.temporal:
@@ -213,10 +218,15 @@ def cmd_day(args: argparse.Namespace) -> int:
         log: GroundTruth = durable.HeartbeatLog(log_path)  # slot heartbeats come from ground-truth writes
     else:
         log = GroundTruth(log_path)
+    reset_failed = False
     try:
+        for i in skipped:  # the app's drift canary failed: don't burn Jev calls on a UI that has changed
+            log.write(event="skipped_drift", host_ms=int(time.time() * 1000), at=i.at, task=i.template,
+                      app=templates[i.template].app)  # fmt: skip
+            print(f"  {i.at} {i.template}: skipped, {templates[i.template].app} drifted (runs/health.json)")
         pacing = "compressed" if args.clock == "time-jump" else args.clock
         runner = Runner(agent, jev, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=make_policy())
-        day = DayRunner(runner, make_session(agent, log), load_templates(), log, args.clock, seed, set_clock=set_clock)
+        day = DayRunner(runner, make_session(agent, log), templates, log, args.clock, seed, set_clock=set_clock)
         if args.temporal:  # durable: resumes after the last finished slot if this day was started before
             from ludius import durable
 
@@ -226,7 +236,13 @@ def cmd_day(args: argparse.Namespace) -> int:
             results = [(r.item.at, r.item.template, r.status) for r in day.run(plan)]
     finally:
         if args.clock == "time-jump":
-            set_clock(None)  # an exception or Ctrl+C mid-day must not leave the range on a jumped clock
+            try:  # an exception or Ctrl+C mid-day must not leave the range on a jumped clock
+                set_clock(None)
+            except (subprocess.CalledProcessError, OSError) as e:  # report it; never mask an exception in flight
+                reset_failed = True
+                detail = (getattr(e, "stderr", "") or str(e)).strip()[-500:]
+                print(f"time-jump reset FAILED, range clocks may still be jumped: {detail}\n"
+                      "  fix: pwsh infra/hyperv/set-clock.ps1 -Reset", file=sys.stderr)  # fmt: skip
         log.close()
         jev.close()
         agent.close()
@@ -235,7 +251,28 @@ def cmd_day(args: argparse.Namespace) -> int:
     done = sum(status == "done" for _, _, status in results)
     print(f"day {plan.date} {plan.persona} (seed {seed}): {done}/{len(results)} done")
     print(f"ground truth: {log_path}")
+    if reset_failed:
+        return 3
     return 0 if done == len(results) else 1
+
+
+def cmd_canary(args: argparse.Namespace) -> int:
+    """Drift canaries: one admitted task per app on the VM as it is; results to runs/health.json."""
+    agent = start_agent(args)
+    jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
+    log_path = RUNS / "canary" / f"{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
+    log = GroundTruth(log_path)
+    try:
+        runner = Runner(agent, jev, load_persona(args.persona), log, clock="compressed", seed=0,
+                        assist=make_assist(), policy=make_policy())  # fmt: skip
+        states = canary.run(load_templates(), DATA / "admission.yaml", runner, make_session(agent, log),
+                            RUNS / "health.json", set(args.app) or None)  # fmt: skip
+    finally:
+        log.close()
+        jev.close()
+        agent.close()
+    print(f"health: {RUNS / 'health.json'}\nlog: {log_path}")
+    return 1 if "drift" in states.values() else 0
 
 
 def cmd_timeline(args: argparse.Namespace) -> int:
@@ -429,6 +466,13 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--restore", metavar="CHECKPOINT", help="restore this checkpoint first")
     d.add_argument("--temporal", metavar="HOST:PORT", help="run as a durable Temporal workflow on this server")
     d.set_defaults(fn=cmd_day)
+
+    ca = sub.add_parser("canary", help="drift canaries: one admitted task per app, results to runs/health.json")
+    ca.add_argument("app", nargs="*", help="only these apps (default: every app with an admitted template)")
+    ca.add_argument("--persona")
+    ca.add_argument("--model", default=DEFAULT_MODEL)
+    ca.add_argument("--restore", metavar="CHECKPOINT", help="restore this checkpoint first")
+    ca.set_defaults(fn=cmd_canary)
 
     tl = sub.add_parser("timeline", help="export ground-truth logs as an instructor timeline CSV")
     tl.add_argument("logs", nargs="+")
