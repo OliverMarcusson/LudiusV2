@@ -2,6 +2,10 @@
 Save As screenshot, with the dialog's UIA rows as ground truth; they skip without the visual dependency group."""
 
 import importlib.util
+import subprocess
+import sys
+import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -186,3 +190,18 @@ def test_cli_agent_adds_visual_rows_only_in_fallback_mode(monkeypatch: pytest.Mo
     agent = visual.VisualHostAgent("127.0.0.1:1", "vm", read=lambda png: [visual.Box(5, 5, 20, 10, "Colours", 0.9)])
     rows = agent.observe().snapshot.elements
     assert [(e.name, e.window, e.framework_id) for e in rows] == [("Colours", 0, "visual")]
+
+
+def test_detector_inference_waits_for_another_process_holding_the_slot(tmp_path: Path) -> None:
+    lock = str(tmp_path / "detector.lock")
+    hold = (
+        "import sys, time\nfrom ludius import visual\n"
+        "with visual.inference_slot(sys.argv[1]):\n    print('held', flush=True)\n    time.sleep(1.5)\n"
+    )
+    other = subprocess.Popen([sys.executable, "-c", hold, lock], stdout=subprocess.PIPE, text=True)
+    assert other.stdout is not None and other.stdout.readline().strip() == "held"
+    start = time.monotonic()
+    with visual.inference_slot(lock):
+        waited = time.monotonic() - start
+    other.wait(10)
+    assert waited > 0.8  # the second VM's inference ran only after the first one's

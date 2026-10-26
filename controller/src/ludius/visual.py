@@ -18,8 +18,12 @@ import importlib
 import io
 import math
 import os
+import sys
+import tempfile
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -117,8 +121,55 @@ def decode(heads: list[Head], r: float, conf: float = DETECT_CONF, iou: float = 
     return kept
 
 
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock(fd: int) -> None:
+        while True:
+            try:
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # gives up after about 10 s; keep waiting
+                return
+            except OSError:
+                pass
+
+    def _unlock(fd: int) -> None:
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+INFERENCE_LOCK = os.path.join(tempfile.gettempdir(), "ludius-detector.lock")
+_in_process = threading.Lock()
+_detectors: dict[str, Reader] = {}
+
+
+@contextmanager
+def inference_slot(path: str = INFERENCE_LOCK) -> Generator[None]:
+    """One detector inference at a time on this host, across threads and controller processes: each one briefly
+    needs about 3 GiB of working set at full 1280 input, so N VMs must not mean N spikes at once."""
+    # ponytail: host-wide serialisation, ~1.3 s per screen queues behind other VMs; a shared detector service
+    # with a bounded pool replaces this when the pipeline design gets one.
+    with _in_process, open(path, "a+b") as f:
+        f.seek(0)
+        _lock(f.fileno())
+        try:
+            yield
+        finally:
+            f.seek(0)
+            _unlock(f.fileno())
+
+
 def detector_reader(path: str) -> Reader:
-    """The OmniParser v2 icon detector exported to ONNX (scripts/export_detector.py): raw head, three strides."""
+    """The OmniParser v2 icon detector exported to ONNX (scripts/export_detector.py): raw head, three strides. One
+    session per model per process, shared by every agent in it."""
+    if path in _detectors:
+        return _detectors[path]
     try:
         ort: Any = importlib.import_module("onnxruntime")
         np: Any = importlib.import_module("numpy")
@@ -141,10 +192,12 @@ def detector_reader(path: str) -> Reader:
         canvas: Any = image_mod.new("RGB", (DETECT_SIZE, DETECT_SIZE), (114, 114, 114))
         canvas.paste(img.resize((round(img.width * r), round(img.height * r))), (0, 0))
         x = np.asarray(canvas, dtype=np.float32).transpose(2, 0, 1)[None] / 255.0
-        out: list[Any] = session.run(None, {name: x})
+        with inference_slot():
+            out: list[Any] = session.run(None, {name: x})
         heads: list[Head] = [(out[k][0][0].tolist(), out[k + 1][0].tolist(), s) for k, s in ((0, 8), (2, 16), (4, 32))]
         return decode(heads, r)
 
+    _detectors[path] = read
     return read
 
 
