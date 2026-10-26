@@ -129,6 +129,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-26">26 Oct 2026</time><span>PowerShell admin look-alike admitted 9/9 as lnord; single-VM time-jump day completed 8/8. Cross-persona planning threads, risk profiles and mistake variants implemented (mistake admission pending). Separate persistent Jev and LLM request counters plus loading, stale and unavailable states are pushed; host activation pending. Offline artifact coverage, persona-hour volume and scenario-artifact survival accept Plaso CSV exports; real-export validation pending. Paint failed 0/9; the mspaint/text-only fix is pushed and awaits re-validation. Explorer rename/move awaits checkpoint prerequisites and admission.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Admission gate and LLM template growth (a proposed WordPad template passed 8/8 and joined the catalog). Near-tie choice, <code>type:copy</code>, rare LLM assist for open-ended subgoals, UAC prompts reported and cancelled. Range metrics and filterability check from ground-truth logs. Operator monitor with 12 fps desktop feeds.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>CI on GitHub Actions. Session hygiene, lock detection, blind unlock and failure-ladder steps 4–8. Explorer and Edge templates. LLM planner (narrative, day plans, content, near-duplicate check), day runner with clock modes, breaks and interruptions, and the instructor timeline export. A planned day (8 items: 3 notes, 2 web lookups, a folder, 2 breaks, one interruption) ran 8/8 in compressed mode on the VM; the interrupted Notepad task resumed and finished. Fixes: an observer race when a window closes mid-snapshot, and actions that change nothing are withdrawn until the screen changes.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>First vertical slice on local Hyper-V: observer, host agent and controller working end to end. Contract test passes. All 4 Notepad variants complete from the <code>clean</code> checkpoint in 9–12 Jev steps, with byte-exact file content. 22 tests pass, including live Jev replay on 5 fixtures. Published to GitHub.</span></li>
@@ -150,7 +151,7 @@ const SECTIONS = [
   ]},
   { id: "architecture", title: "2. Architecture", items: [
     ["Guest, host, decision layers", "done", "Observer (C#), host agent (C#), controller (Python) connected and verified live."],
-    ["Planning layer", "partial", "Narrative, nightly day plans, content and near-duplicate check via OpenRouter. No cross-persona threads or template growth."],
+    ["Planning layer", "partial", "Narrative, nightly day plans, content and near-duplicate check, cross-persona handoffs, template growth and look-alike work near scenario windows, all via OpenRouter. No mail, shared documents or calendar yet."],
   ]},
   { id: "observer", title: "3. Guest observer", items: [
     ["Interactive session at logon, never a service", "done", "Logon scheduled task in the persona's session (session 1)."],
@@ -180,12 +181,12 @@ const SECTIONS = [
     ["Same gRPC API on both hypervisors", "partial", "API defined in <code>proto/</code>; Hyper-V only."],
     ["Input: move, click, keys, type, Ctrl+Alt+Del", "done", "Plus scroll. Uses virtual-key codes (the WMI API), not scancodes."],
     ["Guest channel relay", "partial", "Unary Observe over the Hyper-V socket instead of a bidirectional stream; reconnects after restores."],
-    ["Operator monitor (beyond the spec)", "done", "View-only web page served by the host agent: 12 fps WebSocket feed per range VM from the Hyper-V console thumbnail (nothing in the guest), shared capture loop per VM, origin and host checks. No authentication: localhost only."],
+    ["Operator monitor (beyond the spec)", "done", "View-only 12 fps desktop feeds with shared capture loops, origin and host checks; localhost only, no authentication. Separate persistent Jev/LLM request-attempt counters and loading, unavailable and stale states are pushed (bb50de5, be937a2). Counter activation awaits a safe host rebuild/restart after admissions."],
     ["Lifecycle", "partial", "Start, stop, checkpoint, restore, state. Clone and delete not built."],
-    ["Hyper-V backend", "done", "WMI synthetic mouse and keyboard verified on this Windows 11 host. Not yet checked on the target Windows Server version."],
+    ["Hyper-V backend", "done", "WMI synthetic mouse and keyboard verified on this Windows 11 host. Single-key COM calls retry transient 0xC0000002 failures up to 3 times; PowerShell admission passed 9/9 with the fix. Not yet checked on the target Windows Server version."],
     ["Proxmox backend (QMP, USB tablet, vsock, API)", "todo", ""],
     ["Fixed resolution in VM config", "done", "<code>Set-VMVideo</code> 1920×1080."],
-    ["Mapping recheck on resolution change", "todo", ""],
+    ["Mapping recheck on resolution change", "done", "The step loop tracks guest width, height and DPI; on a change it moves the pointer to two known points and compares the guest cursor within 1 px. Drift fails the task instead of clicking blind."],
     ["Click jitter, movement paths, persona timing", "done", "Eased curved paths; Gaussian point inside the element box; heavy-tailed typing delays."],
     ["Contract test", "partial", "<code>ludius contract</code> passes on Hyper-V (pointer within 1 px, exact typing). No CI, no Proxmox."],
   ]},
@@ -204,19 +205,20 @@ const SECTIONS = [
     ["Company narrative and world state", "partial", "Narrative generated once per range (company, people, projects, dated events). World state is what the day logs say happened. Weekly revision, inbox and calendar don't exist yet."],
     ["Nightly day plans", "done", "<code>ludius plan day</code>: one LLM call per persona and day, validated in code, one repair round, rejects dropped."],
     ["Task instances from the planner", "done", "Plan items are task instances: template, parameters, content and a one-line reason."],
-    ["Personas", "partial", "Role, department, working hours, style sheet (writing, file naming, habits), typing, think time, pointer timing. No risk profile."],
-    ["Task templates with variants", "partial", "Notepad (4 variants), Explorer new folder (2), Edge web lookup (2), WordPad formatted note (4, LLM-proposed); all complete live. No Outlook or Office."],
+    ["Personas", "partial", "Role, department, working hours, style, timing and risk profiles; IT admin lnord added. Company narrative regeneration to include lnord is pending."],
+    ["Task templates with variants", "partial", "Notepad, Explorer new folder, Edge and WordPad complete live; PowerShell admin check admitted 9/9 across 3 variants as lnord. Paint failed 0/9 (bad Run command, unsupported drag); mspaint/text-only fix pushed, re-validation pending. Explorer rename/move awaits a checkpoint containing its test file/folder and admission. No Outlook or Office."],
+    ["Mistake variants", "partial", "Notepad typo followed by Backspace and Explorer misnamed folder followed by F2 rename are implemented. VM admissions are running; no final results yet."],
     ["Template growth and admission", "done", "<code>ludius plan template</code>: the LLM proposes a template from the capability catalog; code checks catalog processes, placeholders, regexes, policy and a closing check; <code>ludius validate</code> admits variants passing 2/3 runs from <code>clean</code>. The WordPad proposal passed 8/8."],
     ["Task stack and interruptions", "done", "Interrupt items are pushed at the running task's next subgoal boundary, run to completion, and the task resumes; its time budget pauses meanwhile."],
     ["Content generation and near-duplicate check", "done", "All text written at plan time in the persona's style; ASCII, file-name and policy checks; SequenceMatcher ≥ 0.85 against the persona's earlier content is rejected."],
-    ["Cross-persona interaction", "todo", ""],
+    ["Cross-persona interaction", "partial", "Plan items can hand off to a colleague's account (validated against narrative people). A colleague's next plans see completed handoffs (joined from plans + day logs, last 3 days) as threads to pick up. No mail, shared documents or calendar yet, so threads are planning-level only."],
     ["Variety by filter dimension", "partial", "Launch method (Start search, Run, taskbar, Win+E), UI path (shortcut vs menu/ribbon), content and timing from the plan."],
-    ["Legitimate activity that resembles signal", "todo", ""],
+    ["Legitimate activity that resembles signal", "partial", "Risk profiles and IT admin persona; scenario windows place role-appropriate look-alike work nearby, never inside, validated in code. PowerShell admin check admitted 9/9 as lnord. Macro attachment remains deferred until Office or a mail client is available on the image."],
     ["LLM fallback and end-of-task verification", "done", "The LLM confirms Jev's open-ended completions (at most twice per subgoal) and proposes one intermediate subgoal when Jev is stuck. Both calls verified against the live screen; no catalog template is open-ended yet, so neither has fired in a real task."],
   ]},
   { id: "clock", title: "7. Clock modes, range lifecycle and provisioning", items: [
     ["Realtime and compressed modes", "done", "Day runner plays the plan on its logical timeline: realtime waits for each item (late items run at once), compressed runs back to back. Breaks lock the screen."],
-    ["Time-jump mode", "todo", ""],
+    ["Time-jump mode", "partial", "<code>ludius day --clock time-jump</code>: compressed pacing, and before each item the guest clock is set to its logical time over PowerShell Direct with Hyper-V time sync off; reset to host time after the day. 8/8 items done live, 4616 events logged. Single test VM only: no DC or controllable NTP source yet."],
     ["Seeded runs", "done", "Seed fixes variant choice and jitter."],
     ["Range lifecycle (build, age, inject, snapshot, deliver, reset)", "partial", "Per-VM checkpoint and restore only."],
     ["Persistent-VM hygiene and drift canaries", "partial", "Normalize before and after every task (dismiss dialogs and UAC prompts, close strays, confirm an unlocked desktop); side effects logged. No drift canaries."],
@@ -226,7 +228,7 @@ const SECTIONS = [
     ["Fixture replay", "done", "5 recorded screens; offline option/policy checks and live Jev replay (5/5)."],
     ["Contract tests", "partial", "Hyper-V only, run by hand."],
     ["Template validation in compressed mode", "done", "Admission gate: every variant N times from the <code>clean</code> checkpoint, results in <code>data/admission.yaml</code>."],
-    ["Range test runs and metrics", "partial", "<code>ludius metrics &lt;logs&gt;</code> computes coherence (completion per template, orphan steps), guardrails (blocked, failure rate per app), volume per persona-hour, repetition (sequence repeats, launch-method mix, step-gap CV) from ground-truth logs. Artifact coverage and survival need a Plaso super-timeline; not built."],
+    ["Range test runs and metrics", "partial", "Ground-truth coherence, guardrails, volume and repetition metrics. <code>--timeline after.csv [--before before.csv] [--manifest scenario.json]</code> adds artifact coverage per persona, timeline events per persona-hour and scenario-artifact survival from psort dynamic/l2tcsv exports. Prefetch stays host-scoped; unknown accounts and uncertain survival remain explicit. Offline suite: 30 passed, 5 skipped. Real before/after exports not yet validated."],
     ["Filterability test", "partial", "<code>ludius metrics --human &lt;logs&gt;</code> fits the best single-feature rule per feature (steps, gap mean/CV, hour, launch, first action, process) and passes if balanced accuracy ≤ 0.6. Decision stumps stand in for LightGBM; no human baseline recorded yet."],
     ["Ground-truth step log", "done", "JSONL with host and guest time, persona, window, element, action, Jev answer and result."],
     ["Instructor timeline export", "done", "<code>ludius timeline</code>: CSV with guest time, persona, VM, task, subgoal, action, target, window and result."],
@@ -240,8 +242,8 @@ const SECTIONS = [
     ["Python 3.12+, Pydantic, strict pyright", "done", "Synchronous for now; asyncio comes with orchestration."],
     ["Temporal, PostgreSQL, MinIO", "todo", ""],
     ["Visual fallback (ONNX detector, PaddleOCR)", "todo", ""],
-    ["Analysis (Plaso, DuckDB, Polars, LightGBM)", "todo", ""],
-    ["Repository layout", "partial", "proto, guest, host, controller (incl. planner), fixtures, infra. No analysis yet."],
+    ["Analysis (Plaso, DuckDB, Polars, LightGBM)", "partial", "Offline psort CSV ingestion and coverage/survival metrics in controller; no artifact collection or Plaso execution yet. Filterability uses single-feature rules; DuckDB, Polars and LightGBM are not integrated."],
+    ["Repository layout", "partial", "proto, guest, host, controller (planner and offline artifact analysis), fixtures, infra and web monitor. No separate analysis service."],
     ["CI", "done", "GitHub Actions: ruff, pyright and pytest on Linux; .NET build on Windows."],
     ["Open question: Hyper-V WMI input methods", "partial", "Verified on a Windows 11 host. Not yet checked on Windows Server."],
     ["Open question: FlaUI under NativeAOT", "done", "Sidestepped: COM interop via Interop.UIAutomationClient, single-file self-contained, no AOT."],
