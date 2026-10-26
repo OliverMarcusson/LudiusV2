@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 from ludius.llm import LlmClient
 from ludius.policy import Policy
@@ -48,6 +48,8 @@ class Narrative(Strict):
     people: list[Person]
     projects: list[str]
     events: list[Event]
+    revised: str = ""  # YYYY-MM-DD of the last weekly revision (spec section 6); "" until the first
+    history: list[Event] = Field(default_factory=list[Event])  # dated world-state updates, one per revision
 
 
 class PlanItem(TaskInstance):
@@ -285,6 +287,8 @@ class World:
 
     def save_narrative(self, n: Narrative) -> Path:
         _dump(self.narrative_path, n.model_dump())
+        if n.revised:  # each weekly revision is also kept, dated, so the range's story can be replayed
+            _dump(self.root / "world" / "revisions" / f"{n.revised}.yaml", n.model_dump())
         return self.narrative_path
 
     def plan_path(self, user: str, date: str) -> Path:

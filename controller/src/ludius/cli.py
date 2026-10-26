@@ -19,7 +19,7 @@ from pathlib import Path
 import yaml
 from google.protobuf import json_format
 
-from ludius import admission, artifacts, growth, keys, metrics, planner, timeline
+from ludius import admission, artifacts, growth, keys, metrics, planner, revision, timeline
 from ludius.assist import Assist
 from ludius.day import DayRunner, run_task
 from ludius.hostagent import HostAgent
@@ -155,6 +155,15 @@ def cmd_plan(args: argparse.Namespace) -> int:
             path = growth.save(raw, DATA / "templates" / "proposed")
             print(f"proposed {t.task} ({len(t.variants)} variants): {t.about}\n  -> {path}")
             print(f"  admit with: ludius validate {t.task}")
+        elif args.what == "revise":
+            personas = [load_yaml(Persona, p) for p in sorted((DATA / "personas").glob("*.yaml"))]
+            evidence = revision.happened(world, personas, date)
+            n, dropped = revision.revise(llm, world.narrative(), personas, date, evidence)
+            print(f"revised {n.revised}: {n.history[-1].what}")
+            print(f"  projects: {', '.join(n.projects)}; {len(n.people)} people; {len(n.events)} events")
+            for d in dropped:
+                print(f"  dropped {d}")
+            print(f"  -> {world.save_narrative(n)}")
         elif args.what == "narrative":
             personas = [load_yaml(Persona, p) for p in sorted((DATA / "personas").glob("*.yaml"))]
             n = planner.make_narrative(llm, personas, date)
@@ -368,7 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     r.set_defaults(fn=cmd_run)
 
     pl = sub.add_parser("plan", help="LLM planner: company narrative or a persona's day plan")
-    pl.add_argument("what", choices=["narrative", "day", "template"])
+    pl.add_argument("what", choices=["narrative", "revise", "day", "template"])
     pl.add_argument("--idea", help="template growth: what kind of task to propose")
     pl.add_argument("--persona", help="persona YAML (day plans)")
     pl.add_argument("--date", help="YYYY-MM-DD (default today)")
