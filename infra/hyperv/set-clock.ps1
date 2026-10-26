@@ -4,12 +4,13 @@
 # sync back on (re-enabling it alone doesn't pull a clock that is a day ahead back).
 # Range DC first (spec section 7): when .env names a running range DC (LUDIUS_DC_VM), its clock is set before the
 # guest's, so a range member that syncs from it follows. The DC's Hyper-V time sync stays off (it is the source).
-param([string]$Time, [switch]$Reset)
+param([string]$Time, [switch]$Reset, [string]$VM)  # -VM: another range member than .env LUDIUS_VM (the clock sweeper)
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $cfg = @{}
 foreach ($line in Get-Content (Join-Path $root '.env')) { if ($line -match '^\s*([A-Z0-9_]+)=(.*)$') { $cfg[$Matches[1]] = $Matches[2] } }
-$vm = $cfg.LUDIUS_VM
+$vm = if ($VM) { $VM } else { $cfg.LUDIUS_VM }
+if ($vm -notmatch '^ludius-[A-Za-z0-9-]+$') { throw "not a range VM: $vm" }
 $admin = [pscredential]::new("$($cfg.LUDIUS_ADMIN_USER)", (ConvertTo-SecureString $cfg.LUDIUS_ADMIN_PASSWORD -AsPlainText -Force))
 $utc = if ($Reset) { [datetime]::UtcNow } else { $null }
 $at = if ($Reset) { $null } else { [datetime]::ParseExact($Time, 's', [cultureinfo]::InvariantCulture) }  # guest-local

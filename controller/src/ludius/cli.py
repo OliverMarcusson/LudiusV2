@@ -20,8 +20,9 @@ from pathlib import Path
 import yaml
 from google.protobuf import json_format
 
-from ludius import admission, artifacts, canary, clocklease, growth, keys, metrics, planner, revision, timeline, visual, world_state
+from ludius import admission, artifacts, canary, growth, keys, metrics, planner, revision, timeline, visual, world_state
 from ludius.assist import Assist
+from ludius.clocklease import Lease
 from ludius.day import DayRunner, run_task
 from ludius.hostagent import HostAgent
 from ludius.jev import DEFAULT_MODEL, JevClient
@@ -89,9 +90,9 @@ def start_agent(args: argparse.Namespace) -> HostAgent:
 
 
 @functools.cache
-def _clock_lease() -> clocklease.Lease:
+def _clock_lease() -> Lease:
     vm = os.environ["LUDIUS_VM"]  # set-clock.ps1 jumps .env's LUDIUS_VM
-    return clocklease.Lease(RUNS / "locks" / f"clock-{vm}.json", vm)
+    return Lease(RUNS / "locks" / f"clock-{vm}.json", vm)
 
 
 def set_clock(at: dt.datetime | None) -> None:

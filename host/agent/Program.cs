@@ -17,7 +17,41 @@ builder.Services.AddSingleton<FeedHub>();
 var app = builder.Build();
 app.MapGrpcService<AgentService>();
 Monitor.Map(app);
+ClockSweep.Start(app);
 app.Run();
+
+// Orphaned time-jumps: every 60 s, infra/hyperv/clock-sweep.ps1 resets the range clocks of any clock lease
+// (runs/locks/clock-<vm>.json) its controller stopped renewing, i.e. a controller that was killed mid-day.
+static class ClockSweep
+{
+    public static void Start(WebApplication app)
+    {
+        var root = app.Environment.ContentRootPath;
+        var script = Path.GetFullPath(app.Configuration["Agent:ClockSweepScript"] ?? "../../infra/hyperv/clock-sweep.ps1", root);
+        var runs = Environment.GetEnvironmentVariable("LUDIUS_RUNS") is { Length: > 0 } r ? r : Path.GetFullPath("../../runs", root);
+        var log = app.Logger;
+        var stop = app.Lifetime.ApplicationStopping;
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(60));
+            while (await timer.WaitForNextTickAsync(stop))
+            {
+                try
+                {
+                    var psi = new System.Diagnostics.ProcessStartInfo("pwsh",
+                        ["-NoProfile", "-NonInteractive", "-File", script, "-Locks", Path.Combine(runs, "locks")])
+                        { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                    using var p = System.Diagnostics.Process.Start(psi)!;
+                    var output = (await p.StandardOutput.ReadToEndAsync(stop) + await p.StandardError.ReadToEndAsync(stop)).Trim();
+                    await p.WaitForExitAsync(stop);
+                    if (output != "") log.LogWarning("clock sweep: {Output}", output);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (Exception e) { log.LogError(e, "clock sweep failed"); }
+            }
+        }, stop);
+    }
+}
 
 // Operator monitor: a view-only web page of the VMs' desktops on its own HTTP/1.1 endpoint.
 // GET routes only, and nothing here reaches input, the guest channel or lifecycle.
