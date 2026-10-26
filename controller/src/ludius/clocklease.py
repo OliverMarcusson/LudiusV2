@@ -6,9 +6,10 @@ RENEW_S. A reset drops it. If the controller is killed the renewals stop; the ho
 set-clock.ps1 -Reset and only then deletes the lease. Heartbeats rather than pids: a reused pid can't keep a dead
 controller's lease alive. Host and LAN time are never touched; the reset is the same one a finishing day runs.
 
-Limit: a lease proves who may hold a jumped clock, not that the clock is still jumped. After a sweep, a resumed day
-is on host time until its next set_clock; durable break_end and a break's late interrupts (slot jump=False) don't
-call it today, so they would act on host time (open item with the day/durable seam, not covered by a test yet).
+A lease proves who may hold a jumped clock, not that the clock is still jumped, so the day never relies on it:
+since efbb23e every time-jump step that acts on the desktop sets the clock first (each slot, both ends of a break,
+a break's late interrupts at its logical end), and a failed set stops the step before the desktop. Covered by
+test_day/test_durable with a simulated sweep; not yet by a live time-jump run.
 """
 
 from __future__ import annotations
