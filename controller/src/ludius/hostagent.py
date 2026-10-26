@@ -54,10 +54,12 @@ class HostAgent:
                 result: pb.ObserveResult = self._stub.Observe(pb.ObserveRequest(vm=self.vm, request=req), timeout=60)
                 return result
             except grpc.RpcError as e:
-                # INTERNAL: the observer threw mid-snapshot (UI changing under it). Look again.
-                if e.code() != grpc.StatusCode.INTERNAL or attempt == 2:  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+                # INTERNAL: the observer threw mid-snapshot (UI changing under it). UNAVAILABLE: the guest channel
+                # dropped (seen right after a host agent restart) and the agent reconnects. Look again.
+                code = e.code()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+                if code not in (grpc.StatusCode.INTERNAL, grpc.StatusCode.UNAVAILABLE) or attempt == 2:
                     raise
-                time.sleep(0.5)
+                time.sleep(0.5 if code == grpc.StatusCode.INTERNAL else 3)
         raise AssertionError("unreachable")
 
     def lifecycle(self, op: int, checkpoint: str = "") -> str:
