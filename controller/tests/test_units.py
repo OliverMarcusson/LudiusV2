@@ -9,7 +9,7 @@ from ludius import keys
 from ludius.cli import DATA
 from ludius.jev import JevError, build_request, parse_response
 from ludius.policy import Policy
-from ludius.tasks import Done, Task, TaskInstance, WindowCheck, check_done, load_template
+from ludius.tasks import Done, Persona, Task, TaskInstance, WindowCheck, check_done, load_template
 from ludius.v1 import observation_pb2 as obs
 
 OPTIONS = {"o1": "click [1] button 'Save'", "o2": "press Esc"}
@@ -164,3 +164,34 @@ def test_near_tie_only_between_equivalent_options() -> None:
     runner.rng = random.Random(1)
     picks = {runner._choose(d, opts).key for _ in range(40)}  # pyright: ignore[reportPrivateUsage]
     assert picks == {"o1", "o2"}
+
+
+def test_mapping_recheck_on_display_change(tmp_path: Any) -> None:
+    from ludius.loop import GroundTruth, Runner
+    from ludius.v1 import agent_pb2 as pb
+
+    class FakeAgent:
+        vm = "t"
+
+        def __init__(self) -> None:
+            self.size, self.pos, self.offset = (1920, 1080), (0, 0), 0
+
+        def move(self, x: int, y: int, duration_ms: int = 0) -> int:
+            self.pos = (x + self.offset, y)
+            return 0
+
+        def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
+            s = obs.Snapshot(screen_width=self.size[0], screen_height=self.size[1], dpi=96,
+                             cursor_x=self.pos[0], cursor_y=self.pos[1])  # fmt: skip
+            return pb.ObserveResult(snapshot=s)
+
+    agent = FakeAgent()
+    runner = Runner(agent, None, Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    runner.observe()
+    assert runner.mapping_ok  # first display: nothing to compare
+    agent.size = (1280, 720)
+    runner.observe()
+    assert runner.mapping_ok
+    agent.size, agent.offset = (1600, 900), 7  # pointer lands 7 px off after this change
+    runner.observe()
+    assert not runner.mapping_ok

@@ -100,12 +100,31 @@ class Runner:
         self.policy = policy or Policy()
         self.rng = random.Random(seed)
         self.snap: obs.Snapshot = obs.Snapshot()
+        self.display: tuple[int, int, int] | None = None  # (width, height, dpi) the pointer mapping was checked at
+        self.mapping_ok = True
 
     # Observation and pacing -------------------------------------------------------
 
     def observe(self, timeout_ms: int = 5000) -> obs.Snapshot:
         self.snap = self.agent.observe(wait_settle=True, timeout_ms=timeout_ms).snapshot
+        display = (self.snap.screen_width, self.snap.screen_height, self.snap.dpi)
+        if not self.snap.locked and display[0] > 0 and display != self.display:
+            if self.display is not None:
+                self.mapping_ok = self.recheck_mapping(display)
+            self.display = display
         return self.snap
+
+    def recheck_mapping(self, display: tuple[int, int, int]) -> bool:
+        """Spec section 4: after a resolution or scaling change, confirm a pointer move lands where intended."""
+        w, h, _ = display
+        misses: list[tuple[int, int, int, int]] = []
+        for x, y in ((w // 2, h // 2), (w // 5, h // 4)):
+            self.agent.move(x, y, 0)
+            s = self.agent.observe(wait_settle=False).snapshot
+            if abs(s.cursor_x - x) > 1 or abs(s.cursor_y - y) > 1:  # Hyper-V rounds by up to 1 px
+                misses.append((x, y, s.cursor_x, s.cursor_y))
+        self.log.write(event="mapping_recheck", host_ms=_now(), display=list(display), ok=not misses, misses=misses)
+        return not misses
 
     def think(self) -> None:
         if self.clock == "realtime":
@@ -226,6 +245,8 @@ class Runner:
                 return "failed", step - 1, "time budget"
             if snap.locked:
                 return "failed", step - 1, "session locked"
+            if not self.mapping_ok:
+                return "failed", step - 1, "pointer mapping drift after a display change"
             if snap.secure_desktop:
                 # A UAC prompt: noise never elevates. Cancel it like a person would and give up the task.
                 self.agent.chord(keys.chord("Esc"))
