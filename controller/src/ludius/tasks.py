@@ -68,6 +68,7 @@ class Template(Strict):
     defaults: dict[str, str] = Field(default_factory=dict[str, str])  # fixed values, e.g. the Start search query
     about: str = ""  # one line for the planner's capability catalog
     example: dict[str, str] = Field(default_factory=dict[str, str])  # parameters for admission test runs
+    resembles: str = ""  # signal type this legitimate work looks like (powershell, rdp, macro); spec section 6
 
     def check(self) -> None:
         for v in self.variants:
@@ -87,6 +88,7 @@ class Persona(Strict):
     typing_jitter_ms: int = 60
     think_mean_s: float = 1.6  # pause before each action in realtime mode
     pointer_ms: tuple[int, int] = (180, 520)
+    risk_profile: list[str] = Field(default_factory=list[str])  # signal-like templates that fit the role
 
 
 class TaskInstance(Strict):

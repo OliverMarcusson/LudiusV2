@@ -64,6 +64,23 @@ class PlanItem(TaskInstance):
         return v
 
 
+class Scenario(Strict):
+    """Where an injected scenario lands, so legitimate look-alike work is planned near it (spec section 6)."""
+
+    date: str  # YYYY-MM-DD
+    start: str  # HH:MM
+    end: str  # HH:MM
+    signal: str  # matches Template.resembles: powershell, rdp, macro ...
+
+    @classmethod
+    def parse(cls, s: str) -> Scenario:
+        """'2026-10-28T13:00-14:00:powershell'"""
+        m = re.fullmatch(r"(\d{4}-\d\d-\d\d)T(\d\d:\d\d)-(\d\d:\d\d):(\w+)", s)
+        if not m:
+            raise ValueError("scenario must look like 2026-10-28T13:00-14:00:powershell")
+        return cls(date=m[1], start=m[2], end=m[3], signal=m[4])
+
+
 class _Draft(Strict):
     items: list[PlanItem]
 
@@ -118,9 +135,13 @@ def plan_day(
     world: str,
     history: list[str],
     policy: Policy | None = None,
+    scenario: Scenario | None = None,
 ) -> tuple[DayPlan, list[str]]:
     """Draft, validate, ask once to replace rejected items, drop what still fails. Returns the plan and rejects."""
     policy = policy or Policy()
+    templates = role_templates(templates, persona)
+    window = scenario if scenario and scenario.date == date.isoformat() else None
+    lookalikes = sorted(k for k, t in templates.items() if window and t.resembles == window.signal)
     colleagues = {p.user for p in narrative.people if p.user and p.user != persona.user}
     user = (
         f"Company story:\n{narrative.model_dump_json(indent=1)}\n\n"
@@ -143,15 +164,22 @@ def plan_day(
             if colleagues
             else ""
         )
+        + (
+            f" Part of this persona's normal job ({', '.join(lookalikes)}) is due today: plan one or two such "
+            f"items within 90 minutes before {window.start} or after {window.end}, never between them, each with "
+            "a concrete work reason from the company story."
+            if window and lookalikes
+            else ""
+        )
     )
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
-    rejects = validate(draft.items, templates, history, policy, colleagues)
+    rejects = validate(draft.items, templates, history, policy, colleagues, window)
     if rejects:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
             f"- item {i} ({draft.items[i].template} at {draft.items[i].at}): {why}" for i, why in rejects
         )
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
-        rejects = validate(draft.items, templates, history, policy, colleagues)
+        rejects = validate(draft.items, templates, history, policy, colleagues, window)
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     return DayPlan(persona=persona.user, date=date.isoformat(), items=items), [
@@ -162,12 +190,18 @@ def plan_day(
 # Validation ---------------------------------------------------------------------------
 
 
+def role_templates(templates: dict[str, Template], persona: Persona) -> dict[str, Template]:
+    """Signal-like templates only for personas whose risk profile includes them; the rest are unknown to the plan."""
+    return {k: t for k, t in templates.items() if not t.resembles or k in persona.risk_profile}
+
+
 def validate(
     items: list[PlanItem],
     templates: dict[str, Template],
     history: list[str],
     policy: Policy,
     colleagues: set[str] | None = None,
+    scenario: Scenario | None = None,
 ) -> list[tuple[int, str]]:
     rejects: list[tuple[int, str]] = []
     seen = list(history)
@@ -175,6 +209,9 @@ def validate(
         why = _check_item(it, templates, seen, policy)
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
+        t = templates.get(it.template)
+        if not why and scenario and t and t.resembles and scenario.start <= it.at <= scenario.end:
+            why = f"{t.resembles}-like work must not overlap the scenario window {scenario.start}-{scenario.end}"
         if why:
             rejects.append((i, why))
         else:

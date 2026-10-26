@@ -145,6 +145,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
             plan, rejects = planner.plan_day(
                 llm, world.narrative(), persona, date, templates, world.summary(persona.user, date),
                 world.history(persona.user),
+                scenario=planner.Scenario.parse(args.scenario) if args.scenario else None,
             )  # fmt: skip
             path = world.save_plan(plan, templates)
             for it in plan.items:
@@ -339,6 +340,7 @@ def main(argv: list[str] | None = None) -> int:
     pl.add_argument("--idea", help="template growth: what kind of task to propose")
     pl.add_argument("--persona", help="persona YAML (day plans)")
     pl.add_argument("--date", help="YYYY-MM-DD (default today)")
+    pl.add_argument("--scenario", help="scenario window for look-alike work, e.g. 2026-10-28T13:00-14:00:powershell")
     pl.add_argument("--model", default=PLANNER_MODEL)
     pl.set_defaults(fn=cmd_plan)
 

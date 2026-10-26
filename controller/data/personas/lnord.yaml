@@ -1,0 +1,14 @@
+name: Lars Nord
+user: lnord
+role: IT administrator
+department: IT
+hours: ["07:45", "16:15"]
+style: >-
+  Short, factual notes in English with ticket numbers ("INC-2291 printer queue"). Names files with the date
+  first ("2026-10-28 patch list"). Checks services and accounts from PowerShell rather than the GUI and
+  searches vendor docs for error codes.
+typing_mean_ms: 105
+typing_jitter_ms: 45
+think_mean_s: 1.2
+pointer_ms: [160, 440]
+risk_profile: [powershell_admin_check]

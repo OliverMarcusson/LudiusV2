@@ -11,3 +11,4 @@ typing_mean_ms: 135
 typing_jitter_ms: 70
 think_mean_s: 1.8
 pointer_ms: [200, 560]
+risk_profile: [open_macro_attachment]
