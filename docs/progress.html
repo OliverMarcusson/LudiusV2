@@ -129,6 +129,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-26">26 Oct 2026</time><span>Owner deferred Proxmox for now; its requirements remain incomplete, outside active work queues. Watchdog guest smoke confirms three task triggers, synthetic crash-event relaunch in 32 s with uiAccess retained, and idle daily takeover. Actual observer watchdog failure and takeover during a live request remain untested. Server ISO downloaded (8152356864 bytes); Office clone unique-name setup and isolated DC/NTP provisioning continue.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>cff875c loads scenario-reserved path/mailbox policy into planning and run/validate/day; red-herring exemptions retained, suite 43 passed/5 skipped. Live policy verification and keyboard-only target gap remain. 083f080 adds virtualized-list range hints and offline scroll-option coverage; live scroll/clipping/retry checks pending. 6d6ae51 clone verified live into separate Office VM; guarded deletion refusals verified, actual deletion not run. Clone retains Windows identity; no concurrent domain use. Server evaluation ISO download started; DC/NTP provisioning pending capacity-safe setup.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Planning state 78fbf0a rebuilds documents, colleague messages, next-working-day follow-ups and persona calendar briefs from completed day-log items and narrative events. Due follow-ups must be scheduled by id and close only on logged completion; offline suite 40 passed, 5 skipped. This is derived planning data: no mail/calendar UI, shared storage or invite-response integration yet. Scenario-reserved path loading is next.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>Observer watchdog implemented in 15e9a85: fail-fast on a request over 60 s or five consecutive request failures, event-triggered interactive relaunch after 30 s, and daily takeover between requests. Session 0 refused; observer adds no child processes or disk writes. Build, eleven fake-clock cases and scheduled-task construction pass. Guest crash-event delivery, relaunch/uiAccess and takeover timing remain unverified; Miso owns the smoke test.</span></li>
@@ -183,7 +184,7 @@ const SECTIONS = [
     ["Stable IDs, ranking, ~200 cap, context lines", "done", "Hash of control type, automation id, name and ancestor path, mapped to short ids for the observer's lifetime."],
     ["Settle detection", "done", "UIA events + DXGI dirty rects, 300 ms quiet, 5 s timeout, busy cursor and indeterminate progress reported. ~0.3–0.5 s per settled snapshot."],
     ["Footprint: one process, no disk, no network", "done", "WinExe, no console, Hyper-V socket only, neutral name (<code>uiprobe.exe</code> under RangeAssist)."],
-    ["Daily restart and watchdog", "partial", "15e9a85 detects requests over 60 s or five consecutive failures; fail-fast plus Application Error 1000 trigger relaunches interactively after 30 s. Daily takeover waits for 10 s quiet (120 s cap). Session 0 refused. Build, eleven fake-clock cases and task construction pass. VM crash event, relaunch/uiAccess and swap timing pending."],
+    ["Daily restart and watchdog", "partial", "15e9a85 detects requests over 60 s or five failures. Offline clock/task checks pass. Guest confirms three triggers; synthetic uiprobe crash-event relaunch in 32 s retains session/uiAccess; idle takeover passes. General PowerShell FailFast emits event 1000. Actual uiprobe watchdog failure and under-load takeover remain unverified; synthetic evidence is not claimed as those tests."],
     ["Pixels-only mode", "todo", ""],
   ]},
   { id: "host", title: "4. Host agent and hypervisor abstraction", items: [
@@ -193,7 +194,7 @@ const SECTIONS = [
     ["Operator monitor (beyond the spec)", "done", "View-only 12 fps desktop feeds, shared capture loops, origin/host checks; localhost only, no authentication. Persistent Jev/LLM counters and admission summaries expose loading/stale/error states without raw typed text. Live /api/calls and /api/admission confirmed. Admission evidence comes from central runs; lost worktree logs are not reconstructed."],
     ["Lifecycle", "partial", "Start/stop/checkpoint/restore/state plus clone and guarded delete API in 6d6ae51. Live clone creates new VM id and disk; source checkpoints preserved. Delete refuses missing confirmation/non-ludius names; no real delete run. Clone retains Windows computer name/SID; sysprep/domain-safe cloning and Proxmox remain pending."],
     ["Hyper-V backend", "done", "WMI synthetic mouse and keyboard verified on this Windows 11 host. Single-key COM calls retry transient 0xC0000002 failures up to 3 times; PowerShell admission passed 9/9 with the fix. Not yet checked on the target Windows Server version."],
-    ["Proxmox backend (QMP, USB tablet, vsock, API)", "todo", ""],
+    ["Proxmox backend (QMP, USB tablet, vsock, API)", "todo", "Deferred by owner for now; not implemented or verified."],
     ["Fixed resolution in VM config", "done", "<code>Set-VMVideo</code> 1920×1080."],
     ["Mapping recheck on resolution change", "done", "The step loop tracks guest width, height and DPI; on a change it moves the pointer to two known points and compares the guest cursor within 1 px. Drift fails the task instead of clicking blind."],
     ["Click jitter, movement paths, persona timing", "done", "Eased curved paths; Gaussian point inside the element box; heavy-tailed typing delays."],
@@ -249,7 +250,7 @@ const SECTIONS = [
     ["Guest observer: C#, single self-contained exe", "done", ".NET 10 instead of 9 (only SDK installed; .NET 9 support ends Nov 2026)."],
     ["DXGI settle via Vortice", "done", ""],
     ["Host agent: C# on Windows", "done", ""],
-    ["Host agent on Linux (Proxmox)", "todo", ""],
+    ["Host agent on Linux (Proxmox)", "todo", "Proxmox work deferred by owner for now; incomplete."],
     ["gRPC + protobuf", "done", ""],
     ["Python 3.12+, Pydantic, strict pyright", "done", "Synchronous for now; asyncio comes with orchestration."],
     ["Temporal, PostgreSQL, MinIO", "todo", ""],
