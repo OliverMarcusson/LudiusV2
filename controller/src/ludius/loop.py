@@ -20,7 +20,7 @@ from ludius.assist import Assist
 from ludius.jev import Decision
 from ludius.options import Option, StepView, build_options, build_state, describe, view
 from ludius.policy import Policy, alt_f4_safe
-from ludius.tasks import Persona, Subgoal, Task, check_done
+from ludius.tasks import Persona, Subgoal, Task, check_done, pixels_window
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
@@ -420,6 +420,7 @@ class Runner:
             step=step,
             window=fg.title if fg else "",
             process=fg.process_name if fg else "",
+            **({"trust": "pixels"} if fg is not None and pixels_window(fg) else {}),
             element={"id": e.id, "key": e.key, "role": e.role, "name": e.name} if e else None,
             action=o.kind,
             option=o.text,

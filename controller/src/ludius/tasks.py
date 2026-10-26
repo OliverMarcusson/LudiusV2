@@ -168,11 +168,19 @@ def _window_matches(w: obs.Window, c: WindowCheck, task: Task) -> bool:
     return not (c.title and not re.search(task.fmt_re(c.title), w.title, re.I))
 
 
+def pixels_window(w: obs.Window) -> bool:
+    """A window read from pixels only (pixels-only mode): no process or class identity behind it."""
+    return w.framework_id == "visual" and w.process_name == ""
+
+
 def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool) -> bool | None:
     """True/False when the subgoal has a code check, None when it has none (Jev decides)."""
     if done is None:
         return None
     if done.typed and not typed_ok:
+        return False
+    # Pixels carry no process identity, so a window or foreground check can never pass on them.
+    if (done.window or done.foreground) and any(pixels_window(w) for w in snap.windows):
         return False
     if done.window:
         # Foreground set plus every open app window, so a backgrounded window still counts as open.

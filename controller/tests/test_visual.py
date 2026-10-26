@@ -205,3 +205,41 @@ def test_detector_inference_waits_for_another_process_holding_the_slot(tmp_path:
         waited = time.monotonic() - start
     other.wait(10)
     assert waited > 0.8  # the second VM's inference ran only after the first one's
+
+
+def test_pixels_snapshot_never_passes_window_checks_never_gets_alt_f4_and_normalize_only_escapes(
+    tmp_path: Path,
+) -> None:
+    from ludius import keys
+    from ludius.loop import GroundTruth
+    from ludius.policy import alt_f4_safe
+    from ludius.session import Session
+    from ludius.tasks import Done, WindowCheck, check_done, pixels_window
+
+    def screen(*names: str) -> obs.Snapshot:
+        return visual.pixels_snapshot(_png(1920, 1080, b"s"), lambda png: [
+            visual.Box(10, 10 + 30 * i, 200, 20, n, 0.99) for i, n in enumerate(names)
+        ], settled=True, settle_ms=0)  # fmt: skip
+
+    snap = screen("Untitled - Notepad", "File")
+    fg = snap.windows[0]
+    assert pixels_window(fg) and not alt_f4_safe(fg)
+    task: Any = None  # never consulted: the pixels guard decides first
+    for done in [Done(window=WindowCheck(process="notepad.exe")), Done(foreground=WindowCheck(absent=True, title="x"))]:
+        assert check_done(done, snap, task, typed_ok=True) is False
+
+    class Screens:
+        def __init__(self, snaps: list[obs.Snapshot]) -> None:
+            self.snaps, self.chords = snaps, list[list[int]]()
+
+        def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
+            return pb.ObserveResult(snapshot=self.snaps.pop(0) if len(self.snaps) > 1 else self.snaps[0])
+
+        def chord(self, vks: list[int]) -> int:
+            self.chords.append(vks)
+            return 0
+
+    agent = Screens([screen("Shut Down Windows", "OK"), screen("Shut Down Windows", "OK"), screen("Recycle Bin")])
+    s = Session(agent, GroundTruth(tmp_path / "gt.jsonl"), "pw")  # pyright: ignore[reportArgumentType]
+    assert s.normalize(rounds=4)
+    assert agent.chords == [keys.chord("Esc")]  # Esc for Shut Down, never Alt+F4, never a click

@@ -14,6 +14,7 @@ from collections.abc import Callable
 from ludius import keys
 from ludius.loop import Agent, GroundTruth
 from ludius.policy import SHELL_PROCESSES, shell_dialog
+from ludius.tasks import pixels_window
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
@@ -96,6 +97,17 @@ class Session:
                 time.sleep(1.0)
                 continue
             fg = _fg(snap)
+            if fg is not None and pixels_window(fg):
+                # Pixels only: nothing is known by process, so nothing is closed and no row is clicked. Shut Down
+                # Windows left open is the one thing to leave, with Esc.
+                if any(
+                    e.framework_id == "visual" and re.fullmatch(r"Shut Down Windows", e.name) for e in snap.elements
+                ):
+                    self.agent.chord(keys.chord("Esc"))
+                    time.sleep(0.6)
+                    continue
+                self.log.write(event="normalized", host_ms=_now(), closed=closed, trust="pixels", verified=False)
+                return True
             popup = next((w for w in snap.windows if w.kind in (obs.Window.POPUP, obs.Window.OWNED)), None)
             strays = [
                 a

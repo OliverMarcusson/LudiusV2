@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from ludius.tasks import Strict
+from ludius.tasks import Strict, pixels_window
 from ludius.v1 import observation_pb2 as obs
 
 # Actions noise must never take, whatever the task says (spec section 5).
@@ -30,7 +30,10 @@ DESKTOP_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd"}
 
 
 def alt_f4_safe(fg: obs.Window | None) -> bool:
-    return fg is not None and fg.class_name not in DESKTOP_CLASSES
+    # Read from pixels, the window could be the desktop itself: no Alt+F4 without a known class and process.
+    if fg is None or pixels_window(fg) or fg.process_name == "":
+        return False
+    return fg.class_name not in DESKTOP_CLASSES
 
 
 def shell_dialog(fg: obs.Window | None) -> bool:
