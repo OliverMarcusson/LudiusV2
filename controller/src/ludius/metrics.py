@@ -22,6 +22,10 @@ CHANCE_MARGIN = 0.6
 # run on both sides; the order within each label is a salted hash, so the split is reproducible.
 HOLDOUT_FRACTION = 0.3
 HOLDOUT_SALT = "ludius-holdout-v1"
+HOLDOUT_LIMITS = (
+    "logs are disjoint, content is not: the same template or near-duplicate sessions in different logs can still "
+    "leak across the split; with stand-in labels this says nothing about performance against genuine humans"
+)
 # What the labels are. Nothing here verifies that the comparison logs are human sessions.
 LABELS = (
     "stand-in: positive = logs given as noise, negative = logs given with --human; operator-supplied, "
@@ -254,7 +258,7 @@ def split(noise: list[Instance], human: list[Instance], fraction: float = HOLDOU
 def held_out(noise: list[Instance], human: list[Instance], fraction: float = HOLDOUT_FRACTION,
              salt: str = HOLDOUT_SALT) -> dict[str, Any]:  # fmt: skip
     """The best stump fitted on the training logs only, scored on the held-out logs only."""
-    out: dict[str, Any] = {"grouping": "source log", "fraction": fraction, "salt": salt}
+    out: dict[str, Any] = {"grouping": "source log", "fraction": fraction, "salt": salt, "limits": HOLDOUT_LIMITS}
     sides = split(noise, human, fraction, salt)
     if isinstance(sides, str):
         return out | {"available": False, "reason": sides}

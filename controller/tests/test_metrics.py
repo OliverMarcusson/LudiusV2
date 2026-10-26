@@ -44,6 +44,7 @@ def test_held_out_splits_whole_source_logs_and_fits_on_train_only(tmp_path: Path
     r = metrics.report(noise, human, tmp_path / "features.csv")
     h = r["filterability"]["held_out"]
     assert h["available"] and h["grouping"] == "source log" and h["salt"] == metrics.HOLDOUT_SALT
+    assert "near-duplicate" in h["limits"] and "genuine humans" in h["limits"]
     train, test = set(h["train"]["sources"]), set(h["test"]["sources"])
     assert not train & test and train | test == {p.name for p in noise + human}  # no run on both sides
     assert h["test"]["noise"] and h["test"]["human"] and h["train"]["noise"] and h["train"]["human"]
