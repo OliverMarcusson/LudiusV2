@@ -19,7 +19,7 @@ from pathlib import Path
 import yaml
 from google.protobuf import json_format
 
-from ludius import admission, growth, keys, metrics, planner, timeline
+from ludius import admission, artifacts, growth, keys, metrics, planner, timeline
 from ludius.assist import Assist
 from ludius.day import DayRunner, run_task
 from ludius.hostagent import HostAgent
@@ -201,7 +201,15 @@ def cmd_timeline(args: argparse.Namespace) -> int:
 
 def cmd_metrics(args: argparse.Namespace) -> int:
     human = [Path(p) for p in args.human] if args.human else None
-    print(json.dumps(metrics.report([Path(p) for p in args.logs], human), indent=2))
+    logs = [Path(p) for p in args.logs]
+    out = metrics.report(logs, human)
+    if args.timeline:
+        personas = [load_yaml(Persona, p).user for p in sorted((DATA / "personas").glob("*.yaml"))]
+        out["artifacts"] = artifacts.report(
+            Path(args.timeline), personas, logs,
+            Path(args.manifest) if args.manifest else None, Path(args.before) if args.before else None,
+        )  # fmt: skip
+    print(json.dumps(out, indent=2))
     return 0
 
 
@@ -372,6 +380,9 @@ def main(argv: list[str] | None = None) -> int:
     me = sub.add_parser("metrics", help="range test metrics and filterability check from ground-truth logs")
     me.add_argument("logs", nargs="+")
     me.add_argument("--human", nargs="+", metavar="LOG", help="human baseline logs for the filterability check")
+    me.add_argument("--timeline", metavar="CSV", help="psort CSV export (dynamic or l2tcsv) after the noise")
+    me.add_argument("--before", metavar="CSV", help="psort CSV export before the noise, for survival")
+    me.add_argument("--manifest", metavar="JSON", help='scenario artifacts: [{"id": ..., "match": {field: regex}}]')
     me.set_defaults(fn=cmd_metrics)
 
     va = sub.add_parser("validate", help="admission gate: run every template variant from a clean checkpoint")
