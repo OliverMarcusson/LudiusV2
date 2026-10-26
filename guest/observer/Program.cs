@@ -8,7 +8,11 @@ using Ludius.V1;
 // Read-only UIA observer for one interactive session. Started at logon by a
 // scheduled task; serves one host connection at a time over a Hyper-V socket.
 // Writes nothing to disk. `--once` prints one settled snapshot as JSON (dev only).
+#if WATCHDOG_TEST
+const string Version = "0.1.0-watchdogtest"; // the hooks in Observe exist only in this build
+#else
 const string Version = "0.1.0";
+#endif
 var service = Guid.Parse(Arg("--service") ?? "000011cb-facb-11e6-bd58-64006a7986d3");
 
 // Only in a user's interactive session: session 0 cannot see the desktop.
@@ -105,6 +109,12 @@ void Serve(Socket conn)
 
 Snapshot Observe(SnapshotRequest r)
 {
+#if WATCHDOG_TEST
+    // Test build only. These quiet_ms values drive the real watchdog: 4242 hangs this request past the 60 s
+    // limit; 4243 fails it, and five in a row trip the failure rule.
+    if (r.QuietMs == 4242) Thread.Sleep(Timeout.Infinite);
+    if (r.QuietMs == 4243) throw new InvalidOperationException("injected watchdog test failure");
+#endif
     var (settled, ms) = r.WaitSettle
         ? settle.Wait(r.QuietMs == 0 ? 300 : r.QuietMs, r.TimeoutMs == 0 ? 5000 : r.TimeoutMs)
         : (true, 0u);

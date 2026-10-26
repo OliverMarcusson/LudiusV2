@@ -17,6 +17,8 @@
     <UiAccess Condition="'$(UiAccess)' == ''">false</UiAccess>
     <ApplicationManifest Condition="'$(UiAccess)' == 'true'">app.uiaccess.manifest</ApplicationManifest>
     <ApplicationManifest Condition="'$(UiAccess)' != 'true'">app.manifest</ApplicationManifest>
+    <!-- Watchdog fault hooks for the VM smoke test: -p:WatchdogTest=true only, never in a production build. -->
+    <DefineConstants Condition="'$(WatchdogTest)' == 'true'">$(DefineConstants);WATCHDOG_TEST</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
