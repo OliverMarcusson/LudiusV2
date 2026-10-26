@@ -105,16 +105,30 @@ def cmd_validate(args: argparse.Namespace) -> int:
     template = load_template(source)
     agent = agent_from(args)
     jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
-    log = GroundTruth(RUNS / "admission" / f"{time.strftime('%Y%m%d-%H%M%S')}-{template.task}.jsonl")
+    log_path = RUNS / "admission" / f"{time.strftime('%Y%m%d-%H%M%S')}-{template.task}.jsonl"
+    log = GroundTruth(log_path)
     try:
-        runner = Runner(agent, jev, load_persona(args.persona), log, clock="compressed", seed=0, assist=make_assist())
-        results = admission.validate(template, args.runs, lambda: restore(agent, args.restore), runner,
-                                     make_session(agent, log))  # fmt: skip
+        try:
+            runner = Runner(agent, jev, load_persona(args.persona), log, clock="compressed", seed=0,
+                            assist=make_assist())  # fmt: skip
+            results, stopped = admission.validate(template, args.runs, lambda: restore(agent, args.restore), runner,
+                                                  make_session(agent, log))  # fmt: skip
+        finally:
+            jev.close()
+            agent.close()
+        variants = {str(v): f"{st.count('done')}/{len(st)}" for v, st in results.items()}
+        if stopped:
+            # Incomplete: too few runs to judge reliability, so nothing is recorded or admitted.
+            log.write(event="admission_end", host_ms=int(time.time() * 1000), task=template.task, admitted=False,
+                      variants=variants, stopped=stopped)  # fmt: skip
+            print(f"{template.task}: stopped, not judged ({stopped}). Runs so far: " + ", ".join(
+                f"v{v} {' '.join(st)}" for v, st in results.items()) + f"\n  log: {log_path}")  # fmt: skip
+            return 2
+        ok = admission.admit(template, results, source, DATA / "templates", DATA / "admission.yaml")
+        log.write(event="admission_end", host_ms=int(time.time() * 1000), task=template.task, admitted=ok,
+                  variants=variants)  # fmt: skip
     finally:
         log.close()
-        jev.close()
-        agent.close()
-    ok = admission.admit(template, results, source, DATA / "templates", DATA / "admission.yaml")
     print(f"{template.task}: {'admitted' if ok else 'rejected'} " + ", ".join(
         f"v{v} {st.count('done')}/{len(st)}" for v, st in results.items()))  # fmt: skip
     return 0 if ok else 1
