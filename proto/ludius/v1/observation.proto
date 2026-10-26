@@ -75,6 +75,7 @@ message Snapshot {
   int32 cursor_y = 15;
   uint32 dropped_elements = 16;   // elements beyond the cap
   string user = 17;
+  repeated Window apps = 18;      // all open top-level app windows (no elements), z-order
 }
 
 // Controller/host → observer, framed on the guest channel.

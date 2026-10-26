@@ -95,6 +95,22 @@ static partial class Native
         finally { CloseHandle(token); }
     }
 
+    [LibraryImport("wtsapi32.dll", EntryPoint = "WTSQuerySessionInformationW")][return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool WTSQuerySessionInformation(IntPtr server, uint session, int infoClass, out IntPtr buffer, out int bytes);
+    [LibraryImport("wtsapi32.dll")] public static partial void WTSFreeMemory(IntPtr memory);
+
+    // WTSSessionInfoEx -> WTSINFOEX_LEVEL1_W.SessionFlags: 0 = locked, 1 = unlocked.
+    // The Windows 10 lock screen (LockApp) runs on the user's own desktop, so the
+    // input desktop alone does not reveal it.
+    public static bool SessionLocked()
+    {
+        if (!ProcessIdToSessionId((uint)Environment.ProcessId, out var session)) return false;
+        if (!WTSQuerySessionInformation(0, session, 25, out var buf, out _)) return false;
+        // Level (4) + padding: the union holds LARGE_INTEGERs, so Data starts at 8; Flags follow Id and State.
+        try { return Marshal.ReadInt32(buf, 16) == 0; }
+        finally { WTSFreeMemory(buf); }
+    }
+
     // The input desktop is "Default" while the user is at the desktop; Winlogon
     // (lock screen, UAC secure desktop) cannot even be opened from the session.
     public static bool InputDesktopIsDefault()

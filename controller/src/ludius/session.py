@@ -1,0 +1,196 @@
+"""Persistent-VM hygiene and the upper failure ladder (spec sections 5 and 7).
+
+normalize: dismiss dialogs and close apps outside the allowlist, confirm an unlocked,
+responsive desktop. unlock: Ctrl+Alt+Del and the persona's password, blind, through
+the virtual keyboard (real type 7 unlock logons). escalate: ladder steps 4-8.
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from collections.abc import Callable
+
+from ludius import keys
+from ludius.loop import Agent, GroundTruth
+from ludius.policy import SHELL_PROCESSES
+from ludius.v1 import agent_pb2 as pb
+from ludius.v1 import observation_pb2 as obs
+
+DISCARD = re.compile(r"(don'?t save|no|discard)", re.I)
+DISMISS = re.compile(r"(cancel|close|ok|not now|no thanks|dismiss)", re.I)
+
+
+class VmUnhealthy(Exception):
+    """Ladder step 8: the VM leaves the pool; the trace is in the ground-truth log."""
+
+
+class Session:
+    def __init__(
+        self,
+        agent: Agent,
+        log: GroundTruth,
+        password: str,
+        lifecycle: Callable[[int], str] | None = None,
+    ) -> None:
+        self.agent = agent
+        self.log = log
+        self.password = password
+        self.lifecycle = lifecycle
+
+    def observe(self, timeout_ms: int = 5000) -> obs.Snapshot:
+        return self.agent.observe(wait_settle=True, timeout_ms=timeout_ms).snapshot
+
+    def wait_ready(self, seconds: float = 180) -> obs.Snapshot:
+        """Until the observer answers from an unlocked desktop (it restarts with every logon)."""
+        deadline = time.monotonic() + seconds
+        while True:
+            try:
+                snap = self.observe(timeout_ms=2000)
+                if not snap.locked:
+                    return snap
+            except Exception:
+                if time.monotonic() > deadline:
+                    raise
+            if time.monotonic() > deadline:
+                raise TimeoutError("desktop not ready")
+            time.sleep(2)
+
+    # Unlock -------------------------------------------------------------------------
+
+    def unlock(self) -> bool:
+        snap = self.observe()
+        if not snap.locked:
+            return True
+        self.log.write(event="unlock", host_ms=_now())
+        return self.sign_in()
+
+    def sign_in(self) -> bool:
+        """Blind: Ctrl+Alt+Del, then the password into the focused box. Lock screen and logon screen alike."""
+        for _ in range(2):
+            self.agent.ctrl_alt_del()
+            time.sleep(2.0)
+            self.agent.type(self.password + "\n", 90, 40)
+            try:
+                self.wait_ready(30)
+                self.log.write(event="unlocked", host_ms=_now())
+                return True
+            except Exception:
+                self.agent.chord(keys.chord("Esc"))
+                time.sleep(1)
+        return False
+
+    # Normalize ----------------------------------------------------------------------
+
+    def normalize(self, keep: set[str] | None = None, rounds: int = 12) -> bool:
+        """Close everything outside `keep` (process names). True when only kept apps remain."""
+        keep = {k.lower() for k in keep or set()}
+        closed: list[str] = []
+        for _ in range(rounds):
+            if not self.unlock():
+                return False
+            snap = self.observe()
+            fg = _fg(snap)
+            popup = next((w for w in snap.windows if w.kind in (obs.Window.POPUP, obs.Window.OWNED)), None)
+            strays = [
+                a
+                for a in snap.apps
+                if a.process_name.lower() not in keep
+                and (a.process_name.lower() not in SHELL_PROCESSES or _explorer_window(a))
+            ]
+            if fg is not None and _is_shell_surface(fg) and popup is None and not strays:
+                self.log.write(event="normalized", host_ms=_now(), closed=closed)
+                return True
+            if popup is not None or (fg is not None and fg.class_name == "#32770"):
+                # A save prompt from closing a noise app: discard like a person giving up.
+                target = _button(snap, DISCARD) or _button(snap, DISMISS)
+                if target is not None:
+                    self._click(target)
+                else:
+                    self.agent.chord(keys.chord("Esc"))
+            elif fg is not None and not _is_shell_surface(fg) and fg.process_name.lower() not in keep:
+                closed.append(f"{fg.title} ({fg.process_name})")
+                self.agent.chord(keys.chord("Alt+F4"))
+            elif strays:
+                # Bring the next stray forward through its taskbar button, else Alt+Tab.
+                btn = next((e for e in snap.elements if e.role == "button" and strays[0].title and
+                            strays[0].title.split(" - ")[-1].lower() in e.name.lower()), None)  # fmt: skip
+                if btn is not None:
+                    self._click(btn)
+                else:
+                    self.agent.chord(keys.chord("Alt+Tab"))
+            else:
+                self.agent.chord(keys.chord("Esc"))
+            time.sleep(0.6)
+        self.log.write(event="normalize_failed", host_ms=_now(), closed=closed)
+        return False
+
+    def _click(self, e: obs.Element) -> None:
+        b = e.bounds
+        self.agent.move(max(1, b.x + b.width // 2), max(1, b.y + b.height // 2), 120)
+        self.agent.click()
+
+    # Ladder 4-8 ---------------------------------------------------------------------
+
+    def escalate(self) -> int:
+        """Run ladder steps 4..8 until the desktop is clean. Returns the step that worked."""
+        # 4: restart the app (close it; the next task launches it again).
+        self.log.write(event="ladder", step=4, action="restart app", host_ms=_now())
+        if self.normalize():
+            return 4
+        # 5: normalize the session harder (more rounds).
+        self.log.write(event="ladder", step=5, action="normalize session", host_ms=_now())
+        if self.normalize(rounds=24):
+            return 5
+        # 6: sign out and back in (autologon), via the Win+X menu: U, I.
+        self.log.write(event="ladder", step=6, action="sign out", host_ms=_now())
+        self.agent.chord(keys.chord("Win+X"))
+        time.sleep(1.0)
+        self.agent.chord(keys.chord("U"))
+        time.sleep(0.6)
+        self.agent.chord(keys.chord("I"))
+        try:
+            time.sleep(15)  # autologon only runs at boot: sign back in like a person
+            if self.sign_in() and self.normalize():
+                return 6
+        except Exception:
+            pass
+        # 7: reboot the VM through the hypervisor.
+        self.log.write(event="ladder", step=7, action="reboot VM", host_ms=_now())
+        if self.lifecycle is not None:
+            try:
+                self.lifecycle(pb.LifecycleRequest.STOP)
+                self.lifecycle(pb.LifecycleRequest.START)
+                self.wait_ready(300)
+                if self.normalize():
+                    return 7
+            except Exception:
+                pass
+        # 8: out of the pool.
+        self.log.write(event="ladder", step=8, action="mark VM unhealthy", host_ms=_now())
+        raise VmUnhealthy("session could not be normalized")
+
+
+def _fg(snap: obs.Snapshot) -> obs.Window | None:
+    return next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
+
+
+def _is_shell_surface(w: obs.Window) -> bool:
+    return w.class_name in ("Progman", "WorkerW", "Shell_TrayWnd") or w.process_name.lower() in SHELL_PROCESSES - {
+        "explorer.exe"
+    }
+
+
+def _explorer_window(w: obs.Window) -> bool:
+    """File Explorer folders run in explorer.exe but are ordinary apps to close."""
+    return w.process_name.lower() == "explorer.exe" and w.class_name == "CabinetWClass"
+
+
+def _button(snap: obs.Snapshot, pattern: re.Pattern[str]) -> obs.Element | None:
+    return next(
+        (e for e in snap.elements if e.role == "button" and pattern.fullmatch(e.name.replace("&", "").strip())), None
+    )
+
+
+def _now() -> int:
+    return int(time.time() * 1000)

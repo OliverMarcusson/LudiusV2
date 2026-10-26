@@ -15,9 +15,11 @@ from pathlib import Path
 
 from google.protobuf import json_format
 
+from ludius import keys
 from ludius.hostagent import HostAgent
 from ludius.jev import DEFAULT_MODEL, JevClient
 from ludius.loop import GroundTruth, Runner
+from ludius.session import Session
 from ludius.tasks import Persona, Task, TaskInstance, load_template, load_yaml
 from ludius.v1 import agent_pb2 as pb
 
@@ -56,7 +58,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     log = GroundTruth(log_path)
     try:
         runner = Runner(agent, jev, persona, log, clock=args.clock, seed=seed)
+        session = make_session(agent, log)
+        if not session.normalize():
+            session.escalate()
+        apps_before = [f"{a.title} ({a.process_name})" for a in runner.observe().apps]
         out = runner.run(task)
+        apps_after = [f"{a.title} ({a.process_name})" for a in runner.observe().apps]
+        log.write(event="side_effects", host_ms=int(time.time() * 1000), task=template.task,
+                  opened=[a for a in apps_after if a not in apps_before], left=apps_after)  # fmt: skip
+        if out.status != "done" and not session.normalize():
+            session.escalate()
     finally:
         log.close()
         jev.close()
@@ -148,6 +159,27 @@ def cmd_contract(args: argparse.Namespace) -> int:
     return 0 if failures == 0 else 1
 
 
+def make_session(agent: HostAgent, log: GroundTruth) -> Session:
+    return Session(agent, log, os.environ.get("LUDIUS_PERSONA_PASSWORD", ""), lifecycle=lambda op: agent.lifecycle(op))
+
+
+def cmd_session(args: argparse.Namespace) -> int:
+    agent = agent_from(args)
+    log = GroundTruth(ROOT / "runs" / f"{time.strftime('%Y%m%d-%H%M%S')}-session.jsonl")
+    s = make_session(agent, log)
+    if args.op == "lock":
+        agent.chord(keys.chord("Win+L"))
+        time.sleep(3)
+        print("locked" if s.observe().locked else "not locked")
+    elif args.op == "unlock":
+        print("unlocked" if s.unlock() else "unlock failed")
+    else:
+        print("normalized" if s.normalize() else "normalize failed")
+    log.close()
+    agent.close()
+    return 0
+
+
 def cmd_vm(args: argparse.Namespace) -> int:
     agent = agent_from(args)
     op = {
@@ -187,6 +219,10 @@ def main(argv: list[str] | None = None) -> int:
 
     c = sub.add_parser("contract", help="pointer and typing contract test")
     c.set_defaults(fn=cmd_contract)
+
+    s = sub.add_parser("session", help="session hygiene: lock (test), unlock, normalize")
+    s.add_argument("op", choices=["lock", "unlock", "normalize"])
+    s.set_defaults(fn=cmd_session)
 
     v = sub.add_parser("vm", help="VM lifecycle through the host agent")
     v.add_argument("op", choices=["start", "stop", "checkpoint", "restore", "state"])

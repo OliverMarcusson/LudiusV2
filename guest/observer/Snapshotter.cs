@@ -85,7 +85,7 @@ sealed partial class Snapshotter
             ScreenHeight = Native.GetSystemMetrics(1),
             Dpi = (int)Native.GetDpiForSystem(),
             User = Environment.UserName,
-            Locked = !Native.InputDesktopIsDefault(),
+            Locked = Native.SessionLocked() || !Native.InputDesktopIsDefault(),
         };
         var ci = new Native.CURSORINFO { cbSize = Marshal.SizeOf<Native.CURSORINFO>() };
         if (Native.GetCursorInfo(ref ci))
@@ -96,6 +96,7 @@ sealed partial class Snapshotter
         }
         if (snap.Locked) return snap;
 
+        foreach (var h in AppWindows()) snap.Apps.Add(DescribeWindow(h, Window.Types.Kind.Unspecified));
         var raws = new List<Raw>();
         var keys = new HashSet<string>();
         foreach (var (hwnd, kind) in CollectWindows())
@@ -163,6 +164,23 @@ sealed partial class Snapshotter
         all.AddRange(popups);
         all.AddRange(shell);
         return all;
+    }
+
+    // Taskbar-style app windows: visible, uncloaked, unowned, titled, not tool windows or the shell.
+    static List<IntPtr> AppWindows()
+    {
+        var list = new List<IntPtr>();
+        Native.EnumWindows((h, _) =>
+        {
+            if (!Native.IsWindowVisible(h) || Native.Cloaked(h) || Native.Owner(h) != 0) return true;
+            if ((Native.GetWindowLongPtr(h, Native.GWL_EXSTYLE) & Native.WS_EX_TOOLWINDOW) != 0) return true;
+            if (Native.Title(h) == "") return true;
+            if (Native.ClassName(h) is "Shell_TrayWnd" or "Progman" or "WorkerW" or "Windows.UI.Core.CoreWindow"
+                or "Shell_SecondaryTrayWnd" or "NotifyIconOverflowWindow") return true;
+            list.Add(h);
+            return true;
+        }, 0);
+        return list;
     }
 
     static bool Overlaps(IntPtr h, Native.RECT a)
