@@ -63,7 +63,8 @@ try {
             wevtutil sl $l.Key /ms:$($l.Value); if ($LASTEXITCODE) { throw "wevtutil $($l.Key): $LASTEXITCODE" }
         }
         # ux_noise, in the persona's hive: no minimize/taskbar animations, 100% scaling (96 dpi), no toasts over
-        # tasks (focus assist's effect). Read at logon: they apply from the persona's next logon.
+        # tasks (focus assist's effect); accessibility: keyboard cues (access-key underlines always shown).
+        # Read at logon: they apply from the persona's next logon.
         $sid = ([Security.Principal.NTAccount]$persona).Translate([Security.Principal.SecurityIdentifier]).Value
         $loaded = Test-Path "Registry::HKEY_USERS\$sid"
         $hive = if ($loaded) { "Registry::HKEY_USERS\$sid" } else { 'Registry::HKEY_USERS\LudiusPersona' }
@@ -71,12 +72,14 @@ try {
         try {
             $adv = "$hive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
             $push = "$hive\Software\Microsoft\Windows\CurrentVersion\PushNotifications"
-            foreach ($k in "$hive\Control Panel\Desktop\WindowMetrics", $adv, $push) { if (-not (Test-Path $k)) { New-Item $k | Out-Null } }
+            $cues = "$hive\Control Panel\Accessibility\Keyboard Preference"
+            foreach ($k in "$hive\Control Panel\Desktop\WindowMetrics", $adv, $push, $cues) { if (-not (Test-Path $k)) { New-Item $k | Out-Null } }
             Set-ItemProperty "$hive\Control Panel\Desktop\WindowMetrics" MinAnimate '0'
             Set-ItemProperty $adv TaskbarAnimations 0 -Type DWord
             Set-ItemProperty "$hive\Control Panel\Desktop" LogPixels 96 -Type DWord
             Set-ItemProperty "$hive\Control Panel\Desktop" Win8DpiScaling 1 -Type DWord
             Set-ItemProperty $push ToastEnabled 0 -Type DWord
+            Set-ItemProperty $cues On '1'
         } finally {
             if (-not $loaded) { [gc]::Collect(); reg unload 'HKU\LudiusPersona' | Out-Null }
         }
