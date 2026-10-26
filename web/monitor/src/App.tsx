@@ -4,7 +4,7 @@ import { ArrowLeft, Pause, Play } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Feed } from "@/components/feed"
-import { type CallsState, useCalls, useNow, useVms } from "@/lib/feeds"
+import { type Admission, type Calls, type Polled, useAdmission, useCalls, useNow, useVms } from "@/lib/feeds"
 import { cn } from "@/lib/utils"
 
 const COLUMNS = ["1", "2", "3", "4"] as const
@@ -31,8 +31,8 @@ function useFocused(): [string | null, (name: string | null) => void] {
 }
 
 // The two OpenRouter totals. Only an "ok" answer is shown as current; last known totals are kept but marked.
-function CallCounters({ state, now }: { state: CallsState; now: number }) {
-  const { status, calls, at, error } = state
+function CallCounters({ state, now }: { state: Polled<Calls>; now: number }) {
+  const { status, data: calls, at, error } = state
   const value = (n: number | undefined) => (n === undefined ? "–" : n.toLocaleString())
   const title =
     status === "ok"
@@ -66,10 +66,92 @@ function CallCounters({ state, now }: { state: CallsState; now: number }) {
   )
 }
 
+const ACTIVE_MS = 90_000 // matches the agent's running window
+
+function ago(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s} s`
+  if (s < 3600) return `${Math.floor(s / 60)} min`
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`
+}
+
+// Progress of the newest admission log: running only while events keep arriving; never inferred from call counts.
+function AdmissionProgress({ state, now }: { state: Polled<Admission>; now: number }) {
+  const { status, data: a, at, error } = state
+  if (!a || at === null) {
+    return (
+      <section aria-label="Admission progress" aria-busy={status === "loading"} className="text-sm text-muted-foreground">
+        <span className="font-medium text-foreground">Admission</span>{" "}
+        {status === "loading" ? "loading" : <span className="text-lost">unavailable ({error})</span>}
+      </section>
+    )
+  }
+  // The answer ages while polls fail; a run that was active when last seen goes stale here too.
+  const age = a.ageMs === null ? null : a.ageMs + (now - at)
+  const st = a.state === "running" && age !== null && age >= ACTIVE_MS ? (a.inRun ? "stale" : "idle") : a.state
+  const label =
+    st === "none"
+      ? "No admission runs yet"
+      : st === "running"
+        ? a.inRun
+          ? "Running"
+          : "Running, between runs"
+        : st === "completed"
+          ? a.stopped
+            ? "Stopped early, not admitted"
+            : a.admitted === null
+              ? "Completed"
+              : a.admitted
+                ? "Completed, admitted"
+                : "Completed, rejected"
+          : st === "stale"
+            ? "No events mid-run: may be stuck or stopped"
+            : "Idle: last run ended, batch finished or stopped"
+  const dot = st === "running" ? "bg-live" : st === "stale" ? "bg-stale" : "bg-muted-foreground/50"
+  return (
+    <section
+      aria-label="Admission progress"
+      className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-muted-foreground tabular-nums"
+    >
+      <span className="font-medium text-foreground">Admission</span>
+      <span className="flex items-center gap-1.5">
+        <span className={cn("size-2 self-center rounded-full", dot)} aria-hidden />
+        <span className={cn(st === "stale" && "text-stale", st === "running" && "text-foreground")}>{label}</span>
+      </span>
+      {a.task && <span className="font-medium text-foreground">{a.task}</span>}
+      {a.variant !== null && a.run > 0 && (
+        <span>
+          {a.inRun || st === "running" ? "" : "last: "}variant {a.variant}, run {a.run}
+        </span>
+      )}
+      {a.inRun && a.subgoal && (
+        <span>
+          step {a.step} · {a.subgoal}
+          {a.action && ` · ${a.action}${a.result ? ` → ${a.result}` : ""}`}
+        </span>
+      )}
+      {!a.inRun && a.status && <span>last run {a.status}</span>}
+      {st !== "none" && (
+        <span>
+          {a.done} done, <span className={cn(a.failed > 0 && "text-stale")}>{a.failed} failed</span>
+        </span>
+      )}
+      {age !== null && st !== "none" && <span>last event {ago(age)} ago</span>}
+      {a.truncated && <span title="The log is larger than the agent reads; counts cover its end only">partial log</span>}
+      {status === "stale" && (
+        <span className="text-stale" title={error ?? undefined}>
+          agent not answering, shown as of {ago(now - at)} ago
+        </span>
+      )}
+    </section>
+  )
+}
+
 export default function App() {
   const { vms, error, loaded } = useVms()
   const now = useNow()
   const calls = useCalls()
+  const admission = useAdmission()
   const [paused, setPaused] = useState(false)
   const [columns, setColumns] = useState(() => localStorage.getItem("monitor.columns") ?? "3")
   const [focused, setFocused] = useFocused()
@@ -125,6 +207,8 @@ export default function App() {
           </Button>
         </div>
       </header>
+
+      <AdmissionProgress state={admission} now={now} />
 
       {error && (
         <p role="alert" className="rounded-md border border-lost/40 bg-lost/10 px-4 py-3 text-sm">

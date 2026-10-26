@@ -54,49 +54,109 @@ export interface Calls {
   since: Date | null // when counting started; null before the first call
 }
 
-// loading: no answer yet. ok: `calls` is current. stale: the last poll failed, `calls` is the last good answer
+// loading: no answer yet. ok: `data` is current. stale: the last poll failed, `data` is the last good answer
 // from `at`. unavailable: no good answer yet, `error` says why.
-export type CallsStatus = "loading" | "ok" | "stale" | "unavailable"
+export type PollStatus = "loading" | "ok" | "stale" | "unavailable"
 
-export interface CallsState {
-  status: CallsStatus
-  calls: Calls | null
+export interface Polled<T> {
+  status: PollStatus
+  data: T | null
   at: number | null // ms epoch of the last good answer
   error: string | null
 }
 
-const CALLS_TIMEOUT_MS = 5000
+const POLL_TIMEOUT_MS = 5000
 
 const count = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0
 
+function record(data: unknown, what: string): Record<string, unknown> {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) throw new Error(`malformed ${what}`)
+  return data as Record<string, unknown>
+}
+
 // Accept only what the counters can show truthfully: two non-negative integers and an optional valid date.
 export function parseCalls(data: unknown): Calls {
-  if (typeof data !== "object" || data === null) throw new Error("malformed counter data")
-  const { jev, llm, since } = data as Record<string, unknown>
+  const { jev, llm, since } = record(data, "counter data")
   if (!count(jev) || !count(llm)) throw new Error("malformed counter data")
   const at = typeof since === "string" ? new Date(since) : null
   return { jev, llm, since: at && !Number.isNaN(at.getTime()) ? at : null }
 }
 
-export function useCalls(intervalMs = 2000): CallsState {
-  const [state, setState] = useState<CallsState>({ status: "loading", calls: null, at: null, error: null })
+// running: an event in the last 90 s. completed: the log ends with an admission_end record. stale: quiet in the
+// middle of a run, so the worker may be stuck or gone. idle: quiet after a run ended, so the batch finished or
+// stopped; the log alone can't tell which. none: no admission log yet.
+export type AdmissionState = "running" | "completed" | "stale" | "idle" | "none"
+
+export interface Admission {
+  state: AdmissionState
+  task: string | null
+  variant: string | null
+  run: number
+  inRun: boolean
+  step: number
+  subgoal: string | null
+  action: string | null
+  result: string | null
+  status: string | null // how the last finished run ended, e.g. done or abandoned
+  done: number
+  failed: number
+  admitted: boolean | null
+  stopped: boolean // admission ended early, e.g. a failed checkpoint restore
+  ageMs: number | null
+  truncated: boolean
+}
+
+const ADMISSION_STATES: readonly string[] = ["running", "completed", "stale", "idle", "none"]
+const TOKEN = /^[A-Za-z0-9_.:+-]{1,64}$/
+
+// The agent already sends identifiers only; check again so nothing else can reach the page.
+export function parseAdmission(data: unknown): Admission {
+  const r = record(data, "admission data")
+  if (typeof r.state !== "string" || !ADMISSION_STATES.includes(r.state)) throw new Error("malformed admission data")
+  const token = (v: unknown) => (typeof v === "string" && TOKEN.test(v) ? v : null)
+  const num = (v: unknown) => (count(v) ? v : 0)
+  const a: Admission = {
+    state: r.state as AdmissionState,
+    task: token(r.task),
+    variant: token(r.variant),
+    run: num(r.run),
+    inRun: r.inRun === true,
+    step: num(r.step),
+    subgoal: token(r.subgoal),
+    action: token(r.action),
+    result: token(r.result),
+    status: token(r.status),
+    done: num(r.done),
+    failed: num(r.failed),
+    admitted: typeof r.admitted === "boolean" ? r.admitted : null,
+    stopped: r.stopped === true,
+    ageMs: count(r.ageMs) ? r.ageMs : null,
+    truncated: r.truncated === true,
+  }
+  if (a.state !== "none" && (a.task === null || a.ageMs === null)) throw new Error("malformed admission data")
+  return a
+}
+
+// Polls a read-only JSON route. Each request is aborted after 5 s; a failed poll keeps the last good answer but
+// marks it stale. `parse` must be stable (a module-level function) and throw on anything it can't show.
+export function usePolled<T>(url: string, parse: (data: unknown) => T, intervalMs = 2000): Polled<T> {
+  const [state, setState] = useState<Polled<T>>({ status: "loading", data: null, at: null, error: null })
   useEffect(() => {
     let stop = false
     let timer: number | undefined
     let inflight: AbortController | null = null
     const tick = async () => {
       const ctl = (inflight = new AbortController())
-      const deadline = window.setTimeout(() => ctl.abort(), CALLS_TIMEOUT_MS)
+      const deadline = window.setTimeout(() => ctl.abort(), POLL_TIMEOUT_MS)
       try {
-        const res = await fetch("/api/calls", { cache: "no-store", signal: ctl.signal })
+        const res = await fetch(url, { cache: "no-store", signal: ctl.signal })
         if (!res.ok) throw new Error(`host agent answered ${res.status}`)
-        const calls = parseCalls(await res.json())
-        if (!stop) setState({ status: "ok", calls, at: Date.now(), error: null })
+        const data = parse(await res.json())
+        if (!stop) setState({ status: "ok", data, at: Date.now(), error: null })
       } catch (e) {
         if (stop) return
         const error = ctl.signal.aborted ? "no answer within 5 s" : e instanceof Error ? e.message : String(e)
-        // Keep good totals through a failure, marked stale so they don't read as current.
-        setState((s) => ({ ...s, status: s.calls ? "stale" : "unavailable", error }))
+        setState((s) => ({ ...s, status: s.data ? "stale" : "unavailable", error }))
       } finally {
         window.clearTimeout(deadline)
         if (!stop) timer = window.setTimeout(tick, intervalMs)
@@ -108,9 +168,12 @@ export function useCalls(intervalMs = 2000): CallsState {
       window.clearTimeout(timer)
       inflight?.abort()
     }
-  }, [intervalMs])
+  }, [url, parse, intervalMs])
   return state
 }
+
+export const useCalls = () => usePolled("/api/calls", parseCalls)
+export const useAdmission = () => usePolled("/api/admission", parseAdmission)
 
 export interface Stream {
   at: number | null // ms epoch of the last frame drawn
