@@ -207,25 +207,35 @@ def cmd_day(args: argparse.Namespace) -> int:
     log_path = Path(args.log) if args.log else planner.World(RUNS).day_log(plan.persona, plan.date)
     agent = start_agent(args)
     jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
-    log = GroundTruth(log_path)
+    if args.temporal:
+        from ludius import durable  # needs the durable dependency group
+
+        log: GroundTruth = durable.HeartbeatLog(log_path)  # slot heartbeats come from ground-truth writes
+    else:
+        log = GroundTruth(log_path)
     try:
         pacing = "compressed" if args.clock == "time-jump" else args.clock
         runner = Runner(agent, jev, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=make_policy())
         day = DayRunner(runner, make_session(agent, log), load_templates(), log, args.clock, seed, set_clock=set_clock)
-        results = day.run(plan)
+        if args.temporal:  # durable: resumes after the last finished slot if this day was started before
+            from ludius import durable
+
+            desk = RUNS / "locks" / f"{args.vm or os.environ['LUDIUS_VM']}.lock"
+            results = [(d.at, d.template, d.status) for d in durable.run(args.temporal, day, plan, args.clock, desk)]
+        else:
+            results = [(r.item.at, r.item.template, r.status) for r in day.run(plan)]
     finally:
         if args.clock == "time-jump":
             set_clock(None)  # an exception or Ctrl+C mid-day must not leave the range on a jumped clock
         log.close()
         jev.close()
         agent.close()
-    for r in results:
-        print(f"  {r.item.at} {r.item.template}: {r.status}")
-    print(
-        f"day {plan.date} {plan.persona} (seed {seed}): {sum(r.status == 'done' for r in results)}/{len(results)} done"
-    )
+    for at, template, status in results:
+        print(f"  {at} {template}: {status}")
+    done = sum(status == "done" for _, _, status in results)
+    print(f"day {plan.date} {plan.persona} (seed {seed}): {done}/{len(results)} done")
     print(f"ground truth: {log_path}")
-    return 0 if all(r.status == "done" for r in results) else 1
+    return 0 if done == len(results) else 1
 
 
 def cmd_timeline(args: argparse.Namespace) -> int:
@@ -417,6 +427,7 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--model", default=DEFAULT_MODEL)
     d.add_argument("--log")
     d.add_argument("--restore", metavar="CHECKPOINT", help="restore this checkpoint first")
+    d.add_argument("--temporal", metavar="HOST:PORT", help="run as a durable Temporal workflow on this server")
     d.set_defaults(fn=cmd_day)
 
     tl = sub.add_parser("timeline", help="export ground-truth logs as an instructor timeline CSV")
