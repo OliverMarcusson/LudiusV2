@@ -1,0 +1,39 @@
+# Create a project folder in Documents with File Explorer.
+# Variants: launch via Win+E or the taskbar; create via Ctrl+Shift+N or the ribbon/"New folder" button.
+task: explorer_new_folder
+app: explorer
+processes: [explorer.exe]
+params: [folder_name]
+variants:
+  - [open_explorer_keys, go_documents, new_folder_shortcut, name_folder, close_explorer]
+  - [open_explorer_taskbar, go_documents, new_folder_button, name_folder, close_explorer]
+budget_steps: 35
+budget_minutes: 6
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  open_explorer_taskbar:
+    goal: "Open File Explorer from its taskbar button"
+    launch: true
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_documents:
+    goal: "Go to the Documents folder"
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
+  new_folder_shortcut:
+    goal: "Create a new folder here with Ctrl+Shift+N"
+    keys: [Ctrl+Shift+N]
+    done: {element: {role: edit, name: '^New folder'}}
+  new_folder_button:
+    goal: "Create a new folder here with the New folder button"
+    done: {element: {role: edit, name: '^New folder'}}
+  name_folder:
+    goal: "Name the new folder {folder_name} and confirm the name"
+    text: folder_name
+    keys: [Enter]
+    done: {element: {role: list item, name: '^{folder_name}$'}}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}

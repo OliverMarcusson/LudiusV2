@@ -62,6 +62,12 @@ try {
         New-Item -Force 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' | Out-Null
         Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' DisableWindowsConsumerFeatures 1 -Type DWord
         Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' DisableSoftLanding 1 -Type DWord
+        # Edge: no first-run wizard, sign-in or default-browser prompts over tasks.
+        $edge = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+        New-Item -Force $edge | Out-Null
+        foreach ($p in @{ HideFirstRunExperience = 1; BrowserSignin = 0; DefaultBrowserSettingEnabled = 0; ShowRecommendationsEnabled = 0; StartupBoostEnabled = 0 }.GetEnumerator()) {
+            Set-ItemProperty $edge $p.Key $p.Value -Type DWord
+        }
 
         # Observer: in the persona's interactive session at logon, never a service;
         # restarted daily and on failure (UIA client leaks).

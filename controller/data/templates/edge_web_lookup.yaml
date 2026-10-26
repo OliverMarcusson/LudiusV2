@@ -1,0 +1,34 @@
+# Look something up on the web in Edge and read one result.
+task: edge_web_lookup
+app: edge
+processes: [msedge.exe]
+params: [search_query]
+variants:
+  - [open_edge_start, search, open_result, close_edge]
+  - [open_edge_taskbar, search, open_result, close_edge]
+budget_steps: 40
+budget_minutes: 8
+subgoals:
+  open_edge_start:
+    goal: "Open Microsoft Edge from the Start menu"
+    launch: true
+    keys: [Win]
+    text: app_query
+    done: {foreground: {process: msedge.exe}}
+  open_edge_taskbar:
+    goal: "Open Microsoft Edge from its taskbar button"
+    launch: true
+    done: {foreground: {process: msedge.exe}}
+  search:
+    goal: "Search the web for: {search_query}"
+    text: search_query
+    keys: [Ctrl+L, Enter]
+    allow_destructive: ["(?i)accept.*|reject.*"]
+    done: {foreground: {process: msedge.exe, title: "{search_query}"}}
+  open_result:
+    goal: "Open one of the search results that matches the search"
+    allow_destructive: ["(?i)accept.*|reject.*"]
+    steps: 10
+  close_edge:
+    goal: "Close Microsoft Edge"
+    done: {window: {process: msedge.exe, absent: true}}

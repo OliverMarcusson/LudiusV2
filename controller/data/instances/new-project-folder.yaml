@@ -1,0 +1,4 @@
+template: explorer_new_folder
+context: "Anna sets up a folder for the Lund office accruals before month end"
+params:
+  folder_name: Lund accruals Q3

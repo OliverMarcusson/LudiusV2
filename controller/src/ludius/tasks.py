@@ -24,6 +24,7 @@ class Strict(BaseModel):
 class WindowCheck(Strict):
     process: str | None = None  # exact, case-insensitive
     title: str | None = None  # regex, after parameter substitution
+    class_name: str | None = None  # exact window class, e.g. CabinetWClass for Explorer folders
     absent: bool = False  # true: no such window may exist
 
 
@@ -138,6 +139,8 @@ def load_yaml[M: BaseModel](cls: type[M], path: Path) -> M:
 def _window_matches(w: obs.Window, c: WindowCheck, task: Task) -> bool:
     if c.process and w.process_name.lower() != c.process.lower():
         return False
+    if c.class_name and w.class_name != c.class_name:
+        return False
     return not (c.title and not re.search(task.fmt_re(c.title), w.title, re.I))
 
 
@@ -148,7 +151,8 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
     if done.typed and not typed_ok:
         return False
     if done.window:
-        hit = any(_window_matches(w, done.window, task) for w in snap.windows)
+        # Foreground set plus every open app window, so a backgrounded window still counts as open.
+        hit = any(_window_matches(w, done.window, task) for w in [*snap.windows, *snap.apps])
         if hit == done.window.absent:
             return False
     if done.foreground:
