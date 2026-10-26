@@ -113,7 +113,8 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
 
     content = task.text(sg)
     for e in v.allowed:
-        if e.role in CLICKABLE and e.bounds.width > 0:
+        # Words read from pixels (visual fallback) carry no role: clicking them is the only way in.
+        if (e.role in CLICKABLE or (e.role == "text" and e.framework_id == "visual")) and e.bounds.width > 0:
             add("click", f"click {describe(e)}", element=e)
             if e.role in OPENABLE:
                 add("double_click", f"double-click to open [{e.id}] {e.role} '{e.name}'", element=e)

@@ -214,3 +214,19 @@ def test_no_alt_f4_on_the_desktop() -> None:
     shutdown = obs.Window(kind=obs.Window.FOREGROUND, class_name="#32770", process_name="explorer.exe")
     assert shell_dialog(shutdown)
     assert not shell_dialog(obs.Window(kind=obs.Window.FOREGROUND, class_name="#32770", process_name="notepad.exe"))
+
+
+def test_visual_words_are_click_targets() -> None:
+    from ludius.options import build_options, view
+
+    t = load_template(DATA / "templates" / "notepad_write_note.yaml")
+    task = Task(t, TaskInstance(template=t.task, params=t.example), random.Random(0))
+    sg = task.subgoal("close_app")
+    w = obs.Window(kind=obs.Window.FOREGROUND, class_name="Notepad", process_name="notepad.exe", no_tree=True)
+    box = obs.Rect(x=10, y=10, width=40, height=12)
+    snap = obs.Snapshot(windows=[w], elements=[
+        obs.Element(id=1, role="text", name="Save", framework_id="visual", bounds=box),
+        obs.Element(id=2, role="text", name="Label", framework_id="Win32", bounds=box),
+    ])  # fmt: skip
+    texts = [o.text for o in build_options(view(snap, task, sg, Policy()), task, sg, Policy()) if o.kind == "click"]
+    assert any("'Save'" in x for x in texts) and not any("'Label'" in x for x in texts)
