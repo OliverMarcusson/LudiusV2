@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import subprocess
-import time
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -12,19 +12,29 @@ import pytest
 from ludius import cli, clocklease
 
 
-def test_lease_is_renewed_until_released(tmp_path: Path) -> None:
+def test_lease_is_renewed_until_released(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "locks" / "clock-ludius-x.json"
-    lease = clocklease.Lease(path, "ludius-x", renew_s=0.05)
+    lease = clocklease.Lease(path, "ludius-x", renew_s=0.01)
+    writes: list[str] = []
+    renewed = threading.Event()
+    write = lease._write  # pyright: ignore[reportPrivateUsage]
+
+    def counted() -> None:
+        write()
+        writes.append(threading.current_thread().name)
+        if threading.current_thread().name == "clock-lease":
+            renewed.set()
+
+    monkeypatch.setattr(lease, "_write", counted)
     lease.hold()
-    first = path.stat().st_mtime_ns
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["vm"] == "ludius-x" and dt.datetime.fromisoformat(data["renewed"]).tzinfo is not None
-    time.sleep(0.3)
-    assert path.stat().st_mtime_ns > first  # the heartbeat thread rewrote it
+    assert renewed.wait(10)  # the heartbeat thread rewrote it (event, not a sleep: no race with a loaded host)
     lease.release()
     assert not path.exists()
-    time.sleep(0.15)
-    assert not path.exists()  # the stopped thread doesn't bring it back
+    n = len(writes)
+    assert lease._thread is None  # pyright: ignore[reportPrivateUsage]  # release() joined the renewer
+    assert len(writes) == n and not path.exists()  # the stopped thread can't bring it back
 
 
 def test_set_clock_keeps_the_lease_when_the_reset_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

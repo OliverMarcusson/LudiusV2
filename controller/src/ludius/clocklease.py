@@ -30,23 +30,34 @@ class Lease:
     def __init__(self, path: Path, vm: str, renew_s: float = RENEW_S) -> None:
         self.path, self.vm, self.renew_s = path, vm, renew_s
         self._stop: threading.Event | None = None
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()  # a renewal never lands after release() unlinked the lease
 
     def hold(self) -> None:
         """Write the lease now and keep renewing it until release(); a second hold() only renews."""
-        self._write()
+        with self._lock:
+            self._write()
         if self._stop is None:
             self._stop = threading.Event()
-            threading.Thread(target=self._renew, args=(self._stop,), daemon=True, name="clock-lease").start()
+            self._thread = threading.Thread(target=self._renew, args=(self._stop,), daemon=True, name="clock-lease")
+            self._thread.start()
 
     def release(self) -> None:
-        if self._stop is not None:
-            self._stop.set()
-            self._stop = None
-        self.path.unlink(missing_ok=True)
+        """Stop renewing and drop the lease; once this returns no renewal can write it again."""
+        with self._lock:
+            if self._stop is not None:
+                self._stop.set()
+            self.path.unlink(missing_ok=True)
+        if self._thread is not None:
+            self._thread.join()
+        self._stop = self._thread = None
 
     def _renew(self, stop: threading.Event) -> None:
         while not stop.wait(self.renew_s):
-            self._write()
+            with self._lock:
+                if stop.is_set():  # released while this renewal waited for the lock
+                    return
+                self._write()
 
     def _write(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
