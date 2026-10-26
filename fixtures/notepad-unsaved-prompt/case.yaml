@@ -1,0 +1,7 @@
+template: notepad_write_note
+instance: q3-call-notes
+subgoal: save_shortcut
+expect:
+- click \[\d+\] button 'Save'
+forbid:
+- Don't Save

@@ -1,0 +1,206 @@
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Management;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
+
+namespace Ludius.HostAgent;
+
+// Hyper-V backend: synthetic keyboard and mouse through WMI (root\virtualization\v2),
+// lifecycle through the Hyper-V PowerShell module, console frames through the
+// thumbnail API. Coordinates are guest physical pixels.
+sealed partial class HyperV(Guid observerService)
+{
+    static readonly ManagementScope Scope = new(@"\\.\root\virtualization\v2");
+
+    [GeneratedRegex(@"^[\w .-]{1,64}$")]
+    private static partial Regex SafeName();
+
+    public sealed class Vm
+    {
+        public required string Name;
+        public required Guid Id;
+        public required ManagementObject System;
+        public required ManagementObject Keyboard;
+        public required ManagementObject Mouse;
+        public required GuestChannel Channel;
+        public readonly SemaphoreSlim InputGate = new(1, 1);
+        public (int X, int Y)? Pointer;
+    }
+
+    readonly Dictionary<string, Vm> vms = [];
+
+    public Vm Get(string name)
+    {
+        lock (vms)
+        {
+            if (vms.TryGetValue(name, out var vm)) return vm;
+            if (!SafeName().IsMatch(name)) throw new ArgumentException("invalid VM name");
+            var system = Query($"SELECT * FROM Msvm_ComputerSystem WHERE ElementName='{name}'").SingleOrDefault()
+                ?? throw new KeyNotFoundException($"no VM named {name}");
+            var id = Guid.Parse((string)system["Name"]);
+            vm = new Vm
+            {
+                Name = name,
+                Id = id,
+                System = system,
+                Keyboard = Related(system, "Msvm_Keyboard"),
+                Mouse = Related(system, "Msvm_SyntheticMouse"),
+                Channel = new GuestChannel(id, observerService),
+            };
+            vms[name] = vm;
+            return vm;
+        }
+    }
+
+    // Lifecycle changes invalidate device handles and the guest channel.
+    public void Forget(string name)
+    {
+        lock (vms)
+        {
+            if (vms.Remove(name, out var vm)) vm.Channel.Dispose();
+        }
+    }
+
+    static IEnumerable<ManagementObject> Query(string wql) =>
+        new ManagementObjectSearcher(Scope, new ObjectQuery(wql)).Get().Cast<ManagementObject>();
+
+    static ManagementObject Related(ManagementObject o, string cls) =>
+        o.GetRelated(cls).Cast<ManagementObject>().SingleOrDefault() ?? throw new InvalidOperationException($"{cls} not available (VM off?)");
+
+    static void Call(ManagementObject o, string method, params object[] args)
+    {
+        var rc = o.InvokeMethod(method, args);
+        if (rc is uint code && code != 0) throw new InvalidOperationException($"{method} returned {code}");
+        if (rc is bool ok && !ok) throw new InvalidOperationException($"{method} failed");
+    }
+
+    // Input --------------------------------------------------------------
+
+    public async Task Move(Vm vm, int x, int y, uint durationMs, CancellationToken ct)
+    {
+        var from = vm.Pointer;
+        int steps = from is null || durationMs < 30 ? 1 : (int)Math.Clamp(durationMs / 15, 2, 60);
+        // A slightly curved, eased path rather than a teleport or a ruler line.
+        double bend = (Random.Shared.NextDouble() - 0.5) * 0.25;
+        for (int i = 1; i <= steps; i++)
+        {
+            double t = (double)i / steps, e = t * t * (3 - 2 * t);
+            int px = x, py = y;
+            if (from is { } f && i < steps)
+            {
+                double dx = x - f.X, dy = y - f.Y;
+                double arc = Math.Sin(Math.PI * t) * bend;
+                px = (int)Math.Round(f.X + dx * e - dy * arc);
+                py = (int)Math.Round(f.Y + dy * e + dx * arc);
+            }
+            Call(vm.Mouse, "SetAbsolutePosition", px, py);
+            if (i < steps) await Task.Delay((int)(durationMs / steps), ct);
+        }
+        vm.Pointer = (x, y);
+    }
+
+    // ButtonIndex: 1 left, 2 right, 3 middle (verified by the contract test).
+    public async Task Click(Vm vm, int button, uint count, CancellationToken ct)
+    {
+        for (uint i = 0; i < Math.Max(1, count); i++)
+        {
+            Call(vm.Mouse, "SetButtonState", (uint)button, true);
+            await Task.Delay(Random.Shared.Next(45, 95), ct);
+            Call(vm.Mouse, "SetButtonState", (uint)button, false);
+            if (i + 1 < count) await Task.Delay(Random.Shared.Next(70, 130), ct);
+        }
+    }
+
+    public void Key(Vm vm, uint vk, bool down) => Call(vm.Keyboard, down ? "PressKey" : "ReleaseKey", vk);
+
+    public async Task Chord(Vm vm, IReadOnlyList<uint> keys, CancellationToken ct)
+    {
+        foreach (var k in keys) { Key(vm, k, true); await Task.Delay(Random.Shared.Next(20, 50), ct); }
+        for (int i = keys.Count - 1; i >= 0; i--) { Key(vm, keys[i], false); await Task.Delay(Random.Shared.Next(15, 35), ct); }
+    }
+
+    public async Task Type(Vm vm, string text, uint meanMs, uint jitterMs, CancellationToken ct)
+    {
+        if (text.Any(c => c is not ('\n' or '\t') && (c < ' ' || c > '~')))
+            throw new ArgumentException("only printable ASCII, \\n and \\t can be typed");
+        foreach (var c in text)
+        {
+            switch (c)
+            {
+                case '\n': Call(vm.Keyboard, "TypeKey", 0x0Du); break;
+                case '\t': Call(vm.Keyboard, "TypeKey", 0x09u); break;
+                default: Call(vm.Keyboard, "TypeText", c.ToString()); break;
+            }
+            // Heavy-ish tail: mostly near the mean, sometimes a pause.
+            double delay = meanMs + (Random.Shared.NextDouble() * 2 - 1) * jitterMs;
+            if (Random.Shared.NextDouble() < 0.04) delay += meanMs * (2 + Random.Shared.NextDouble() * 4);
+            if (delay > 0) await Task.Delay((int)delay, ct);
+        }
+    }
+
+    public void CtrlAltDel(Vm vm) => Call(vm.Keyboard, "TypeCtrlAltDel");
+
+    public async Task Scroll(Vm vm, int notches, CancellationToken ct)
+    {
+        for (int i = 0; i < Math.Abs(notches); i++)
+        {
+            Call(vm.Mouse, "SetScrollPosition", Math.Sign(notches) * 120);
+            await Task.Delay(Random.Shared.Next(40, 110), ct);
+        }
+    }
+
+    // Lifecycle (PowerShell, as in spec section 4) --------------------------
+
+    public async Task<string> Lifecycle(string vm, Ludius.V1.LifecycleRequest.Types.Op op, string checkpoint, CancellationToken ct)
+    {
+        if (!SafeName().IsMatch(vm) || (checkpoint != "" && !SafeName().IsMatch(checkpoint))) throw new ArgumentException("invalid name");
+        var script = op switch
+        {
+            Ludius.V1.LifecycleRequest.Types.Op.Start => "Start-VM -Name $env:LUDIUS_VM",
+            Ludius.V1.LifecycleRequest.Types.Op.Stop => "Stop-VM -Name $env:LUDIUS_VM -Force",
+            Ludius.V1.LifecycleRequest.Types.Op.Checkpoint => "Checkpoint-VM -Name $env:LUDIUS_VM -SnapshotName $env:LUDIUS_CP",
+            Ludius.V1.LifecycleRequest.Types.Op.Restore => "Restore-VMSnapshot -VMName $env:LUDIUS_VM -Name $env:LUDIUS_CP -Confirm:$false",
+            _ => "",
+        } + "; (Get-VM -Name $env:LUDIUS_VM).State.ToString()";
+        if (op != Ludius.V1.LifecycleRequest.Types.Op.State) Forget(vm);
+        var psi = new ProcessStartInfo("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script])
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+            Environment = { ["LUDIUS_VM"] = vm, ["LUDIUS_CP"] = checkpoint },
+        };
+        using var p = Process.Start(psi)!;
+        var stdout = p.StandardOutput.ReadToEndAsync(ct);
+        var stderr = p.StandardError.ReadToEndAsync(ct);
+        await p.WaitForExitAsync(ct);
+        if (p.ExitCode != 0) throw new InvalidOperationException((await stderr).Trim());
+        return (await stdout).Trim().Split('\n')[^1].Trim();
+    }
+
+    // Console frame ----------------------------------------------------------
+
+    public (byte[] Png, int Width, int Height) Screenshot(Vm vm)
+    {
+        var head = Query($"ASSOCIATORS OF {{{vm.System.Path.RelativePath}}} WHERE ResultClass=Msvm_VideoHead").FirstOrDefault();
+        int w = head is null ? 1920 : Convert.ToInt32(head["CurrentHorizontalResolution"]);
+        int h = head is null ? 1080 : Convert.ToInt32(head["CurrentVerticalResolution"]);
+        var settings = Query($"ASSOCIATORS OF {{{vm.System.Path.RelativePath}}} WHERE ResultClass=Msvm_VirtualSystemSettingData")
+            .First(s => (string)s["VirtualSystemType"] == "Microsoft:Hyper-V:System:Realized");
+        var svc = Query("SELECT * FROM Msvm_VirtualSystemManagementService").Single();
+        var inParams = svc.GetMethodParameters("GetVirtualSystemThumbnailImage");
+        inParams["TargetSystem"] = settings.Path.Path; // a REF parameter: the object path
+        inParams["WidthPixels"] = (ushort)w;
+        inParams["HeightPixels"] = (ushort)h;
+        var outParams = svc.InvokeMethod("GetVirtualSystemThumbnailImage", inParams, null);
+        if ((uint)outParams["ReturnValue"] != 0) throw new InvalidOperationException("thumbnail failed");
+        var data = (byte[])outParams["ImageData"];
+        using var bmp = new Bitmap(w, h, PixelFormat.Format16bppRgb565);
+        var bits = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, bmp.PixelFormat);
+        Marshal.Copy(data, 0, bits.Scan0, Math.Min(data.Length, bits.Stride * h));
+        bmp.UnlockBits(bits);
+        using var ms = new MemoryStream();
+        bmp.Save(ms, ImageFormat.Png);
+        return (ms.ToArray(), w, h);
+    }
+}

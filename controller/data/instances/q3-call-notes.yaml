@@ -1,0 +1,13 @@
+# Until the planner exists, instances are written by hand.
+template: notepad_write_note
+context: "Anna jots down notes from a call with Johan about the Q3 close"
+params:
+  file_name: q3 close call notes
+  launch_query: notepad
+content:
+  body: |-
+    Call with Johan 26/10 re Q3 close
+    - accruals for the Lund office still missing, Johan chases Maria
+    - FX revaluation run moved to Thursday
+    - need final headcount numbers from HR before the board pack
+    Follow up Friday.

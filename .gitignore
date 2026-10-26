@@ -1,0 +1,13 @@
+.env
+secrets/
+*.pfx
+bin/
+obj/
+out/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+infra/hyperv/build/
+TASKS.md
+runs/

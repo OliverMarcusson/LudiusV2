@@ -1,0 +1,61 @@
+"""Thin typed client for the host agent's gRPC API. Hypervisor-agnostic by design."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import grpc
+
+from ludius.v1 import agent_pb2 as pb
+from ludius.v1 import agent_pb2_grpc as rpc
+from ludius.v1 import observation_pb2 as obs
+
+
+class HostAgent:
+    def __init__(self, address: str, vm: str) -> None:
+        self.vm = vm
+        self._channel = grpc.insecure_channel(address)
+        # Generated stubs are untyped; results are annotated at each call.
+        self._stub: Any = rpc.HostAgentStub(self._channel)
+
+    def close(self) -> None:
+        self._channel.close()
+
+    def _input(self, **action: Any) -> int:
+        result: pb.InputResult = self._stub.Input(pb.InputRequest(vm=self.vm, **action), timeout=120)
+        return result.host_time_ms
+
+    def move(self, x: int, y: int, duration_ms: int = 0) -> int:
+        return self._input(move=pb.Move(x=x, y=y, duration_ms=duration_ms))
+
+    def click(self, button: int = pb.Click.LEFT, count: int = 1) -> int:
+        return self._input(click=pb.Click(button=button, count=count))  # pyright: ignore[reportArgumentType]
+
+    def key(self, vk: int, down: bool) -> int:
+        return self._input(key=pb.Key(vk=vk, down=down))
+
+    def chord(self, vks: list[int]) -> int:
+        return self._input(chord=pb.Chord(vk=vks))
+
+    def type(self, text: str, mean_ms: int, jitter_ms: int) -> int:
+        return self._input(type=pb.TypeText(text=text, mean_ms=mean_ms, jitter_ms=jitter_ms))
+
+    def scroll(self, notches: int) -> int:
+        return self._input(scroll=pb.Scroll(notches=notches))
+
+    def ctrl_alt_del(self) -> int:
+        return self._input(ctrl_alt_del=pb.CtrlAltDel())
+
+    def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
+        req = obs.SnapshotRequest(wait_settle=wait_settle, quiet_ms=quiet_ms, timeout_ms=timeout_ms)
+        result: pb.ObserveResult = self._stub.Observe(pb.ObserveRequest(vm=self.vm, request=req), timeout=60)
+        return result
+
+    def lifecycle(self, op: int, checkpoint: str = "") -> str:
+        req = pb.LifecycleRequest(vm=self.vm, op=op, checkpoint=checkpoint)  # pyright: ignore[reportArgumentType]
+        result: pb.LifecycleResult = self._stub.Lifecycle(req, timeout=600)
+        return result.state
+
+    def screenshot(self) -> bytes:
+        result: pb.ScreenshotResult = self._stub.Screenshot(pb.ScreenshotRequest(vm=self.vm), timeout=60)
+        return result.png

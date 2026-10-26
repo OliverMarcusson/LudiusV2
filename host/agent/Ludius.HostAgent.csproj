@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Ludius.HostAgent</RootNamespace>
+    <AssemblyName>ludius-host-agent</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Protobuf Include="..\..\proto\ludius\v1\observation.proto" ProtoRoot="..\..\proto" GrpcServices="None" />
+    <Protobuf Include="..\..\proto\ludius\v1\agent.proto" ProtoRoot="..\..\proto" GrpcServices="Server" />
+    <Compile Include="..\..\guest\observer\HyperVEndPoint.cs" Link="HyperVEndPoint.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore" Version="2.84.0" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.14" />
+    <PackageReference Include="System.Management" Version="10.0.14" />
+  </ItemGroup>
+
+</Project>

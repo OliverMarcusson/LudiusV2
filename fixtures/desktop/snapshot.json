@@ -1,0 +1,468 @@
+{
+  "seq": "7",
+  "guestTimeMs": "1793015498298",
+  "screenWidth": 1920,
+  "screenHeight": 1080,
+  "dpi": 96,
+  "windows": [
+    {
+      "handle": "65838",
+      "title": "Program Manager",
+      "className": "Progman",
+      "processName": "explorer.exe",
+      "pid": 6388,
+      "frameworkId": "Win32",
+      "bounds": {
+        "width": 1920,
+        "height": 1080
+      },
+      "kind": "FOREGROUND"
+    },
+    {
+      "handle": "393268",
+      "className": "Shell_TrayWnd",
+      "processName": "explorer.exe",
+      "pid": 6388,
+      "frameworkId": "Win32",
+      "bounds": {
+        "y": 1040,
+        "width": 1920,
+        "height": 40
+      },
+      "kind": "SHELL"
+    }
+  ],
+  "elements": [
+    {
+      "id": 1,
+      "key": "c4a1f71d9d15ac54",
+      "role": "list",
+      "name": "Desktop",
+      "enabled": true,
+      "focused": true,
+      "bounds": {
+        "width": 1920,
+        "height": 1080
+      },
+      "automationId": "1",
+      "className": "SysListView32",
+      "frameworkId": "Win32",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 2,
+      "key": "99ac5b57d3786123",
+      "role": "list item",
+      "name": "Recycle Bin",
+      "enabled": true,
+      "focused": true,
+      "bounds": {
+        "y": 5,
+        "width": 76,
+        "height": 70
+      },
+      "actions": [
+        "invoke",
+        "select"
+      ],
+      "automationId": "ListViewItem-0",
+      "frameworkId": "Win32",
+      "ancestorPath": "list:1",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 3,
+      "key": "a26487dcfb856f8f",
+      "role": "list item",
+      "name": "Microsoft Edge",
+      "enabled": true,
+      "bounds": {
+        "y": 106,
+        "width": 76,
+        "height": 85
+      },
+      "actions": [
+        "invoke",
+        "select"
+      ],
+      "automationId": "ListViewItem-1",
+      "frameworkId": "Win32",
+      "ancestorPath": "list:1",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 4,
+      "key": "4467194d3e36f3ec",
+      "role": "button",
+      "name": "Start",
+      "enabled": true,
+      "bounds": {
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "Start",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 6,
+      "key": "1fd39c2cafd24cf8",
+      "role": "button",
+      "name": "Search highlights icon opens search home window",
+      "enabled": true,
+      "bounds": {
+        "x": 312,
+        "y": 1040,
+        "width": 80,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4104",
+      "className": "DynamicContent1",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:4100",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 7,
+      "key": "32aa62b4b4f9d0d4",
+      "role": "button",
+      "name": "Search - Waterfall near Sitovo, Bulgaria",
+      "enabled": true,
+      "bounds": {
+        "x": 48,
+        "y": 1040,
+        "width": 344,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4101",
+      "className": "Button",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:4100",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 8,
+      "key": "5c43bc22396cba31",
+      "role": "button",
+      "name": "Task View",
+      "enabled": true,
+      "bounds": {
+        "x": 392,
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4113",
+      "className": "TrayButton",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 10,
+      "key": "4ea0560a7c97d214",
+      "role": "button",
+      "name": "Copilot",
+      "enabled": true,
+      "bounds": {
+        "x": 443,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.Copilot_8wekyb3d8bbwe!App",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 11,
+      "key": "210ac4172d8972e6",
+      "role": "button",
+      "name": "Microsoft Edge",
+      "enabled": true,
+      "bounds": {
+        "x": 492,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "MSEdge",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 12,
+      "key": "914b54c471ab6e0f",
+      "role": "button",
+      "name": "File Explorer",
+      "enabled": true,
+      "bounds": {
+        "x": 541,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.Windows.Explorer",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 13,
+      "key": "1be251954d8c9055",
+      "role": "button",
+      "name": "Microsoft Store",
+      "enabled": true,
+      "bounds": {
+        "x": 590,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.WindowsStore_8wekyb3d8bbwe!App",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 14,
+      "key": "7745b1d62d43af4c",
+      "role": "button",
+      "name": "Mail",
+      "enabled": true,
+      "bounds": {
+        "x": 639,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "microsoft.windowscommunicationsapps_8wekyb3d8bbwe!microsoft.windowslive.mail",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 15,
+      "key": "0d17b5601bc0818c",
+      "role": "button",
+      "name": "OMXSPI index+0,67%",
+      "enabled": true,
+      "bounds": {
+        "x": 1458,
+        "y": 1040,
+        "width": 199,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4105",
+      "className": "DynamicContent2",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 17,
+      "key": "211a6ddb2d181a18",
+      "role": "button",
+      "name": "Notification Chevron",
+      "enabled": true,
+      "bounds": {
+        "x": 1665,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "1502",
+      "className": "Button",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 20,
+      "key": "6225cf2c816643c2",
+      "role": "button",
+      "name": "Meet Now",
+      "enabled": true,
+      "bounds": {
+        "x": 1689,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE83-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 21,
+      "key": "6af0b88ecb7a2466",
+      "role": "button",
+      "name": "Network\nInternet access",
+      "enabled": true,
+      "bounds": {
+        "x": 1713,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE74-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 22,
+      "key": "664970396a6237d9",
+      "role": "button",
+      "name": "No Audio Output Device is installed.",
+      "enabled": true,
+      "bounds": {
+        "x": 1737,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE73-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 24,
+      "key": "74ec42dfb7d4b427",
+      "role": "button",
+      "name": "Tray Input Indicator - English (United States)",
+      "enabled": true,
+      "bounds": {
+        "x": 1761,
+        "y": 1040,
+        "width": 36,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "InputIndicatorButton",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303/pane:308",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 28,
+      "key": "2e5fa1ee305d2906",
+      "role": "button",
+      "name": "System Clock, 12:51, \u200e26/\u200e10/\u200e2026",
+      "enabled": true,
+      "bounds": {
+        "x": 1797,
+        "y": 1040,
+        "width": 70,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "TrayClockWClass",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 26,
+      "key": "eb4910fb247dac1d",
+      "role": "button",
+      "name": "Action Centre, 1 new notification",
+      "enabled": true,
+      "bounds": {
+        "x": 1867,
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "TrayButton",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 27,
+      "key": "23d3bd30dfa199ca",
+      "role": "button",
+      "name": "Show desktop",
+      "enabled": true,
+      "bounds": {
+        "x": 1915,
+        "y": 1040,
+        "width": 5,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "307",
+      "className": "TrayShowDesktopButtonWClass",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    }
+  ],
+  "settled": true,
+  "settleMs": 313,
+  "cursorX": 993,
+  "cursorY": 533,
+  "user": "aberg"
+}

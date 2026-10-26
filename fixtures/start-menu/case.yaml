@@ -1,0 +1,6 @@
+template: notepad_write_note
+instance: q3-call-notes
+subgoal: open_from_start
+expect:
+- type the text to enter into \[\d+\] edit 'Search box'
+- type the text to enter at the keyboard focus

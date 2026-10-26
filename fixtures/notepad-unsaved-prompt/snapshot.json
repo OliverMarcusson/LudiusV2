@@ -1,0 +1,547 @@
+{
+  "seq": "11",
+  "guestTimeMs": "1793015518125",
+  "screenWidth": 1920,
+  "screenHeight": 1080,
+  "dpi": 96,
+  "windows": [
+    {
+      "handle": "3276838",
+      "title": "Notepad",
+      "className": "#32770",
+      "processName": "notepad.exe",
+      "pid": 4064,
+      "frameworkId": "Win32",
+      "bounds": {
+        "x": 769,
+        "y": 418,
+        "width": 366,
+        "height": 141
+      },
+      "kind": "FOREGROUND"
+    },
+    {
+      "handle": "393268",
+      "className": "Shell_TrayWnd",
+      "processName": "explorer.exe",
+      "pid": 6388,
+      "frameworkId": "Win32",
+      "bounds": {
+        "y": 1040,
+        "width": 1920,
+        "height": 40
+      },
+      "kind": "SHELL"
+    }
+  ],
+  "elements": [
+    {
+      "id": 192,
+      "key": "0d4154bae7ecf68d",
+      "role": "button",
+      "name": "Save",
+      "enabled": true,
+      "focused": true,
+      "bounds": {
+        "x": 869,
+        "y": 519,
+        "width": 72,
+        "height": 23
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "CommandButton_6",
+      "className": "CCPushButton",
+      "frameworkId": "DirectUI",
+      "hints": [
+        "submits",
+        "Enter triggers this"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 193,
+      "key": "9a8d0c9e8b78a631",
+      "role": "button",
+      "name": "Don't Save",
+      "enabled": true,
+      "bounds": {
+        "x": 947,
+        "y": 519,
+        "width": 92,
+        "height": 23
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "CommandButton_7",
+      "className": "CCPushButton",
+      "frameworkId": "DirectUI",
+      "hints": [
+        "closes dialog",
+        "destructive"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 194,
+      "key": "48621d39998e9536",
+      "role": "button",
+      "name": "Cancel",
+      "enabled": true,
+      "bounds": {
+        "x": 1045,
+        "y": 519,
+        "width": 72,
+        "height": 23
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "CommandButton_2",
+      "className": "CCPushButton",
+      "frameworkId": "DirectUI",
+      "hints": [
+        "closes dialog"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 99,
+      "key": "a49ccd1b1b04d815",
+      "role": "title bar",
+      "value": "Notepad",
+      "enabled": true,
+      "bounds": {
+        "x": 777,
+        "y": 421,
+        "width": 350,
+        "height": 28
+      },
+      "actions": [
+        "value"
+      ],
+      "automationId": "TitleBar",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 104,
+      "key": "76c3e03fae826da9",
+      "role": "button",
+      "name": "Close",
+      "enabled": true,
+      "bounds": {
+        "x": 1094,
+        "y": 419,
+        "width": 34,
+        "height": 30
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Close",
+      "ancestorPath": "title bar:TitleBar",
+      "hints": [
+        "closes dialog"
+      ]
+    },
+    {
+      "id": 4,
+      "key": "4467194d3e36f3ec",
+      "role": "button",
+      "name": "Start",
+      "enabled": true,
+      "bounds": {
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "Start",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 6,
+      "key": "1fd39c2cafd24cf8",
+      "role": "button",
+      "name": "Search highlights icon opens search home window",
+      "enabled": true,
+      "bounds": {
+        "x": 312,
+        "y": 1040,
+        "width": 80,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4104",
+      "className": "DynamicContent1",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:4100",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 7,
+      "key": "32aa62b4b4f9d0d4",
+      "role": "button",
+      "name": "Search - Waterfall near Sitovo, Bulgaria",
+      "enabled": true,
+      "bounds": {
+        "x": 48,
+        "y": 1040,
+        "width": 344,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4101",
+      "className": "Button",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:4100",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 8,
+      "key": "5c43bc22396cba31",
+      "role": "button",
+      "name": "Task View",
+      "enabled": true,
+      "bounds": {
+        "x": 392,
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4113",
+      "className": "TrayButton",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 10,
+      "key": "4ea0560a7c97d214",
+      "role": "button",
+      "name": "Copilot",
+      "enabled": true,
+      "bounds": {
+        "x": 443,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.Copilot_8wekyb3d8bbwe!App",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 11,
+      "key": "210ac4172d8972e6",
+      "role": "button",
+      "name": "Microsoft Edge",
+      "enabled": true,
+      "bounds": {
+        "x": 492,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "MSEdge",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 12,
+      "key": "914b54c471ab6e0f",
+      "role": "button",
+      "name": "File Explorer",
+      "enabled": true,
+      "bounds": {
+        "x": 541,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.Windows.Explorer",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 13,
+      "key": "1be251954d8c9055",
+      "role": "button",
+      "name": "Microsoft Store",
+      "enabled": true,
+      "bounds": {
+        "x": 590,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.WindowsStore_8wekyb3d8bbwe!App",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 14,
+      "key": "7745b1d62d43af4c",
+      "role": "button",
+      "name": "Mail",
+      "enabled": true,
+      "bounds": {
+        "x": 639,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "microsoft.windowscommunicationsapps_8wekyb3d8bbwe!microsoft.windowslive.mail",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 111,
+      "key": "4c573fe69f73a82a",
+      "role": "button",
+      "name": "Notepad \u2013 1 running window",
+      "enabled": true,
+      "bounds": {
+        "x": 688,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\notepad.exe",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 190,
+      "key": "3079b5610856d07a",
+      "role": "button",
+      "name": "Vad g\u00f6r Wolfgangsee till en av \u00d6sterrikes vackraste sj\u00f6ar?",
+      "enabled": true,
+      "bounds": {
+        "x": 1458,
+        "y": 1040,
+        "width": 199,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4105",
+      "className": "DynamicContent2",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 17,
+      "key": "211a6ddb2d181a18",
+      "role": "button",
+      "name": "Notification Chevron",
+      "enabled": true,
+      "bounds": {
+        "x": 1665,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "1502",
+      "className": "Button",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 20,
+      "key": "6225cf2c816643c2",
+      "role": "button",
+      "name": "Meet Now",
+      "enabled": true,
+      "bounds": {
+        "x": 1689,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE83-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 21,
+      "key": "6af0b88ecb7a2466",
+      "role": "button",
+      "name": "Network\nInternet access",
+      "enabled": true,
+      "bounds": {
+        "x": 1713,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE74-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 22,
+      "key": "664970396a6237d9",
+      "role": "button",
+      "name": "No Audio Output Device is installed.",
+      "enabled": true,
+      "bounds": {
+        "x": 1737,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE73-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 24,
+      "key": "74ec42dfb7d4b427",
+      "role": "button",
+      "name": "Tray Input Indicator - English (United States)",
+      "enabled": true,
+      "bounds": {
+        "x": 1761,
+        "y": 1040,
+        "width": 36,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "InputIndicatorButton",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303/pane:308",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 28,
+      "key": "2e5fa1ee305d2906",
+      "role": "button",
+      "name": "System Clock, 12:51, \u200e26/\u200e10/\u200e2026",
+      "enabled": true,
+      "bounds": {
+        "x": 1797,
+        "y": 1040,
+        "width": 70,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "TrayClockWClass",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 26,
+      "key": "eb4910fb247dac1d",
+      "role": "button",
+      "name": "Action Centre, 1 new notification",
+      "enabled": true,
+      "bounds": {
+        "x": 1867,
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "TrayButton",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 27,
+      "key": "23d3bd30dfa199ca",
+      "role": "button",
+      "name": "Show desktop",
+      "enabled": true,
+      "bounds": {
+        "x": 1915,
+        "y": 1040,
+        "width": 5,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "307",
+      "className": "TrayShowDesktopButtonWClass",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    }
+  ],
+  "context": [
+    "text: Do you want to save changes to Untitled?"
+  ],
+  "settled": true,
+  "settleMs": 328,
+  "cursorX": 993,
+  "cursorY": 533,
+  "user": "aberg"
+}

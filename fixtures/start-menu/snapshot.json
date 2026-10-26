@@ -1,0 +1,1331 @@
+{
+  "seq": "8",
+  "guestTimeMs": "1793015501532",
+  "screenWidth": 1920,
+  "screenHeight": 1080,
+  "dpi": 96,
+  "windows": [
+    {
+      "handle": "66008",
+      "title": "Search",
+      "className": "Windows.UI.Core.CoreWindow",
+      "processName": "SearchApp.exe",
+      "pid": 7832,
+      "frameworkId": "XAML",
+      "bounds": {
+        "x": 48,
+        "y": 400,
+        "width": 784,
+        "height": 680
+      },
+      "kind": "FOREGROUND"
+    },
+    {
+      "handle": "393268",
+      "className": "Shell_TrayWnd",
+      "processName": "explorer.exe",
+      "pid": 6388,
+      "frameworkId": "Win32",
+      "bounds": {
+        "y": 1040,
+        "width": 1920,
+        "height": 40
+      },
+      "kind": "SHELL"
+    },
+    {
+      "handle": "65988",
+      "title": "Start",
+      "className": "Windows.UI.Core.CoreWindow",
+      "processName": "StartMenuExperienceHost.exe",
+      "pid": 7056,
+      "frameworkId": "XAML",
+      "bounds": {
+        "width": 1920,
+        "height": 1040
+      },
+      "kind": "SHELL"
+    }
+  ],
+  "elements": [
+    {
+      "id": 29,
+      "key": "204a1b98f1357faa",
+      "role": "edit",
+      "name": "Search box",
+      "enabled": true,
+      "focused": true,
+      "bounds": {
+        "x": 48,
+        "y": 1040,
+        "width": 264,
+        "height": 40
+      },
+      "actions": [
+        "value"
+      ],
+      "automationId": "SearchTextBox",
+      "className": "RichEditBox",
+      "frameworkId": "XAML",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 34,
+      "key": "e8365aaa333b4e86",
+      "role": "edit",
+      "name": "Search box",
+      "enabled": true,
+      "focused": true,
+      "bounds": {},
+      "actions": [
+        "value"
+      ],
+      "automationId": "SearchTextBox",
+      "className": "RichEditBox",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:Windows.UI.Core.CoreWindow",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 31,
+      "key": "44da5812ee3d0326",
+      "role": "button",
+      "name": "Search Highlights Icon",
+      "enabled": true,
+      "bounds": {
+        "x": 312,
+        "y": 1040,
+        "width": 80,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "Button",
+      "frameworkId": "XAML"
+    },
+    {
+      "id": 4,
+      "key": "4467194d3e36f3ec",
+      "role": "button",
+      "name": "Start",
+      "enabled": true,
+      "bounds": {
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "Start",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 8,
+      "key": "5c43bc22396cba31",
+      "role": "button",
+      "name": "Task View",
+      "enabled": true,
+      "bounds": {
+        "x": 392,
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4113",
+      "className": "TrayButton",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 10,
+      "key": "4ea0560a7c97d214",
+      "role": "button",
+      "name": "Copilot",
+      "enabled": true,
+      "bounds": {
+        "x": 443,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.Copilot_8wekyb3d8bbwe!App",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 11,
+      "key": "210ac4172d8972e6",
+      "role": "button",
+      "name": "Microsoft Edge",
+      "enabled": true,
+      "bounds": {
+        "x": 492,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "MSEdge",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 12,
+      "key": "914b54c471ab6e0f",
+      "role": "button",
+      "name": "File Explorer",
+      "enabled": true,
+      "bounds": {
+        "x": 541,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.Windows.Explorer",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 13,
+      "key": "1be251954d8c9055",
+      "role": "button",
+      "name": "Microsoft Store",
+      "enabled": true,
+      "bounds": {
+        "x": 590,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.WindowsStore_8wekyb3d8bbwe!App",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 14,
+      "key": "7745b1d62d43af4c",
+      "role": "button",
+      "name": "Mail",
+      "enabled": true,
+      "bounds": {
+        "x": 639,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "microsoft.windowscommunicationsapps_8wekyb3d8bbwe!microsoft.windowslive.mail",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 15,
+      "key": "0d17b5601bc0818c",
+      "role": "button",
+      "name": "OMXSPI index+0,67%",
+      "enabled": true,
+      "bounds": {
+        "x": 1458,
+        "y": 1040,
+        "width": 199,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4105",
+      "className": "DynamicContent2",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 17,
+      "key": "211a6ddb2d181a18",
+      "role": "button",
+      "name": "Notification Chevron",
+      "enabled": true,
+      "bounds": {
+        "x": 1665,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "1502",
+      "className": "Button",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 20,
+      "key": "6225cf2c816643c2",
+      "role": "button",
+      "name": "Meet Now",
+      "enabled": true,
+      "bounds": {
+        "x": 1689,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE83-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 21,
+      "key": "6af0b88ecb7a2466",
+      "role": "button",
+      "name": "Network\nInternet access",
+      "enabled": true,
+      "bounds": {
+        "x": 1713,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE74-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 22,
+      "key": "664970396a6237d9",
+      "role": "button",
+      "name": "No Audio Output Device is installed.",
+      "enabled": true,
+      "bounds": {
+        "x": 1737,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE73-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 24,
+      "key": "74ec42dfb7d4b427",
+      "role": "button",
+      "name": "Tray Input Indicator - English (United States)",
+      "enabled": true,
+      "bounds": {
+        "x": 1761,
+        "y": 1040,
+        "width": 36,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "InputIndicatorButton",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303/pane:308",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 28,
+      "key": "2e5fa1ee305d2906",
+      "role": "button",
+      "name": "System Clock, 12:51, \u200e26/\u200e10/\u200e2026",
+      "enabled": true,
+      "bounds": {
+        "x": 1797,
+        "y": 1040,
+        "width": 70,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "TrayClockWClass",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 26,
+      "key": "eb4910fb247dac1d",
+      "role": "button",
+      "name": "Action Centre, 1 new notification",
+      "enabled": true,
+      "bounds": {
+        "x": 1867,
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "TrayButton",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 27,
+      "key": "23d3bd30dfa199ca",
+      "role": "button",
+      "name": "Show desktop",
+      "enabled": true,
+      "bounds": {
+        "x": 1915,
+        "y": 1040,
+        "width": 5,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "307",
+      "className": "TrayShowDesktopButtonWClass",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 41,
+      "key": "026a3280cd59fb2c",
+      "role": "list item",
+      "name": "Toggle Start navigation menu items",
+      "value": "collapsed",
+      "enabled": true,
+      "bounds": {
+        "y": 404,
+        "width": 48,
+        "height": 48
+      },
+      "actions": [
+        "invoke",
+        "expand"
+      ],
+      "automationId": "NavigationPaneHamburgerButton",
+      "className": "Button",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/window:PaneRoot/list:NavigationPane",
+      "hints": [
+        "opens list/menu"
+      ],
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 42,
+      "key": "111621905eec73a5",
+      "role": "list item",
+      "name": "User account for Anna Berg",
+      "enabled": true,
+      "bounds": {
+        "y": 800,
+        "width": 48,
+        "height": 48
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "UserTileButton",
+      "className": "Button",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/window:PaneRoot/list:NavigationPane",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 43,
+      "key": "f91ac8e69224a371",
+      "role": "list item",
+      "name": "Documents",
+      "enabled": true,
+      "bounds": {
+        "y": 848,
+        "width": 48,
+        "height": 48
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.Windows.Documents",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/window:PaneRoot/list:NavigationPane",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 44,
+      "key": "22367f7fff8a78cf",
+      "role": "list item",
+      "name": "Pictures",
+      "enabled": true,
+      "bounds": {
+        "y": 896,
+        "width": 48,
+        "height": 48
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.Windows.Pictures",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/window:PaneRoot/list:NavigationPane",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 45,
+      "key": "7e063cf3623741ec",
+      "role": "list item",
+      "name": "Settings",
+      "enabled": true,
+      "bounds": {
+        "y": 944,
+        "width": 48,
+        "height": 48
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/window:PaneRoot/list:NavigationPane",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 46,
+      "key": "73ea510f3f08d26d",
+      "role": "list item",
+      "name": "Power",
+      "enabled": true,
+      "bounds": {
+        "y": 992,
+        "width": 48,
+        "height": 48
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "PowerButton",
+      "className": "Button",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/window:PaneRoot/list:NavigationPane",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 47,
+      "key": "4f50001fdcfc41eb",
+      "role": "semantic zoom",
+      "name": "All apps",
+      "value": "on",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 400,
+        "width": 260,
+        "height": 640
+      },
+      "actions": [
+        "invoke",
+        "toggle"
+      ],
+      "automationId": "ZoomControl",
+      "className": "SemanticZoom",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow",
+      "window": 2
+    },
+    {
+      "id": 48,
+      "key": "83fbf6f7519ca8d6",
+      "role": "list",
+      "name": "All apps",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 400,
+        "width": 260,
+        "height": 640
+      },
+      "actions": [
+        "scroll"
+      ],
+      "automationId": "AppsList",
+      "className": "ListView",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl",
+      "hints": [
+        "list continues, 6 visible"
+      ],
+      "window": 2
+    },
+    {
+      "id": 49,
+      "key": "7a6dcebc90a9b673",
+      "role": "group",
+      "name": "#",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 407,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 50,
+      "key": "f1739210f88a1271",
+      "role": "list item",
+      "name": "3D Viewer",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 443,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~Microsoft.Microsoft3DViewer_8wekyb3d8bbwe!Microsoft.Microsoft3DViewer",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 51,
+      "key": "1479832e88046eb7",
+      "role": "group",
+      "name": "A",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 479,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 52,
+      "key": "4246f2acdf4faa49",
+      "role": "list item",
+      "name": "Alarms & Clock",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 515,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~Microsoft.WindowsAlarms_8wekyb3d8bbwe!App",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 53,
+      "key": "17493427e1f86b59",
+      "role": "group",
+      "name": "C",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 551,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 54,
+      "key": "6fa38f2af9e09f41",
+      "role": "list item",
+      "name": "Calculator",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 587,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 55,
+      "key": "43100001f28158d0",
+      "role": "list item",
+      "name": "Calendar",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 623,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~microsoft.windowscommunicationsapps_8wekyb3d8bbwe!microsoft.windowslive.calendar",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 56,
+      "key": "0b42f24016268e41",
+      "role": "list item",
+      "name": "Camera",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 659,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~Microsoft.WindowsCamera_8wekyb3d8bbwe!App",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 57,
+      "key": "cb784c0e59ba6fd4",
+      "role": "list item",
+      "name": "Copilot",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 695,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~Microsoft.Copilot_8wekyb3d8bbwe!App",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 58,
+      "key": "a40e933584c7fef2",
+      "role": "list item",
+      "name": "Cortana",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 731,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~Microsoft.549981C3F5F10_8wekyb3d8bbwe!App",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 59,
+      "key": "9c42a7df01bd2b47",
+      "role": "group",
+      "name": "F",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 767,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 60,
+      "key": "b2f6f85243615bb7",
+      "role": "list item",
+      "name": "Feedback Hub",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 803,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~Microsoft.WindowsFeedbackHub_8wekyb3d8bbwe!App",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 61,
+      "key": "8890bd562531d5a5",
+      "role": "group",
+      "name": "G",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 839,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 62,
+      "key": "dffddb0d0c7ffedc",
+      "role": "list item",
+      "name": "Get Help, System",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 875,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~Microsoft.GetHelp_8wekyb3d8bbwe!App",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 63,
+      "key": "abcccc6e717b9b2b",
+      "role": "list item",
+      "name": "Groove Music, Installing at 100 per cent",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 911,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 64,
+      "key": "0c1c3bea55ac0614",
+      "role": "group",
+      "name": "M",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 947,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 65,
+      "key": "d40ad75bf1a9ccc1",
+      "role": "list item",
+      "name": "Mail",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 983,
+        "width": 246,
+        "height": 36
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~microsoft.windowscommunicationsapps_8wekyb3d8bbwe!microsoft.windowslive.mail",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 66,
+      "key": "7ca42a035d224d97",
+      "role": "list item",
+      "name": "Maps",
+      "enabled": true,
+      "bounds": {
+        "x": 60,
+        "y": 1019,
+        "width": 246,
+        "height": 21
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "P~Microsoft.WindowsMaps_8wekyb3d8bbwe!App",
+      "className": "ListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/semantic zoom:ZoomControl/list:AppsList/group:ListViewItem",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 68,
+      "key": "63687b47b946781e",
+      "role": "group",
+      "name": "Productivity group header",
+      "enabled": true,
+      "bounds": {
+        "x": 320,
+        "y": 413,
+        "width": 316,
+        "height": 32
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{d92812dd-7a64-4a88-9279-3275d0b5472e}",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 69,
+      "key": "109c5371ffcf079c",
+      "role": "list item",
+      "name": "Office",
+      "enabled": true,
+      "bounds": {
+        "x": 324,
+        "y": 449,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "tile-P~Microsoft.MicrosoftOfficeHub_8wekyb3d8bbwe!Microsoft.MicrosoftOfficeHub",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{d92812dd-7a64-4a88-9279-3275d0b5472e}",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 70,
+      "key": "0c1bca44b02ff58d",
+      "role": "list item",
+      "name": "OneDrive\u2019s folder",
+      "value": "collapsed",
+      "enabled": true,
+      "bounds": {
+        "x": 428,
+        "y": 449,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke",
+        "expand"
+      ],
+      "automationId": "{7de6ccca-abe8-457f-b4e3-77b510943367}",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{d92812dd-7a64-4a88-9279-3275d0b5472e}",
+      "hints": [
+        "opens list/menu"
+      ],
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 71,
+      "key": "33dccabe037cbc15",
+      "role": "list item",
+      "name": "Mail\nWe speak Gmail",
+      "enabled": true,
+      "bounds": {
+        "x": 532,
+        "y": 449,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "tile-P~microsoft.windowscommunicationsapps_8wekyb3d8bbwe!microsoft.windowslive.mail",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{d92812dd-7a64-4a88-9279-3275d0b5472e}",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 72,
+      "key": "09b39b97c724f295",
+      "role": "list item",
+      "name": "Microsoft Edge",
+      "enabled": true,
+      "bounds": {
+        "x": 324,
+        "y": 553,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "tile-W~MSEdge",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{d92812dd-7a64-4a88-9279-3275d0b5472e}",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 73,
+      "key": "e098bff51bf74ab1",
+      "role": "list item",
+      "name": "Photos",
+      "enabled": true,
+      "bounds": {
+        "x": 428,
+        "y": 553,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "tile-P~Microsoft.Windows.Photos_8wekyb3d8bbwe!App",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{d92812dd-7a64-4a88-9279-3275d0b5472e}",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 74,
+      "key": "4948dde2e8e1d9a0",
+      "role": "list item",
+      "name": "LinkedIn",
+      "enabled": true,
+      "bounds": {
+        "x": 532,
+        "y": 553,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "tile-P~7EE7776C.LinkedInforWindows_w1wdnht996qgy!App",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{d92812dd-7a64-4a88-9279-3275d0b5472e}",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 75,
+      "key": "1d2435e1de6ff212",
+      "role": "group",
+      "name": "Explore group header",
+      "enabled": true,
+      "bounds": {
+        "x": 320,
+        "y": 657,
+        "width": 316,
+        "height": 32
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{161da2f9-c06f-4aee-b768-c0dc4aa8376c}",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 76,
+      "key": "ada431d91640157e",
+      "role": "list item",
+      "name": "Microsoft Store",
+      "enabled": true,
+      "bounds": {
+        "x": 324,
+        "y": 693,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "tile-P~Microsoft.WindowsStore_8wekyb3d8bbwe!App",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{161da2f9-c06f-4aee-b768-c0dc4aa8376c}",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 77,
+      "key": "a9f9f94e68fe4eb9",
+      "role": "list item",
+      "name": "Calculator",
+      "enabled": true,
+      "bounds": {
+        "x": 428,
+        "y": 693,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "tile-P~Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{161da2f9-c06f-4aee-b768-c0dc4aa8376c}",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 78,
+      "key": "1ba50cf506d28fa8",
+      "role": "list item",
+      "name": "Microsoft To Do: Lists, Tasks & Reminders",
+      "enabled": true,
+      "bounds": {
+        "x": 532,
+        "y": 693,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "tile-P~Microsoft.Todos_8wekyb3d8bbwe!App",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{161da2f9-c06f-4aee-b768-c0dc4aa8376c}",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 79,
+      "key": "048946959059e040",
+      "role": "list item",
+      "name": "Movies & TV",
+      "enabled": true,
+      "bounds": {
+        "x": 324,
+        "y": 797,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "tile-P~Microsoft.ZuneVideo_8wekyb3d8bbwe!Microsoft.ZuneVideo",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{161da2f9-c06f-4aee-b768-c0dc4aa8376c}",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 80,
+      "key": "e4308d225a7c2734",
+      "role": "list item",
+      "name": "Microsoft Solitaire Collection\nSolitaire",
+      "enabled": true,
+      "bounds": {
+        "x": 428,
+        "y": 797,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "tile-P~Microsoft.MicrosoftSolitaireCollection_8wekyb3d8bbwe!App",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{161da2f9-c06f-4aee-b768-c0dc4aa8376c}",
+      "window": 2,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 81,
+      "key": "16496c35c6fc1d5c",
+      "role": "list item",
+      "name": "Play folder",
+      "value": "collapsed",
+      "enabled": true,
+      "bounds": {
+        "x": 532,
+        "y": 797,
+        "width": 100,
+        "height": 100
+      },
+      "actions": [
+        "invoke",
+        "expand"
+      ],
+      "automationId": "{718af052-343c-4794-8af9-ca6c7983bb75}",
+      "className": "TileListViewItem",
+      "frameworkId": "XAML",
+      "ancestorPath": "window:SplitViewFrameXAMLWindow/list:groupItems/group:{161da2f9-c06f-4aee-b768-c0dc4aa8376c}",
+      "hints": [
+        "opens list/menu"
+      ],
+      "window": 2,
+      "keyboardFocusable": true
+    }
+  ],
+  "context": [
+    "text: Type here to search",
+    "text: Vertical size grip",
+    "text: Diagonal size grip",
+    "text: Horizontal size grip"
+  ],
+  "settled": true,
+  "settleMs": 547,
+  "cursorX": 993,
+  "cursorY": 533,
+  "user": "aberg"
+}

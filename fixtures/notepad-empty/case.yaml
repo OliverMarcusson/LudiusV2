@@ -1,0 +1,6 @@
+template: notepad_write_note
+instance: q3-call-notes
+subgoal: write_body
+expect:
+- type the text to enter into \[\d+\] document 'Text Editor'
+- type the text to enter at the keyboard focus

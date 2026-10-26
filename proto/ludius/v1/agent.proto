@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package ludius.v1;
+
+option csharp_namespace = "Ludius.V1";
+
+import "ludius/v1/observation.proto";
+
+// One host agent per hypervisor host. The controller never learns which
+// hypervisor is behind it.
+service HostAgent {
+  rpc Input(InputRequest) returns (InputResult);
+  rpc Observe(ObserveRequest) returns (ObserveResult);
+  rpc Lifecycle(LifecycleRequest) returns (LifecycleResult);
+  rpc Screenshot(ScreenshotRequest) returns (ScreenshotResult);
+}
+
+message Move {
+  int32 x = 1;            // guest physical pixels
+  int32 y = 2;
+  uint32 duration_ms = 3; // short movement path, 0 = jump
+}
+
+message Click {
+  enum Button {
+    LEFT = 0;
+    RIGHT = 1;
+    MIDDLE = 2;
+  }
+  Button button = 1;
+  uint32 count = 2;       // 1 or 2
+}
+
+message Key {
+  uint32 vk = 1;          // Windows virtual-key code
+  bool down = 2;
+}
+
+message Chord {
+  repeated uint32 vk = 1; // pressed in order, released in reverse
+}
+
+message TypeText {
+  string text = 1;        // printable ASCII, \n and \t
+  uint32 mean_ms = 2;     // per-key delay distribution
+  uint32 jitter_ms = 3;
+}
+
+message CtrlAltDel {}
+
+message Scroll {
+  int32 notches = 1;      // positive = up / away from the user
+}
+
+message InputRequest {
+  string vm = 1;
+  oneof action {
+    Move move = 2;
+    Click click = 3;
+    Key key = 4;
+    Chord chord = 5;
+    TypeText type = 6;
+    CtrlAltDel ctrl_alt_del = 7;
+    Scroll scroll = 8;
+  }
+}
+
+message InputResult {
+  int64 host_time_ms = 1;
+}
+
+message ObserveRequest {
+  string vm = 1;
+  SnapshotRequest request = 2;
+}
+
+message ObserveResult {
+  Snapshot snapshot = 1;
+  Hello hello = 2;        // the observer's current hello
+  int64 host_time_ms = 3;
+}
+
+message LifecycleRequest {
+  string vm = 1;
+  enum Op {
+    START = 0;
+    STOP = 1;
+    CHECKPOINT = 2;
+    RESTORE = 3;
+    STATE = 4;
+  }
+  Op op = 2;
+  string checkpoint = 3;
+}
+
+message LifecycleResult {
+  string state = 1;
+}
+
+message ScreenshotRequest {
+  string vm = 1;
+}
+
+message ScreenshotResult {
+  bytes png = 1;
+  int32 width = 2;
+  int32 height = 3;
+}

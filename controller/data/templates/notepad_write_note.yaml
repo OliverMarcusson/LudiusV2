@@ -1,0 +1,50 @@
+# Write a short note in Notepad and save it in Documents.
+# Variants cover launch method (Start search vs Run: different parent process,
+# UserAssist and RunMRU artifacts) and UI path (Ctrl+S vs File menu).
+task: notepad_write_note
+app: notepad
+processes: [notepad.exe]
+params: [file_name, body, launch_query]
+variants:
+  - [open_from_start, write_body, save_shortcut, name_file, confirm_save, close_app]
+  - [open_from_run, write_body, save_menu, name_file, confirm_save, close_app]
+  - [open_from_start, write_body, save_menu, name_file, confirm_save, close_app]
+  - [open_from_run, write_body, save_shortcut, name_file, confirm_save, close_app]
+budget_steps: 40
+budget_minutes: 8
+on_abandon: close_without_saving
+subgoals:
+  open_from_start:
+    goal: "Open Notepad by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    done: {foreground: {process: notepad.exe}}
+  open_from_run:
+    goal: "Open Notepad through the Run dialog (Win+R)"
+    launch: true
+    keys: [Win+R]
+    text: launch_query
+    done: {foreground: {process: notepad.exe}}
+  write_body:
+    goal: "Type the note into the Notepad text area"
+    text: body
+    done: {typed: true}
+  save_shortcut:
+    goal: "Open the Save As dialog with the keyboard shortcut"
+    keys: [Ctrl+S]
+    done: {window: {process: notepad.exe, title: "^Save As$"}}
+  save_menu:
+    goal: "Open the Save As dialog from Notepad's File menu"
+    done: {window: {process: notepad.exe, title: "^Save As$"}}
+  name_file:
+    goal: "Enter {file_name} as the file name in the Save As dialog"
+    text: file_name
+    done: {typed: true, element: {name: "^File name", value: '^{file_name}(\.txt)?$'}}
+  confirm_save:
+    goal: "Save the file as {file_name}"
+    # Explorer hides known extensions by default, so the title may lack ".txt".
+    done: {window: {process: notepad.exe, title: '^{file_name}(\.txt)? - Notepad$'}}
+  close_app:
+    goal: "Close Notepad"
+    done: {window: {process: notepad.exe, absent: true}}

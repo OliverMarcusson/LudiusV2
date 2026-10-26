@@ -1,0 +1,8 @@
+template: notepad_write_note
+instance: q3-call-notes
+subgoal: open_from_start
+expect:
+- press Win$
+- click \[\d+\] button 'Start'
+- click \[\d+\] button 'Type here to search'
+- click \[\d+\] button 'Search highlights

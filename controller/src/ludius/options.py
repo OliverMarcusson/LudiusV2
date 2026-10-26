@@ -1,0 +1,134 @@
+"""Jev state and option set, built in code from one settled snapshot."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from ludius.policy import SHELL_PROCESSES, Policy
+from ludius.tasks import Subgoal, Task
+from ludius.v1 import observation_pb2 as obs
+
+CLICKABLE = {
+    "button", "split button", "menu item", "list item", "tab item", "hyperlink", "check box", "radio button",
+    "combo box", "tree item", "data item", "edit", "document", "header item", "spinner", "slider",
+}  # fmt: skip
+EDITABLE = {"edit", "document", "combo box"}
+OPENABLE = {"list item", "data item"}  # double-click opens files and shell items
+BASE_KEYS = ["Enter", "Esc", "Tab", "Shift+Tab", "Up", "Down", "Left", "Right", "Alt+F4"]
+MAX_ELEMENT_LINES = 120
+
+
+@dataclass
+class Option:
+    key: str  # Jev choice key: o1, o2, ...
+    kind: str  # click | double_click | type | key | scroll | rescan
+    text: str  # what Jev reads
+    element: obs.Element | None = None
+    keys: str = ""
+    content: str = ""  # content key for type
+    notches: int = 0
+
+
+@dataclass
+class StepView:
+    """What the controller knows about the screen for one step."""
+
+    snapshot: obs.Snapshot
+    allowed: list[obs.Element] = field(default_factory=list[obs.Element])
+    windows: dict[int, obs.Window] = field(default_factory=dict[int, obs.Window])
+
+
+def describe(e: obs.Element) -> str:
+    s = f"[{e.id}] {e.role} '{e.name}'"
+    if e.value:
+        s += f" value='{e.value[:80]}'"
+    flags = [f for f, on in (("focused", e.focused), ("selected", e.selected), ("expanded", e.expanded),
+                             ("read-only", e.read_only), ("disabled", not e.enabled)) if on]  # fmt: skip
+    if flags:
+        s += " " + ",".join(flags)
+    if e.hints:
+        s += " hint=" + "; ".join(e.hints)
+    return s
+
+
+def window_line(w: obs.Window) -> str:
+    return f"{w.title or w.class_name} ({w.process_name})"
+
+
+def view(snap: obs.Snapshot, task: Task, sg: Subgoal, policy: Policy) -> StepView:
+    """Elements the task may touch: its apps' windows, the shell when launching, never refused elements."""
+    v = StepView(snapshot=snap)
+    apps = {p.lower() for p in task.template.processes}
+    for i, w in enumerate(snap.windows):
+        proc = w.process_name.lower()
+        dialog_of_app = w.kind in (obs.Window.OWNED, obs.Window.POPUP)  # common dialogs and menus of the app
+        shell = w.kind == obs.Window.SHELL or proc in SHELL_PROCESSES
+        if proc in apps or (dialog_of_app and _owner_is_app(snap, apps)) or (sg.launch and shell):
+            v.windows[i] = w
+    for e in snap.elements:
+        if e.window in v.windows and policy.element_allowed(e, sg.allow_destructive) is None:
+            v.allowed.append(e)
+    return v
+
+
+def _owner_is_app(snap: obs.Snapshot, apps: set[str]) -> bool:
+    fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
+    return fg is not None and fg.process_name.lower() in apps
+
+
+def build_state(v: StepView, task: Task, sg: Subgoal, history: list[str], last_result: str) -> dict[str, Any]:
+    snap = v.snapshot
+    fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
+    focused = next((e for e in snap.elements if e.focused), None)
+    content = task.text(sg)
+    state: dict[str, Any] = {
+        "goal": sg.goal,
+        "task_context": task.inst.context or task.fmt(task.template.task.replace("_", " ")),
+        "window": window_line(fg) if fg else "desktop",
+        "other_windows": [window_line(w) for w in snap.windows if w.kind in (obs.Window.OWNED, obs.Window.POPUP)],
+        "focused": f"[{focused.id}]" if focused else "none",
+        "history": history[-8:],
+        "last_result": last_result,
+        "elements": [describe(e) for e in v.allowed[:MAX_ELEMENT_LINES]],
+        "context": list(snap.context[:30]),
+    }
+    if content is not None:
+        state["text_to_enter"] = content if len(content) <= 160 else content[:160] + "…"
+    if snap.busy_cursor or snap.indeterminate_progress:
+        state["busy"] = True
+    return state
+
+
+def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[Option]:
+    opts: list[Option] = []
+
+    def add(kind: str, text: str, **kw: Any) -> None:
+        opts.append(Option(key=f"o{len(opts) + 1}", kind=kind, text=text, **kw))
+
+    content = task.text(sg)
+    for e in v.allowed:
+        if e.role in CLICKABLE and e.bounds.width > 0:
+            add("click", f"click {describe(e)}", element=e)
+            if e.role in OPENABLE:
+                add("double_click", f"double-click to open [{e.id}] {e.role} '{e.name}'", element=e)
+        if (
+            content is not None
+            and e.role in EDITABLE
+            and not e.read_only
+            and e.enabled
+            and policy.text_allowed(content, e) is None
+        ):
+            add("type", f"type the text to enter into [{e.id}] {e.role} '{e.name}'", element=e, content=sg.text or "")
+    if content is not None and policy.text_allowed(content, None) is None:
+        # Where focus already is (Start search, a field without a usable tree).
+        add("type", "type the text to enter at the keyboard focus", content=sg.text or "")
+    for k in [*BASE_KEYS, *sg.keys]:
+        if k == "Win" and not sg.launch:
+            continue
+        add("key", f"press {k}", keys=k)
+    if any("list continues" in h for e in v.allowed for h in e.hints) or any(e.role == "document" for e in v.allowed):
+        add("scroll", "scroll down", notches=-3)
+        add("scroll", "scroll up", notches=3)
+    add("rescan", "rescan: wait for the screen to finish loading and look again")
+    return opts[:255]

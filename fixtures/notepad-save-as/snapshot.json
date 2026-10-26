@@ -1,0 +1,1519 @@
+{
+  "seq": "10",
+  "guestTimeMs": "1793015513750",
+  "screenWidth": 1920,
+  "screenHeight": 1080,
+  "dpi": 96,
+  "windows": [
+    {
+      "handle": "393558",
+      "title": "Save As",
+      "className": "#32770",
+      "processName": "notepad.exe",
+      "pid": 4064,
+      "frameworkId": "Win32",
+      "bounds": {
+        "x": 216,
+        "y": 259,
+        "width": 960,
+        "height": 540
+      },
+      "kind": "FOREGROUND"
+    },
+    {
+      "handle": "393268",
+      "className": "Shell_TrayWnd",
+      "processName": "explorer.exe",
+      "pid": 6388,
+      "frameworkId": "Win32",
+      "bounds": {
+        "y": 1040,
+        "width": 1920,
+        "height": 40
+      },
+      "kind": "SHELL"
+    }
+  ],
+  "elements": [
+    {
+      "id": 151,
+      "key": "89fd0f4f9803d491",
+      "role": "edit",
+      "name": "File name:",
+      "value": "*.txt",
+      "enabled": true,
+      "focused": true,
+      "bounds": {
+        "x": 352,
+        "y": 688,
+        "width": 791,
+        "height": 17
+      },
+      "actions": [
+        "value"
+      ],
+      "automationId": "1001",
+      "className": "Edit",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:DUIViewWndClassName/combo box:FileNameControlHost",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 114,
+      "key": "e3119e2196a3b698",
+      "role": "button",
+      "name": "&Help",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 1131,
+        "y": 327,
+        "width": 28,
+        "height": 26
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "HelpButton",
+      "className": "Button3d",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/tool bar:FolderBandModuleInner",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 115,
+      "key": "ad8bb4d9ea3d8536",
+      "role": "split button",
+      "name": "Views",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 1068,
+        "y": 327,
+        "width": 55,
+        "height": 26
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "ViewControl",
+      "className": "ViewControl",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/tool bar:FolderBandModuleInner",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 116,
+      "key": "28b8ccb4a0157d9c",
+      "role": "button",
+      "name": "View Slider",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 1095,
+        "y": 327,
+        "width": 18,
+        "height": 26
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "SplitMenuButton",
+      "className": "Button3d",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/tool bar:FolderBandModuleInner/split button:ViewControl"
+    },
+    {
+      "id": 117,
+      "key": "d04fa6082bc242c2",
+      "role": "button",
+      "name": "Organise",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 227,
+        "y": 327,
+        "width": 91,
+        "height": 26
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7DDC1264-7E4D-4F74-BBC0-D191987C8D0F}",
+      "className": "AJOSplitButton",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/tool bar:FolderBandModuleInner",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 118,
+      "key": "8c1b23c35836c649",
+      "role": "button",
+      "name": "New folder",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 318,
+        "y": 327,
+        "width": 88,
+        "height": 26
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{E44616AD-6DF1-4B94-85A4-E465AE8A19DB}",
+      "className": "AJOSplitButton",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/tool bar:FolderBandModuleInner",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 121,
+      "key": "1b670ea2ebca28b1",
+      "role": "tree item",
+      "name": "Quick access",
+      "value": "Quick access",
+      "enabled": true,
+      "expanded": true,
+      "bounds": {
+        "x": 267,
+        "y": 372,
+        "width": 72,
+        "height": 24
+      },
+      "actions": [
+        "invoke",
+        "value",
+        "select",
+        "expand"
+      ],
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:ProperTreeHost/tree:100",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 122,
+      "key": "103f2960873ffb71",
+      "role": "tree item",
+      "name": "Desktop (pinned)",
+      "value": "Desktop (pinned)",
+      "enabled": true,
+      "bounds": {
+        "x": 275,
+        "y": 396,
+        "width": 47,
+        "height": 24
+      },
+      "actions": [
+        "value",
+        "select",
+        "expand"
+      ],
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:ProperTreeHost/tree:100/tree item:",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 123,
+      "key": "50808becfeff2aef",
+      "role": "tree item",
+      "name": "Downloads (pinned)",
+      "value": "Downloads (pinned)",
+      "enabled": true,
+      "bounds": {
+        "x": 275,
+        "y": 420,
+        "width": 63,
+        "height": 24
+      },
+      "actions": [
+        "value",
+        "select",
+        "expand"
+      ],
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:ProperTreeHost/tree:100/tree item:",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 124,
+      "key": "20b06cddce2ce4a9",
+      "role": "tree item",
+      "name": "Documents (pinned)",
+      "value": "Documents (pinned)",
+      "enabled": true,
+      "bounds": {
+        "x": 275,
+        "y": 444,
+        "width": 65,
+        "height": 24
+      },
+      "actions": [
+        "value",
+        "select",
+        "expand"
+      ],
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:ProperTreeHost/tree:100/tree item:",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 125,
+      "key": "3f52b3e40b34346c",
+      "role": "tree item",
+      "name": "Pictures (pinned)",
+      "value": "Pictures (pinned)",
+      "enabled": true,
+      "bounds": {
+        "x": 275,
+        "y": 468,
+        "width": 46,
+        "height": 24
+      },
+      "actions": [
+        "value",
+        "select",
+        "expand"
+      ],
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:ProperTreeHost/tree:100/tree item:",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 126,
+      "key": "05426beb66080280",
+      "role": "tree item",
+      "name": "Music",
+      "value": "Music",
+      "enabled": true,
+      "bounds": {
+        "x": 275,
+        "y": 492,
+        "width": 36,
+        "height": 24
+      },
+      "actions": [
+        "value",
+        "select",
+        "expand"
+      ],
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:ProperTreeHost/tree:100/tree item:",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 127,
+      "key": "2d4e114e71dd735e",
+      "role": "tree item",
+      "name": "Videos",
+      "value": "Videos",
+      "enabled": true,
+      "bounds": {
+        "x": 275,
+        "y": 516,
+        "width": 39,
+        "height": 24
+      },
+      "actions": [
+        "value",
+        "select",
+        "expand"
+      ],
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:ProperTreeHost/tree:100/tree item:",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 129,
+      "key": "8004f12e81eb7f7c",
+      "role": "tree item",
+      "name": "OneDrive",
+      "value": "OneDrive",
+      "enabled": true,
+      "bounds": {
+        "x": 267,
+        "y": 548,
+        "width": 53,
+        "height": 24
+      },
+      "actions": [
+        "invoke",
+        "value",
+        "select",
+        "expand"
+      ],
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:ProperTreeHost/tree:100/tree item:",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 130,
+      "key": "f2bb5b3a9035120e",
+      "role": "tree item",
+      "name": "This PC",
+      "value": "This PC",
+      "enabled": true,
+      "selected": true,
+      "bounds": {
+        "x": 267,
+        "y": 580,
+        "width": 43,
+        "height": 24
+      },
+      "actions": [
+        "invoke",
+        "value",
+        "select",
+        "expand"
+      ],
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:ProperTreeHost/tree:100/tree item:",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 131,
+      "key": "37a3c372c6ed14d0",
+      "role": "tree item",
+      "name": "Network",
+      "value": "Network",
+      "enabled": true,
+      "bounds": {
+        "x": 267,
+        "y": 612,
+        "width": 49,
+        "height": 24
+      },
+      "actions": [
+        "invoke",
+        "value",
+        "select",
+        "expand"
+      ],
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:ProperTreeHost/tree:100/tree item:",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 135,
+      "key": "8517a3d6b1e12d1d",
+      "role": "split button",
+      "name": "Name",
+      "value": "collapsed",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 384,
+        "y": 356,
+        "width": 272,
+        "height": 25
+      },
+      "actions": [
+        "invoke",
+        "expand"
+      ],
+      "automationId": "System.ItemNameDisplay",
+      "className": "UIColumnHeader",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/header:UIViewHeader",
+      "hints": [
+        "opens list/menu"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 136,
+      "key": "a897f425e0fa8e79",
+      "role": "button",
+      "name": "Filter drop-down",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 640,
+        "y": 356,
+        "width": 15,
+        "height": 25
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "DropDown",
+      "className": "Button",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/header:UIViewHeader/split button:System.ItemNameDisplay"
+    },
+    {
+      "id": 137,
+      "key": "62aa2cfebb8c6b81",
+      "role": "split button",
+      "name": "Date modified",
+      "value": "collapsed",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 656,
+        "y": 356,
+        "width": 144,
+        "height": 25
+      },
+      "actions": [
+        "invoke",
+        "expand"
+      ],
+      "automationId": "System.DateModified",
+      "className": "UIColumnHeader",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/header:UIViewHeader",
+      "hints": [
+        "opens list/menu"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 138,
+      "key": "28224ac7b675e357",
+      "role": "button",
+      "name": "Filter drop-down",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 784,
+        "y": 356,
+        "width": 15,
+        "height": 25
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "DropDown",
+      "className": "Button",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/header:UIViewHeader/split button:System.DateModified"
+    },
+    {
+      "id": 139,
+      "key": "ab563cfe1fb1b0e0",
+      "role": "split button",
+      "name": "Type",
+      "value": "collapsed",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 800,
+        "y": 356,
+        "width": 120,
+        "height": 25
+      },
+      "actions": [
+        "invoke",
+        "expand"
+      ],
+      "automationId": "System.ItemTypeText",
+      "className": "UIColumnHeader",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/header:UIViewHeader",
+      "hints": [
+        "opens list/menu"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 140,
+      "key": "77c53c2d2abfc7de",
+      "role": "button",
+      "name": "Filter drop-down",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 904,
+        "y": 356,
+        "width": 15,
+        "height": 25
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "DropDown",
+      "className": "Button",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/header:UIViewHeader/split button:System.ItemTypeText"
+    },
+    {
+      "id": 141,
+      "key": "5c8bae51f46417f4",
+      "role": "split button",
+      "name": "Size",
+      "value": "collapsed",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 920,
+        "y": 356,
+        "width": 80,
+        "height": 25
+      },
+      "actions": [
+        "invoke",
+        "expand"
+      ],
+      "automationId": "System.Size",
+      "className": "UIColumnHeader",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/header:UIViewHeader",
+      "hints": [
+        "opens list/menu"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 142,
+      "key": "9d0234c78d69d7f2",
+      "role": "button",
+      "name": "Filter drop-down",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 984,
+        "y": 356,
+        "width": 15,
+        "height": 25
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "DropDown",
+      "className": "Button",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/header:UIViewHeader/split button:System.Size"
+    },
+    {
+      "id": 143,
+      "key": "448226cfd1917df7",
+      "role": "list item",
+      "name": "q3 close call notes",
+      "value": "q3 close call notes",
+      "enabled": true,
+      "bounds": {
+        "x": 398,
+        "y": 387,
+        "width": 598,
+        "height": 22
+      },
+      "actions": [
+        "invoke",
+        "value",
+        "select"
+      ],
+      "automationId": "0",
+      "className": "UIItem",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 145,
+      "key": "62f84d299a80c582",
+      "role": "edit",
+      "name": "Name",
+      "value": "q3 close call notes",
+      "enabled": true,
+      "bounds": {
+        "x": 420,
+        "y": 387,
+        "width": 236,
+        "height": 22
+      },
+      "actions": [
+        "value"
+      ],
+      "automationId": "System.ItemNameDisplay",
+      "className": "UIProperty",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/list item:0"
+    },
+    {
+      "id": 146,
+      "key": "2e39aa4e5e562e3e",
+      "role": "edit",
+      "name": "Date modified",
+      "value": "\u200e26/\u200e10/\u200e2026 \u200f\u200e12:42",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 656,
+        "y": 387,
+        "width": 144,
+        "height": 22
+      },
+      "automationId": "System.DateModified",
+      "className": "UIProperty",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/list item:0",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 147,
+      "key": "d25ef0b1233a3754",
+      "role": "edit",
+      "name": "Type",
+      "value": "Text Document",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 800,
+        "y": 387,
+        "width": 120,
+        "height": 22
+      },
+      "automationId": "System.ItemTypeText",
+      "className": "UIProperty",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/list item:0",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 148,
+      "key": "15356047479a29fb",
+      "role": "edit",
+      "name": "Size",
+      "value": "1 KB",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 920,
+        "y": 387,
+        "width": 80,
+        "height": 22
+      },
+      "automationId": "System.Size",
+      "className": "UIProperty",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName/pane:listview/list:UIItemsView/list item:0",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 150,
+      "key": "0af7576982db1924",
+      "role": "combo box",
+      "name": "File name:",
+      "value": "*.txt",
+      "enabled": true,
+      "bounds": {
+        "x": 349,
+        "y": 685,
+        "width": 814,
+        "height": 23
+      },
+      "actions": [
+        "value",
+        "expand"
+      ],
+      "automationId": "FileNameControlHost",
+      "className": "AppControlHost",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName",
+      "hints": [
+        "opens list/menu"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 152,
+      "key": "5e825edb6b5fe1fd",
+      "role": "button",
+      "name": "Open",
+      "enabled": true,
+      "bounds": {
+        "x": 1147,
+        "y": 686,
+        "width": 15,
+        "height": 21
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "DropDown",
+      "ancestorPath": "pane:DUIViewWndClassName/combo box:FileNameControlHost",
+      "hints": [
+        "submits"
+      ]
+    },
+    {
+      "id": 154,
+      "key": "32ff00669fed0963",
+      "role": "combo box",
+      "name": "Save as type:",
+      "value": "Text Documents (*.txt)",
+      "enabled": true,
+      "bounds": {
+        "x": 349,
+        "y": 710,
+        "width": 814,
+        "height": 23
+      },
+      "actions": [
+        "value",
+        "expand"
+      ],
+      "automationId": "FileTypeControlHost",
+      "className": "AppControlHost",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:DUIViewWndClassName",
+      "hints": [
+        "opens list/menu"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 155,
+      "key": "f2bcc1350a3aee2e",
+      "role": "button",
+      "name": "Open",
+      "enabled": true,
+      "bounds": {
+        "x": 1147,
+        "y": 711,
+        "width": 15,
+        "height": 21
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "DropDown",
+      "ancestorPath": "pane:DUIViewWndClassName/combo box:FileTypeControlHost",
+      "hints": [
+        "submits"
+      ]
+    },
+    {
+      "id": 157,
+      "key": "0172ccde9db8dc1f",
+      "role": "button",
+      "name": "Hide Folders",
+      "enabled": true,
+      "bounds": {
+        "x": 234,
+        "y": 758,
+        "width": 90,
+        "height": 22
+      },
+      "actions": [
+        "invoke"
+      ],
+      "ancestorPath": "tool bar:ToolbarWindow32"
+    },
+    {
+      "id": 159,
+      "key": "332dee7711784099",
+      "role": "combo box",
+      "name": "Encoding:",
+      "value": "UTF-8",
+      "enabled": true,
+      "bounds": {
+        "x": 801,
+        "y": 754,
+        "width": 150,
+        "height": 23
+      },
+      "actions": [
+        "value",
+        "expand"
+      ],
+      "className": "ComboBox",
+      "frameworkId": "Win32",
+      "hints": [
+        "opens list/menu"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 160,
+      "key": "177a3e9f30aef068",
+      "role": "button",
+      "name": "Open",
+      "enabled": true,
+      "bounds": {
+        "x": 935,
+        "y": 755,
+        "width": 15,
+        "height": 21
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "DropDown",
+      "ancestorPath": "combo box:ComboBox",
+      "hints": [
+        "submits"
+      ]
+    },
+    {
+      "id": 161,
+      "key": "f4317cf43c1ca000",
+      "role": "button",
+      "name": "Save",
+      "enabled": true,
+      "bounds": {
+        "x": 963,
+        "y": 753,
+        "width": 88,
+        "height": 26
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "1",
+      "className": "Button",
+      "frameworkId": "Win32",
+      "hints": [
+        "submits",
+        "Enter triggers this"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 162,
+      "key": "36636c82f1004181",
+      "role": "button",
+      "name": "Cancel",
+      "enabled": true,
+      "bounds": {
+        "x": 1063,
+        "y": 753,
+        "width": 88,
+        "height": 26
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "2",
+      "className": "Button",
+      "frameworkId": "Win32",
+      "hints": [
+        "closes dialog"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 172,
+      "key": "7b48d976a16aa38e",
+      "role": "button",
+      "name": "Up to \"This PC\" (Alt + Up Arrow)",
+      "enabled": true,
+      "bounds": {
+        "x": 305,
+        "y": 295,
+        "width": 24,
+        "height": 24
+      },
+      "actions": [
+        "invoke"
+      ],
+      "ancestorPath": "pane:40965/pane:UpBand/tool bar:ToolbarWindow32"
+    },
+    {
+      "id": 177,
+      "key": "c270494b246c6498",
+      "role": "split button",
+      "name": "All locations",
+      "enabled": true,
+      "bounds": {
+        "x": 331,
+        "y": 296,
+        "width": 35,
+        "height": 21
+      },
+      "actions": [
+        "invoke"
+      ],
+      "ancestorPath": "pane:40965/pane:41477/progress bar:msctls_progress32/pane:Breadcrumb Parent/tool bar:1001"
+    },
+    {
+      "id": 178,
+      "key": "0260ac4ffd28fec4",
+      "role": "split button",
+      "name": "This PC",
+      "enabled": true,
+      "bounds": {
+        "x": 366,
+        "y": 296,
+        "width": 62,
+        "height": 21
+      },
+      "actions": [
+        "invoke"
+      ],
+      "ancestorPath": "pane:40965/pane:41477/progress bar:msctls_progress32/pane:Breadcrumb Parent/tool bar:1001"
+    },
+    {
+      "id": 179,
+      "key": "c1fc032b36e05a7f",
+      "role": "menu item",
+      "name": "Documents",
+      "enabled": true,
+      "bounds": {
+        "x": 428,
+        "y": 296,
+        "width": 69,
+        "height": 21
+      },
+      "actions": [
+        "invoke"
+      ],
+      "ancestorPath": "pane:40965/pane:41477/progress bar:msctls_progress32/pane:Breadcrumb Parent/tool bar:1001"
+    },
+    {
+      "id": 181,
+      "key": "d1828ec7ee4be025",
+      "role": "button",
+      "name": "Previous Locations",
+      "enabled": true,
+      "bounds": {
+        "x": 901,
+        "y": 296,
+        "width": 20,
+        "height": 22
+      },
+      "actions": [
+        "invoke"
+      ],
+      "ancestorPath": "pane:40965/pane:41477/progress bar:msctls_progress32/tool bar:ToolbarWindow32"
+    },
+    {
+      "id": 182,
+      "key": "ecc4077e9a4c60d9",
+      "role": "button",
+      "name": "Refresh \"Documents\" (F5)",
+      "enabled": true,
+      "bounds": {
+        "x": 921,
+        "y": 296,
+        "width": 20,
+        "height": 22
+      },
+      "actions": [
+        "invoke"
+      ],
+      "ancestorPath": "pane:40965/pane:41477/progress bar:msctls_progress32/tool bar:ToolbarWindow32"
+    },
+    {
+      "id": 187,
+      "key": "51235d6ff9217ae7",
+      "role": "edit",
+      "name": "Search Box",
+      "enabled": true,
+      "bounds": {
+        "x": 960,
+        "y": 299,
+        "width": 170,
+        "height": 15
+      },
+      "actions": [
+        "value"
+      ],
+      "automationId": "SearchEditBox",
+      "className": "SearchEditBox",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:40965/pane:UniversalSearchBand/pane:Search Box/pane:SearchEditBoxWrapperClass",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 188,
+      "key": "8072aee1ad942090",
+      "role": "button",
+      "name": "Search",
+      "enabled": true,
+      "readOnly": true,
+      "bounds": {
+        "x": 1134,
+        "y": 295,
+        "width": 16,
+        "height": 24
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "SearchBoxSearchButton",
+      "className": "Button",
+      "frameworkId": "DirectUI",
+      "ancestorPath": "pane:40965/pane:UniversalSearchBand/pane:Search Box/pane:SearchEditBoxWrapperClass"
+    },
+    {
+      "id": 99,
+      "key": "a49ccd1b1b04d815",
+      "role": "title bar",
+      "value": "Save As",
+      "enabled": true,
+      "bounds": {
+        "x": 240,
+        "y": 262,
+        "width": 928,
+        "height": 28
+      },
+      "actions": [
+        "value"
+      ],
+      "automationId": "TitleBar",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 100,
+      "key": "a97a851288890924",
+      "role": "menu bar",
+      "name": "System",
+      "enabled": true,
+      "bounds": {
+        "x": 224,
+        "y": 267,
+        "width": 22,
+        "height": 22
+      },
+      "automationId": "SystemMenuBar",
+      "ancestorPath": "title bar:TitleBar",
+      "keyboardFocusable": true
+    },
+    {
+      "id": 101,
+      "key": "26dc1858994289b7",
+      "role": "menu item",
+      "name": "System",
+      "value": "collapsed",
+      "enabled": true,
+      "bounds": {
+        "x": 224,
+        "y": 267,
+        "width": 22,
+        "height": 22
+      },
+      "actions": [
+        "invoke",
+        "expand"
+      ],
+      "ancestorPath": "title bar:TitleBar/menu bar:SystemMenuBar",
+      "hints": [
+        "opens list/menu"
+      ],
+      "keyboardFocusable": true
+    },
+    {
+      "id": 104,
+      "key": "76c3e03fae826da9",
+      "role": "button",
+      "name": "Close",
+      "enabled": true,
+      "bounds": {
+        "x": 1135,
+        "y": 260,
+        "width": 34,
+        "height": 30
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Close",
+      "ancestorPath": "title bar:TitleBar",
+      "hints": [
+        "closes dialog"
+      ]
+    },
+    {
+      "id": 4,
+      "key": "4467194d3e36f3ec",
+      "role": "button",
+      "name": "Start",
+      "enabled": true,
+      "bounds": {
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "Start",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 6,
+      "key": "1fd39c2cafd24cf8",
+      "role": "button",
+      "name": "Search highlights icon opens search home window",
+      "enabled": true,
+      "bounds": {
+        "x": 312,
+        "y": 1040,
+        "width": 80,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4104",
+      "className": "DynamicContent1",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:4100",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 7,
+      "key": "32aa62b4b4f9d0d4",
+      "role": "button",
+      "name": "Search - Waterfall near Sitovo, Bulgaria",
+      "enabled": true,
+      "bounds": {
+        "x": 48,
+        "y": 1040,
+        "width": 344,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4101",
+      "className": "Button",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:4100",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 8,
+      "key": "5c43bc22396cba31",
+      "role": "button",
+      "name": "Task View",
+      "enabled": true,
+      "bounds": {
+        "x": 392,
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4113",
+      "className": "TrayButton",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 10,
+      "key": "4ea0560a7c97d214",
+      "role": "button",
+      "name": "Copilot",
+      "enabled": true,
+      "bounds": {
+        "x": 443,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.Copilot_8wekyb3d8bbwe!App",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 11,
+      "key": "210ac4172d8972e6",
+      "role": "button",
+      "name": "Microsoft Edge",
+      "enabled": true,
+      "bounds": {
+        "x": 492,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "MSEdge",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 12,
+      "key": "914b54c471ab6e0f",
+      "role": "button",
+      "name": "File Explorer",
+      "enabled": true,
+      "bounds": {
+        "x": 541,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.Windows.Explorer",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 13,
+      "key": "1be251954d8c9055",
+      "role": "button",
+      "name": "Microsoft Store",
+      "enabled": true,
+      "bounds": {
+        "x": 590,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "Microsoft.WindowsStore_8wekyb3d8bbwe!App",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 14,
+      "key": "7745b1d62d43af4c",
+      "role": "button",
+      "name": "Mail",
+      "enabled": true,
+      "bounds": {
+        "x": 639,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "microsoft.windowscommunicationsapps_8wekyb3d8bbwe!microsoft.windowslive.mail",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 111,
+      "key": "4c573fe69f73a82a",
+      "role": "button",
+      "name": "Notepad \u2013 1 running window",
+      "enabled": true,
+      "bounds": {
+        "x": 688,
+        "y": 1040,
+        "width": 49,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\notepad.exe",
+      "ancestorPath": "tool bar:MSTaskListWClass",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 190,
+      "key": "3079b5610856d07a",
+      "role": "button",
+      "name": "Vad g\u00f6r Wolfgangsee till en av \u00d6sterrikes vackraste sj\u00f6ar?",
+      "enabled": true,
+      "bounds": {
+        "x": 1458,
+        "y": 1040,
+        "width": 199,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "4105",
+      "className": "DynamicContent2",
+      "frameworkId": "Win32",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 17,
+      "key": "211a6ddb2d181a18",
+      "role": "button",
+      "name": "Notification Chevron",
+      "enabled": true,
+      "bounds": {
+        "x": 1665,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "1502",
+      "className": "Button",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 20,
+      "key": "6225cf2c816643c2",
+      "role": "button",
+      "name": "Meet Now",
+      "enabled": true,
+      "bounds": {
+        "x": 1689,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE83-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 21,
+      "key": "6af0b88ecb7a2466",
+      "role": "button",
+      "name": "Network\nInternet access",
+      "enabled": true,
+      "bounds": {
+        "x": 1713,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE74-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 22,
+      "key": "664970396a6237d9",
+      "role": "button",
+      "name": "No Audio Output Device is installed.",
+      "enabled": true,
+      "bounds": {
+        "x": 1737,
+        "y": 1040,
+        "width": 24,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "{7820AE73-23E3-4229-82C1-E41CB67D5B9C}",
+      "ancestorPath": "pane:303/pane:SysPager/tool bar:1504",
+      "window": 1
+    },
+    {
+      "id": 24,
+      "key": "74ec42dfb7d4b427",
+      "role": "button",
+      "name": "Tray Input Indicator - English (United States)",
+      "enabled": true,
+      "bounds": {
+        "x": 1761,
+        "y": 1040,
+        "width": 36,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "InputIndicatorButton",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303/pane:308",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 28,
+      "key": "2e5fa1ee305d2906",
+      "role": "button",
+      "name": "System Clock, 12:51, \u200e26/\u200e10/\u200e2026",
+      "enabled": true,
+      "bounds": {
+        "x": 1797,
+        "y": 1040,
+        "width": 70,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "TrayClockWClass",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 26,
+      "key": "eb4910fb247dac1d",
+      "role": "button",
+      "name": "Action Centre, 1 new notification",
+      "enabled": true,
+      "bounds": {
+        "x": 1867,
+        "y": 1040,
+        "width": 48,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "className": "TrayButton",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    },
+    {
+      "id": 27,
+      "key": "23d3bd30dfa199ca",
+      "role": "button",
+      "name": "Show desktop",
+      "enabled": true,
+      "bounds": {
+        "x": 1915,
+        "y": 1040,
+        "width": 5,
+        "height": 40
+      },
+      "actions": [
+        "invoke"
+      ],
+      "automationId": "307",
+      "className": "TrayShowDesktopButtonWClass",
+      "frameworkId": "Win32",
+      "ancestorPath": "pane:303",
+      "window": 1,
+      "keyboardFocusable": true
+    }
+  ],
+  "context": [
+    "header: Header",
+    "text: File name:",
+    "text: Save as type:",
+    "text: Encoding:"
+  ],
+  "settled": true,
+  "settleMs": 782,
+  "cursorX": 993,
+  "cursorY": 533,
+  "user": "aberg"
+}
