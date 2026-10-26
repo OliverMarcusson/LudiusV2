@@ -1,3 +1,40 @@
+explorer_new_folder:
+  admitted: true
+  admitted_variants:
+  - 0
+  - 1
+  - 2
+  date: '2026-10-26'
+  variants:
+    0: 3/3
+    1: 3/3
+    2: 3/3
+notepad_write_note:
+  admitted: true
+  admitted_variants:
+  - 0
+  - 1
+  - 2
+  - 3
+  date: '2026-10-26'
+  variants:
+    0: 3/3
+    1: 3/3
+    2: 3/3
+    3: 3/3
+paint_quick_sketch:
+  admitted: true
+  admitted_variants:
+  - 0
+  - 1
+  - 2
+  - 3
+  date: '2026-10-26'
+  variants:
+    0: 3/3
+    1: 3/3
+    2: 3/3
+    3: 2/3
 powershell_admin_check:
   admitted: true
   admitted_variants:
