@@ -140,7 +140,7 @@ class JevClient:
     def decide(self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True) -> Decision:
         body = build_request(self.model, state, options, ask_progress=ask_progress)
         last: Exception | None = None
-        for _ in range(2):  # one retry on transport errors and 5xx
+        for _ in range(2):  # one retry on transport errors, 5xx and answers that break the contract
             calls.count("jev")
             try:
                 res = self._http.post(self._endpoint, json=body)
@@ -152,10 +152,14 @@ class JevClient:
                 continue
             if res.status_code != 200:
                 raise JevError(f"HTTP {res.status_code}: {res.text[:300]}")
-            decision = parse_response(json.loads(res.content), self.model, options, ask_progress=ask_progress)
+            try:
+                decision = parse_response(json.loads(res.content), self.model, options, ask_progress=ask_progress)
+            except (JevError, ValueError) as e:  # e.g. a choice that isn't the most probable option (seen once)
+                last = e
+                continue
             decision.request = body
             return decision
-        raise JevError(f"Jev unreachable: {last}")
+        raise JevError(f"Jev failed twice: {last}")
 
     def close(self) -> None:
         self._http.close()
