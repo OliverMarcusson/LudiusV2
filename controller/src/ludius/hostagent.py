@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import grpc
@@ -48,8 +49,16 @@ class HostAgent:
 
     def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
         req = obs.SnapshotRequest(wait_settle=wait_settle, quiet_ms=quiet_ms, timeout_ms=timeout_ms)
-        result: pb.ObserveResult = self._stub.Observe(pb.ObserveRequest(vm=self.vm, request=req), timeout=60)
-        return result
+        for attempt in range(3):
+            try:
+                result: pb.ObserveResult = self._stub.Observe(pb.ObserveRequest(vm=self.vm, request=req), timeout=60)
+                return result
+            except grpc.RpcError as e:
+                # INTERNAL: the observer threw mid-snapshot (UI changing under it). Look again.
+                if e.code() != grpc.StatusCode.INTERNAL or attempt == 2:  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+                    raise
+                time.sleep(0.5)
+        raise AssertionError("unreachable")
 
     def lifecycle(self, op: int, checkpoint: str = "") -> str:
         req = pb.LifecycleRequest(vm=self.vm, op=op, checkpoint=checkpoint)  # pyright: ignore[reportArgumentType]

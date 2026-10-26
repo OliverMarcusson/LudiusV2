@@ -107,3 +107,28 @@ def test_policy() -> None:
 def test_all_templates_load() -> None:
     for path in (DATA / "templates").glob("*.yaml"):
         load_template(path)
+
+
+def test_near_duplicate() -> None:
+    from ludius.planner import near_duplicate
+
+    earlier = ["Call with Johan re Q3 close - accruals missing"]
+    assert near_duplicate("call with johan, re Q3 close: accruals missing!", earlier)
+    assert near_duplicate("Budget review with Maria for the Lund office move", earlier) is None
+
+
+def test_plan_validation() -> None:
+    from ludius.cli import load_templates
+    from ludius.planner import PlanItem, validate
+
+    ok = PlanItem(at="09:10", template="explorer_new_folder", params={"folder_name": "lund accruals q3"})
+    items = [
+        ok,
+        PlanItem(at="12:00", template="break", minutes=45),
+        PlanItem(at="13:00", template="no_such_task"),
+        PlanItem(at="13:30", template="explorer_new_folder", params={"folder_name": "a/b"}),
+        PlanItem(at="14:00", template="edge_web_lookup"),  # search_query missing
+        PlanItem(at="15:00", template="explorer_new_folder", params={"folder_name": "Lund accruals Q3!"}),  # dup
+        PlanItem(at="16:00", template="edge_web_lookup", params={"search_query": "moms på tjänster"}),
+    ]
+    assert [i for i, _ in validate(items, load_templates(), [], Policy())] == [2, 3, 4, 5, 6]

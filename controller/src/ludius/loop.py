@@ -10,6 +10,7 @@ import json
 import random
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -150,7 +151,8 @@ class Runner:
 
     # The loop ---------------------------------------------------------------------
 
-    def run(self, task: Task) -> Outcome:
+    def run(self, task: Task, between: Callable[[], None] | None = None) -> Outcome:
+        """`between` runs at each subgoal boundary: the task stack's hook for interruptions."""
         t0 = time.monotonic()
         steps = 0
         done: list[str] = []
@@ -181,6 +183,10 @@ class Runner:
                 )
                 return out
             done.append(name)
+            if between is not None and name != task.subgoal_names[-1]:
+                paused = time.monotonic()
+                between()
+                t0 += time.monotonic() - paused  # an interruption does not use this task's time budget
         self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status="done", steps=steps)
         return Outcome("done", steps, "", done)
 
@@ -190,6 +196,7 @@ class Runner:
         no_change = 0
         typed_ok = False
         recovering = False
+        dead: set[tuple[str, str]] = set()  # actions that just changed nothing, withdrawn until the screen changes
         snap = self.observe()
         for step in range(1, budget + 1):
             if time.monotonic() - t0 > task.template.budget_minutes * 60:
@@ -210,6 +217,7 @@ class Runner:
                 return "done", step - 1, ""
             v = view(snap, task, sg, self.policy)
             options = self._recovery_options(v) if recovering else build_options(v, task, sg, self.policy)
+            options = [o for o in options if _ident(o) not in dead] or options
             state = build_state(v, task, sg, history, last_result)
             decision = self.jev.decide(state, {o.key: o.text for o in options}, ask_progress=not recovering)
             chosen = self._choose(decision, options)
@@ -254,6 +262,10 @@ class Runner:
             recovering = False
 
             no_change = 0 if changed else no_change + 1
+            if changed:
+                dead.clear()
+            elif chosen.kind != "rescan":
+                dead.add(_ident(chosen))
             if no_change == 2:
                 # Ladder step 1: rescan with a longer settle before anything else.
                 snap = self.observe(timeout_ms=10000)
@@ -356,6 +368,10 @@ def _typed_landed(snap: obs.Snapshot, o: Option, _task: Task) -> bool:
         return True  # typed at the focus: the subgoal's own check decides
     target = next((e for e in snap.elements if e.key == o.element.key), None)
     return target is not None and target.value != o.element.value
+
+
+def _ident(o: Option) -> tuple[str, str]:
+    return o.kind, o.element.key if o.element is not None else o.text
 
 
 def _short(o: Option) -> str:

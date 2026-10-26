@@ -228,6 +228,8 @@ sealed partial class Snapshotter
             }
             catch (COMException e) when (e.HResult == UIA_E_TIMEOUT) { w.Unresponsive = true; return found; }
             catch (COMException e) when (e.HResult == UIA_E_ELEMENTNOTAVAILABLE) { return found; }
+            // E_INVALIDARG arrives as ArgumentException: the window closed between enumeration and reading.
+            catch (ArgumentException) { return found; }
             // E_ACCESSDENIED arrives as UnauthorizedAccessException: a window we may not read
             // (integrity level, a closing window). One such window never fails the snapshot.
             catch (Exception e) when (e is UnauthorizedAccessException or COMException) { w.ElevatedUnreadable = true; return found; }

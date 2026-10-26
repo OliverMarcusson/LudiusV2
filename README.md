@@ -4,7 +4,7 @@ Background user activity (noise) for Windows VMs in DFIR training ranges. See [t
 
 Progress against the spec is tracked in [`docs/progress.html`](docs/progress.html), published at https://marcusson.dev/ludius-progress. Update its `SECTIONS` list and change log whenever work lands, then republish.
 
-This is the first vertical slice, built on local Hyper-V. A persona completes a whole Notepad task through the hypervisor's virtual keyboard and mouse: launch, write, save and close. The guest reads the screen through UI Automation, and Jev (TypeSafe, via OpenRouter) chooses one action per step.
+Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrative and each persona's day plan, including all content. A day runner plays the plan through the hypervisor's virtual keyboard and mouse. The guest reads the screen through UI Automation, and Jev (TypeSafe, via OpenRouter) chooses one action per step.
 
 ## Layout
 
@@ -13,8 +13,8 @@ This is the first vertical slice, built on local Hyper-V. A persona completes a 
 | `proto/` | gRPC schemas: observation (guest channel) and host agent API |
 | `guest/observer/` | C# observer (`uiprobe.exe`): UIA3 snapshots, element table, hints, stable ids, cap, settle (UIA events + DXGI dirty rects), Hyper-V socket server. Read-only; writes nothing to disk |
 | `host/agent/` | C# host agent: gRPC on `127.0.0.1:7451`, Hyper-V WMI keyboard/mouse, observer relay, lifecycle, console frames |
-| `controller/` | Python: Jev client, options, policy, completion checks, step loop, failure ladder 1–3, ground-truth log, CLI |
-| `controller/data/` | Templates, personas, task instances |
+| `controller/` | Python: planner (narrative, day plans, content, near-duplicate check), day runner (clock modes, breaks, interruptions), Jev client, options, policy, completion checks, step loop, session hygiene, unlock, failure ladder 1–8, ground truth and instructor timeline, CLI |
+| `controller/data/` | Templates (Notepad, Explorer, Edge), personas, hand-written task instances |
 | `fixtures/` | Recorded snapshots + console frames + expected choices, used for offline replay |
 | `infra/hyperv/` | Unattended Win10 test VM, provisioning, screenshot helper |
 
@@ -38,9 +38,15 @@ uv run ludius contract                             # pointer mapping + typing ro
 uv run ludius observe                              # print the current element table
 uv run ludius run data\instances\q3-call-notes.yaml --restore clean [--variant N] [--clock realtime]
 uv run ludius observe --record NAME                # new fixture
+uv run ludius session lock|unlock|normalize
+
+uv run ludius plan narrative --date 2026-10-26     # once per range -> runs/world/narrative.yaml
+uv run ludius plan day --date 2026-10-27           # per persona and day -> runs/plans/<date>-<user>.yaml
+uv run ludius day ..\runs\plans\2026-10-27-aberg.yaml --restore clean [--clock realtime]
+uv run ludius timeline ..\runs\days\*.jsonl --out ..\runs\timeline.csv
 ```
 
-Each run writes a ground-truth JSONL file to `runs/`.
+Each run writes a ground-truth JSONL file to `runs/` (gitignored); days go to `runs/days/`, and the planner reads them back as world state.
 
 ## Checks
 
@@ -56,6 +62,8 @@ dotnet build Ludius.sln
 - Contract: the pointer lands within 1 px. Hyper-V's absolute pointer rounds low coordinates down by one, and an absolute (0,0) is ignored. Typed ASCII, symbols included, read back exactly via UIA.
 - All 4 Notepad variants (Start search or Run dialog, Ctrl+S or File menu) completed from the clean checkpoint in 9–12 Jev steps. The saved file's content is byte-exact. One Jev call costs about $0.0001.
 - The observer runs with `uiAccess` and DXGI settle. A settled snapshot takes about 0.3–0.5 s.
+- Explorer (4 variants) and Edge (2 variants) templates complete live. Lock/unlock, sign-out/sign-in and normalize (closing unsaved Notepads and Explorer windows) all work.
+- Planner: narrative and a day plan for 2026-10-27 cost about $0.05 (Claude Sonnet 5.5). The day (8 items: 3 notes, 2 web lookups, a folder, 2 breaks, one interruption) ran 8/8 in compressed mode on the VM; the interrupted Notepad task resumed and finished. Breaks lock the screen and unlock again.
 
 ## Deviations from the spec
 
@@ -67,4 +75,4 @@ dotnet build Ludius.sln
 
 ## Not built yet
 
-Planner (narrative, day plans, LLM content via OpenRouter), Temporal/Postgres, Proxmox backend and vsock, visual fallback (OCR/detector), lock/unlock, failure-ladder steps 4–8, clone/delete lifecycle, non-ASCII typing, and the analysis/filterability pipeline.
+Cross-persona threads, Outlook/Office templates, template growth, time-jump mode, Temporal/Postgres, Proxmox backend and vsock, visual fallback (OCR/detector), clone/delete lifecycle, non-ASCII typing, and the analysis/filterability pipeline.

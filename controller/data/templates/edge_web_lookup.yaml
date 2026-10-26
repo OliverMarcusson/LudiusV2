@@ -3,6 +3,8 @@ task: edge_web_lookup
 app: edge
 processes: [msedge.exe]
 params: [search_query]
+about: "Look something up on the web in Edge and open one result. search_query: what the persona types into the search box."
+defaults: {app_query: edge}
 variants:
   - [open_edge_start, search, open_result, close_edge]
   - [open_edge_taskbar, search, open_result, close_edge]
@@ -29,6 +31,8 @@ subgoals:
     goal: "Open one of the search results that matches the search"
     allow_destructive: ["(?i)accept.*|reject.*"]
     steps: 10
+    # A result page is in front: Edge's title no longer names the query (results often open in a new tab).
+    done: {foreground: {process: msedge.exe, title: '^(?!.*{search_query})'}}
   close_edge:
     goal: "Close Microsoft Edge"
     done: {window: {process: msedge.exe, absent: true}}

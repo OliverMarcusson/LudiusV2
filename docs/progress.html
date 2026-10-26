@@ -129,6 +129,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-26">26 Oct 2026</time><span>CI on GitHub Actions. Session hygiene, lock detection, blind unlock and failure-ladder steps 4–8. Explorer and Edge templates. LLM planner (narrative, day plans, content, near-duplicate check), day runner with clock modes, breaks and interruptions, and the instructor timeline export. A planned day (8 items: 3 notes, 2 web lookups, a folder, 2 breaks, one interruption) ran 8/8 in compressed mode on the VM; the interrupted Notepad task resumed and finished. Fixes: an observer race when a window closes mid-snapshot, and actions that change nothing are withdrawn until the screen changes.</span></li>
       <li><time datetime="2026-10-26">26 Oct 2026</time><span>First vertical slice on local Hyper-V: observer, host agent and controller working end to end. Contract test passes. All 4 Notepad variants complete from the <code>clean</code> checkpoint in 9–12 Jev steps, with byte-exact file content. 22 tests pass, including live Jev replay on 5 fixtures. Published to GitHub.</span></li>
     </ul>
   </section>
@@ -141,14 +142,14 @@ const SECTIONS = [
   { id: "principles", title: "1. Purpose and principles", items: [
     ["Human interface only for actions", "done", "All input goes through Hyper-V's synthetic keyboard and mouse (WMI). The observer never acts."],
     ["Privileged, minimal reading", "done", "Read-only UIA observer with uiAccess, signed by the range CA."],
-    ["Each layer has one owner", "partial", "Code owns structure, policy and verification, and Jev owns steps. No LLM planner yet: task instances are written by hand."],
+    ["Each layer has one owner", "done", "Planner LLM owns narrative, day plans and content; code owns structure, policy and verification; Jev owns steps."],
     ["No LLM in the step loop", "done", "One Jev call per step, nothing else in the loop."],
-    ["Coherent, varied, non-destructive noise", "partial", "One full template with 4 variants plus code-enforced policy. Variety across tasks needs the planner."],
+    ["Coherent, varied, non-destructive noise", "partial", "Planned days of 3 templates (9 variants) with persona-styled content and code-enforced policy. The task mix is still narrow."],
     ["Hypervisor-agnostic", "partial", "The controller only talks to the host agent's API. Only the Hyper-V backend exists."],
   ]},
   { id: "architecture", title: "2. Architecture", items: [
     ["Guest, host, decision layers", "done", "Observer (C#), host agent (C#), controller (Python) connected and verified live."],
-    ["Planning layer", "todo", "Not built."],
+    ["Planning layer", "partial", "Narrative, nightly day plans, content and near-duplicate check via OpenRouter. No cross-persona threads or template growth."],
   ]},
   { id: "observer", title: "3. Guest observer", items: [
     ["Interactive session at logon, never a service", "done", "Logon scheduled task in the persona's session (session 1)."],
@@ -194,39 +195,39 @@ const SECTIONS = [
     ["Choosing", "partial", "Top option only; no sampling among equivalent near-ties."],
     ["Policy", "done", "Destructive allowlist, never-list, password fields, reserved paths, step and time budgets. Reserved paths aren't loaded from scenarios yet."],
     ["Failure ladder steps 1–3", "done", "Rescan, restricted in-app recovery, human-like abandonment."],
-    ["Failure ladder steps 4–8", "todo", "Logged as an escalation only."],
-    ["Logon and unlock", "todo", "Lock state is reported; the unlock flow isn't built."],
+    ["Failure ladder steps 4–8", "done", "Restart app, harder normalize, sign out and back in, reboot through the host agent, then mark unhealthy. Verified up to step 6 live."],
+    ["Logon and unlock", "done", "Lock detected via WTS session flags; blind Ctrl+Alt+Del plus the persona's password through the virtual keyboard. Lock/unlock and sign-out/sign-in verified live."],
   ]},
   { id: "planning", title: "6. Planning layer", items: [
-    ["Company narrative and world state", "todo", ""],
-    ["Nightly day plans", "todo", ""],
-    ["Task instances from the planner", "todo", "Written by hand in YAML for now."],
-    ["Personas", "partial", "Name, role, typing, think time and pointer timing. No style sheet, schedule, file habits or risk profile."],
-    ["Task templates with variants", "partial", "One template (Notepad) with 4 variants and structured completion checks."],
+    ["Company narrative and world state", "partial", "Narrative generated once per range (company, people, projects, dated events). World state is what the day logs say happened. Weekly revision, inbox and calendar don't exist yet."],
+    ["Nightly day plans", "done", "<code>ludius plan day</code>: one LLM call per persona and day, validated in code, one repair round, rejects dropped."],
+    ["Task instances from the planner", "done", "Plan items are task instances: template, parameters, content and a one-line reason."],
+    ["Personas", "partial", "Role, department, working hours, style sheet (writing, file naming, habits), typing, think time, pointer timing. No risk profile."],
+    ["Task templates with variants", "partial", "Notepad (4 variants), Explorer new folder (4), Edge web lookup (2); all complete live. No Outlook or Office yet."],
     ["Template growth and admission", "todo", ""],
-    ["Task stack and interruptions", "todo", ""],
-    ["Content generation and near-duplicate check", "todo", "OpenRouter is the chosen LLM provider."],
+    ["Task stack and interruptions", "done", "Interrupt items are pushed at the running task's next subgoal boundary, run to completion, and the task resumes; its time budget pauses meanwhile."],
+    ["Content generation and near-duplicate check", "done", "All text written at plan time in the persona's style; ASCII, file-name and policy checks; SequenceMatcher ≥ 0.85 against the persona's earlier content is rejected."],
     ["Cross-persona interaction", "todo", ""],
-    ["Variety by filter dimension", "partial", "Launch method (Start search vs Run) and UI path (shortcut vs menu) only."],
+    ["Variety by filter dimension", "partial", "Launch method (Start search, Run, taskbar, Win+E), UI path (shortcut vs menu/ribbon), content and timing from the plan."],
     ["Legitimate activity that resembles signal", "todo", ""],
     ["LLM fallback and end-of-task verification", "todo", ""],
   ]},
   { id: "clock", title: "7. Clock modes, range lifecycle and provisioning", items: [
-    ["Realtime and compressed modes", "partial", "Pacing switch only; no scheduler or logical timeline."],
+    ["Realtime and compressed modes", "done", "Day runner plays the plan on its logical timeline: realtime waits for each item (late items run at once), compressed runs back to back. Breaks lock the screen."],
     ["Time-jump mode", "todo", ""],
     ["Seeded runs", "done", "Seed fixes variant choice and jitter."],
     ["Range lifecycle (build, age, inject, snapshot, deliver, reset)", "partial", "Per-VM checkpoint and restore only."],
-    ["Persistent-VM hygiene and drift canaries", "todo", ""],
+    ["Persistent-VM hygiene and drift canaries", "partial", "Normalize before and after every task (dismiss dialogs, close strays, confirm unlocked desktop); side effects logged. No drift canaries."],
     ["Golden image (Packer + Ansible)", "partial", "Stand-in: unattended ISO build and <code>provision.ps1</code> (CA, observer, base settings, autologon)."],
   ]},
   { id: "testing", title: "8. Testing and quality", items: [
     ["Fixture replay", "done", "5 recorded screens; offline option/policy checks and live Jev replay (5/5)."],
     ["Contract tests", "partial", "Hyper-V only, run by hand."],
-    ["Template validation in compressed mode", "partial", "All 4 Notepad variants run by hand; no admission gate."],
+    ["Template validation in compressed mode", "partial", "Every variant of all 3 templates run live from <code>clean</code>; no automatic admission gate."],
     ["Range test runs and metrics", "todo", ""],
     ["Filterability test", "todo", ""],
     ["Ground-truth step log", "done", "JSONL with host and guest time, persona, window, element, action, Jev answer and result."],
-    ["Instructor timeline export", "todo", ""],
+    ["Instructor timeline export", "done", "<code>ludius timeline</code>: CSV with guest time, persona, VM, task, subgoal, action, target, window and result."],
   ]},
   { id: "stack", title: "9. Tech stack, repository and CI", items: [
     ["Guest observer: C#, single self-contained exe", "done", ".NET 10 instead of 9 (only SDK installed; .NET 9 support ends Nov 2026)."],
@@ -238,8 +239,8 @@ const SECTIONS = [
     ["Temporal, PostgreSQL, MinIO", "todo", ""],
     ["Visual fallback (ONNX detector, PaddleOCR)", "todo", ""],
     ["Analysis (Plaso, DuckDB, Polars, LightGBM)", "todo", ""],
-    ["Repository layout", "partial", "proto, guest, host, controller, fixtures, infra. No planner or analysis yet."],
-    ["CI", "partial", "uv, ruff, pyright, pytest and dotnet build all pass locally; no CI workflow."],
+    ["Repository layout", "partial", "proto, guest, host, controller (incl. planner), fixtures, infra. No analysis yet."],
+    ["CI", "done", "GitHub Actions: ruff, pyright and pytest on Linux; .NET build on Windows."],
     ["Open question: Hyper-V WMI input methods", "partial", "Verified on a Windows 11 host. Not yet checked on Windows Server."],
     ["Open question: FlaUI under NativeAOT", "done", "Sidestepped: COM interop via Interop.UIAutomationClient, single-file self-contained, no AOT."],
   ]},

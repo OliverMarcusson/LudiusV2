@@ -1,0 +1,284 @@
+"""Planning layer (spec section 6): company narrative, nightly day plans with all content, near-duplicate check.
+
+The LLM writes the narrative once per range and one plan per persona per day, from the narrative plus the
+actual world state (what the ground truth says happened). Every plan is validated in code before it runs:
+known templates, complete parameters, policy-clean ASCII text, and no content too close to earlier output.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import random
+import re
+from difflib import SequenceMatcher
+from pathlib import Path
+from typing import Any
+
+import yaml
+from pydantic import field_validator
+
+from ludius.llm import LlmClient
+from ludius.policy import Policy
+from ludius.tasks import Persona, Strict, Task, TaskInstance, Template
+
+BREAK = "break"  # pseudo-template: away from the desk, screen locked
+NEAR_DUPLICATE = 0.85  # SequenceMatcher ratio at or above this is "too similar"
+MIN_COMPARE = 12  # shorter values (app names, short queries) may repeat
+_HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")  # the virtual keyboard types ASCII only
+
+
+class Person(Strict):
+    name: str
+    role: str
+    department: str
+    user: str = ""  # Windows account when this person is a persona
+
+
+class Event(Strict):
+    date: str  # YYYY-MM-DD
+    what: str
+
+
+class Narrative(Strict):
+    company: str
+    city: str
+    summary: str
+    people: list[Person]
+    projects: list[str]
+    events: list[Event]
+
+
+class PlanItem(TaskInstance):
+    at: str  # HH:MM on the plan's logical timeline
+    minutes: int = 0  # breaks: how long the persona is away
+    interrupt: bool = False  # cuts into the task running at that time, at its next subgoal boundary
+
+    @field_validator("at")
+    @classmethod
+    def _at(cls, v: str) -> str:
+        if not _HHMM.match(v):
+            raise ValueError("at must be HH:MM")
+        return v
+
+
+class _Draft(Strict):
+    items: list[PlanItem]
+
+
+class DayPlan(Strict):
+    persona: str
+    date: str
+    items: list[PlanItem]
+
+
+# Prompts ------------------------------------------------------------------------------
+
+NARRATIVE_SYSTEM = (
+    "You write the backstory of a fictional, ordinary small company for a cyber-defence training range. "
+    "It must read as mundane and plausible: real-sounding departments, projects and calendar events. "
+    "No security incidents, no hacking, no real companies or real people."
+)
+
+PLAN_SYSTEM = (
+    "You plan one ordinary working day for one employee of a fictional company in a training range. "
+    "Every item is a task from the catalog, done for a concrete reason that follows from the company story, "
+    "the persona's role and what really happened before. Write all content (file names, note text, search "
+    "queries) in the persona's own style. Use plain ASCII only. Never mention the range, training, Ludius, "
+    "security tools or anything outside the fiction."
+)
+
+
+def catalog(templates: dict[str, Template]) -> str:
+    lines = [f"- {t.task}: {t.about} Parameters: {', '.join(t.params) or 'none'}." for t in templates.values()]
+    lines.append(f"- {BREAK}: away from the desk (lunch, coffee, meeting), screen locked. Set minutes.")
+    return "\n".join(lines)
+
+
+def make_narrative(llm: LlmClient, personas: list[Persona], start: dt.date) -> Narrative:
+    who = "\n".join(f"- {p.name} (account {p.user}): {p.role}, {p.department}" for p in personas)
+    user = (
+        f"Range start date: {start.isoformat()}.\nThese employees are personas and must appear in people with their "
+        f"account as user:\n{who}\n\nReturn JSON with keys company, city, summary (3-5 sentences), people "
+        "(8-15 entries: name, role, department, user), projects (3-6 short strings) and events (6-12 entries: "
+        "date YYYY-MM-DD within four weeks of the start, what). Include the routine (month-end close, team "
+        "meetings) and a few one-offs (an office move, a supplier change, a system migration)."
+    )
+    return llm.json(Narrative, NARRATIVE_SYSTEM, user)
+
+
+def plan_day(
+    llm: LlmClient,
+    narrative: Narrative,
+    persona: Persona,
+    date: dt.date,
+    templates: dict[str, Template],
+    world: str,
+    history: list[str],
+    policy: Policy | None = None,
+) -> tuple[DayPlan, list[str]]:
+    """Draft, validate, ask once to replace rejected items, drop what still fails. Returns the plan and rejects."""
+    policy = policy or Policy()
+    user = (
+        f"Company story:\n{narrative.model_dump_json(indent=1)}\n\n"
+        f"Persona: {persona.name}, {persona.role} ({persona.department}). Usual hours {persona.hours[0]}-"
+        f"{persona.hours[1]}.\nStyle and habits: {persona.style or 'ordinary'}\n\n"
+        f"Day to plan: {date.strftime('%A')} {date.isoformat()}.\n\n"
+        f"What happened so far:\n{world or '- nothing yet'}\n\n"
+        f"Task catalog:\n{catalog(templates)}\n\n"
+        f"Recent content the persona already wrote (do not repeat or paraphrase it):\n"
+        + ("\n".join(f"- {h[:120]}" for h in history[-40:]) or "- none")
+        + '\n\nReturn JSON {"items": [...]} with 5-10 items inside the usual hours, sorted by time. Each item: '
+        "at (HH:MM), template (a catalog name), params (object with every listed parameter as a string), "
+        "context (one sentence: why the persona does this now), and for breaks minutes instead of params. "
+        "Include a lunch break. Mark at most one short item interrupt: true when it plausibly cuts into the "
+        "task before it (a quick lookup prompted by that work)."
+    )
+    draft = llm.json(_Draft, PLAN_SYSTEM, user)
+    rejects = validate(draft.items, templates, history, policy)
+    if rejects:
+        fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
+            f"- item {i} ({draft.items[i].template} at {draft.items[i].at}): {why}" for i, why in rejects
+        )
+        draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
+        rejects = validate(draft.items, templates, history, policy)
+    bad = {i for i, _ in rejects}
+    items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
+    return DayPlan(persona=persona.user, date=date.isoformat(), items=items), [
+        f"{draft.items[i].template} at {draft.items[i].at}: {why}" for i, why in rejects
+    ]
+
+
+# Validation ---------------------------------------------------------------------------
+
+
+def validate(
+    items: list[PlanItem], templates: dict[str, Template], history: list[str], policy: Policy
+) -> list[tuple[int, str]]:
+    rejects: list[tuple[int, str]] = []
+    seen = list(history)
+    for i, it in enumerate(items):
+        why = _check_item(it, templates, seen, policy)
+        if why:
+            rejects.append((i, why))
+        else:
+            seen += content_values(it, templates)
+    return rejects
+
+
+def _check_item(it: PlanItem, templates: dict[str, Template], seen: list[str], policy: Policy) -> str | None:
+    if it.template == BREAK:
+        return None if 1 <= it.minutes <= 120 else "break needs 1-120 minutes"
+    t = templates.get(it.template)
+    if t is None:
+        return f"unknown template {it.template!r}"
+    try:
+        Task(t, it, random.Random(0))
+    except ValueError as e:
+        return str(e)
+    for key, value in {**it.params, **it.content}.items():
+        if not _PRINTABLE.match(value):
+            return f"{key}: non-ASCII text cannot be typed"
+        if "\n" in value and key != "body":
+            return f"{key}: must be one line"
+        if key.endswith("_name") and re.search(r'[<>:"/\\|?*]', value):
+            return f"{key}: not a valid file name"
+        if r := policy.text_allowed(value, None):
+            return f"{key}: {r}"
+    for value in content_values(it, templates):
+        if dup := near_duplicate(value, seen):
+            return f"too similar to earlier content {dup[:60]!r}"
+    return None
+
+
+def content_values(it: PlanItem, templates: dict[str, Template]) -> list[str]:
+    """Planner-written text (not template defaults), long enough to compare."""
+    t = templates.get(it.template)
+    keys = set(t.params) if t else set[str]()
+    return [v for k, v in {**it.params, **it.content}.items() if k in keys and len(v) >= MIN_COMPARE]
+
+
+def near_duplicate(text: str, earlier: list[str]) -> str | None:
+    a = _norm(text)
+    for b in earlier:
+        nb = _norm(b)
+        sm = SequenceMatcher(None, a, nb, autojunk=False)
+        if (
+            sm.real_quick_ratio() >= NEAR_DUPLICATE
+            and sm.quick_ratio() >= NEAR_DUPLICATE
+            and sm.ratio() >= NEAR_DUPLICATE
+        ):
+            return b
+    return None
+
+
+def _norm(s: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", s.lower()))
+
+
+# World state and persistence ------------------------------------------------------------
+
+
+class World:
+    """Range state on disk: narrative, content history and per-day ground truth (runs/ is gitignored)."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.narrative_path = root / "world" / "narrative.yaml"
+        self.history_path = root / "world" / "content.jsonl"
+
+    def narrative(self) -> Narrative:
+        return Narrative.model_validate(yaml.safe_load(self.narrative_path.read_text(encoding="utf-8")))
+
+    def save_narrative(self, n: Narrative) -> Path:
+        _dump(self.narrative_path, n.model_dump())
+        return self.narrative_path
+
+    def plan_path(self, user: str, date: str) -> Path:
+        return self.root / "plans" / f"{date}-{user}.yaml"
+
+    def day_log(self, user: str, date: str) -> Path:
+        return self.root / "days" / f"{date}-{user}.jsonl"
+
+    def save_plan(self, plan: DayPlan, templates: dict[str, Template]) -> Path:
+        path = self.plan_path(plan.persona, plan.date)
+        _dump(path, plan.model_dump(exclude_defaults=True))
+        self.history_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.history_path.open("a", encoding="utf-8") as f:
+            for it in plan.items:
+                for v in content_values(it, templates):
+                    f.write(json.dumps({"date": plan.date, "persona": plan.persona, "text": v}) + "\n")
+        return path
+
+    def history(self, user: str) -> list[str]:
+        if not self.history_path.exists():
+            return []
+        rows = [json.loads(line) for line in self.history_path.read_text(encoding="utf-8").splitlines() if line]
+        return [r["text"] for r in rows if r["persona"] == user]
+
+    def summary(self, user: str, before: dt.date, days: int = 3) -> str:
+        """What really happened on the persona's last few days, from the day ground-truth logs."""
+        out: list[str] = []
+        for d in sorted(self.root.glob(f"days/*-{user}.jsonl")):
+            day = d.name[:10]
+            if day >= before.isoformat():
+                continue
+            for line in d.read_text(encoding="utf-8").splitlines():
+                r: dict[str, Any] = json.loads(line)
+                if r.get("event") == "item_end":
+                    params: dict[str, str] = r.get("params") or {}
+                    detail = ", ".join(f"{k}={v[:60]}" for k, v in params.items() if k != "body")
+                    out.append(
+                        f"- {day} {r['at']} {r['template']} {r['status']}: {r.get('context', '')} {detail}".rstrip()
+                    )
+        return "\n".join(out[-12 * days :])
+
+
+def load_plan(path: Path) -> DayPlan:
+    return DayPlan.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+def _dump(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=110), encoding="utf-8")

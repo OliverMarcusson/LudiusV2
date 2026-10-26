@@ -1,7 +1,7 @@
 """Task templates, personas and task instances, plus code-side completion checks.
 
 A template is a skeleton (variants of subgoal sequences); an instance fills its
-parameters. Until the planner exists, instances come from YAML files.
+parameters, from the planner or a hand-written YAML file.
 """
 
 from __future__ import annotations
@@ -63,7 +63,9 @@ class Template(Strict):
     budget_steps: int = 40
     budget_minutes: float = 8
     on_abandon: str = "close_without_saving"
-    params: list[str] = Field(default_factory=list[str])
+    params: list[str] = Field(default_factory=list[str])  # the planner fills these
+    defaults: dict[str, str] = Field(default_factory=dict[str, str])  # fixed values, e.g. the Start search query
+    about: str = ""  # one line for the planner's capability catalog
 
     def check(self) -> None:
         for v in self.variants:
@@ -76,6 +78,9 @@ class Persona(Strict):
     name: str
     user: str
     role: str = ""
+    department: str = ""
+    hours: tuple[str, str] = ("08:30", "17:00")  # usual working day, local time
+    style: str = ""  # writing style, file naming and work habits, for the planner
     typing_mean_ms: int = 140
     typing_jitter_ms: int = 60
     think_mean_s: float = 1.6  # pause before each action in realtime mode
@@ -94,7 +99,8 @@ class Task:
     """A template bound to an instance: formatted subgoals for the chosen variant."""
 
     def __init__(self, template: Template, inst: TaskInstance, rng: random.Random) -> None:
-        missing = [p for p in template.params if p not in inst.params and p not in inst.content]
+        have = {**template.defaults, **inst.params, **inst.content}
+        missing = [p for p in template.params if not have.get(p)]
         if missing:
             raise ValueError(f"{template.task}: missing parameters {missing}")
         self.template = template
@@ -106,7 +112,7 @@ class Task:
         )
         self.variant = idx
         self.subgoal_names = template.variants[idx]
-        self.values: dict[str, str] = {**inst.params, **inst.content}
+        self.values = have
 
     def fmt(self, s: str) -> str:
         return s.format_map(self.values)

@@ -7,6 +7,7 @@ OPENROUTER_API_KEY, LUDIUS_VM, LUDIUS_AGENT (host agent address).
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import os
 import random
 import sys
@@ -15,16 +16,20 @@ from pathlib import Path
 
 from google.protobuf import json_format
 
-from ludius import keys
+from ludius import keys, planner, timeline
+from ludius.day import DayRunner, run_task
 from ludius.hostagent import HostAgent
 from ludius.jev import DEFAULT_MODEL, JevClient
+from ludius.llm import DEFAULT_MODEL as PLANNER_MODEL
+from ludius.llm import LlmClient
 from ludius.loop import GroundTruth, Runner
 from ludius.session import Session
-from ludius.tasks import Persona, Task, TaskInstance, load_template, load_yaml
+from ludius.tasks import Persona, Task, TaskInstance, Template, load_template, load_yaml
 from ludius.v1 import agent_pb2 as pb
 
 ROOT = Path(__file__).resolve().parents[3]
 DATA = ROOT / "controller" / "data"
+RUNS = ROOT / "runs"
 
 
 def load_env() -> None:
@@ -45,29 +50,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.variant is not None:
         inst.variant = args.variant
     template = load_template(DATA / "templates" / f"{inst.template}.yaml")
-    persona = load_yaml(Persona, Path(args.persona) if args.persona else DATA / "personas" / "aberg.yaml")
+    persona = load_persona(args.persona)
     seed = args.seed if args.seed is not None else int(time.time())
     task = Task(template, inst, random.Random(seed))
-    agent = agent_from(args)
-    if args.restore:
-        agent.lifecycle(pb.LifecycleRequest.RESTORE, args.restore)
-        agent.lifecycle(pb.LifecycleRequest.START)
-        _wait_for_observer(agent)
+    agent = start_agent(args)
     jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
-    log_path = Path(args.log or ROOT / "runs" / f"{time.strftime('%Y%m%d-%H%M%S')}-{template.task}.jsonl")
+    log_path = Path(args.log or RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-{template.task}.jsonl")
     log = GroundTruth(log_path)
     try:
         runner = Runner(agent, jev, persona, log, clock=args.clock, seed=seed)
-        session = make_session(agent, log)
-        if not session.normalize():
-            session.escalate()
-        apps_before = [f"{a.title} ({a.process_name})" for a in runner.observe().apps]
-        out = runner.run(task)
-        apps_after = [f"{a.title} ({a.process_name})" for a in runner.observe().apps]
-        log.write(event="side_effects", host_ms=int(time.time() * 1000), task=template.task,
-                  opened=[a for a in apps_after if a not in apps_before], left=apps_after)  # fmt: skip
-        if out.status != "done" and not session.normalize():
-            session.escalate()
+        out = run_task(runner, make_session(agent, log), task)
     finally:
         log.close()
         jev.close()
@@ -78,6 +70,85 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     print(f"ground truth: {log_path}")
     return 0 if out.status == "done" else 1
+
+
+def start_agent(args: argparse.Namespace) -> HostAgent:
+    agent = agent_from(args)
+    if args.restore:
+        agent.lifecycle(pb.LifecycleRequest.RESTORE, args.restore)
+        agent.lifecycle(pb.LifecycleRequest.START)
+        _wait_for_observer(agent)
+    return agent
+
+
+def load_persona(path: str | None) -> Persona:
+    return load_yaml(Persona, Path(path) if path else DATA / "personas" / "aberg.yaml")
+
+
+def load_templates() -> dict[str, Template]:
+    ts = [load_template(p) for p in sorted((DATA / "templates").glob("*.yaml"))]
+    return {t.task: t for t in ts}
+
+
+def cmd_plan(args: argparse.Namespace) -> int:
+    """Narrative once per range; one validated day plan per persona and day (spec section 6)."""
+    world = planner.World(RUNS)
+    date = dt.date.fromisoformat(args.date) if args.date else dt.date.today()
+    llm = LlmClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
+    try:
+        if args.what == "narrative":
+            personas = [load_yaml(Persona, p) for p in sorted((DATA / "personas").glob("*.yaml"))]
+            n = planner.make_narrative(llm, personas, date)
+            print(
+                f"{n.company} ({n.city}): {len(n.people)} people, {len(n.events)} events -> {world.save_narrative(n)}"
+            )
+        else:
+            persona = load_persona(args.persona)
+            templates = load_templates()
+            plan, rejects = planner.plan_day(
+                llm, world.narrative(), persona, date, templates, world.summary(persona.user, date),
+                world.history(persona.user),
+            )  # fmt: skip
+            path = world.save_plan(plan, templates)
+            for it in plan.items:
+                print(f"  {it.at} {it.template}{' (interrupt)' if it.interrupt else ''}: {it.context}")
+            for r in rejects:
+                print(f"  rejected {r}")
+            print(f"{len(plan.items)} items -> {path}")
+        print(f"planner cost ${llm.cost:.4f}")
+    finally:
+        llm.close()
+    return 0
+
+
+def cmd_day(args: argparse.Namespace) -> int:
+    plan = planner.load_plan(Path(args.plan))
+    persona = load_persona(args.persona or str(DATA / "personas" / f"{plan.persona}.yaml"))
+    seed = args.seed if args.seed is not None else int(time.time())
+    log_path = Path(args.log) if args.log else planner.World(RUNS).day_log(plan.persona, plan.date)
+    agent = start_agent(args)
+    jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
+    log = GroundTruth(log_path)
+    try:
+        runner = Runner(agent, jev, persona, log, clock=args.clock, seed=seed)
+        results = DayRunner(runner, make_session(agent, log), load_templates(), log, args.clock, seed).run(plan)
+    finally:
+        log.close()
+        jev.close()
+        agent.close()
+    for r in results:
+        print(f"  {r.item.at} {r.item.template}: {r.status}")
+    print(
+        f"day {plan.date} {plan.persona} (seed {seed}): {sum(r.status == 'done' for r in results)}/{len(results)} done"
+    )
+    print(f"ground truth: {log_path}")
+    return 0 if all(r.status == "done" for r in results) else 1
+
+
+def cmd_timeline(args: argparse.Namespace) -> int:
+    out = Path(args.out)
+    print(f"{timeline.export([Path(p) for p in args.logs], out)} rows -> {out}")
+    return 0
 
 
 def _wait_for_observer(agent: HostAgent, seconds: float = 180) -> None:
@@ -165,7 +236,7 @@ def make_session(agent: HostAgent, log: GroundTruth) -> Session:
 
 def cmd_session(args: argparse.Namespace) -> int:
     agent = agent_from(args)
-    log = GroundTruth(ROOT / "runs" / f"{time.strftime('%Y%m%d-%H%M%S')}-session.jsonl")
+    log = GroundTruth(RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-session.jsonl")
     s = make_session(agent, log)
     if args.op == "lock":
         agent.chord(keys.chord("Win+L"))
@@ -211,6 +282,28 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--log")
     r.add_argument("--restore", metavar="CHECKPOINT", help="restore this checkpoint first")
     r.set_defaults(fn=cmd_run)
+
+    pl = sub.add_parser("plan", help="LLM planner: company narrative or a persona's day plan")
+    pl.add_argument("what", choices=["narrative", "day"])
+    pl.add_argument("--persona", help="persona YAML (day plans)")
+    pl.add_argument("--date", help="YYYY-MM-DD (default today)")
+    pl.add_argument("--model", default=PLANNER_MODEL)
+    pl.set_defaults(fn=cmd_plan)
+
+    d = sub.add_parser("day", help="play a day plan on its logical timeline")
+    d.add_argument("plan", help="day plan YAML (runs/plans/...)")
+    d.add_argument("--persona")
+    d.add_argument("--clock", choices=["realtime", "compressed"], default="compressed")
+    d.add_argument("--seed", type=int)
+    d.add_argument("--model", default=DEFAULT_MODEL)
+    d.add_argument("--log")
+    d.add_argument("--restore", metavar="CHECKPOINT", help="restore this checkpoint first")
+    d.set_defaults(fn=cmd_day)
+
+    tl = sub.add_parser("timeline", help="export ground-truth logs as an instructor timeline CSV")
+    tl.add_argument("logs", nargs="+")
+    tl.add_argument("--out", default=str(RUNS / "timeline.csv"))
+    tl.set_defaults(fn=cmd_timeline)
 
     o = sub.add_parser("observe", help="print a snapshot or record a fixture")
     o.add_argument("--record", metavar="NAME")

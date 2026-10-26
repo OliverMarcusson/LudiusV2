@@ -2,4 +2,3 @@ template: edge_web_lookup
 context: "Anna checks the revenue recognition rule before answering Johan"
 params:
   search_query: IFRS 15 principal versus agent
-  app_query: edge
