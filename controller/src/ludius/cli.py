@@ -19,7 +19,7 @@ from pathlib import Path
 import yaml
 from google.protobuf import json_format
 
-from ludius import admission, artifacts, growth, keys, metrics, planner, revision, timeline
+from ludius import admission, artifacts, growth, keys, metrics, planner, revision, timeline, world_state
 from ludius.assist import Assist
 from ludius.day import DayRunner, run_task
 from ludius.hostagent import HostAgent
@@ -173,10 +173,16 @@ def cmd_plan(args: argparse.Namespace) -> int:
         else:
             persona = load_persona(args.persona)
             templates = load_templates()
+            narrative = world.narrative()
+            personas = [load_yaml(Persona, p) for p in sorted((DATA / "personas").glob("*.yaml"))]
+            state = world_state.build(world, narrative, personas, date)
+            world_state.save(state, world)
+            context = "\n".join(x for x in (world.summary(persona.user, date),
+                                            world_state.brief(state, persona.user, date)) if x)  # fmt: skip
             plan, rejects = planner.plan_day(
-                llm, world.narrative(), persona, date, templates, world.summary(persona.user, date),
-                world.history(persona.user),
+                llm, narrative, persona, date, templates, context, world.history(persona.user),
                 scenario=planner.Scenario.parse(args.scenario) if args.scenario else None,
+                followups={f.id: f.about for f in world_state.due(state, persona.user, date)},
             )  # fmt: skip
             path = world.save_plan(plan, templates)
             for it in plan.items:

@@ -57,6 +57,7 @@ class PlanItem(TaskInstance):
     minutes: int = 0  # breaks: how long the persona is away
     interrupt: bool = False  # cuts into the task running at that time, at its next subgoal boundary
     handoff: str = ""  # colleague's account: the result lands on their later plan as a thread to pick up
+    followup: str = ""  # id of the open follow-up (world_state) this item settles
 
     @field_validator("at")
     @classmethod
@@ -138,9 +139,14 @@ def plan_day(
     history: list[str],
     policy: Policy | None = None,
     scenario: Scenario | None = None,
+    followups: dict[str, str] | None = None,
 ) -> tuple[DayPlan, list[str]]:
-    """Draft, validate, ask once to replace rejected items, drop what still fails. Returns the plan and rejects."""
+    """Draft, validate, ask once to replace rejected items, drop what still fails. Returns the plan and rejects.
+
+    `followups` (id -> what) are open tasks colleagues handed over; each must be scheduled with its id.
+    """
     policy = policy or Policy()
+    followups = followups or {}
     templates = role_templates(templates, persona)
     window = scenario if scenario and scenario.date == date.isoformat() else None
     lookalikes = sorted(k for k, t in templates.items() if window and t.resembles == window.signal)
@@ -173,20 +179,29 @@ def plan_day(
             if window and lookalikes
             else ""
         )
+        + (
+            " These follow-ups from colleagues are due: schedule each as one item (a fitting catalog task, often "
+            "early in the day) with followup set to its id:\n" + "\n".join(f"- {k}: {v}" for k, v in followups.items())
+            if followups
+            else ""
+        )
     )
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
-    rejects = validate(draft.items, templates, history, policy, colleagues, window)
-    if rejects:
+    rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups))
+    missing = sorted(set(followups) - {it.followup for it in draft.items})
+    if rejects or missing:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
-            f"- item {i} ({draft.items[i].template} at {draft.items[i].at}): {why}" for i, why in rejects
+            [f"- item {i} ({draft.items[i].template} at {draft.items[i].at}): {why}" for i, why in rejects]
+            + [f"- follow-up {k} is not scheduled" for k in missing]
         )
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
-        rejects = validate(draft.items, templates, history, policy, colleagues, window)
+        rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups))
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
+    missing = sorted(set(followups) - {it.followup for it in items})
     return DayPlan(persona=persona.user, date=date.isoformat(), items=items), [
         f"{draft.items[i].template} at {draft.items[i].at}: {why}" for i, why in rejects
-    ]
+    ] + [f"follow-up {k}: not scheduled, stays open" for k in missing]
 
 
 # Validation ---------------------------------------------------------------------------
@@ -204,6 +219,7 @@ def validate(
     policy: Policy,
     colleagues: set[str] | None = None,
     scenario: Scenario | None = None,
+    followups: set[str] | None = None,
 ) -> list[tuple[int, str]]:
     rejects: list[tuple[int, str]] = []
     seen = list(history)
@@ -211,6 +227,10 @@ def validate(
         why = _check_item(it, templates, seen, policy)
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
+        if not why and it.followup and it.followup not in (followups or set[str]()):
+            why = f"followup {it.followup!r} is not an open follow-up"
+        if not why and it.followup and it.followup in {x.followup for x in items[:i]}:
+            why = f"followup {it.followup!r} is already scheduled"
         t = templates.get(it.template)
         if not why and scenario and t and t.resembles and scenario.start <= it.at <= scenario.end:
             why = f"{t.resembles}-like work must not overlap the scenario window {scenario.start}-{scenario.end}"
