@@ -238,8 +238,12 @@ class Runner:
         no_change = 0
         typed_ok = False
         recovering = False
-        dead: set[tuple[str, str]] = set()  # actions that just changed nothing, withdrawn until the screen changes
+        # Progress means reaching a screen not seen before in this subgoal. An action that changed nothing,
+        # or only led back to an earlier screen (open/close toggles, dialog loops), is withdrawn on the screen
+        # it was tried from, for the rest of the subgoal.
+        dead: dict[tuple[Any, ...], set[tuple[str, str]]] = {}
         snap = self.observe()
+        seen = {fingerprint(snap)}
         for step in range(1, budget + 1):
             if time.monotonic() - t0 > task.template.budget_minutes * 60:
                 return "failed", step - 1, "time budget"
@@ -267,7 +271,8 @@ class Runner:
                 return "done", step - 1, ""
             v = view(snap, task, sg, self.policy)
             options = self._recovery_options(v) if recovering else build_options(v, task, sg, self.policy)
-            options = [o for o in options if _ident(o) not in dead] or options
+            here = fingerprint(snap)
+            options = [o for o in options if _ident(o) not in dead.get(here, ())] or options
             state = build_state(v, task, sg, history, last_result)
             decision = self.jev.decide(state, {o.key: o.text for o in options}, ask_progress=not recovering)
             chosen = self._choose(decision, options)
@@ -308,25 +313,26 @@ class Runner:
                 continue
 
             self.think()
-            before = fingerprint(snap)
             host_ms = _now()
             self.act(chosen, task)
             snap = self.observe(timeout_ms=10000 if chosen.kind == "rescan" else 5000)
-            changed = fingerprint(snap) != before
+            after = fingerprint(snap)
+            changed, revisit = after != here, after in seen
+            seen.add(after)
             if chosen.kind == "type":
                 typed_ok = _typed_landed(snap, chosen, task)
-            last_result = "changed" if changed else "no visible change"
+            outcome = "back to an earlier screen" if changed and revisit else "changed" if changed else "no change"
+            last_result = "no visible change" if not changed else outcome
             if not snap.settled:
                 last_result += " (screen still busy)"
-            history.append(f"{_short(chosen)} -> {'changed' if changed else 'no change'}")
+            history.append(f"{_short(chosen)} -> {outcome}")
             self._log_step(task, name, snap, chosen, decision, last_result, step, host_ms=host_ms)
             recovering = False
 
-            no_change = 0 if changed else no_change + 1
-            if changed:
-                dead.clear()
-            elif chosen.kind != "rescan":
-                dead.add(_ident(chosen))
+            progress = changed and not revisit
+            no_change = 0 if progress else no_change + 1
+            if not progress and chosen.kind != "rescan":
+                dead.setdefault(here, set()).add(_ident(chosen))
             if no_change == 2:
                 # Ladder step 1: rescan with a longer settle before anything else.
                 snap = self.observe(timeout_ms=10000)
