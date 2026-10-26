@@ -515,6 +515,7 @@ def main(argv: list[str] | None = None) -> int:
     v.set_defaults(fn=cmd_vm)
 
     args = p.parse_args(argv)
+    sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]  # guest UI text (U+200E...) on a cp1252 pipe
     return int(args.fn(args))
 
 
