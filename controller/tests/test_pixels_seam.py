@@ -189,6 +189,21 @@ def test_pixels_focus_is_unknown_and_the_hint_is_pixels_only() -> None:
         Template.model_validate(base | {"pixels": base["pixels"] | {"hints": {"nope": hint}}})
 
 
+def test_filename_hint_is_conditional_pixels_only_and_does_not_recommend_alt_n() -> None:
+    t = task(file_name="meeting notes", body="x", file_name_typo="meeting notesq")
+    for sg_name in ("name_file", "name_file_typo"):
+        sg = t.subgoal(sg_name)
+        hint = sg.pixels_hint
+        assert hint.startswith("If nothing was clicked since the Save As dialog opened, type")
+        assert "Encoding" in hint and "Alt+N" not in hint and "Alt" not in sg.keys
+        snap = real("notepad-save-as")
+        assert build_state(view(snap, t, sg, Policy()), t, sg, [], "")["goal"].endswith(hint)
+        tree = obs.Snapshot(windows=[obs.Window(title="Save As", process_name="notepad.exe", kind=obs.Window.FOREGROUND)])
+        assert hint not in build_state(view(tree, t, sg, Policy()), t, sg, [], "")["goal"]
+    # The completion checks stay strict: nothing relaxed by the hint.
+    assert check_done(t.subgoal("name_file").done, real("notepad-save-as"), t, typed_ok=True) is False
+
+
 def test_pixels_never_pass_on_typed_alone() -> None:
     # Typing at focus counts as landed with no element to read back: on pixels only a visible check can pass.
     t = task(file_name="meeting notes", body="x")
