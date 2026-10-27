@@ -8,9 +8,12 @@ known templates, complete parameters, policy-clean ASCII text, and no content to
 from __future__ import annotations
 
 import datetime as dt
+import errno
 import json
+import os
 import random
 import re
+import tempfile
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -389,6 +392,30 @@ def load_plan(path: Path) -> DayPlan:
 
 
 def _dump(path: Path, data: Any, mode: str = "w") -> None:
+    """mode "w" rewrites in place; mode "x" publishes the complete bytes atomically and never replaces `path`."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open(mode, encoding="utf-8") as f:
-        f.write(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=110))
+    text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=110)  # serialize before touching disk
+    if mode == "w":
+        with path.open("w", encoding="utf-8") as f:
+            f.write(text)
+        return
+    assert mode == "x", mode
+    # Write a same-directory temp, then os.link it into place: link creation is atomic and fails with
+    # FileExistsError if `path` exists (NTFS and POSIX alike), so a concurrent winner is never overwritten
+    # and `path` is either absent or complete. Filesystems without hard links fail closed (no replace fallback).
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            raise
+        except OSError as e:
+            if path.exists():  # Windows can report an existing target as an access error
+                raise FileExistsError(errno.EEXIST, "plan already exists", str(path)) from e
+            raise OSError(f"cannot publish {path} atomically without replacing: hard links unavailable ({e})") from e
+    finally:
+        Path(tmp).unlink(missing_ok=True)
