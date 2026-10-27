@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ludius.jev import MAX_OPTIONS
 from ludius.policy import SHELL_PROCESSES, Policy, alt_f4_safe
 from ludius.tasks import Subgoal, Task, element_matches, pixels_region, pixels_window
 from ludius.v1 import observation_pb2 as obs
@@ -150,6 +151,7 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
         ):
             text = f"type the text to enter into [{e.id}] {e.role} '{e.name}'"
             add("type", text, element=e, content=sg.text or "", literal=literal)
+    elements = len(opts)
     if content is not None and policy.text_allowed(content, None) is None:
         # Where focus already is (Start search, a field without a usable tree).
         add("type", "type the text to enter at the keyboard focus", content=sg.text or "", literal=literal)
@@ -175,4 +177,10 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
         add("scroll", "scroll down", notches=-3)
         add("scroll", "scroll up", notches=3)
     add("rescan", "rescan: wait for the screen to finish loading and look again")
-    return opts[:255]
+    if len(opts) > MAX_OPTIONS:
+        # Over Jev's limit, element options give way: cutting the tail lost the keys, F12 among them, behind
+        # Excel's ~250 ribbon controls (runs 2 and 4 never saw the subgoal's own key).
+        opts = opts[: elements - (len(opts) - MAX_OPTIONS)] + opts[elements:]
+        for i, o in enumerate(opts, start=1):
+            o.key = f"o{i}"
+    return opts

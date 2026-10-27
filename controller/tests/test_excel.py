@@ -283,3 +283,19 @@ def test_no_text_no_edit_clicks_and_template_search_text(task: tuple[Task, dict[
                                   "params": {"file_name": "stock count q4"}, "content": {"rows": ROWS}})  # fmt: skip
     why = [w for _, w in validate([it], {t.task: t}, [], Policy(reserved_paths=["save as"]), user="aberg")]
     assert why == ["save_as: search text: scenario-reserved path"]
+
+
+def test_keys_survive_the_option_limit(task: tuple[Task, dict[str, Any]]) -> None:
+    """Run4: ~250 ribbon controls pushed F12 past Jev's 255 options; elements give way, never keys or rescan."""
+    from ludius.jev import MAX_OPTIONS
+
+    tk, _ = task
+    s, p = run2_snap(), Policy()
+    for i in range(300):
+        e = s.elements.add(id=100 + i, role="button", name=f"Ribbon {i}", window=0)
+        e.bounds.width = e.bounds.height = 20
+    sg = tk.subgoal("save_as")
+    opts = build_options(view(s, tk, sg, p), tk, sg, p)
+    assert len(opts) == MAX_OPTIONS and [o.key for o in opts] == [f"o{i}" for i in range(1, MAX_OPTIONS + 1)]
+    texts = [o.text for o in opts]
+    assert "press F12" in texts and "press Esc" in texts and opts[-1].kind == "rescan"
