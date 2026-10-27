@@ -19,6 +19,8 @@
     <ApplicationManifest Condition="'$(UiAccess)' != 'true'">app.manifest</ApplicationManifest>
     <!-- Watchdog fault hooks for the VM smoke test: -p:WatchdogTest=true only, never in a production build. -->
     <DefineConstants Condition="'$(WatchdogTest)' == 'true'">$(DefineConstants);WATCHDOG_TEST</DefineConstants>
+    <!-- List clipping/hint regression check (ListSelfTest.cs): -p:ListSelfTest=true only, never in a production build. -->
+    <DefineConstants Condition="'$(ListSelfTest)' == 'true'">$(DefineConstants);LIST_SELFTEST</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

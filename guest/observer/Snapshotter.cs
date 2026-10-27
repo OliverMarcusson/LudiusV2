@@ -41,6 +41,7 @@ sealed partial class Snapshotter
         ["button", "check box", "combo box", "edit", "hyperlink", "list item", "menu item", "radio button", "slider",
          "spinner", "split button", "tab item", "tree item", "data item", "document", "menu bar", "scroll bar"];
     static readonly HashSet<string> Lists = ["list", "data grid", "tree", "table"];
+    static readonly HashSet<string> Rows = ["list item", "tree item", "data item"];
 
     [GeneratedRegex(@"\b(delete|remove|discard|send|pay|uninstall|format|don't save|empty|erase)\b", RegexOptions.IgnoreCase)]
     private static partial Regex Destructive();
@@ -73,6 +74,7 @@ sealed partial class Snapshotter
         public bool Actionable;
         public string Context = "";
         public bool Busy;
+        public Rect? Content; // a list's row viewport, when its bounds are known
     }
 
     public Snapshot Take()
@@ -230,7 +232,7 @@ sealed partial class Snapshotter
                 w.FrameworkId = Str(root, UIA_FrameworkIdPropertyId);
                 var winRect = w.Bounds;
                 bool sparseDocument = false;
-                Walk(root, "", winRect, w, index, found, keys, ref sparseDocument);
+                Walk(root, "", winRect, false, null, w, index, found, keys, ref sparseDocument);
                 // Chromium builds its tree lazily once a client asks; give it one more look.
                 if (sparseDocument && attempt == 0) { Thread.Sleep(200); continue; }
                 return found;
@@ -245,7 +247,8 @@ sealed partial class Snapshotter
         }
     }
 
-    void Walk(IUIAutomationElement e, string path, Rect clip, Window w, uint index, List<Raw> found, HashSet<string> keys, ref bool sparseDocument)
+    // `content` is set when `e` is a list: its rows and their cells clip to it, its header keeps `clip`.
+    void Walk(IUIAutomationElement e, string path, Rect clip, bool inList, Rect? content, Window w, uint index, List<Raw> found, HashSet<string> keys, ref bool sparseDocument)
     {
         var kids = e.GetCachedChildren();
         int n = kids?.Length ?? 0;
@@ -254,8 +257,10 @@ sealed partial class Snapshotter
         {
             var c = kids!.GetElement(i);
             var role = Role(c);
-            var raw = Describe(c, role, path, clip, w, index, lastText, i, keys);
-            var childClip = clip;
+            bool row = inList || (content is not null && role != "header");
+            var rowClip = content is { } v && role != "header" ? v : clip;
+            var raw = Describe(c, role, path, rowClip, row, w, index, lastText, i, keys);
+            var childClip = rowClip;
             if (role == "document" && Str(c, UIA_FrameworkIdPropertyId) == "Chrome")
             {
                 childClip = raw.E.Bounds; // off-screen nodes are exposed: clip to the viewport
@@ -264,11 +269,11 @@ sealed partial class Snapshotter
             if (raw.E.Bounds.Width > 0 || raw.E.Focused) found.Add(raw);
             if (role == "text" && raw.E.Name != "") lastText = raw.E.Name;
             var seg = $"{role}:{(raw.E.AutomationId != "" ? raw.E.AutomationId : raw.E.ClassName)}";
-            Walk(c, path == "" ? seg : $"{path}/{seg}", childClip, w, index, found, keys, ref sparseDocument);
+            Walk(c, path == "" ? seg : $"{path}/{seg}", childClip, row, raw.Content, w, index, found, keys, ref sparseDocument);
         }
     }
 
-    Raw Describe(IUIAutomationElement c, string role, string path, Rect clip, Window w, uint index, string lastText, int sibling, HashSet<string> keys)
+    Raw Describe(IUIAutomationElement c, string role, string path, Rect clip, bool inList, Window w, uint index, string lastText, int sibling, HashSet<string> keys)
     {
         var e = new Element
         {
@@ -282,7 +287,7 @@ sealed partial class Snapshotter
             KeyboardFocusable = Bool(c, UIA_IsKeyboardFocusablePropertyId),
             Password = Bool(c, UIA_IsPasswordPropertyId),
             Window = index,
-            Bounds = Clip(Bounds(c), clip),
+            Bounds = inList ? VisibleRow(Bounds(c), clip) : Clip(Bounds(c), clip),
         };
         e.Name = NameOf(c, role, lastText);
 
@@ -307,10 +312,18 @@ sealed partial class Snapshotter
         if (!ids.TryGetValue(key, out var id)) ids[key] = id = nextId++;
         e.Id = id;
 
-        Hints(c, e, w);
+        Rect? content = null;
+        int rowsShown = 0;
+        if (Lists.Contains(role))
+        {
+            var kids = Kids(c);
+            content = ContentViewport(e.Bounds, kids);
+            if (content is { } v) rowsShown = VisibleRows(kids, v);
+        }
+        Hints(c, e, w, rowsShown);
         bool actionable = e.Actions.Count > 0 || (e.KeyboardFocusable && Interactive.Contains(role));
         if (role is "list" or "tree" or "data grid") actionable = e.Hints.Count > 0 || e.Focused; // containers matter only when they scroll
-        var raw = new Raw { E = e, Kind = w.Kind, Actionable = actionable && e.Enabled };
+        var raw = new Raw { E = e, Kind = w.Kind, Actionable = actionable && e.Enabled, Content = content };
         if (!raw.Actionable && e.Name != "" && role is "text" or "status bar" or "header" or "title bar" or "group")
             raw.Context = $"{role}: {Trim(e.Name, 160)}";
         raw.Busy = role == "progress bar" && !Bool(c, UIA_IsRangeValuePatternAvailablePropertyId);
@@ -343,13 +356,13 @@ sealed partial class Snapshotter
         return "";
     }
 
-    static void Hints(IUIAutomationElement c, Element e, Window w)
+    static void Hints(IUIAutomationElement c, Element e, Window w, int rowsShown)
     {
         CommonHints(e, w);
         if ((Int(c, UIA_LegacyIAccessibleStatePropertyId) & 0x100) != 0) e.Hints.Add("Enter triggers this"); // STATE_SYSTEM_DEFAULT
         if (Lists.Contains(e.Role) && Bool(c, UIA_ScrollVerticallyScrollablePropertyId) &&
             c.GetCachedPropertyValue(UIA_ScrollVerticalScrollPercentPropertyId) is double pct && pct < 99.5)
-            e.Hints.Add(ListShown(c.GetCachedChildren()?.Length ?? 0, pct, Int(c, UIA_GridRowCountPropertyId)));
+            e.Hints.Add(ListShown(rowsShown, pct, Int(c, UIA_GridRowCountPropertyId)));
     }
 
     // Hints from the element's own fields, shared by UIA and Java rows.
@@ -482,19 +495,56 @@ sealed partial class Snapshotter
         return raw;
     }
 
-    // Spec: virtualized lists report "items 1–14 shown, list continues". The cached children are the visible
-    // items; the first one's index is exact at the top and estimated from the scroll position when the list
-    // reports its row count (GridPattern, e.g. Explorer's item view). Otherwise only the count is known.
+    // Spec: virtualized lists report "items 1–14 shown, list continues". `visible` counts the rows on screen.
+    // The first one is item 1 only when the list is scrolled exactly to the top; elsewhere its ordinal is an
+    // estimate from the scroll position and the list's own row count (GridPattern), labelled as such, or unknown.
     internal static string ListShown(int visible, double pct, int rows)
     {
-        if (visible > 0 && pct <= 0.5) return $"items 1–{visible} shown, list continues";
-        if (visible > 0 && rows > visible)
+        if (visible == 0) return "list continues";
+        var of = rows > visible ? $" of {rows}" : "";
+        if (pct <= 0) return $"items 1–{visible} shown{of}, list continues";
+        if (rows > visible)
         {
             var first = (int)Math.Round(pct / 100 * (rows - visible)) + 1;
-            return $"items {first}–{first + visible - 1} shown of {rows}, list continues";
+            return $"about items {first}–{first + visible - 1} shown of {rows} (estimated from scroll position), list continues";
         }
         return $"{visible} items shown, list continues";
     }
+
+    static List<(string Role, Rect Bounds)> Kids(IUIAutomationElement c)
+    {
+        var kids = c.GetCachedChildren();
+        var list = new List<(string, Rect)>();
+        for (int i = 0; i < (kids?.Length ?? 0); i++) { var k = kids!.GetElement(i); list.Add((Role(k), Bounds(k))); }
+        return list;
+    }
+
+    // Where a list's rows show: its bounds below a column header in its upper half (Explorer's details view
+    // puts the header inside the list, over the first row). Unknown list bounds: unknown viewport, no clipping.
+    internal static Rect? ContentViewport(Rect list, IEnumerable<(string Role, Rect Bounds)> kids)
+    {
+        if (list.Width <= 0 || list.Height <= 0) return null;
+        int top = list.Y, bottom = list.Y + list.Height;
+        foreach (var (role, b) in kids)
+        {
+            var h = Clip(b, list);
+            if (role == "header" && h.Height > 0 && 2 * h.Y + h.Height < 2 * list.Y + list.Height)
+                top = Math.Max(top, h.Y + h.Height);
+        }
+        return top < bottom ? new Rect { X = list.X, Y = top, Width = list.Width, Height = bottom - top } : new Rect();
+    }
+
+    // A row partly under the header or past the bottom keeps only its visible part, and only when enough of it
+    // shows to click: the centre of what is left is then on the row, not on the header.
+    internal static Rect VisibleRow(Rect row, Rect content)
+    {
+        var v = Clip(row, content);
+        // ponytail: half the row or 16 px, a fixed floor; tune to the measured pointer tolerance if rows get missed
+        return v.Height * 2 >= row.Height || v.Height >= 16 ? v : new Rect();
+    }
+
+    internal static int VisibleRows(IEnumerable<(string Role, Rect Bounds)> kids, Rect content) =>
+        kids.Count(k => Rows.Contains(k.Role) && VisibleRow(k.Bounds, content).Width > 0);
 
     static Rect Bounds(IUIAutomationElement c) =>
         c.GetCachedPropertyValue(UIA_BoundingRectanglePropertyId) is double[] { Length: 4 } r

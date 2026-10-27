@@ -13,6 +13,9 @@ const string Version = "0.1.0-watchdogtest"; // the hooks in Observe exist only 
 #else
 const string Version = "0.1.0";
 #endif
+#if LIST_SELFTEST
+return ListSelfTest.Run();
+#endif
 var service = Guid.Parse(Arg("--service") ?? "000011cb-facb-11e6-bd58-64006a7986d3");
 
 // Only in a user's interactive session: session 0 cannot see the desktop.
