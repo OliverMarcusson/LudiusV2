@@ -198,7 +198,9 @@ def test_filename_hint_is_conditional_pixels_only_and_does_not_recommend_alt_n()
         assert "Encoding" in hint and "Alt+N" not in hint and "Alt" not in sg.keys
         snap = real("notepad-save-as")
         assert build_state(view(snap, t, sg, Policy()), t, sg, [], "")["goal"].endswith(hint)
-        tree = obs.Snapshot(windows=[obs.Window(title="Save As", process_name="notepad.exe", kind=obs.Window.FOREGROUND)])
+        tree = obs.Snapshot(
+            windows=[obs.Window(title="Save As", process_name="notepad.exe", kind=obs.Window.FOREGROUND)]
+        )
         assert hint not in build_state(view(tree, t, sg, Policy()), t, sg, [], "")["goal"]
     # The completion checks stay strict: nothing relaxed by the hint.
     assert check_done(t.subgoal("name_file").done, real("notepad-save-as"), t, typed_ok=True) is False
