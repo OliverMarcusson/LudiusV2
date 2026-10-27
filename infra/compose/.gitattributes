@@ -1,0 +1,2 @@
+# Bind-mounted into Linux containers: a CRLF checkout would break the init script.
+* text=auto eol=lf
