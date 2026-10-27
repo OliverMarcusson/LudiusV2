@@ -21,6 +21,10 @@ if (Get-VM $VMName -ErrorAction SilentlyContinue) { throw "$VMName already exist
 $raw = Join-Path $build 'disk.raw'
 $fixed = Join-Path $build 'disk.vhd'  # left by an earlier run that stopped after the footer step
 if (-not (Test-Path $raw) -and -not (Test-Path $fixed)) { throw "no Debian image at $raw" }
+if (-not (Get-VMSwitch -Name $Switch -ErrorAction SilentlyContinue)) { throw "no Hyper-V switch $Switch (create the private range switch first)" }
+$vhd = Join-Path (Get-VMHost).VirtualHardDiskPath "$VMName.vhdx"
+# The source disk.vhd is only deleted once the VM is up, so a leftover VHDX is safe to delete before a rerun.
+if (Test-Path $vhd) { throw "$vhd is left over from a failed run (no VM $VMName); delete it and rerun" }
 
 function New-Password {
     $chars = [char[]]'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -99,12 +103,11 @@ Move-Item $raw $fixed
 }
 fsutil sparse setflag $fixed 0 | Out-Null  # tar extracts the image sparse; Hyper-V refuses sparse disks
 if ($LASTEXITCODE) { throw "could not clear the sparse flag on $fixed" }
-$vhd = Join-Path (Get-VMHost).VirtualHardDiskPath "$VMName.vhdx"
 Convert-VHD -Path $fixed -DestinationPath $vhd -VHDType Dynamic
-Remove-Item $fixed
 Resize-VHD -Path $vhd -SizeBytes 24GB  # cloud-init grows the root partition at first boot
 
-New-VM -Name $VMName -Generation 2 -MemoryStartupBytes 3GB -VHDPath $vhd -SwitchName 'Default Switch' | Out-Null
+$new = New-VM -Name $VMName -Generation 2 -MemoryStartupBytes 3GB -VHDPath $vhd -SwitchName 'Default Switch'
+Set-Content -Encoding ascii (Join-Path $build 'vm-id') "$($new.Id)"  # the one-VM cap exempts this Id, not the name
 Set-VM $VMName -ProcessorCount 2 -StaticMemory -AutomaticCheckpointsEnabled $false -CheckpointType Standard
 Set-VMNetworkAdapter -VMName $VMName -StaticMacAddress $macNat
 Add-VMNetworkAdapter -VMName $VMName -SwitchName $Switch -StaticMacAddress $macRange
@@ -113,4 +116,5 @@ Add-VMDvdDrive $VMName -Path $seed
 Set-VMFirmware $VMName -FirstBootDevice (Get-VMHardDiskDrive $VMName)
 Disable-VMIntegrationService $VMName -Name 'Time Synchronization'
 Start-VM $VMName  # exempt from the one-VM cap
+Remove-Item $fixed
 Write-Output "Started $VMName; cloud-init configures user ludius (key build\srv\id_ed25519), range address $Address"

@@ -2,7 +2,8 @@
 #  1. Four processes race to activate four Saved VMs; each holds the window between check and "start" open for
 #     0.8 s. Exactly one may start; the rest must be refused by the recheck under the lock.
 #  2. Fail closed: while another process holds the lock, an activation with a 1 s lock timeout is refused.
-#  3. The exempt range server (ludius-srv01) running does not block a persona VM.
+#  3. The range server exemption follows the recorded VM Id, in both start orders; a same-named VM with another Id
+#     is capped like any other.
 $ErrorActionPreference = 'Stop'
 $dir = Join-Path ([IO.Path]::GetTempPath()) "ludius-onevm-$PID"
 New-Item -ItemType Directory -Force $dir | Out-Null
@@ -12,9 +13,10 @@ $names = 'ludius-a', 'ludius-b', 'ludius-c', 'ludius-d'
 $names | ForEach-Object { [pscustomobject]@{ Name = $_; State = 'Saved' } } | ConvertTo-Json | Set-Content $state
 
 $actor = @'
-param($lib, $state, $me, $lockSeconds)
+param($lib, $state, $me, $lockSeconds, $exemptFile)
 . $lib
-function Get-VM { param($Name) Get-Content $state | ConvertFrom-Json }
+if ($exemptFile) { $OneVmExemptIdFile = $exemptFile }
+function Get-VM { [CmdletBinding()] param($Name) Get-Content $state | ConvertFrom-Json | Where-Object { -not $Name -or $_.Name -like $Name } }
 try {
     Invoke-OneVm $me -LockSeconds $lockSeconds {
         Start-Sleep -Milliseconds 800  # the race window a lock-free check-then-start would lose
@@ -51,11 +53,24 @@ $r
 if ($r -notlike 'refused ludius-a : one-VM cap: activation lock busy*' -or
     @(Get-Content $state | ConvertFrom-Json | Where-Object State -eq 'Running').Count) { throw 'lock timeout did not fail closed' }
 'ok: busy lock fails closed'
-# The exempt range server running does not block a persona VM, and is not itself refused.
-@([pscustomobject]@{ Name = 'ludius-srv01'; State = 'Running' }, [pscustomobject]@{ Name = 'ludius-a'; State = 'Saved' }) |
-    ConvertTo-Json | Set-Content $state
-$r = & pwsh -NoProfile -NonInteractive -File $actorFile $lib $state 'ludius-a' 5
-$r
-if ($r -ne 'started ludius-a') { throw 'exempt range server blocked a persona VM' }
-'ok: exempt range server does not count'
+# Range server exemption by recorded VM Id (not by name), both orders.
+$exemptFile = Join-Path $dir 'vm-id'
+$srvId = [guid]::NewGuid().ToString()
+Set-Content $exemptFile $srvId
+function Set-State($a, $srv, $id) {
+    @([pscustomobject]@{ Name = 'ludius-a'; Id = [guid]::NewGuid().ToString(); State = $a },
+      [pscustomobject]@{ Name = 'ludius-srv01'; Id = $id; State = $srv }) | ConvertTo-Json | Set-Content $state
+}
+$cases = @(
+    @{ a = 'Saved'; srv = 'Running'; id = $srvId; start = 'ludius-a'; want = 'started'; what = 'server up, persona starts' },
+    @{ a = 'Running'; srv = 'Saved'; id = $srvId; start = 'ludius-srv01'; want = 'started'; what = 'persona up, server starts' },
+    @{ a = 'Saved'; srv = 'Running'; id = [guid]::NewGuid().ToString(); start = 'ludius-a'; want = 'refused'; what = 'look-alike up, persona refused' },
+    @{ a = 'Running'; srv = 'Saved'; id = [guid]::NewGuid().ToString(); start = 'ludius-srv01'; want = 'refused'; what = 'persona up, look-alike refused' }
+)
+foreach ($c in $cases) {
+    Set-State $c.a $c.srv $c.id
+    $r = & pwsh -NoProfile -NonInteractive -File $actorFile $lib $state $c.start 5 $exemptFile
+    if ($r -notlike "$($c.want) $($c.start)*") { throw "exemption ($($c.what)): $r" }
+    "ok: $($c.what)"
+}
 Remove-Item -Recurse $dir

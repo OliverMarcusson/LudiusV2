@@ -23,6 +23,16 @@ foreach ($line in Get-Content (Join-Path $root 'runs\world\narrative.yaml')) {
     elseif ($name -and $line -match '^\s+user:\s*([a-z0-9]+)\s*$') { $people += "$($Matches[1])|$name"; $name = $null }
 }
 if ($people.Count -lt 2) { throw 'no people found in runs\world\narrative.yaml' }
+# Everything substituted into the root script is checked here; the bash side also reads it only as heredoc data.
+$userRe = '^[a-z][a-z0-9._-]*$'
+foreach ($p in $people) {
+    $u, $n = $p -split '\|', 2
+    if ($u -cnotmatch $userRe -or $n -notmatch "^\p{L}[\p{L}\p{M} .'-]*$") { throw "unsafe narrative person: $p" }
+}
+$personas = @((Get-ChildItem (Join-Path $root 'controller\data\personas') -Filter *.yaml).BaseName)
+foreach ($p in $personas) { if ($p -cnotmatch $userRe) { throw "unsafe persona name: $p" } }
+$addr = $cfg.LUDIUS_SRV_ADDRESS
+if (-not ($addr -match '^\d{1,3}(\.\d{1,3}){3}$' -and [Net.IPAddress]::TryParse($addr, [ref]$null))) { throw "bad LUDIUS_SRV_ADDRESS: $addr" }
 
 $script = @'
 set -euo pipefail
@@ -76,7 +86,7 @@ while IFS='|' read -r user full; do
       --mail-address="$user@corp.ludius.test" >/dev/null
   fi
   samba-tool user setexpiry "$user" --noexpiry >/dev/null
-done <<PEOPLE
+done <<'PEOPLE'
 __PEOPLE__
 PEOPLE
 
@@ -112,7 +122,8 @@ if ! grep -q '^mysql_password' /etc/gromox/mysql_adaptor.cfg 2>/dev/null; then
   mariadb -e "CREATE DATABASE IF NOT EXISTS grommunio; CREATE USER IF NOT EXISTS 'grommunio'@'localhost' IDENTIFIED BY '$DBPW'; ALTER USER 'grommunio'@'localhost' IDENTIFIED BY '$DBPW'; GRANT ALL ON grommunio.* TO 'grommunio'@'localhost';"
   printf 'mysql_username=grommunio\nmysql_password=%s\nmysql_dbname=grommunio\nschema_upgrade=host:srv01\n' "$DBPW" >/etc/gromox/mysql_adaptor.cfg
   printf "DB:\n  host: 'localhost'\n  user: 'grommunio'\n  pass: '%s'\n  database: 'grommunio'\n" "$DBPW" >/etc/grommunio-admin-api/conf.d/database.yaml
-  gromox-dbop -C >/dev/null
+  # The config doubles as the done marker: drop it if the schema init fails, so a rerun tries again.
+  if ! gromox-dbop -C >/dev/null; then rm -f /etc/gromox/mysql_adaptor.cfg; echo 'gromox-dbop -C failed' >&2; exit 1; fi
 fi
 printf 'http_listen = [::]:10080\nhttp_listen_tls = [::]:10443\nlda_listen = [::1]:25\noutgoing_smtp_url = smtp://[::1]:25\n' >/etc/gromox/gromox.cfg
 printf 'host_id=mail.corp.ludius.test\ndefault_domain=corp.ludius.test\nhttp_support_tls=true\nhttp_certificate_path=%s/chain.pem\nhttp_private_key_path=%s/server.key\n' $SSL $SSL >/etc/gromox/http.cfg
@@ -125,7 +136,7 @@ grommunio-admin domain list 2>/dev/null | grep -q 'corp.ludius.test' || grommuni
 # Community licence: at most 5 normal (log-in) mailboxes. Personas get those; simulated colleagues get shared
 # mailboxes (status 4: real mailboxes in the address book that receive mail, but no log-in), which the licence
 # does not count.
-PERSONAS=" __PERSONAS__ "
+PERSONAS=' __PERSONAS__ '
 while IFS='|' read -r user full; do
   [ -n "$user" ] || continue
   addr="$user@corp.ludius.test"
@@ -136,7 +147,7 @@ while IFS='|' read -r user full; do
     grommunio-admin user create "$addr" --domain corp.ludius.test --status $status --property "displayname=$full" >/dev/null
   fi
   [ $status = 0 ] && grommunio-admin passwd "$addr" --password "${user}2026" >/dev/null
-done <<PEOPLE
+done <<'PEOPLE'
 __PEOPLE__
 PEOPLE
 for n in mail autodiscover; do
@@ -153,7 +164,6 @@ curl -s --cacert $SSL/ca.crt -o /dev/null -w 'autodiscover via nginx: %{http_cod
 PASS=aberg2026 /usr/libexec/gromox/autodiscover -e aberg@corp.ludius.test -H mail.corp.ludius.test 2>&1 | grep -m3 -E 'Server|URL|DisplayName|rror' || true
 ss -lntup | awk 'NR>1 && /:(25|53|88|123|389|443|445|8443) / {print $1, $5}' | sort -u | tr '\n' ' '; echo
 '@
-$personas = (Get-ChildItem (Join-Path $root 'controller\data\personas') -Filter *.yaml).BaseName -join ' '
-$script = $script.Replace('__PERSONAS__', $personas).Replace('__ADDR__', $cfg.LUDIUS_SRV_ADDRESS).Replace('__PEOPLE__', ($people -join "`n")).Replace("`r`n", "`n")
+$script = $script.Replace('__PERSONAS__', ($personas -join ' ')).Replace('__ADDR__', $addr).Replace('__PEOPLE__', ($people -join "`n")).Replace("`r`n", "`n")
 $script | ssh -i $key -o UserKnownHostsFile=$known -o StrictHostKeyChecking=accept-new -o BatchMode=yes "ludius@$ip" 'tr -d '''' | sudo bash -s'  # pwsh ends piped stdin with CRLF
 if ($LASTEXITCODE) { throw "provisioning failed on $vm ($LASTEXITCODE)" }
