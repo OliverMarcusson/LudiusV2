@@ -282,3 +282,35 @@ def test_proposals_may_not_mark_typing_unreadable() -> None:
     assert growth.check(proposal, caps, {}) == []
     proposal.subgoals["write_body"].unreadable_ok = True
     assert any("unreadable_ok not permitted" in p for p in growth.check(proposal, caps, {}))
+
+
+def test_a_blocked_subgoal_waits_without_asking_jev(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from ludius import loop
+    from ludius.loop import GroundTruth, Runner
+    from ludius.tasks import Persona
+    from ludius.v1 import agent_pb2 as pb
+
+    class Agent:
+        vm = "t"
+
+        def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
+            return pb.ObserveResult(snapshot=obs.Snapshot(screen_width=1920, screen_height=1080, dpi=96))
+
+    class NoJev:
+        def decide(self, *_: object, **__: object) -> None:
+            pytest.fail("Jev asked while no input was allowed")
+
+    polls: list[object] = []
+
+    def delivered(*a: object) -> bool:
+        polls.append(a)
+        return len(polls) == 3  # the mail lands on the third look
+
+    monkeypatch.setattr(mail, "delivered", delivered)
+    monkeypatch.setattr(loop, "BLOCKED_WAIT_S", 0)
+    t = cli.load_templates()["outlook_send_mail"]
+    task = Task(t, PlanItem.model_validate(item()), random.Random(0))
+    task.owner, task.started_ms = "aberg", 1
+    runner = Runner(Agent(), NoJev(), Persona(name="t", user="aberg"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    status, steps, _ = runner._subgoal(task, "send_button", task.subgoal("send_button"), budget=12, t0=1e18)  # pyright: ignore[reportPrivateUsage]
+    assert (status, steps, len(polls)) == ("done", 2, 3)

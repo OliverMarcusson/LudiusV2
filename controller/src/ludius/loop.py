@@ -28,6 +28,7 @@ Clock = Literal["realtime", "compressed", "time-jump"]
 DONE_THRESHOLD = 0.85
 OFF_TRACK_THRESHOLD = 0.8
 NEAR_TIE = 0.05  # probability gap within which equivalent options may be sampled
+BLOCKED_WAIT_S = 1.5  # a step with no input allowed: wait this long, then look again (no Jev call)
 
 
 class Agent(Protocol):
@@ -281,6 +282,14 @@ class Runner:
                     steps=step - 1,
                 )
                 return "done", step - 1, ""
+            if blocked := preconditions(sg, snap, task):
+                # No input is allowed (e.g. the mail is sent, its window closed, delivery still on its way): a Jev
+                # call could only pick a blocked action. Wait and look again; the step budget still bounds it.
+                self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
+                               reason=blocked)  # fmt: skip
+                time.sleep(BLOCKED_WAIT_S)
+                snap = self.observe(timeout_ms=10000)
+                continue
             v = view(snap, task, sg, self.policy)
             options = self._recovery_options(v) if recovering else build_options(v, task, sg, self.policy)
             here = fingerprint(snap)
