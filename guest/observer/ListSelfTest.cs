@@ -36,7 +36,7 @@ static class ListSelfTest
         Eq(R(568, 330, 272, 22), Snapshotter.VisibleRow(R(568, 330, 272, 22), content!), "a whole row keeps its bounds");
         Eq(new Rect(), Snapshotter.VisibleRow(R(568, 813, 272, 22), content!), "Dism, 6 px showing, is not a target");
         Eq(23, Snapshotter.VisibleRows(top, content!), "rows shown at the top, header not counted");
-        Eq("items 1–23 shown, list continues", Snapshotter.ListShown(23, 0, 0), "exact ordinal at the top");
+        Eq("items 1–23 shown, list continues", Snapshotter.ListShown(23, 0), "exact ordinal at the top");
 
         // -3 notches: Boot at y 314 (12 px below the header) .. en-US at y 818 (1 px).
         var down = new List<(string, Rect)> { header };
@@ -46,10 +46,14 @@ static class ListSelfTest
         Eq(true, boot.Y + boot.Height / 2 >= 324, "Boot's centre is below the header, not on it");
         Eq(new Rect(), Snapshotter.VisibleRow(R(568, 818, 272, 22), content!), "en-US, 1 px showing, is not a target");
         Eq(24, Snapshotter.VisibleRows(down, content!), "rows shown after scrolling");
-        // ~0.2 % down: not the top, so no "items 1–N". Explorer reported no row count here.
-        Eq("24 items shown, list continues", Snapshotter.ListShown(24, 0.2, 0), "no invented ordinal off the top");
-        Eq("about items 10–33 shown of 4501 (estimated from scroll position), list continues",
-            Snapshotter.ListShown(24, 0.2, 4501), "an estimate says so");
+        // ~0.2 % down: not the top, so no "items 1–N".
+        Eq("24 items shown, list continues", Snapshotter.ListShown(24, 0.2), "no invented ordinal off the top");
+
+        // Measured live (runs/frameworks/20261027-115204-list-fix-live.txt): Explorer's GridRowCount was the realised
+        // rows (24-26 of 4501) at ~0.2 % to ~22 % scroll. ListShown takes no row count, so no "1–N" and no "of N".
+        Eq("23 items shown, list continues", Snapshotter.ListShown(23, 22.5), "off the top, far down");
+        Eq("24 items shown, list continues", Snapshotter.ListShown(24, double.NaN), "unknown percent does not claim the top");
+        Eq("24 items shown, list continues", Snapshotter.ListShown(24, -1), "negative percent does not claim the top");
 
         // +300 back: sl-SI at y 303 (1 px below the header) .. WinBioPlugIns at y 807 (12 px).
         var back = new List<(string, Rect)> { header };
@@ -61,8 +65,7 @@ static class ListSelfTest
         // No header: the whole list is the viewport. Unknown list bounds: no viewport, no clipping, no count.
         Eq(list, Snapshotter.ContentViewport(list, Rows(330, 24)), "no header, whole list");
         Eq(null, Snapshotter.ContentViewport(new Rect(), top), "unknown bounds, unknown viewport");
-        Eq("list continues", Snapshotter.ListShown(0, 0, 0), "no rows identified, no count");
-        Eq("items 1–23 shown of 4501, list continues", Snapshotter.ListShown(23, 0, 4501), "top with a row count");
+        Eq("list continues", Snapshotter.ListShown(0, 0), "no rows identified, no count");
 
         Console.WriteLine(failures == 0 ? "list selftest: pass" : $"list selftest: {failures} failed");
         return failures == 0 ? 0 : 1;

@@ -362,7 +362,7 @@ sealed partial class Snapshotter
         if ((Int(c, UIA_LegacyIAccessibleStatePropertyId) & 0x100) != 0) e.Hints.Add("Enter triggers this"); // STATE_SYSTEM_DEFAULT
         if (Lists.Contains(e.Role) && Bool(c, UIA_ScrollVerticallyScrollablePropertyId) &&
             c.GetCachedPropertyValue(UIA_ScrollVerticalScrollPercentPropertyId) is double pct && pct < 99.5)
-            e.Hints.Add(ListShown(rowsShown, pct, Int(c, UIA_GridRowCountPropertyId)));
+            e.Hints.Add(ListShown(rowsShown, pct));
     }
 
     // Hints from the element's own fields, shared by UIA and Java rows.
@@ -496,19 +496,13 @@ sealed partial class Snapshotter
     }
 
     // Spec: virtualized lists report "items 1–14 shown, list continues". `visible` counts the rows on screen.
-    // The first one is item 1 only when the list is scrolled exactly to the top; elsewhere its ordinal is an
-    // estimate from the scroll position and the list's own row count (GridPattern), labelled as such, or unknown.
-    internal static string ListShown(int visible, double pct, int rows)
+    // The first one is item 1 only when the list is scrolled exactly to the top. Elsewhere the ordinal is unknown:
+    // a virtualizing provider's own row count (GridPattern) is the realised rows, not the list's total, so it is
+    // never used as a total or to estimate an ordinal. An unknown percent (negative, NaN) does not claim the top.
+    internal static string ListShown(int visible, double pct)
     {
         if (visible == 0) return "list continues";
-        var of = rows > visible ? $" of {rows}" : "";
-        if (pct <= 0) return $"items 1–{visible} shown{of}, list continues";
-        if (rows > visible)
-        {
-            var first = (int)Math.Round(pct / 100 * (rows - visible)) + 1;
-            return $"about items {first}–{first + visible - 1} shown of {rows} (estimated from scroll position), list continues";
-        }
-        return $"{visible} items shown, list continues";
+        return pct == 0 ? $"items 1–{visible} shown, list continues" : $"{visible} items shown, list continues";
     }
 
     static List<(string Role, Rect Bounds)> Kids(IUIAutomationElement c)
