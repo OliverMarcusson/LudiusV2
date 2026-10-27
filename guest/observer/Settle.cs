@@ -53,7 +53,7 @@ sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEv
                 uia.RemovePropertyChangedEventHandler(tracked, this);
             }
         }
-        catch (Exception e) when (e is COMException or UnauthorizedAccessException) { }
+        catch (Exception e) when (e is COMException or UnauthorizedAccessException or ArgumentException) { }
         tracked = null;
         trackedHwnd = fg;
         if (fg == 0) return;
@@ -65,7 +65,9 @@ sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEv
                 [UIA_NamePropertyId, UIA_ValueValuePropertyId, UIA_IsEnabledPropertyId, UIA_ToggleToggleStatePropertyId,
                  UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_SelectionItemIsSelectedPropertyId]);
         }
-        catch (Exception e) when (e is COMException or UnauthorizedAccessException) { tracked = null; }
+        // E_INVALIDARG arrives as ArgumentException (Outlook's main window refuses subtree handlers). The window is
+        // not retried until the foreground changes: settling falls back to focus/window events and pixels.
+        catch (Exception e) when (e is COMException or UnauthorizedAccessException or ArgumentException) { tracked = null; }
         Hit();
     }
 
