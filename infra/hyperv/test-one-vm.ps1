@@ -2,6 +2,7 @@
 #  1. Four processes race to activate four Saved VMs; each holds the window between check and "start" open for
 #     0.8 s. Exactly one may start; the rest must be refused by the recheck under the lock.
 #  2. Fail closed: while another process holds the lock, an activation with a 1 s lock timeout is refused.
+#  3. The exempt range server (ludius-srv01) running does not block a persona VM.
 $ErrorActionPreference = 'Stop'
 $dir = Join-Path ([IO.Path]::GetTempPath()) "ludius-onevm-$PID"
 New-Item -ItemType Directory -Force $dir | Out-Null
@@ -50,4 +51,11 @@ $r
 if ($r -notlike 'refused ludius-a : one-VM cap: activation lock busy*' -or
     @(Get-Content $state | ConvertFrom-Json | Where-Object State -eq 'Running').Count) { throw 'lock timeout did not fail closed' }
 'ok: busy lock fails closed'
+# The exempt range server running does not block a persona VM, and is not itself refused.
+@([pscustomobject]@{ Name = 'ludius-srv01'; State = 'Running' }, [pscustomobject]@{ Name = 'ludius-a'; State = 'Saved' }) |
+    ConvertTo-Json | Set-Content $state
+$r = & pwsh -NoProfile -NonInteractive -File $actorFile $lib $state 'ludius-a' 5
+$r
+if ($r -ne 'started ludius-a') { throw 'exempt range server blocked a persona VM' }
+'ok: exempt range server does not count'
 Remove-Item -Recurse $dir

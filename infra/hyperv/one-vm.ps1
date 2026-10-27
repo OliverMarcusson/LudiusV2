@@ -2,7 +2,10 @@
 # Every activation (start, restore) runs through Invoke-OneVm: a host-wide named mutex is held across the recheck and
 # the activation, so two processes (host agent, new-vm.ps1, new-dc.ps1) can't both see an idle host and both start.
 # Fails closed: if the lock can't be taken within -LockSeconds, nothing is activated.
+# Exempt: the range's Linux infrastructure server (Samba AD DC + grommunio mail, owner-approved 27 Oct 2026) runs
+# beside the one persona VM and is neither counted nor capped.
 # Dot-source it: . (Join-Path $PSScriptRoot 'one-vm.ps1'). The host agent dot-sources it too (LUDIUS_ONEVM).
+$OneVmExempt = @('ludius-srv01')
 function Invoke-OneVm([string]$Name, [scriptblock]$Activate, [int]$LockSeconds = 60) {
     $m = [Threading.Mutex]::new($false, 'Global\ludius-vm-activation')
     try {
@@ -10,7 +13,7 @@ function Invoke-OneVm([string]$Name, [scriptblock]$Activate, [int]$LockSeconds =
         catch [Threading.AbandonedMutexException] { $got = $true }  # holder died; we own it now
         if (-not $got) { throw "one-VM cap: activation lock busy for $LockSeconds s; $Name not activated" }
         try {
-            $up = @(Get-VM -Name 'ludius-*' | Where-Object { $_.State -notin 'Off', 'Saved' -and $_.Name -ne $Name })
+            $up = @(Get-VM -Name 'ludius-*' | Where-Object { $_.State -notin 'Off', 'Saved' -and $_.Name -ne $Name -and $_.Name -notin $OneVmExempt })
             if ($up) { throw "one-VM cap: $($up.Name -join ', ') is up; save it before activating $Name" }
             & $Activate
         } finally { $m.ReleaseMutex() }
