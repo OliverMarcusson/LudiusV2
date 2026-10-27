@@ -31,6 +31,7 @@ from ludius.tasks import (
     pixels_window,
     preconditions,
     recipient_reserved,
+    send_confirmation,
 )
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
@@ -200,6 +201,8 @@ class Runner:
                 if e is None or not e.focused:
                     return "the focusing click did not put the keyboard focus in the target field"
                 self._caret_to_end(e, sg)
+            if sg.replace:  # the focus is checked to be the target: the text replaces its old value
+                self.agent.chord(keys.chord("Ctrl+A"))
             self._type(text)
         elif o.kind == "key":
             self.agent.chord(keys.chord(o.keys))
@@ -246,7 +249,7 @@ class Runner:
         t0 = time.monotonic()
         steps = 0
         done: list[str] = []
-        task.owner = self.persona.user
+        task.owner, task.tz = self.persona.user, self.persona.tz
         task.started_ms = self.observe().guest_time_ms or int(time.time() * 1000)  # the guest's clock, like the range's
         if task.template.sends_mail:  # by identity: a rewound guest clock makes earlier mail look recent
             task.mail_before = mail_baseline(task)
@@ -320,6 +323,7 @@ class Runner:
         dead: dict[tuple[Any, ...], set[tuple[str, str]]] = {}
         snap = self.observe()
         seen = {fingerprint(snap)}
+        guarded = False  # the last input passed this subgoal's require/forbid checks (send_confirmation)
         for step in range(1, budget + 1):
             if time.monotonic() - t0 > task.template.budget_minutes * 60:
                 return "failed", step - 1, "time budget"
@@ -353,7 +357,17 @@ class Runner:
                 self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
                                reason=OVERWRITE_REASON)  # fmt: skip
                 return "failed", step - 1, OVERWRITE_REASON
-            if blocked := preconditions(sg, snap, task):
+            if (blocked := preconditions(sg, snap, task)) and guarded and (ok := send_confirmation(snap, task)):
+                # The guarded send's own prompt (SEND_CONFIRM), right after the input the contract allowed: answer
+                # it once, without Jev.
+                guarded = False
+                self._move_to(ok)
+                self.agent.click()
+                self.log.write(event="confirm", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
+                               element=ok.name)  # fmt: skip
+                snap = self.observe(timeout_ms=10000)
+                continue
+            if blocked:
                 # No input is allowed (e.g. the mail is sent, its window closed, delivery still on its way): a Jev
                 # call could only pick a blocked action. Wait and look again; the step budget still bounds it.
                 self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
@@ -407,6 +421,7 @@ class Runner:
             self.think()
             host_ms = _now()
             refused = self.act(chosen, task, sg)
+            guarded = bool(sg.require) and not refused and chosen.kind != "rescan"  # the contract held for it
             snap = self.observe(timeout_ms=10000 if chosen.kind == "rescan" else 5000)
             after = fingerprint(snap)
             changed, revisit = after != here, after in seen
@@ -492,18 +507,35 @@ class Runner:
             task=task.template.task,
         )
         apps = {p.lower() for p in task.template.processes}
-        for _ in range(4):
+        keyed: tuple[Any, ...] | None = None  # the screen a close key was last pressed on
+        for _ in range(6):  # a meeting: Don't Send, close, Don't save changes, OK
             snap = self.observe()
             fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
+            fgi = next((i for i, w in enumerate(snap.windows) if w is fg), None)
             discard = next(
-                (e for e in snap.elements if re.fullmatch(r"(don'?t save|no|discard)", e.name.replace("&", ""), re.I)),
+                (e for e in snap.elements
+                 if re.fullmatch(r"(don'?t save( changes)?|don'?t send|no|discard)", e.name.replace("&", ""), re.I)),
                 None,
-            )
+            )  # fmt: skip
+            if discard is not None and discard.role == "radio button" and discard.selected:
+                # Outlook's meeting close prompt: "Don't save changes" is a choice, confirmed with the dialog's OK
+                # (its other choices save or send the meeting; Enter would confirm whichever is selected).
+                discard = next((e for e in snap.elements if e.window == discard.window and e.role == "button"
+                                and e.name.replace("&", "") == "OK"), None)  # fmt: skip
+            if discard is None and keyed == fingerprint(snap):
+                # A modal that ignores Alt+F4 and Esc (Outlook's "send without a location?" has only Don't Send and
+                # Send Anyway): leave it by its own Cancel or Close button. Names match exactly, never a send.
+                discard = next((e for e in snap.elements if e.window == fgi and e.role == "button"
+                                and re.fullmatch(r"cancel|close", e.name.replace("&", ""), re.I)), None)  # fmt: skip
+                if discard is None:
+                    break
+            keyed = None
             if discard is not None:
                 self._move_to(discard)
                 self.agent.click()
             elif fg is not None and fg.process_name.lower() in apps and alt_f4_safe(fg):  # not the desktop
                 self.agent.chord(keys.chord("Esc") if fg.kind != obs.Window.FOREGROUND else keys.chord("Alt+F4"))
+                keyed = fingerprint(snap)
             else:
                 return
             time.sleep(0.3)

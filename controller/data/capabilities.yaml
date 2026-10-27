@@ -29,7 +29,7 @@ apps:
   - name: outlook
     process: outlook.exe
     start_query: outlook
-    features: [send a mail to a colleague, reply to a mail, read the inbox, file a mail in a folder]
+    features: [send a mail to a colleague, reply to a mail, invite a colleague to a meeting, read the inbox, file a mail in a folder]
   - name: excel
     process: excel.exe
     start_query: excel

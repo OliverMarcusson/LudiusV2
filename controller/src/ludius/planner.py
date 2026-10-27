@@ -45,8 +45,11 @@ _REFERS_TO_EXISTING = {
     "explorer_rename_move": {"file_name", "folder_name"},  # acts on these, creates new_name only
     "outlook_send_mail": {"to", "to_name"},
     "outlook_reply_mail": {"to", "to_name", "subject"},
+    "outlook_send_invite": {"to", "to_name"},
 }
 _DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)  # Windows reserved, any extension
+# A meeting (date, start, end): a weekday inside the working day, of a sensible length, soon after the plan's day.
+WORK_DAY, MEETING_MINUTES, MEETING_DAYS_AHEAD = ("08:00", "17:00"), (15, 120), 14
 SHOWN_EXISTING = 80  # existing names listed in the prompt; validation checks all of them
 
 
@@ -231,7 +234,7 @@ def plan_day(
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
     fill_recipient_names(draft.items, people)
     rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                       mail_threads, people, persona.user)  # fmt: skip
+                       mail_threads, people, persona.user, date.isoformat())  # fmt: skip
     missing = sorted(set(followups) - {it.followup for it in draft.items})
     if rejects or missing:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
@@ -241,7 +244,7 @@ def plan_day(
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
         fill_recipient_names(draft.items, people)
         rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                           mail_threads, people, persona.user)  # fmt: skip
+                           mail_threads, people, persona.user, date.isoformat())  # fmt: skip
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     missing = sorted(set(followups) - {it.followup for it in items})
@@ -270,10 +273,11 @@ def validate(
     mail_threads: dict[str, tuple[str, str]] | None = None,
     people: dict[str, str] | None = None,
     user: str = "",
+    day: str = "",
 ) -> list[tuple[int, str]]:
     """Rejected items with the reason. A reply must answer a mail follow-up in `mail_threads` from its `to`
     colleague with its subject; without mail threads no reply is valid. A mail's to_name must be exactly the
-    narrative name (`people`, account -> name) of its `to` colleague."""
+    narrative name (`people`, account -> name) of its `to` colleague. A meeting's date follows the plan's `day`."""
     rejects: list[tuple[int, str]] = []
     seen = list(history)
     taken = taken_names(existing)  # grows with each accepted item: a second item with the same name would overwrite
@@ -281,6 +285,8 @@ def validate(
         why = _check_item(it, templates, seen, policy, user)
         if not why:
             why = _recipient(it, colleagues or set[str](), people or {})
+        if not why:
+            why = _meeting_day(it, day)
         if not why and it.template == REPLY:
             why = _reply_thread(it, mail_threads or {})
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
@@ -330,6 +336,35 @@ def _recipient(it: PlanItem, colleagues: set[str], people: dict[str, str]) -> st
         return f"to_name {name!r} is not {user!r}'s name from the company story"
     if it.handoff and it.handoff != user:
         return f"handoff {it.handoff!r} must be the mail's recipient {user!r}"
+    return None
+
+
+def _meeting(values: dict[str, str]) -> str | None:
+    """A meeting's date is a weekday (YYYY-MM-DD); start and end (HH:MM) lie in WORK_DAY, MEETING_MINUTES apart."""
+    try:
+        date = dt.date.fromisoformat(values["date"])
+    except ValueError:
+        return "date: must be YYYY-MM-DD"
+    if date.weekday() >= 5 or len(values["date"]) != 10:
+        return "date: must be a weekday (Monday-Friday) as YYYY-MM-DD"
+    start, end = values.get("start", ""), values.get("end", "")
+    if not (_HHMM.match(start) and _HHMM.match(end)):
+        return "start and end: must be HH:MM"
+    minutes = (int(end[:2]) - int(start[:2])) * 60 + int(end[3:]) - int(start[3:])
+    if not (WORK_DAY[0] <= start and end <= WORK_DAY[1]) or not MEETING_MINUTES[0] <= minutes <= MEETING_MINUTES[1]:
+        return (
+            f"a meeting runs {MEETING_MINUTES[0]}-{MEETING_MINUTES[1]} minutes between {WORK_DAY[0]} and {WORK_DAY[1]}"
+        )
+    return None
+
+
+def _meeting_day(it: PlanItem, day: str) -> str | None:
+    """A meeting is planned after the plan's day (YYYY-MM-DD) and at most MEETING_DAYS_AHEAD days after it."""
+    date = {**it.params, **it.content}.get("date")
+    if date is None or not day:
+        return None
+    if not day < date <= (dt.date.fromisoformat(day) + dt.timedelta(days=MEETING_DAYS_AHEAD)).isoformat():
+        return f"date: a meeting is set after {day} and within {MEETING_DAYS_AHEAD} days of it"
     return None
 
 
@@ -387,6 +422,8 @@ def item_problem(it: PlanItem, templates: dict[str, Template], policy: Policy, u
     t = templates.get(it.template)
     if t is None:
         return f"unknown template {it.template!r}"
+    if "date" in {**it.params, **it.content} and (why := _meeting({**it.params, **it.content})):
+        return why  # first: the template's checks format the date
     try:
         task = Task(t, it, random.Random(0))
     except ValueError as e:
@@ -643,7 +680,8 @@ class World:
 
 def load_plan(path: Path) -> DayPlan:
     """Every entry point (day, worker, nightly reuse, world state) loads plans here, so each item's own checks
-    (item_problem, under the LUDIUS_SCENARIO policy) and mail recipients are checked here too: each mail item's `to`
+    (item_problem, under the LUDIUS_SCENARIO policy; a meeting's date against the plan's) and mail recipients are
+    checked here too: each mail or meeting item's `to`
     must be a colleague and its to_name exactly their name in the narrative beside the plan
     (<root>/world/narrative.yaml for <root>/plans/<plan>.yaml). No narrative: a plan with mail is refused.
     """
@@ -652,7 +690,8 @@ def load_plan(path: Path) -> DayPlan:
     # An unknown template can't be played at all; validate() reports it with the role's template set.
     policy, templates = Policy.from_env(), _templates()
     for it in plan.items:
-        if it.template in templates and (why := item_problem(it, templates, policy, plan.persona)):
+        if it.template in templates and (why := item_problem(it, templates, policy, plan.persona)
+                                         or _meeting_day(it, plan.date)):  # fmt: skip
             raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
     mail = [it for it in plan.items if "to" in {**it.params, **it.content}]
     if mail:

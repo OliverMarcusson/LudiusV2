@@ -6,10 +6,12 @@ parameters, from the planner or a hand-written YAML file.
 
 from __future__ import annotations
 
+import datetime as dt
 import random
 import re
 from pathlib import Path
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -77,6 +79,21 @@ class MailCheck(Strict):
     above_quote: bool = False  # a reply: the body must come before the quoted original's From:/Sent: header
 
 
+class InviteCheck(Strict):
+    """A meeting the persona organised and sent (ludius.mail.invited), checked on the range server and never in the
+    UI: the request in the attendee's Inbox and the appointment in the persona's Calendar, both new since the task
+    started, with this subject, one attendee and the planned start and end. `date` (YYYY-MM-DD) and the HH:MM times
+    are local to the persona's time zone (Persona.tz, the guest's), converted to UTC explicitly. `body`, when
+    planned, is contained in the request."""
+
+    mailbox: str = "{to}"
+    subject: str = "{subject}"
+    body: str = "{body}"
+    date: str = "{date}"
+    start: str = "{start}"
+    end: str = "{end}"
+
+
 class FileCheck(Strict):
     """A file the task creates, read on the guest and never in the UI (ludius.guestfile). It declares the template's
     write: `path` is profile-relative in a noise folder. The runner refuses to start the task if the file exists
@@ -107,6 +124,7 @@ class Done(Strict):
     typed: bool = False
     pixels: PixelsCheck | None = None
     mail: MailCheck | None = None
+    invite: InviteCheck | None = None
     file: FileCheck | None = None
 
 
@@ -130,6 +148,9 @@ class Subgoal(Strict):
     # Where a click in a document leaves the caret: at the end (writers append), or at the start (a reply goes
     # above the quoted mail).
     caret: Literal["end", "start"] = "end"
+    # The target holds a value the typed text replaces (Outlook's prefilled meeting date and times): select all
+    # (Ctrl+A) in the focused field right before typing, or the text is inserted into the old value.
+    replace: bool = False
     forbid: list[ElementCheck] = Field(default_factory=list[ElementCheck])
     # Elements never offered as a target in this subgoal, e.g. Outlook's Info Bar, whose click opens the
     # conversation's latest message and took the caret away from the reply being typed.
@@ -161,6 +182,37 @@ SEND_FORBID = [ElementCheck(name="^Cc$", value=r"\S"), ElementCheck(name="^Bcc$"
 # Outlook's notice bar ("You are not responding to the latest message..."): its click opens that message and took
 # the caret away from the reply being typed. Never a target in a mail-sending task.
 SEND_AVOID = [ElementCheck(role="edit", name="^Info Bar$")]
+# The same contract on Outlook's meeting form, which has Required and Optional instead of To, Cc and Bcc: Required
+# exactly the planned colleague, Optional and Location empty (a room or resource picked from the address book lands
+# in Location and is invited too; a focused Location is hidden behind its suggestions popup, so typing there can't
+# be checked: run3). The buttons that open the address book, room finder or location picker, the Scheduling
+# Assistant and the form's data items (its attendee grid adds attendees, its date cells move the meeting: run2,
+# run1) are never targets: Jev never types an attendee, so those are the only ways to add one.
+MEETING_REQUIRE = [
+    ElementCheck(role="edit", name="^Required$", value=SEND_REQUIRE[0].value),
+    ElementCheck(role="edit", name="^Optional$", value="^$"),
+    ElementCheck(role="edit", name="^Location$", value="^$"),
+]
+MEETING_FORBID = [ElementCheck(name="^(Optional|Location|Resources)$", value=r"\S")]
+MEETING_AVOID = [
+    *SEND_AVOID,
+    ElementCheck(
+        role="button", name="^(Required|Optional|Location|Rooms|Room Finder|Address Book|Scheduling Assistant)$"
+    ),
+    ElementCheck(name="^Scheduling Assistant$"),
+    ElementCheck(role="data item"),
+]
+# Prompts the guarded send itself raises, answered once by code with this button: only right after an input that
+# passed the contract (the form is modal-blocked behind them, so it is the checked form that is sent). Run1: Outlook
+# asks before sending a meeting without a location.
+SEND_CONFIRM: dict[str, list[tuple[re.Pattern[str], str]]] = {
+    "mail": [],
+    "meeting": [(re.compile(r"Do you want to send this meeting request without a location\?"), "Send Anyway")],
+}
+SEND_FORMS = {
+    "mail": (SEND_REQUIRE, SEND_FORBID, SEND_AVOID),
+    "meeting": (MEETING_REQUIRE, MEETING_FORBID, MEETING_AVOID),
+}
 
 
 NAME_PARAMS = {"file_name", "folder_name", "new_name"}  # parameters that name a file or folder in the profile
@@ -187,6 +239,7 @@ class Template(Strict):
     resembles: str = ""  # signal type this legitimate work looks like (powershell, rdp, macro); spec section 6
     pixels: Pixels | None = None  # pixels-only mode opt-in; without it the task gets no rows in that mode
     sends_mail: bool = False  # the shared send contract applies (SEND_REQUIRE above); required with a mail check
+    send_form: Literal["mail", "meeting"] = "mail"  # which form's fields the contract reads (SEND_FORMS)
     # What the task creates, profile-relative in a noise folder, as the app writes it (with the extension it adds;
     # ".*" for one it keeps, an Explorer rename). The shared reservation check (file_reserved) resolves these.
     writes: list[str] = Field(default_factory=list[str])
@@ -212,17 +265,21 @@ class Template(Strict):
 
     @model_validator(mode="after")
     def _send_contract(self) -> Template:
-        sends = [n for n, sg in self.subgoals.items() if sg.done and sg.done.mail]
+        sends = [n for n, sg in self.subgoals.items() if sg.done and (sg.done.mail or sg.done.invite)]
         if sends and not self.sends_mail:
-            raise ValueError(f"{self.task}: a mail done check needs sends_mail (the shared send contract)")
+            raise ValueError(f"{self.task}: a mail or meeting done check needs sends_mail (the shared send contract)")
+        wrong = "invite" if self.send_form == "mail" else "mail"
+        if any(getattr(sg.done, wrong) for sg in self.subgoals.values() if sg.done):
+            raise ValueError(f"{self.task}: a {wrong} done check does not fit send_form {self.send_form!r}")
         if self.sends_mail:
             if not sends:
                 raise ValueError(f"{self.task}: sends_mail without a subgoal whose done check is a mail check")
+            require, forbid, avoid = SEND_FORMS[self.send_form]
             for name, sg in self.subgoals.items():
-                sg.avoid = [*SEND_AVOID, *sg.avoid]
+                sg.avoid = [*avoid, *sg.avoid]
                 if name in sends:
-                    sg.require = [*SEND_REQUIRE, *sg.require]
-                    sg.forbid = [*SEND_FORBID, *sg.forbid]
+                    sg.require = [*require, *sg.require]
+                    sg.forbid = [*forbid, *sg.forbid]
         return self
 
     @model_validator(mode="after")
@@ -258,6 +315,7 @@ class Persona(Strict):
     think_mean_s: float = 1.6  # pause before each action in realtime mode
     pointer_ms: tuple[int, int] = (180, 520)
     risk_profile: list[str] = Field(default_factory=list[str])  # signal-like templates that fit the role
+    tz: str = "Europe/Stockholm"  # IANA zone of the persona's guest: what typed dates and times mean (meetings)
 
 
 class TaskInstance(Strict):
@@ -273,13 +331,15 @@ class Task:
 
     def __init__(self, template: Template, inst: TaskInstance, rng: random.Random) -> None:
         have = {**template.defaults, **inst.params, **inst.content}
-        missing = [p for p in template.params if not have.get(p)]
+        # A parameter with a default is optional (a meeting's body); a subgoal typing it is skipped when it is empty.
+        missing = [p for p in template.params if not have.get(p) and p not in template.defaults]
         if missing:
             raise ValueError(f"{template.task}: missing parameters {missing}")
         self.template = template
         self.inst = inst
         self.owner = ""  # persona account and task start (guest clock, Unix ms): set by the runner
         self.started_ms = 0
+        self.tz = "Europe/Stockholm"  # the persona's time zone (Persona.tz), set by the runner
         self.mail_before: mail.Seen | None = None  # mail present at task start (mail_baseline), set by the runner
         self.files_absent: frozenset[str] | None = None  # file checks' paths proven absent at start (file_baseline)
         idx = (
@@ -288,12 +348,17 @@ class Task:
             else rng.choices(range(len(template.variants)), template.weights)[0]
         )
         self.variant = idx
-        self.subgoal_names = template.variants[idx]
+        skip = {
+            n for n, sg in template.subgoals.items() if sg.text and sg.text in template.defaults and not have[sg.text]
+        }
+        self.subgoal_names = [n for n in template.variants[idx] if n not in skip]
         # Mistake variants (spec section 6): `{p}_typo` is the value with one stray neighbouring key at the end,
         # typed first and then fixed (Backspace, rename) by a later subgoal.
         self.values = have | {f"{k}_typo": v + _neighbour(v[-1]) for k, v in have.items() if v and "\n" not in v}
         # `{p}_enter`: the value ending in one Enter, so a spreadsheet's last cell is committed, not left in edit mode.
         self.values |= {f"{k}_enter": v.rstrip("\n") + "\n" for k, v in have.items() if v}
+        # `{p}_dmy`: an ISO date as the en-GB guest types and shows it (Outlook reads 2026-11-05 as 11 May).
+        self.values |= {f"{k}_dmy": f"{v[8:]}/{v[5:7]}/{v[:4]}" for k, v in have.items() if ISO_DATE.fullmatch(v)}
         # Pixels read one row per line and a long line is cut at the window edge: `{p}_head` is the first
         # non-blank line, capped, for visible-text checks. A blank value has none, so its check can't match.
         self.values |= {f"{k}_head": next(x.strip() for x in v.splitlines() if x.strip())[:HEAD]
@@ -317,6 +382,7 @@ class Task:
         return self.values.get(sg.text) if sg.text else sg.search or None
 
 
+ISO_DATE = re.compile(r"\d{4}-\d\d-\d\d")
 _ROWS = ["qwertyuiop", "asdfghjkl", "zxcvbnm"]
 
 
@@ -398,7 +464,9 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
     """True/False when the subgoal has a code check, None when it has none (Jev decides)."""
     if done is None:
         return None
-    if (done.mail or done.file) and not (done.window or done.foreground or done.element or done.typed or done.pixels):
+    if (done.mail or done.invite or done.file) and not (
+        done.window or done.foreground or done.element or done.typed or done.pixels
+    ):
         return _outside_ok(done, task)
     on_pixels = any(pixels_window(w) for w in snap.windows)
     if done.pixels and not on_pixels and not (done.window or done.foreground or done.element or done.typed):
@@ -435,7 +503,8 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
 
 def _outside_ok(done: Done, task: Task) -> bool:
     """The checks read outside the UI (range server, guest disk); last, since they cost a remote call."""
-    return (done.mail is None or _mail_ok(done.mail, task)) and (done.file is None or _file_ok(done.file, task))
+    return ((done.mail is None or _mail_ok(done.mail, task)) and (done.invite is None or _invite_ok(done.invite, task))
+            and (done.file is None or _file_ok(done.file, task)))  # fmt: skip
 
 
 def element_matches(e: obs.Element, c: ElementCheck, task: Task, flags: int = re.I) -> bool:
@@ -481,17 +550,55 @@ def _mail_ok(c: MailCheck, task: Task) -> bool:
                           task.started_ms, c.above_quote, task.mail_before)  # fmt: skip
 
 
+def local_ms(date: str, hhmm: str, tz: str) -> int:
+    """A local date and time in the IANA zone `tz` as Unix ms (UTC)."""
+    return int(dt.datetime.fromisoformat(f"{date}T{hhmm}").replace(tzinfo=ZoneInfo(tz)).timestamp() * 1000)
+
+
+def _invite_ok(c: InviteCheck, task: Task) -> bool:
+    if not task.owner:
+        return False
+    date = task.fmt(c.date)
+    return mail.invited(task.fmt(c.mailbox), task.fmt(c.subject), task.fmt(c.body), f"{task.owner}@{mail.DOMAIN}",
+                        task.started_ms, local_ms(date, task.fmt(c.start), task.tz),
+                        local_ms(date, task.fmt(c.end), task.tz), task.mail_before)  # fmt: skip
+
+
+def _sent_check(done: Done | None) -> tuple[str, str, str, str] | None:
+    """(mailbox, recipient's folder, subject, sender's own folder) of a subgoal's mail or meeting done check."""
+    if done and done.mail:
+        return done.mail.mailbox, done.mail.folder, done.mail.subject, "sent"
+    if done and done.invite:
+        return done.invite.mailbox, "inbox", done.invite.subject, "calendar"
+    return None
+
+
 def mail_baseline(task: Task) -> mail.Seen | None:
-    """What every mail done check of the task could already match at its start (mail.present); None if unread."""
+    """What every mail or meeting done check of the task could already match at its start (mail.present); None if
+    unread."""
     sender = f"{task.owner}@{mail.DOMAIN}"
     seen: set[tuple[str, str, int]] = set()
     for sg in task.template.subgoals.values():
-        if sg.done and (c := sg.done.mail):
-            found = mail.present(task.fmt(c.mailbox), c.folder, task.fmt(c.subject), sender)
+        if c := _sent_check(sg.done):
+            found = mail.present(task.fmt(c[0]), c[1], task.fmt(c[2]), sender, c[3])
             if found is None:
                 return None
             seen |= found
     return frozenset(seen)
+
+
+def send_confirmation(snap: obs.Snapshot, task: Task) -> obs.Element | None:
+    """The button that confirms a prompt the guarded send raised (SEND_CONFIRM), in a foreground window of the
+    task's app; None for any other screen. The caller clicks it only right after an input the contract allowed."""
+    fg = next((i for i, w in enumerate(snap.windows) if w.kind == obs.Window.FOREGROUND), None)
+    apps = {p.lower() for p in task.template.processes}
+    if fg is None or snap.windows[fg].process_name.lower() not in apps:
+        return None
+    mine = [e for e in snap.elements if e.window == fg]
+    for text, button in SEND_CONFIRM[task.template.send_form]:
+        if any(text.fullmatch(e.name) or text.fullmatch(e.value) for e in mine):
+            return next((e for e in mine if e.role == "button" and e.name.replace("&", "") == button), None)
+    return None
 
 
 RESERVED_RECIPIENT = "precondition: the planned recipient is scenario-reserved"
@@ -500,7 +607,7 @@ RESERVED_RECIPIENT = "precondition: the planned recipient is scenario-reserved"
 def recipient_reserved(sg: Subgoal, task: Task, policy: Any) -> bool:
     """The shared send contract's policy check, at send time: a plan made before a mailbox became reserved must
     not send to it. `policy` is a ludius.policy.Policy (which imports this module)."""
-    return bool(sg.done and sg.done.mail and policy.reserved(task.fmt(sg.done.mail.mailbox)))
+    return bool((c := _sent_check(sg.done)) and policy.reserved(task.fmt(c[0])))
 
 
 def write_paths(task: Task) -> list[str]:

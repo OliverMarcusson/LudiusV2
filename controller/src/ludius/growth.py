@@ -81,7 +81,7 @@ def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Templa
     if bad := [p for p in t.processes if p.lower() not in allowed]:
         problems.append(f"processes outside the catalog: {bad}")
     keys = set(t.params) | set(t.defaults)
-    keys |= {f"{k}_{d}" for k in keys for d in ("typo", "enter")}  # variants derived in Task
+    keys |= {f"{k}_{d}" for k in keys for d in ("typo", "enter", "dmy")}  # variants derived in Task
     if missing := [p for p in t.params if not t.example.get(p)]:
         problems.append(f"example lacks {missing}")
     open_ended = 0
