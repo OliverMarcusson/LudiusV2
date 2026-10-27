@@ -122,6 +122,24 @@ def build_state(v: StepView, task: Task, sg: Subgoal, history: list[str], last_r
     return state
 
 
+def search_target(e: obs.Element | None, snap: obs.Snapshot, task: Task) -> bool:
+    """Where a subgoal's template `search` text may go: an enabled, writable edit field in the foreground
+    window of one of the task's own apps, never the keyboard focus unseen (it could be a password field, a reserved
+    field or another app). The element's policy (password, reserved) is checked by the caller as for planner text."""
+    if (
+        e is None
+        or e.role != "edit"
+        or e.read_only
+        or not e.enabled
+        or e.password
+        or not 0 <= e.window < len(snap.windows)
+    ):
+        return False
+    w = snap.windows[e.window]
+    apps = {p.lower() for p in task.template.processes}
+    return w.kind == obs.Window.FOREGROUND and w.process_name.lower() in apps and not pixels_window(w)
+
+
 def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[Option]:
     opts: list[Option] = []
 
@@ -148,11 +166,12 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
             and not e.read_only
             and e.enabled
             and policy.text_allowed(content, e) is None
+            and (sg.text or search_target(e, v.snapshot, task))
         ):
             text = f"type the text to enter into [{e.id}] {e.role} '{e.name}'"
             add("type", text, element=e, content=sg.text or "", literal=literal)
     elements = len(opts)
-    if content is not None and policy.text_allowed(content, None) is None:
+    if sg.text and content is not None and policy.text_allowed(content, None) is None:
         # Where focus already is (Start search, a field without a usable tree).
         add("type", "type the text to enter at the keyboard focus", content=sg.text or "", literal=literal)
     focus = next((e for e in v.allowed if e.focused and e.role in EDITABLE and not e.read_only), None)

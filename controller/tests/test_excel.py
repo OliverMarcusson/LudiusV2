@@ -246,7 +246,7 @@ def run2_snap() -> obs.Snapshot:
                                              ("menu item", "Type to search and use the up and down arrow keys to "
                                               "navigate", "collapsed"), ("button", "File Tab", ""),
                                              ("button", "Save", ""), ("data item", "A5", "")], start=1):  # fmt: skip
-        e = s.elements.add(id=i, role=role, name=name, value=value, window=0)
+        e = s.elements.add(id=i, role=role, name=name, value=value, window=0, enabled=True)
         e.bounds.width = e.bounds.height = 20
     return s
 
@@ -299,3 +299,41 @@ def test_keys_survive_the_option_limit(task: tuple[Task, dict[str, Any]]) -> Non
     assert len(opts) == MAX_OPTIONS and [o.key for o in opts] == [f"o{i}" for i in range(1, MAX_OPTIONS + 1)]
     texts = [o.text for o in opts]
     assert "press F12" in texts and "press Esc" in texts and opts[-1].kind == "rescan"
+
+
+def test_search_text_only_into_a_checked_field_of_the_task_app(task: tuple[Task, dict[str, Any]]) -> None:
+    """Sol repros: template text typed at an unseen focus reached a password field, a reserved field, another app."""
+    from ludius.loop import Runner
+    from ludius.options import Option
+
+    tk, _ = task
+    nav = tk.subgoal("save_as").model_copy(update={"search": "save as"})
+
+    def snap(process: str, name: str, password: bool = False) -> obs.Snapshot:
+        s = obs.Snapshot()
+        s.windows.add(process_name=process, title="w", kind=obs.Window.FOREGROUND)
+        e = s.elements.add(id=1, role="edit", name=name, window=0, focused=True, enabled=True, password=password)
+        e.bounds.width = e.bounds.height = 20
+        return s
+
+    def typed(s: obs.Snapshot, p: Policy) -> list[str]:
+        return [o.text for o in build_options(view(s, tk, nav, p), tk, nav, p) if o.kind == "type"]
+
+    assert typed(snap("EXCEL.EXE", "Microsoft search"), Policy()) == [
+        "type the text to enter into [1] edit 'Microsoft search'"
+    ]  # bound to the field, never "at the keyboard focus"
+    assert typed(snap("EXCEL.EXE", "Password", password=True), Policy()) == []
+    assert typed(snap("EXCEL.EXE", "q4 payroll"), Policy(reserved_names=["q4 payroll"])) == []
+    assert typed(snap("notepad.exe", "Text editor"), Policy()) == []
+    # Defense in depth: the runner's post-check refuses it unbound or in another app, whatever the option list says.
+    r = Runner.__new__(Runner)
+    r.policy = Policy()
+    post_check = r._post_check  # pyright: ignore[reportPrivateUsage]
+    for s, e in [(snap("EXCEL.EXE", "Microsoft search"), None), (snap("notepad.exe", "x"), "elem")]:
+        r.snap = s
+        o = Option("o1", "type", "t", element=s.elements[0] if e else None, literal="save as")
+        assert post_check(o, nav, tk) is not None
+    r.snap = snap("EXCEL.EXE", "Microsoft search")
+    assert post_check(Option("o1", "type", "t", element=r.snap.elements[0], literal="save as"), nav, tk) is None
+    with pytest.raises(ValueError):
+        tasks.Subgoal(goal="g", keys=["F1"] * 17)  # capped, so keys always fit beside Jev's option limit

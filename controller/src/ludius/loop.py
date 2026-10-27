@@ -18,7 +18,7 @@ from typing import Any, Literal, Protocol
 from ludius import keys
 from ludius.assist import Assist
 from ludius.jev import Decision
-from ludius.options import Option, StepView, build_options, build_state, describe, view
+from ludius.options import Option, StepView, build_options, build_state, describe, search_target, view
 from ludius.policy import OVERWRITE_REASON, Policy, alt_f4_safe, overwrite_prompt
 from ludius.tasks import (
     RESERVED_RECIPIENT,
@@ -420,6 +420,8 @@ class Runner:
         if o.kind == "type":
             if overwrite_prompt(self.snap):
                 return OVERWRITE_REASON
+            if not sg.text and not sg.copy_text and not search_target(o.element, self.snap, task):
+                return "template text goes into an edit field of the task's foreground app only"
             return self.policy.text_allowed(o.literal or task.values[o.content], o.element)
         if o.kind == "key":
             return self.policy.key_allowed(o.keys, self.snap)

@@ -117,7 +117,7 @@ class Subgoal(Strict):
     # search box: the text to type in a subgoal without `text`. One printable ASCII line, no Enter; the scenario
     # policy checks it at plan load (planner.item_problem) and on every step (options, loop._post_check).
     search: str = Field(default="", pattern=r"^[ -~]{0,40}$")
-    keys: list[str] = Field(default_factory=list[str])  # extra shortcuts worth offering
+    keys: list[str] = Field(default_factory=list[str], max_length=16)  # extra shortcuts; capped: always offered
     launch: bool = False  # may use the shell (Start, taskbar, Run) to open apps
     copy_text: bool = False  # may copy text visible on screen into the focused field (type:copy[n])
     allow_destructive: list[str] = Field(default_factory=list[str])  # element names (regex) allowed despite the hint
