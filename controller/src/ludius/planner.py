@@ -317,9 +317,10 @@ class World:
     def day_log(self, user: str, date: str) -> Path:
         return self.root / "days" / f"{date}-{user}.jsonl"
 
-    def save_plan(self, plan: DayPlan, templates: dict[str, Template]) -> Path:
+    def save_plan(self, plan: DayPlan, templates: dict[str, Template], *, new: bool = False) -> Path:
+        """new=True never replaces an existing plan file (FileExistsError), even one written concurrently."""
         path = self.plan_path(plan.persona, plan.date)
-        _dump(path, plan.model_dump(exclude_defaults=True))
+        _dump(path, plan.model_dump(exclude_defaults=True), mode="x" if new else "w")
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
         with self.history_path.open("a", encoding="utf-8") as f:
             for it in plan.items:
@@ -387,6 +388,7 @@ def load_plan(path: Path) -> DayPlan:
     return DayPlan.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
-def _dump(path: Path, data: Any) -> None:
+def _dump(path: Path, data: Any, mode: str = "w") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=110), encoding="utf-8")
+    with path.open(mode, encoding="utf-8") as f:
+        f.write(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=110))

@@ -20,11 +20,12 @@ import time
 from collections.abc import Generator
 from contextlib import ExitStack, closing, contextmanager, suppress
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 from google.protobuf import json_format
 
-from ludius import admission, artifacts, canary, growth, keys, metrics, planner, revision, timeline, visual, world_state
+from ludius import admission, artifacts, canary, growth, keys, metrics, planner, revision, timeline, visual
 from ludius.assist import Assist
 from ludius.clocklease import Lease
 from ludius.day import DayRunner, run_task
@@ -37,6 +38,9 @@ from ludius.policy import Policy
 from ludius.session import Session
 from ludius.tasks import Persona, Task, TaskInstance, Template, load_template, load_yaml
 from ludius.v1 import agent_pb2 as pb
+
+if TYPE_CHECKING:
+    from ludius import nightly
 
 ROOT = Path(__file__).resolve().parents[3]
 DATA = ROOT / "controller" / "data"
@@ -194,28 +198,20 @@ def cmd_plan(args: argparse.Namespace) -> int:
                 f"{n.company} ({n.city}): {len(n.people)} people, {len(n.events)} events -> {world.save_narrative(n)}"
             )
         else:
+            from ludius import nightly  # the same generation the nightly planning worker runs
+
             persona = load_persona(args.persona)
-            templates = load_templates()
-            personas = [load_yaml(Persona, p) for p in sorted((DATA / "personas").glob("*.yaml"))]
+            src = plan_sources()
+            scenario = planner.Scenario.parse(args.scenario) if args.scenario else None
             try:  # weekly revision first, so this plan sees the revised story; one planner at a time
-                auto = revision.revise_if_due(llm, world, personas, date)
+                plan, rejects, auto = nightly.generate_day(llm, world, persona, src, date, scenario)
             except revision.RevisionBusy as e:
                 print(e, file=sys.stderr)
                 return 2
             print(f"narrative: {auto.note}")
             for d in auto.dropped:
                 print(f"  dropped {d}")
-            narrative = auto.narrative
-            state = world_state.build(world, narrative, personas, date)
-            world_state.save(state, world)
-            context = "\n".join(x for x in (world.summary(persona.user, date),
-                                            world_state.brief(state, persona.user, date)) if x)  # fmt: skip
-            plan, rejects = planner.plan_day(
-                llm, narrative, persona, date, templates, context, world.history(persona.user),
-                policy=make_policy(), scenario=planner.Scenario.parse(args.scenario) if args.scenario else None,
-                followups={f.id: f.about for f in world_state.due(state, persona.user, date)},
-            )  # fmt: skip
-            path = world.save_plan(plan, templates)
+            path = world.save_plan(plan, src.templates)
             for it in plan.items:
                 print(f"  {it.at} {it.template}{' (interrupt)' if it.interrupt else ''}: {it.context}")
             for r in rejects:
@@ -225,6 +221,13 @@ def cmd_plan(args: argparse.Namespace) -> int:
     finally:
         llm.close()
     return 0
+
+
+def plan_sources() -> nightly.Sources:
+    from ludius import nightly
+
+    personas = [load_yaml(Persona, p) for p in sorted((DATA / "personas").glob("*.yaml"))]
+    return nightly.Sources(personas, load_templates(), make_policy())
 
 
 def cmd_day(args: argparse.Namespace) -> int:
@@ -317,16 +320,22 @@ def build_day(
 
 
 def cmd_schedule(args: argparse.Namespace) -> int:
-    from ludius import durable
+    from ludius import durable, nightly
 
     # Validate definitions before opening a connection. Creation never triggers immediately.
-    definition = durable.schedule_for(
-        args.persona, args.at, args.timezone, args.clock, paused=not args.unpause, canary=args.canary
-    )
+    if args.nightly:
+        if args.canary or args.clock != "realtime":
+            raise ValueError("--clock/--canary configure the day schedule, not --nightly planning")
+        definition = nightly.schedule_for(args.persona, args.at or "22:00", args.timezone, paused=not args.unpause)
+        name = nightly.schedule_id(args.persona)
+    else:
+        definition = durable.schedule_for(
+            args.persona, args.at or "08:30", args.timezone, args.clock, paused=not args.unpause, canary=args.canary
+        )
+        name = durable.schedule_id(args.persona)
 
     async def manage() -> None:
         client = await durable.connect(durable.Target(args.temporal))
-        name = durable.schedule_id(args.persona)
         handle = client.get_schedule_handle(name)
         if args.what == "create":
             await client.create_schedule(name, definition)
@@ -399,6 +408,19 @@ def cmd_worker(args: argparse.Namespace) -> int:
     async def run() -> None:
         client = await durable.connect(durable.Target(args.temporal))
         await scheduled.serve(client, RUNS, persona.user, desk, factory, check)
+
+    with suppress(KeyboardInterrupt):
+        asyncio.run(run())
+    return 0
+
+
+def cmd_plan_worker(args: argparse.Namespace) -> int:
+    from ludius import durable, nightly
+
+    async def run() -> None:
+        client = await durable.connect(durable.Target(args.temporal))
+        llm = functools.partial(LlmClient, os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
+        await nightly.serve(client, RUNS, plan_sources, llm)
 
     with suppress(KeyboardInterrupt):
         asyncio.run(run())
@@ -666,11 +688,12 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--canary", action="store_true", help="with --temporal: run the day's drift canaries first")
     d.set_defaults(fn=cmd_day)
 
-    sc = sub.add_parser("schedule", help="explicit Temporal schedule administration; never generates plans")
+    sc = sub.add_parser("schedule", help="explicit Temporal schedule administration (day playback or --nightly)")
     sc.add_argument("what", choices=["create", "describe", "pause", "unpause", "delete"])
     sc.add_argument("--temporal", required=True, metavar="HOST:PORT")
     sc.add_argument("--persona", required=True, help="persona account, e.g. aberg")
-    sc.add_argument("--at", default="08:30", help="daily HH:MM (create only)")
+    sc.add_argument("--nightly", action="store_true", help="the plan-generation schedule (plan-<persona>)")
+    sc.add_argument("--at", help="daily HH:MM (create only; default 08:30, --nightly 22:00)")
     sc.add_argument("--timezone", default="Europe/Stockholm", help="IANA zone (create only)")
     sc.add_argument("--clock", choices=["realtime", "compressed", "time-jump"], default="realtime")
     sc.add_argument("--canary", action="store_true", help="run drift canaries before each scheduled day")
@@ -683,6 +706,11 @@ def main(argv: list[str] | None = None) -> int:
     wk.add_argument("--vm", default=argparse.SUPPRESS, help="already-running VM (or global --vm/LUDIUS_VM)")
     wk.add_argument("--model", default=DEFAULT_MODEL)
     wk.set_defaults(fn=cmd_worker)
+
+    pw = sub.add_parser("plan-worker", help="explicit Temporal nightly planning worker (host only, LLM calls)")
+    pw.add_argument("--temporal", required=True, metavar="HOST:PORT")
+    pw.add_argument("--model", default=PLANNER_MODEL)
+    pw.set_defaults(fn=cmd_plan_worker)
 
     rv = sub.add_parser("reservation", help="inspect (default, dry run) or clear a closed workflow's day reservation")
     rv.add_argument("what", nargs="?", choices=["inspect", "clear"], default="inspect")
