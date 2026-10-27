@@ -276,7 +276,7 @@ def validate(
 def targets(it: PlanItem) -> list[tuple[str, str]]:
     """(param, name) of what the item creates in the profile; the existing file/folder a rename acts on is not one."""
     skip = _REFERS_TO_EXISTING.get(it.template, set[str]())
-    return [(k, v) for k, v in it.params.items() if k in _NAME_KEYS and k not in skip]
+    return [(k, v) for k, v in {**it.params, **it.content}.items() if k in _NAME_KEYS and k not in skip]
 
 
 def _leaf(path: str) -> str:
@@ -288,7 +288,7 @@ def taken_names(paths: Iterable[str]) -> set[str]:
     out: set[str] = set()
     for p in paths:
         leaf = _leaf(p).casefold()
-        out |= {n for n in (leaf, re.sub(r"\.[a-z0-9]{1,5}$", "", leaf)) if n}
+        out |= {n for n in (leaf, re.sub(r"\.[^.]+$", "", leaf)) if n}
     return out
 
 
@@ -327,9 +327,9 @@ def _check_item(it: PlanItem, templates: dict[str, Template], seen: list[str], p
 
 
 def content_values(it: PlanItem, templates: dict[str, Template]) -> list[str]:
-    """Planner-written text (not template defaults), long enough to compare."""
+    """Planner-written text (not template defaults), long enough to compare; a rename's existing source is not new."""
     t = templates.get(it.template)
-    keys = set(t.params) if t else set[str]()
+    keys = (set(t.params) if t else set[str]()) - _REFERS_TO_EXISTING.get(it.template, set[str]())
     return [v for k, v in {**it.params, **it.content}.items() if k in keys and len(v) >= MIN_COMPARE]
 
 

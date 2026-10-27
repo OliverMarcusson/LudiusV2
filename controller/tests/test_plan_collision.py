@@ -147,3 +147,20 @@ def test_generate_day_feeds_the_inventory_to_the_planner(tmp_path: Path) -> None
     g = nightly.generate_day(llm, world, anna, src, DAY)  # type: ignore[arg-type]
     assert "- admission test note.txt" in llm.prompts[0]
     assert [it.params["file_name"] for it in g.plan.items] == ["admission note oct"] and g.rejects == []
+
+
+def test_review_gaps_content_override_long_extension_and_renaming_earlier_content() -> None:
+    # Review of 4c709d9: runtime content overrides params; any extension hides the stem; a rename's source
+    # may be a name the persona wrote earlier.
+    assert "already exists" in check({**note("fresh"), "content": {"file_name": "ar ageing note"}})[0]
+    assert "already exists" in check(note("notes"), existing=["notes.markdown"])[0]
+    templates = cli.plan_sources().templates
+    move = PlanItem.model_validate(
+        {
+            "at": "11:00",
+            "template": "explorer_rename_move",
+            "context": "Files it away.",
+            "params": {"file_name": "supplier brief", "new_name": "signed", "folder_name": "oct close q4"},
+        }
+    )
+    assert validate([move], templates, ["supplier brief"], Policy(), existing=EXISTING) == []
