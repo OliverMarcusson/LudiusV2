@@ -108,7 +108,14 @@ class Session:
                     continue
                 self.log.write(event="normalized", host_ms=_now(), closed=closed, trust="pixels", verified=False)
                 return True
-            popup = next((w for w in snap.windows if w.kind in (obs.Window.POPUP, obs.Window.OWNED)), None)
+            popup = next(
+                (
+                    w
+                    for i, w in enumerate(snap.windows)
+                    if w.kind in (obs.Window.POPUP, obs.Window.OWNED) and not _inert_shell_popup(snap, i)
+                ),
+                None,
+            )
             strays = [
                 a
                 for a in snap.apps
@@ -196,6 +203,18 @@ def _is_shell_surface(w: obs.Window) -> bool:
     return w.class_name in ("Progman", "WorkerW", "Shell_TrayWnd") or w.process_name.lower() in SHELL_PROCESSES - {
         "explorer.exe"
     }
+
+
+def _inert_shell_popup(snap: obs.Snapshot, i: int) -> bool:
+    """Explorer's tray "Worker Window": a WS_POPUP over the desktop with no UIA tree and no elements. Nothing to
+    dismiss; Esc never closes it, so counting it as a dialog fails every clean-desktop normalize."""
+    w = snap.windows[i]
+    return (
+        w.process_name.lower() == "explorer.exe"
+        and w.class_name == "Worker Window"
+        and w.no_tree
+        and not any(e.window == i for e in snap.elements)
+    )
 
 
 def _explorer_window(w: obs.Window) -> bool:
