@@ -1,0 +1,82 @@
+# Create a meeting for one colleague in Outlook (classic, Exchange profile on the range grommunio) and send it.
+# Done is checked on the range server, not in the UI (ludius.mail.invited): a new meeting request in the colleague's
+# inbox and a new appointment in the persona's Calendar, with the planned subject, attendee, start and end (local to
+# the persona's time zone, Persona.tz). The form's date and times are prefilled, so typing replaces them (replace).
+# Variants cover the new-meeting path (Ctrl+Shift+Q vs the ribbon's New Items menu).
+task: outlook_send_invite
+app: outlook
+processes: [outlook.exe]
+sends_mail: true  # the shared send contract on the meeting form (ludius.tasks.MEETING_REQUIRE)
+send_form: meeting
+params: [to, to_name, subject, date, start, end, body]
+about: "Invite one colleague to a meeting in Outlook and send the invite. to: the colleague's address <user>@corp.ludius.test; subject: one line; date: YYYY-MM-DD, a weekday within the next two weeks after the plan's day; start and end: HH:MM between 08:00 and 17:00, 15-120 minutes apart; body: optional short agenda (ASCII, a few short lines) or empty."
+defaults: {launch_query: outlook, body: ""}
+example: {to: mvellinga@corp.ludius.test, to_name: Marcus Vellinga, subject: lund accruals q4 review, date: "2026-11-05", start: "10:30", end: "11:15", body: "walk through the lund accruals before the close\n- anna"}
+variants:
+  - [open_outlook, new_meeting_shortcut, fill_to, fill_subject, fill_date, fill_start, fill_end, write_body, send_shortcut, close_outlook]
+  - [open_outlook, new_meeting_menu, fill_to, fill_subject, fill_date, fill_start, fill_end, write_body, send_shortcut, close_outlook]
+budget_steps: 40
+budget_minutes: 8
+on_abandon: close_without_saving
+subgoals:
+  open_outlook:
+    goal: "Open Outlook by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    steps: 8
+    done: {foreground: {process: outlook.exe, title: "Outlook"}}
+  new_meeting_shortcut:
+    goal: "Start a new meeting with Ctrl+Shift+Q"
+    keys: [Ctrl+Shift+Q]
+    avoid: [{name: "^(New Meeting|New Items|Calendar)$"}]  # the form opens slowly: a second path opened a second form (run2)
+    done: {window: {process: outlook.exe, title: "^Untitled - Meeting"}}
+  new_meeting_menu:
+    goal: "Start a new meeting from the New Items menu on the Home tab (New Items, then Meeting)"
+    done: {window: {process: outlook.exe, title: "^Untitled - Meeting"}}
+  fill_to:
+    goal: "Type {to} into the Required field of the new meeting"
+    text: to
+    # The planned colleague in the Required field itself (as typed or resolved), not text typed anywhere (run2 typed
+    # into the Scheduling Assistant's grid).
+    done: {element: {role: edit, name: "^Required$", value: "^({to}|{to_name}|{to_name} <{to}>);?$"}}
+  fill_subject:
+    goal: "Type the meeting title into the Title field: {subject}"
+    text: subject
+    done: {element: {role: edit, name: "^Title$", value: "^{subject}$"}}
+  fill_date:
+    goal: "Replace the Start date with {date_dmy}"
+    text: date_dmy
+    replace: true
+    done: {element: {role: edit, name: "^Start date, combo$", value: '^(\w{{3}} )?{date_dmy}$'}}
+  fill_start:
+    goal: "Replace the Start time with {start}"
+    text: start
+    replace: true
+    done: {element: {role: edit, name: "^Start time, combo$", value: "^{start}$"}}
+  fill_end:
+    goal: "Replace the End time with {end}"
+    text: end
+    replace: true
+    done: {element: {role: edit, name: "^End time, combo$", value: "^{end}$"}}
+  write_body:
+    goal: "Type the agenda into the meeting's message body (below the times)"
+    text: body
+    unreadable_ok: true  # Word body: no UIA value; the server-side body check decides
+    done: {typed: true}
+  send_shortcut:
+    goal: "Send the meeting invitation with Alt+S"
+    keys: [Alt+S]
+    allow_destructive: ["Send"]
+    # The planned meeting, read in the form before the irreversible send (the shared contract adds the attendee
+    # fields); Outlook shows a date as "Thu 05/11/2026" once its field loses focus.
+    require:
+      - {role: edit, name: "^Title$", value: "^{subject}$"}
+      - {role: edit, name: "^Start date, combo$", value: '^\w{{3}} {date_dmy}$'}
+      - {role: edit, name: "^Start time, combo$", value: "^{start}$"}
+      - {role: edit, name: "^End date, combo$", value: '^\w{{3}} {date_dmy}$'}
+      - {role: edit, name: "^End time, combo$", value: "^{end}$"}
+    done: {invite: {}}
+  close_outlook:
+    goal: "Close Outlook"
+    done: {window: {process: outlook.exe, absent: true}}
