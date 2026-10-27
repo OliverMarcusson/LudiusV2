@@ -598,7 +598,27 @@ class World:
 
 
 def load_plan(path: Path) -> DayPlan:
-    return DayPlan.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    """Every entry point (day, worker, nightly reuse, world state) loads plans here, so mail recipients are checked
+    here too: each mail item's `to` must be a colleague and its to_name exactly their name in the narrative beside
+    the plan (<root>/world/narrative.yaml for <root>/plans/<plan>.yaml). No narrative: a plan with mail is refused.
+    """
+    plan = DayPlan.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    mail = [it for it in plan.items if "to" in {**it.params, **it.content}]
+    if mail:
+        narrative = path.parent.parent / "world" / "narrative.yaml"
+        people = (
+            {
+                p.user: p.name
+                for p in Narrative.model_validate(yaml.safe_load(narrative.read_text("utf-8"))).people
+                if p.user
+            }  # fmt: skip
+            if narrative.exists()
+            else {}
+        )
+        for it in mail:
+            if why := _recipient(it, set(people) - {plan.persona}, people):
+                raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
+    return plan
 
 
 def _dump(path: Path, data: Any, mode: str = "w") -> None:
