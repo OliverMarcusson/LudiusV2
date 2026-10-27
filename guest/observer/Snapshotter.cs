@@ -152,6 +152,8 @@ sealed partial class Snapshotter
         {
             if (h == fg || !Native.IsWindowVisible(h) || Native.Cloaked(h)) return true;
             var cls = Native.ClassName(h);
+            // Office's drop shadows (four per window or callout, same pid, WS_POPUP): decoration, never an overlay.
+            if (cls == "MSO_BORDEREFFECT_WINDOW_CLASS") return true;
             for (var o = Native.Owner(h); o != 0; o = Native.Owner(o))
                 if (o == fg) { owned.Add((h, Window.Types.Kind.Owned)); return true; }
             Native.GetWindowThreadProcessId(h, out var pid);
