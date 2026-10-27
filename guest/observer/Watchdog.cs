@@ -8,6 +8,8 @@ sealed class Watchdog(Func<long> nowMs, long hungMs = 60_000, int maxFailures = 
     long busySince = -1; // start of the request in progress, -1 between requests
     long lastActivity = nowMs();
     int failures;
+    // What the observer is doing (a window being read, settle tracking): a hang's fault names it.
+    public static volatile string Step = "start";
 
     public void Begin() => Volatile.Write(ref busySince, nowMs());
 
@@ -21,7 +23,7 @@ sealed class Watchdog(Func<long> nowMs, long hungMs = 60_000, int maxFailures = 
     public string? Fault()
     {
         var since = Volatile.Read(ref busySince);
-        if (since >= 0 && nowMs() - since > hungMs) return $"request hung for {(nowMs() - since) / 1000} s";
+        if (since >= 0 && nowMs() - since > hungMs) return $"request hung for {(nowMs() - since) / 1000} s during {Step}";
         var n = Volatile.Read(ref failures);
         return n >= maxFailures ? $"{n} requests failed in a row" : null;
     }

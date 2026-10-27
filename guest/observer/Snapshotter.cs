@@ -110,6 +110,7 @@ sealed partial class Snapshotter
             var w = DescribeWindow(hwnd, kind);
             snap.Windows.Add(w);
             if (w.Unresponsive || w.ElevatedUnreadable) continue;
+            Watchdog.Step = $"read {w.ClassName} ({w.ProcessName}) {kind}";
             var found = ReadWindow(hwnd, w, (uint)(snap.Windows.Count - 1), keys);
             // No usable tree: nothing beyond the title bar (canvas and custom-drawn apps still have one).
             if (found.All(r => r.E.Role == "title bar" || r.E.AncestorPath.StartsWith("title bar"))) w.NoTree = true;

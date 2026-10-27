@@ -54,7 +54,10 @@ uia.ConnectionTimeout = 2000;  // a hung app becomes an unresponsive window,
 uia.TransactionTimeout = 3000; // not a frozen observer
 bool uiAccess = Native.SelfUiAccess();
 JavaBridge.Start(); // no JRE: Java windows stay UIA-only
+dog.Begin(); // startup registers UIA event handlers in every app: a hang there is a fault too
+Watchdog.Step = "startup: settle handlers";
 var settle = new Settle(uia);
+dog.End(ok: true);
 var snapper = new Snapshotter(uia, uiAccess);
 
 if (args.Contains("--once"))

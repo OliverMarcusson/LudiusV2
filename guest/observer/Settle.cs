@@ -25,11 +25,29 @@ sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEv
     public Settle(IUIAutomation2 uia)
     {
         this.uia = uia;
-        var root = uia.GetRootElement();
-        uia.AddFocusChangedEventHandler(null, this);
-        foreach (var id in new[] { UIA_Window_WindowOpenedEventId, UIA_MenuOpenedEventId, UIA_MenuClosedEventId })
-            uia.AddAutomationEventHandler(id, root, TreeScope.TreeScope_Subtree, null, this);
+        Globals(true);
         new Thread(PixelLoop) { IsBackground = true, Name = "dxgi" }.Start();
+    }
+
+    bool globals; // the focus, window and menu handlers are registered
+
+    void Globals(bool on)
+    {
+        if (on == globals) return;
+        Watchdog.Step = on ? "settle: add handlers" : "settle: remove handlers";
+        try
+        {
+            if (on)
+            {
+                var root = uia.GetRootElement();
+                uia.AddFocusChangedEventHandler(null, this);
+                foreach (var id in new[] { UIA_Window_WindowOpenedEventId, UIA_MenuOpenedEventId, UIA_MenuClosedEventId })
+                    uia.AddAutomationEventHandler(id, root, TreeScope.TreeScope_Subtree, null, this);
+            }
+            else uia.RemoveAllEventHandlers(); // the subtree handlers too: Track removed or never added them
+            globals = on;
+        }
+        catch (Exception e) when (e is COMException or UnauthorizedAccessException or ArgumentException) { }
     }
 
     void Hit() => Interlocked.Exchange(ref lastChange, Environment.TickCount64);
@@ -49,6 +67,7 @@ sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEv
         {
             if (tracked != null)
             {
+                Watchdog.Step = "settle: untrack";
                 uia.RemoveStructureChangedEventHandler(tracked, this);
                 uia.RemovePropertyChangedEventHandler(tracked, this);
             }
@@ -57,8 +76,16 @@ sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEv
         tracked = null;
         trackedHwnd = fg;
         if (fg == 0) return;
+        // Excel in front: no handlers at all, pixels alone time the snapshot. With any UIA event handler of ours
+        // registered while cells were typed, Excel's UIA went slow for good: every later read of its window and its
+        // Save As dialog timed out, and a new observer hung registering handlers. Without ours it stayed fast.
+        Native.GetWindowThreadProcessId(fg, out var pid);
+        bool excel = Native.ProcessName(pid).Equals("EXCEL.EXE", StringComparison.OrdinalIgnoreCase);
+        Globals(!excel);
+        if (excel) { Hit(); return; }
         try
         {
+            Watchdog.Step = $"settle: track {Native.ClassName(fg)}";
             tracked = uia.ElementFromHandle(fg);
             uia.AddStructureChangedEventHandler(tracked, TreeScope.TreeScope_Subtree, null, this);
             uia.AddPropertyChangedEventHandler(tracked, TreeScope.TreeScope_Subtree, null, this,
