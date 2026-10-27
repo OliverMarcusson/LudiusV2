@@ -1,0 +1,923 @@
+{
+  "events": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-10-27T10:06:23.783Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "PersonaDay"
+        },
+        "taskQueue": {
+          "name": "ludius-day-aberg"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJwbGFuIjp7InBlcnNvbmEiOiJhYmVyZyIsImRhdGUiOiIyMDI2LTExLTA0IiwiaXRlbXMiOlt7InRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwicGFyYW1zIjp7ImZpbGVfbmFtZSI6Im5vdGUgMDkwMCIsImJvZHkiOiJ0ZXh0In0sImNvbnRlbnQiOnt9LCJ2YXJpYW50IjpudWxsLCJjb250ZXh0IjoiIiwiYXQiOiIwOTowMCIsIm1pbnV0ZXMiOjAsImludGVycnVwdCI6ZmFsc2UsImhhbmRvZmYiOiIiLCJmb2xsb3d1cCI6IiJ9LHsidGVtcGxhdGUiOiJicmVhayIsInBhcmFtcyI6e30sImNvbnRlbnQiOnt9LCJ2YXJpYW50IjpudWxsLCJjb250ZXh0IjoiIiwiYXQiOiIxMjowMCIsIm1pbnV0ZXMiOjMwLCJpbnRlcnJ1cHQiOmZhbHNlLCJoYW5kb2ZmIjoiIiwiZm9sbG93dXAiOiIifSx7InRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwicGFyYW1zIjp7ImZpbGVfbmFtZSI6Im5vdGUgMTIwNSIsImJvZHkiOiJ0ZXh0In0sImNvbnRlbnQiOnt9LCJ2YXJpYW50IjpudWxsLCJjb250ZXh0IjoiIiwiYXQiOiIxMjowNSIsIm1pbnV0ZXMiOjAsImludGVycnVwdCI6dHJ1ZSwiaGFuZG9mZiI6IiIsImZvbGxvd3VwIjoiIn0seyJ0ZW1wbGF0ZSI6Im5vdGVwYWRfd3JpdGVfbm90ZSIsInBhcmFtcyI6eyJmaWxlX25hbWUiOiJub3RlIDEzMDAiLCJib2R5IjoidGV4dCJ9LCJjb250ZW50Ijp7fSwidmFyaWFudCI6bnVsbCwiY29udGV4dCI6IiIsImF0IjoiMTM6MDAiLCJtaW51dGVzIjowLCJpbnRlcnJ1cHQiOmZhbHNlLCJoYW5kb2ZmIjoiIiwiZm9sbG93dXAiOiIifV19LCJjbG9jayI6ImNvbXByZXNzZWQiLCJ1dGNfb2Zmc2V0X3MiOjM2MDAsImhlYXJ0YmVhdF9zIjozMDAsInJldHJ5X3MiOjMwLCJjYW5hcnkiOmZhbHNlfQ=="
+            }
+          ]
+        },
+        "workflowExecutionTimeout": "315360000s",
+        "workflowRunTimeout": "315360000s",
+        "workflowTaskTimeout": "10s",
+        "originalExecutionRunId": "2ddaab10-7d32-4642-a21c-8c772ab58fd5",
+        "identity": "25088@DESKTOP-80CN782",
+        "firstExecutionRunId": "2ddaab10-7d32-4642-a21c-8c772ab58fd5",
+        "attempt": 1,
+        "firstWorkflowTaskBackoff": "0s",
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-10-27T10:06:23.783Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "ludius-day-aberg"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-10-27T10:06:23.790Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "25088@DESKTOP-80CN782",
+        "historySizeBytes": "1134"
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-10-27T10:06:23.817Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "25088@DESKTOP-80CN782",
+        "binaryChecksum": "b5250852d37ab26361b65b94ac34420c",
+        "sdkMetadata": {
+          "coreUsedFlags": [
+            2,
+            3,
+            1
+          ],
+          "sdkName": "temporal-python",
+          "sdkVersion": "1.34.0"
+        },
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-10-27T10:06:23.817Z",
+      "eventType": "EVENT_TYPE_MARKER_RECORDED",
+      "markerRecordedEventAttributes": {
+        "markerName": "core_patch",
+        "details": {
+          "patch-data": {
+            "payloads": [
+              {
+                "metadata": {
+                  "encoding": "anNvbi9wbGFpbg=="
+                },
+                "data": "eyJpZCI6ImxhenktZGF5LXYxIiwiZGVwcmVjYXRlZCI6ZmFsc2V9"
+              }
+            ]
+          }
+        },
+        "workflowTaskCompletedEventId": "3"
+      }
+    },
+    {
+      "eventId": "6",
+      "eventTime": "2026-10-27T10:06:23.817Z",
+      "eventType": "EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES",
+      "upsertWorkflowSearchAttributesEventAttributes": {
+        "workflowTaskCompletedEventId": "3",
+        "searchAttributes": {
+          "indexedFields": {
+            "TemporalChangeVersion": {
+              "metadata": {
+                "type": "S2V5d29yZExpc3Q=",
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "WyJsYXp5LWRheS12MSJd"
+            }
+          }
+        }
+      }
+    },
+    {
+      "eventId": "7",
+      "eventTime": "2026-10-27T10:06:23.817Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "1",
+        "activityType": {
+          "name": "day_prepare"
+        },
+        "taskQueue": {
+          "name": "ludius-day-aberg",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJwbGFuIjp7InBlcnNvbmEiOiJhYmVyZyIsImRhdGUiOiIyMDI2LTExLTA0IiwiaXRlbXMiOlt7InRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwicGFyYW1zIjp7ImZpbGVfbmFtZSI6Im5vdGUgMDkwMCIsImJvZHkiOiJ0ZXh0In0sImNvbnRlbnQiOnt9LCJ2YXJpYW50IjpudWxsLCJjb250ZXh0IjoiIiwiYXQiOiIwOTowMCIsIm1pbnV0ZXMiOjAsImludGVycnVwdCI6ZmFsc2UsImhhbmRvZmYiOiIiLCJmb2xsb3d1cCI6IiJ9LHsidGVtcGxhdGUiOiJicmVhayIsInBhcmFtcyI6e30sImNvbnRlbnQiOnt9LCJ2YXJpYW50IjpudWxsLCJjb250ZXh0IjoiIiwiYXQiOiIxMjowMCIsIm1pbnV0ZXMiOjMwLCJpbnRlcnJ1cHQiOmZhbHNlLCJoYW5kb2ZmIjoiIiwiZm9sbG93dXAiOiIifSx7InRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwicGFyYW1zIjp7ImZpbGVfbmFtZSI6Im5vdGUgMTIwNSIsImJvZHkiOiJ0ZXh0In0sImNvbnRlbnQiOnt9LCJ2YXJpYW50IjpudWxsLCJjb250ZXh0IjoiIiwiYXQiOiIxMjowNSIsIm1pbnV0ZXMiOjAsImludGVycnVwdCI6dHJ1ZSwiaGFuZG9mZiI6IiIsImZvbGxvd3VwIjoiIn0seyJ0ZW1wbGF0ZSI6Im5vdGVwYWRfd3JpdGVfbm90ZSIsInBhcmFtcyI6eyJmaWxlX25hbWUiOiJub3RlIDEzMDAiLCJib2R5IjoidGV4dCJ9LCJjb250ZW50Ijp7fSwidmFyaWFudCI6bnVsbCwiY29udGV4dCI6IiIsImF0IjoiMTM6MDAiLCJtaW51dGVzIjowLCJpbnRlcnJ1cHQiOmZhbHNlLCJoYW5kb2ZmIjoiIiwiZm9sbG93dXAiOiIifV19LCJjbG9jayI6ImNvbXByZXNzZWQiLCJ1dGNfb2Zmc2V0X3MiOjM2MDAsImhlYXJ0YmVhdF9zIjozMDAsInJldHJ5X3MiOjMwLCJjYW5hcnkiOmZhbHNlfQ=="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "300s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "3",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "KeyError",
+            "ValueError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "8",
+      "eventTime": "2026-10-27T10:06:23.817Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "7",
+        "identity": "25088@DESKTOP-80CN782",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "9",
+      "eventTime": "2026-10-27T10:06:23.820Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "YmluYXJ5L251bGw="
+              }
+            }
+          ]
+        },
+        "scheduledEventId": "7",
+        "startedEventId": "8",
+        "identity": "25088@DESKTOP-80CN782"
+      }
+    },
+    {
+      "eventId": "10",
+      "eventTime": "2026-10-27T10:06:23.820Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "ludius-day-aberg"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "11",
+      "eventTime": "2026-10-27T10:06:23.821Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "10",
+        "identity": "25088@DESKTOP-80CN782",
+        "historySizeBytes": "2736"
+      }
+    },
+    {
+      "eventId": "12",
+      "eventTime": "2026-10-27T10:06:23.823Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "10",
+        "identity": "25088@DESKTOP-80CN782",
+        "binaryChecksum": "b5250852d37ab26361b65b94ac34420c",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "13",
+      "eventTime": "2026-10-27T10:06:23.823Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "2",
+        "activityType": {
+          "name": "slot"
+        },
+        "taskQueue": {
+          "name": "ludius-day-aberg",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJkYXRlIjoiMjAyNi0xMS0wNCIsIml0ZW0iOnsidGVtcGxhdGUiOiJub3RlcGFkX3dyaXRlX25vdGUiLCJwYXJhbXMiOnsiZmlsZV9uYW1lIjoibm90ZSAwOTAwIiwiYm9keSI6InRleHQifSwiY29udGVudCI6e30sInZhcmlhbnQiOm51bGwsImNvbnRleHQiOiIiLCJhdCI6IjA5OjAwIiwibWludXRlcyI6MCwiaW50ZXJydXB0IjpmYWxzZSwiaGFuZG9mZiI6IiIsImZvbGxvd3VwIjoiIn0sImludGVycnVwdHMiOltdLCJqdW1wX2F0IjpudWxsfQ=="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "7200s",
+        "heartbeatTimeout": "300s",
+        "workflowTaskCompletedEventId": "11",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "KeyError",
+            "ValueError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "14",
+      "eventTime": "2026-10-27T10:06:23.823Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "13",
+        "identity": "25088@DESKTOP-80CN782",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "15",
+      "eventTime": "2026-10-27T10:06:23.824Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "W3siYXQiOiIwOTowMCIsInRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwic3RhdHVzIjoiZG9uZSJ9XQ=="
+            }
+          ]
+        },
+        "scheduledEventId": "13",
+        "startedEventId": "14",
+        "identity": "25088@DESKTOP-80CN782"
+      }
+    },
+    {
+      "eventId": "16",
+      "eventTime": "2026-10-27T10:06:23.824Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "ludius-day-aberg"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "17",
+      "eventTime": "2026-10-27T10:06:23.824Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "16",
+        "identity": "25088@DESKTOP-80CN782",
+        "historySizeBytes": "3519"
+      }
+    },
+    {
+      "eventId": "18",
+      "eventTime": "2026-10-27T10:06:23.825Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "16",
+        "identity": "25088@DESKTOP-80CN782",
+        "binaryChecksum": "b5250852d37ab26361b65b94ac34420c",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "19",
+      "eventTime": "2026-10-27T10:06:23.825Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "3",
+        "activityType": {
+          "name": "break_start"
+        },
+        "taskQueue": {
+          "name": "ludius-day-aberg",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJkYXRlIjoiMjAyNi0xMS0wNCIsIml0ZW0iOnsidGVtcGxhdGUiOiJicmVhayIsInBhcmFtcyI6e30sImNvbnRlbnQiOnt9LCJ2YXJpYW50IjpudWxsLCJjb250ZXh0IjoiIiwiYXQiOiIxMjowMCIsIm1pbnV0ZXMiOjMwLCJpbnRlcnJ1cHQiOmZhbHNlLCJoYW5kb2ZmIjoiIiwiZm9sbG93dXAiOiIifSwiaW50ZXJydXB0cyI6W3sidGVtcGxhdGUiOiJub3RlcGFkX3dyaXRlX25vdGUiLCJwYXJhbXMiOnsiZmlsZV9uYW1lIjoibm90ZSAxMjA1IiwiYm9keSI6InRleHQifSwiY29udGVudCI6e30sInZhcmlhbnQiOm51bGwsImNvbnRleHQiOiIiLCJhdCI6IjEyOjA1IiwibWludXRlcyI6MCwiaW50ZXJydXB0Ijp0cnVlLCJoYW5kb2ZmIjoiIiwiZm9sbG93dXAiOiIifV0sImp1bXBfYXQiOm51bGx9"
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "300s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "17",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "KeyError",
+            "ValueError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "20",
+      "eventTime": "2026-10-27T10:06:23.825Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "19",
+        "identity": "25088@DESKTOP-80CN782",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "21",
+      "eventTime": "2026-10-27T10:06:23.827Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "YmluYXJ5L251bGw="
+              }
+            }
+          ]
+        },
+        "scheduledEventId": "19",
+        "startedEventId": "20",
+        "identity": "25088@DESKTOP-80CN782"
+      }
+    },
+    {
+      "eventId": "22",
+      "eventTime": "2026-10-27T10:06:23.827Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "ludius-day-aberg"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "23",
+      "eventTime": "2026-10-27T10:06:23.827Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "22",
+        "identity": "25088@DESKTOP-80CN782",
+        "historySizeBytes": "4384"
+      }
+    },
+    {
+      "eventId": "24",
+      "eventTime": "2026-10-27T10:06:23.829Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "22",
+        "identity": "25088@DESKTOP-80CN782",
+        "binaryChecksum": "b5250852d37ab26361b65b94ac34420c",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "25",
+      "eventTime": "2026-10-27T10:06:23.829Z",
+      "eventType": "EVENT_TYPE_TIMER_STARTED",
+      "timerStartedEventAttributes": {
+        "timerId": "1",
+        "startToFireTimeout": "5s",
+        "workflowTaskCompletedEventId": "23"
+      }
+    },
+    {
+      "eventId": "26",
+      "eventTime": "2026-10-27T10:06:28.829Z",
+      "eventType": "EVENT_TYPE_TIMER_FIRED",
+      "timerFiredEventAttributes": {
+        "timerId": "1",
+        "startedEventId": "25"
+      }
+    },
+    {
+      "eventId": "27",
+      "eventTime": "2026-10-27T10:06:28.829Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "ludius-day-aberg"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "28",
+      "eventTime": "2026-10-27T10:06:28.829Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "27",
+        "identity": "25088@DESKTOP-80CN782",
+        "historySizeBytes": "4617"
+      }
+    },
+    {
+      "eventId": "29",
+      "eventTime": "2026-10-27T10:06:28.831Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "27",
+        "identity": "25088@DESKTOP-80CN782",
+        "binaryChecksum": "b5250852d37ab26361b65b94ac34420c",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "30",
+      "eventTime": "2026-10-27T10:06:28.831Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "4",
+        "activityType": {
+          "name": "break_end"
+        },
+        "taskQueue": {
+          "name": "ludius-day-aberg",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJkYXRlIjoiMjAyNi0xMS0wNCIsIml0ZW0iOnsidGVtcGxhdGUiOiJicmVhayIsInBhcmFtcyI6e30sImNvbnRlbnQiOnt9LCJ2YXJpYW50IjpudWxsLCJjb250ZXh0IjoiIiwiYXQiOiIxMjowMCIsIm1pbnV0ZXMiOjMwLCJpbnRlcnJ1cHQiOmZhbHNlLCJoYW5kb2ZmIjoiIiwiZm9sbG93dXAiOiIifSwiaW50ZXJydXB0cyI6W3sidGVtcGxhdGUiOiJub3RlcGFkX3dyaXRlX25vdGUiLCJwYXJhbXMiOnsiZmlsZV9uYW1lIjoibm90ZSAxMjA1IiwiYm9keSI6InRleHQifSwiY29udGVudCI6e30sInZhcmlhbnQiOm51bGwsImNvbnRleHQiOiIiLCJhdCI6IjEyOjA1IiwibWludXRlcyI6MCwiaW50ZXJydXB0Ijp0cnVlLCJoYW5kb2ZmIjoiIiwiZm9sbG93dXAiOiIifV0sImp1bXBfYXQiOm51bGx9"
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "300s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "28",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "KeyError",
+            "ValueError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "31",
+      "eventTime": "2026-10-27T10:06:28.831Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "30",
+        "identity": "25088@DESKTOP-80CN782",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "32",
+      "eventTime": "2026-10-27T10:06:28.832Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJhdCI6IjEyOjAwIiwidGVtcGxhdGUiOiJicmVhayIsInN0YXR1cyI6ImZhaWxlZCJ9"
+            }
+          ]
+        },
+        "scheduledEventId": "30",
+        "startedEventId": "31",
+        "identity": "25088@DESKTOP-80CN782"
+      }
+    },
+    {
+      "eventId": "33",
+      "eventTime": "2026-10-27T10:06:28.832Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "ludius-day-aberg"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "34",
+      "eventTime": "2026-10-27T10:06:28.832Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "33",
+        "identity": "25088@DESKTOP-80CN782",
+        "historySizeBytes": "5532"
+      }
+    },
+    {
+      "eventId": "35",
+      "eventTime": "2026-10-27T10:06:28.833Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "33",
+        "identity": "25088@DESKTOP-80CN782",
+        "binaryChecksum": "b5250852d37ab26361b65b94ac34420c",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "36",
+      "eventTime": "2026-10-27T10:06:28.833Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "5",
+        "activityType": {
+          "name": "slot"
+        },
+        "taskQueue": {
+          "name": "ludius-day-aberg",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJkYXRlIjoiMjAyNi0xMS0wNCIsIml0ZW0iOnsidGVtcGxhdGUiOiJub3RlcGFkX3dyaXRlX25vdGUiLCJwYXJhbXMiOnsiZmlsZV9uYW1lIjoibm90ZSAxMjA1IiwiYm9keSI6InRleHQifSwiY29udGVudCI6e30sInZhcmlhbnQiOm51bGwsImNvbnRleHQiOiIiLCJhdCI6IjEyOjA1IiwibWludXRlcyI6MCwiaW50ZXJydXB0Ijp0cnVlLCJoYW5kb2ZmIjoiIiwiZm9sbG93dXAiOiIifSwiaW50ZXJydXB0cyI6W10sImp1bXBfYXQiOiIxMjozMCJ9"
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "7200s",
+        "heartbeatTimeout": "300s",
+        "workflowTaskCompletedEventId": "34",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "KeyError",
+            "ValueError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "37",
+      "eventTime": "2026-10-27T10:06:28.833Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "36",
+        "identity": "25088@DESKTOP-80CN782",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "38",
+      "eventTime": "2026-10-27T10:06:28.834Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "W3siYXQiOiIxMjowNSIsInRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwic3RhdHVzIjoiZG9uZSJ9XQ=="
+            }
+          ]
+        },
+        "scheduledEventId": "36",
+        "startedEventId": "37",
+        "identity": "25088@DESKTOP-80CN782"
+      }
+    },
+    {
+      "eventId": "39",
+      "eventTime": "2026-10-27T10:06:28.834Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "ludius-day-aberg"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "40",
+      "eventTime": "2026-10-27T10:06:28.834Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "39",
+        "identity": "25088@DESKTOP-80CN782",
+        "historySizeBytes": "6317"
+      }
+    },
+    {
+      "eventId": "41",
+      "eventTime": "2026-10-27T10:06:28.836Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "39",
+        "identity": "25088@DESKTOP-80CN782",
+        "binaryChecksum": "b5250852d37ab26361b65b94ac34420c",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "42",
+      "eventTime": "2026-10-27T10:06:28.836Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "6",
+        "activityType": {
+          "name": "slot"
+        },
+        "taskQueue": {
+          "name": "ludius-day-aberg",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJkYXRlIjoiMjAyNi0xMS0wNCIsIml0ZW0iOnsidGVtcGxhdGUiOiJub3RlcGFkX3dyaXRlX25vdGUiLCJwYXJhbXMiOnsiZmlsZV9uYW1lIjoibm90ZSAxMzAwIiwiYm9keSI6InRleHQifSwiY29udGVudCI6e30sInZhcmlhbnQiOm51bGwsImNvbnRleHQiOiIiLCJhdCI6IjEzOjAwIiwibWludXRlcyI6MCwiaW50ZXJydXB0IjpmYWxzZSwiaGFuZG9mZiI6IiIsImZvbGxvd3VwIjoiIn0sImludGVycnVwdHMiOltdLCJqdW1wX2F0IjpudWxsfQ=="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "7200s",
+        "heartbeatTimeout": "300s",
+        "workflowTaskCompletedEventId": "40",
+        "retryPolicy": {
+          "initialInterval": "30s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "3000s",
+          "maximumAttempts": 3,
+          "nonRetryableErrorTypes": [
+            "KeyError",
+            "ValueError"
+          ]
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "43",
+      "eventTime": "2026-10-27T10:06:28.836Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "42",
+        "identity": "25088@DESKTOP-80CN782",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "44",
+      "eventTime": "2026-10-27T10:06:28.837Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "W3siYXQiOiIxMzowMCIsInRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwic3RhdHVzIjoiZG9uZSJ9XQ=="
+            }
+          ]
+        },
+        "scheduledEventId": "42",
+        "startedEventId": "43",
+        "identity": "25088@DESKTOP-80CN782"
+      }
+    },
+    {
+      "eventId": "45",
+      "eventTime": "2026-10-27T10:06:28.837Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "ludius-day-aberg"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "46",
+      "eventTime": "2026-10-27T10:06:28.837Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "45",
+        "identity": "25088@DESKTOP-80CN782",
+        "historySizeBytes": "7100"
+      }
+    },
+    {
+      "eventId": "47",
+      "eventTime": "2026-10-27T10:06:28.838Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "45",
+        "identity": "25088@DESKTOP-80CN782",
+        "binaryChecksum": "b5250852d37ab26361b65b94ac34420c",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "48",
+      "eventTime": "2026-10-27T10:06:28.838Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "7",
+        "activityType": {
+          "name": "day_end"
+        },
+        "taskQueue": {
+          "name": "ludius-day-aberg",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJwbGFuIjp7InBlcnNvbmEiOiJhYmVyZyIsImRhdGUiOiIyMDI2LTExLTA0IiwiaXRlbXMiOlt7InRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwicGFyYW1zIjp7ImZpbGVfbmFtZSI6Im5vdGUgMDkwMCIsImJvZHkiOiJ0ZXh0In0sImNvbnRlbnQiOnt9LCJ2YXJpYW50IjpudWxsLCJjb250ZXh0IjoiIiwiYXQiOiIwOTowMCIsIm1pbnV0ZXMiOjAsImludGVycnVwdCI6ZmFsc2UsImhhbmRvZmYiOiIiLCJmb2xsb3d1cCI6IiJ9LHsidGVtcGxhdGUiOiJicmVhayIsInBhcmFtcyI6e30sImNvbnRlbnQiOnt9LCJ2YXJpYW50IjpudWxsLCJjb250ZXh0IjoiIiwiYXQiOiIxMjowMCIsIm1pbnV0ZXMiOjMwLCJpbnRlcnJ1cHQiOmZhbHNlLCJoYW5kb2ZmIjoiIiwiZm9sbG93dXAiOiIifSx7InRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwicGFyYW1zIjp7ImZpbGVfbmFtZSI6Im5vdGUgMTIwNSIsImJvZHkiOiJ0ZXh0In0sImNvbnRlbnQiOnt9LCJ2YXJpYW50IjpudWxsLCJjb250ZXh0IjoiIiwiYXQiOiIxMjowNSIsIm1pbnV0ZXMiOjAsImludGVycnVwdCI6dHJ1ZSwiaGFuZG9mZiI6IiIsImZvbGxvd3VwIjoiIn0seyJ0ZW1wbGF0ZSI6Im5vdGVwYWRfd3JpdGVfbm90ZSIsInBhcmFtcyI6eyJmaWxlX25hbWUiOiJub3RlIDEzMDAiLCJib2R5IjoidGV4dCJ9LCJjb250ZW50Ijp7fSwidmFyaWFudCI6bnVsbCwiY29udGV4dCI6IiIsImF0IjoiMTM6MDAiLCJtaW51dGVzIjowLCJpbnRlcnJ1cHQiOmZhbHNlLCJoYW5kb2ZmIjoiIiwiZm9sbG93dXAiOiIifV19LCJkb25lIjpbeyJhdCI6IjA5OjAwIiwidGVtcGxhdGUiOiJub3RlcGFkX3dyaXRlX25vdGUiLCJzdGF0dXMiOiJkb25lIn0seyJhdCI6IjEyOjAwIiwidGVtcGxhdGUiOiJicmVhayIsInN0YXR1cyI6ImZhaWxlZCJ9LHsiYXQiOiIxMjowNSIsInRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwic3RhdHVzIjoiZG9uZSJ9LHsiYXQiOiIxMzowMCIsInRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwic3RhdHVzIjoiZG9uZSJ9XX0="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "315360000s",
+        "scheduleToStartTimeout": "315360000s",
+        "startToCloseTimeout": "300s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "46",
+        "retryPolicy": {
+          "initialInterval": "1s",
+          "backoffCoefficient": 2.0,
+          "maximumInterval": "100s"
+        },
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "49",
+      "eventTime": "2026-10-27T10:06:28.838Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "48",
+        "identity": "25088@DESKTOP-80CN782",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "50",
+      "eventTime": "2026-10-27T10:06:28.839Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "YmluYXJ5L251bGw="
+              }
+            }
+          ]
+        },
+        "scheduledEventId": "48",
+        "startedEventId": "49",
+        "identity": "25088@DESKTOP-80CN782"
+      }
+    },
+    {
+      "eventId": "51",
+      "eventTime": "2026-10-27T10:06:28.839Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "ludius-day-aberg"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "52",
+      "eventTime": "2026-10-27T10:06:28.839Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "51",
+        "identity": "25088@DESKTOP-80CN782",
+        "historySizeBytes": "8574"
+      }
+    },
+    {
+      "eventId": "53",
+      "eventTime": "2026-10-27T10:06:28.840Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "51",
+        "identity": "25088@DESKTOP-80CN782",
+        "binaryChecksum": "b5250852d37ab26361b65b94ac34420c",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "54",
+      "eventTime": "2026-10-27T10:06:28.840Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED",
+      "workflowExecutionCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "W3siYXQiOiIwOTowMCIsInRlbXBsYXRlIjoibm90ZXBhZF93cml0ZV9ub3RlIiwic3RhdHVzIjoiZG9uZSJ9LHsiYXQiOiIxMjowMCIsInRlbXBsYXRlIjoiYnJlYWsiLCJzdGF0dXMiOiJmYWlsZWQifSx7ImF0IjoiMTI6MDUiLCJ0ZW1wbGF0ZSI6Im5vdGVwYWRfd3JpdGVfbm90ZSIsInN0YXR1cyI6ImRvbmUifSx7ImF0IjoiMTM6MDAiLCJ0ZW1wbGF0ZSI6Im5vdGVwYWRfd3JpdGVfbm90ZSIsInN0YXR1cyI6ImRvbmUifV0="
+            }
+          ]
+        },
+        "workflowTaskCompletedEventId": "52"
+      }
+    }
+  ]
+}

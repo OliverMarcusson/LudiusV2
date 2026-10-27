@@ -57,6 +57,10 @@ def slots(plan: DayPlan) -> list[tuple[PlanItem, list[PlanItem]]]:
     return sorted(out + [(orphan, []) for orphan in pending], key=lambda s: s[0].at)
 
 
+class BreakUnlockFailed(RuntimeError):
+    """Back from a break, the screen did not unlock: nothing later in the day may act on the desktop."""
+
+
 @dataclass
 class ItemResult:
     item: PlanItem
@@ -90,9 +94,14 @@ class DayRunner:
     def run(self, plan: DayPlan) -> list[ItemResult]:
         day = dt.date.fromisoformat(plan.date)
         self.start(plan)
-        for item, interrupts in slots(plan):
-            self._wait_for(day, item.at)
-            self.slot(day, item, interrupts)
+        try:
+            for item, interrupts in slots(plan):
+                self._wait_for(day, item.at)
+                self.slot(day, item, interrupts)
+        except BreakUnlockFailed:  # the day stops: no day_end, and the range goes back on host time
+            if self.clock == "time-jump" and self.set_clock:
+                self.set_clock(None)
+            raise
         self.finish(plan, self.results)
         return self.results
 
@@ -123,7 +132,8 @@ class DayRunner:
         if item.template == BREAK:
             self.begin_break(day, item)
             self.sleep(self.away_s(item))
-            self.end_break(day, item)
+            if self.end_break(day, item).status != "done":
+                raise BreakUnlockFailed(f"break at {item.at}: unlock failed, day stopped")
             return
         self._started(day, item)
         task = Task(self.templates[item.template], item, self.rng)

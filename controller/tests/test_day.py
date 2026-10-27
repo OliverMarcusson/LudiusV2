@@ -4,8 +4,10 @@ import datetime as dt
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from ludius.cli import load_templates
-from ludius.day import DayRunner, slots
+from ludius.day import BreakUnlockFailed, DayRunner, slots
 from ludius.loop import GroundTruth, Outcome
 from ludius.planner import DayPlan, PlanItem
 from ludius.tasks import Task
@@ -46,8 +48,8 @@ class FakeRunner:
 
 
 class FakeSession:
-    def __init__(self, calls: list[str]) -> None:
-        self.calls = calls
+    def __init__(self, calls: list[str], unlock_ok: bool = True) -> None:
+        self.calls, self.unlock_ok = calls, unlock_ok
 
     def normalize(self) -> bool:
         self.calls.append("normalize")
@@ -58,7 +60,7 @@ class FakeSession:
 
     def unlock(self) -> bool:
         self.calls.append("unlock")
-        return False
+        return self.unlock_ok
 
 
 def test_time_jump_day_keeps_order_breaks_and_interrupts(tmp_path: Path) -> None:
@@ -78,7 +80,7 @@ def test_time_jump_day_keeps_order_breaks_and_interrupts(tmp_path: Path) -> None
         "clock reset",
     ]  # fmt: skip
     assert [(r.item.at, r.status) for r in results] == [
-        ("08:55", "done"), ("09:10", "done"), ("09:00", "done"), ("10:00", "done"), ("12:00", "failed"),
+        ("08:55", "done"), ("09:10", "done"), ("09:00", "done"), ("10:00", "done"), ("12:00", "done"),
         ("12:05", "done")]  # fmt: skip
     assert day.slot(dt.date(2026, 11, 2), note("13:00"), [])[0].item.at == "13:00"
     # A late interrupt resumed after a break: the clock is set to the break's end, not left to chance.
@@ -86,6 +88,26 @@ def test_time_jump_day_keeps_order_breaks_and_interrupts(tmp_path: Path) -> None
     day.slot(dt.date(2026, 11, 2), note("12:05"), [], jump_at="12:30")
     assert calls[:2] == ["clock 12:30", "normalize"]
     log.close()
+
+
+def test_failed_break_unlock_stops_the_day_and_resets_the_clock(tmp_path: Path) -> None:
+    calls: list[str] = []
+    log = GroundTruth(tmp_path / "day.jsonl")
+    day = DayRunner(FakeRunner(log, calls), FakeSession(calls, unlock_ok=False), load_templates(), log, "time-jump", 0,  # type: ignore[arg-type]
+                    sleep=lambda s: calls.append(f"sleep {s:g}"),
+                    set_clock=lambda t: calls.append(f"clock {t:%H:%M}" if t else "clock reset"))  # fmt: skip
+    plan = DayPlan(persona="aberg", date="2026-11-02", items=[
+        note("09:00"), PlanItem(at="12:00", template="break", minutes=30), note("12:05", interrupt=True), note("13:00"),
+    ])  # fmt: skip
+    with pytest.raises(BreakUnlockFailed, match="12:00"):
+        day.run(plan)
+    log.close()
+    # Nothing after the failed unlock: no late interrupt, no later slot, no hygiene; the clock goes back.
+    assert calls == ["clock 09:00", "normalize", "run note 0900", "clock 12:00", "normalize", "lock", "sleep 5",
+                     "clock 12:30", "unlock", "clock reset"]  # fmt: skip
+    assert [(r.item.at, r.status) for r in day.results] == [("09:00", "done"), ("12:00", "failed")]
+    events = (tmp_path / "day.jsonl").read_text(encoding="utf-8")
+    assert '"status": "failed"' in events and '"day_end"' not in events  # logged as failed, never as a finished day
 
 
 def test_break_end_fails_closed_when_the_clock_cannot_be_set(tmp_path: Path) -> None:

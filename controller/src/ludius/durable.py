@@ -48,7 +48,7 @@ from temporalio.client import (
 )
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.contrib.pydantic import pydantic_data_converter
-from temporalio.exceptions import WorkflowAlreadyStartedError
+from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 from temporalio.worker import Worker
 from temporalio.workflow import ActivityCancellationType
 
@@ -287,9 +287,17 @@ class PersonaDay:
                 if item.template == BREAK:
                     await workflow.execute_activity("break_start", s, start_to_close_timeout=QUICK, retry_policy=retry)
                     await workflow.sleep(item.minutes * 60 if inp.clock == "realtime" else 5)
-                    self.done.append(await workflow.execute_activity(
+                    back_in = await workflow.execute_activity(
                         "break_end", s, result_type=Done, start_to_close_timeout=QUICK, retry_policy=retry,
-                    ))  # fmt: skip
+                    )  # fmt: skip
+                    self.done.append(back_in)
+                    # A failed unlock stops the day (no later slot acts on a locked desktop). Patched: histories
+                    # recorded before this ran on after a failed break_end and still replay that way.
+                    if back_in.status != "done" and workflow.patched("break-unlock-fail-closed-v1"):
+                        raise ApplicationError(
+                            f"break at {item.at}: unlock failed, day stopped", type="BreakUnlockFailed",
+                            non_retryable=True,
+                        )  # fmt: skip
                     # They came due while away: run them on return, at the break's logical end. The clock is set
                     # again, since a lease sweep may have reset it while this worker was gone.
                     back = back_at(day, item)

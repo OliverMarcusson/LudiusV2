@@ -17,7 +17,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
-from temporalio.client import WorkflowExecutionStatus
+from temporalio.client import WorkflowExecutionStatus, WorkflowFailureError
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.testing import WorkflowEnvironment
 from test_day import FakeRunner, FakeSession, note
@@ -127,21 +127,16 @@ async def _break_across_restart(tmp_path: Path, unlock_ok: bool) -> None:
             assert calls == ["open", "normalize", "lock", "close"] and unlocks == [] and reservation() == owner
             assert dt.datetime.now(dt.UTC) < fire_at, "restart took longer than the away timer"
 
-            done = await asyncio.wait_for(child.result(), 120)
-            assert [(d.template, d.status) for d in done] == [
-                ("break", "done" if unlock_ok else "failed"), ("notepad_write_note", "done")]  # fmt: skip
-            # One lock (before the stop), one unlock (after the timer fired), then the later task, then release.
-            assert calls == [
-                "open",
-                "normalize",
-                "lock",
-                "close",
-                "open",
-                "unlock",
-                "normalize",
-                "run note 0001",
-                "close",
-            ]
+            if unlock_ok:
+                done = await asyncio.wait_for(child.result(), 120)
+                assert [(d.template, d.status) for d in done] == [("break", "done"), ("notepad_write_note", "done")]
+                # One lock (before the stop), one unlock (after the timer fired), then the later task, then release.
+                after = ["unlock", "normalize", "run note 0001", "close"]
+            else:  # a failed unlock stops the day: no later task, the abort cleans up and releases, the day fails
+                with pytest.raises(WorkflowFailureError):
+                    await asyncio.wait_for(child.result(), 120)
+                after = ["unlock", "close"]
+            assert calls == ["open", "normalize", "lock", "close", "open", *after]
             assert len(unlocks) == 1 and unlocks[0] >= fire_at - dt.timedelta(seconds=1), (unlocks, fire_at)
             assert reservation() is None
 
@@ -159,8 +154,7 @@ async def _break_across_restart(tmp_path: Path, unlock_ok: bool) -> None:
                 "timer_started",
                 "timer_fired",
                 "break_end",
-                "slot",
-                "day_end",
+                *(["slot", "day_end"] if unlock_ok else ["day_abort"]),
             ], seq
             print("calls", calls, "events", seq, "timer fires", fire_at.isoformat(), "unlocked", unlocks[0].isoformat())
             await stop(live[-1])

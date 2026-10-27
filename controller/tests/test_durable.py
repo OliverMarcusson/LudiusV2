@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import random
 import subprocess
 import sys
 import threading
@@ -10,9 +11,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from temporalio.client import WorkflowHistory
 from temporalio.contrib.pydantic import pydantic_data_converter
-from temporalio.exceptions import CancelledError
+from temporalio.exceptions import ApplicationError, CancelledError
 from temporalio.testing import WorkflowEnvironment
+from temporalio.worker import Replayer
 from test_day import FakeRunner, FakeSession, note
 
 from ludius import durable
@@ -71,7 +74,7 @@ async def _realtime_day(tmp_path: Path) -> None:
         day = _day(FlakyRunner, log, calls, "realtime", sleep=sleep, now=lambda: dt.datetime(9999, 1, 1))
         done = await durable.play(env.client, day, plan, "realtime", tmp_path / "desk.lock")
         assert [(d.at, d.status) for d in done] == [("08:55", "done"), ("09:10", "done"), ("09:00", "done"),
-                                                    ("10:00", "done"), ("12:00", "failed")]  # fmt: skip
+                                                    ("10:00", "done"), ("12:00", "done")]  # fmt: skip
         # Finished slots are not redone by the retry; waits and the break are workflow timers, not sleeps.
         assert calls == ["normalize", "run note 0855", "normalize", "run note 0900", "run note 0910", "normalize",
                          "run note 1000", "normalize", "run note 1000", "normalize", "lock", "unlock"]  # fmt: skip
@@ -368,3 +371,55 @@ async def _fail_closed(tmp_path: Path) -> None:
             await durable.play(env.client, day, BREAK_DAY, "time-jump", tmp_path / "d.lock", retry_s=1)
         assert not any(c.startswith(("unlock", "run note 1205")) for c in calls)  # no GUI step on an unknown clock
         assert calls[-1] == "clock reset"  # the failed day still puts the range back on host time
+
+
+FAILED_BREAK_DAY = DayPlan(persona="aberg", date="2026-11-04", items=[
+    note("09:00"), PlanItem(at="12:00", template="break", minutes=30), note("12:05", interrupt=True), note("13:00"),
+])  # fmt: skip
+
+
+@pytest.mark.parametrize("unlocked", [True, False], ids=["unlocked", "unlock-fails"])
+def test_failed_break_unlock_stops_the_durable_day(monkeypatch: pytest.MonkeyPatch, unlocked: bool) -> None:
+    calls: list[str] = []
+
+    async def execute(name: str, *args: Any, **kw: Any) -> Any:
+        s = args[0] if args else None
+        if not isinstance(s, durable.SlotInput):
+            calls.append(name)
+            return None
+        calls.append(f"{name} {s.item.at}")
+        if name == "break_end":
+            return durable.Done(at=s.item.at, template="break", status="done" if unlocked else "failed")
+        return [durable.Done(at=s.item.at, template=s.item.template, status="done")]
+
+    async def sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(durable.workflow, "execute_activity", execute)
+    monkeypatch.setattr(durable.workflow, "sleep", sleep)
+    monkeypatch.setattr(durable.workflow, "random", lambda: random.Random(0))
+    monkeypatch.setattr(durable.workflow, "patched", lambda marker: True)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    wf = durable.PersonaDay()
+    run = wf.run(durable.DayInput(plan=FAILED_BREAK_DAY, clock="time-jump", utc_offset_s=0))
+    if unlocked:  # an ordinary break: the late interrupt and the later slot still run, and the day ends
+        asyncio.run(run)
+        assert calls == ["day_prepare", "slot 09:00", "break_start 12:00", "break_end 12:00", "slot 12:05",
+                         "slot 13:00", "day_end"]  # fmt: skip
+        return
+    with pytest.raises(ApplicationError, match="unlock failed") as e:
+        asyncio.run(run)
+    assert e.value.non_retryable and e.value.type == "BreakUnlockFailed"
+    # No later desktop slot; the abort resets the clock and releases the day; never a day_end.
+    assert calls == ["day_prepare", "slot 09:00", "break_start 12:00", "break_end 12:00", "day_abort"]
+    assert [(d.at, d.status) for d in wf.done] == [("09:00", "done"), ("12:00", "failed")]
+
+
+def test_histories_recorded_before_the_failed_unlock_stop_still_replay() -> None:
+    """Recorded with the previous PersonaDay (fake desktop, unlock False): break_end returned failed and the day
+    went on to the 12:05 and 13:00 slots. Without its patch marker the new code must make the same commands."""
+    history = WorkflowHistory.from_json(
+        durable.workflow_id(FAILED_BREAK_DAY),
+        (Path(__file__).parent / "fixtures" / "persona_day_failed_break_legacy.json").read_text(encoding="utf-8"),
+    )
+    replayer = Replayer(workflows=[durable.PersonaDay], data_converter=pydantic_data_converter)
+    asyncio.run(replayer.replay_workflow(history))
