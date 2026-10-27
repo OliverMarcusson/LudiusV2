@@ -20,7 +20,7 @@ from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
 DISCARD = re.compile(r"(don'?t save|no|discard)", re.I)
-DISMISS = re.compile(r"(cancel|close|ok|not now|no thanks|dismiss)", re.I)
+DISMISS = re.compile(r"(cancel|close|ok|not now|no thanks|dismiss|got it)", re.I)  # got it: Office teaching callouts
 
 
 class VmUnhealthy(Exception):
