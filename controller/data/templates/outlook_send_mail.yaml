@@ -1,0 +1,55 @@
+# Write a new mail to a colleague in Outlook (classic, Exchange profile on the range grommunio) and send it.
+# Done is checked on the range server, not in the UI: the message is in the colleague's inbox (ludius.mail).
+# Variants cover the new-message path (Ctrl+N vs the ribbon's New Email) and sending (Alt+S vs the Send button).
+task: outlook_send_mail
+app: outlook
+processes: [outlook.exe]
+params: [to, subject, body]
+about: "Write a new mail to one colleague in Outlook and send it. to: the colleague's address <user>@corp.ludius.test; subject: one line; body: the mail text (ASCII, a few short lines)."
+defaults: {launch_query: outlook}
+example: {to: mvellinga@corp.ludius.test, subject: lund accruals q4 status, body: "hi marcus\nlund accruals for q4 are booked\n- anna"}
+variants:
+  - [open_outlook, new_message_shortcut, fill_to, fill_subject, write_body, send_shortcut, close_outlook]
+  - [open_outlook, new_message_ribbon, fill_to, fill_subject, write_body, send_button, close_outlook]
+budget_steps: 40
+budget_minutes: 8
+on_abandon: close_without_saving
+subgoals:
+  open_outlook:
+    goal: "Open Outlook by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    steps: 8
+    done: {foreground: {process: outlook.exe, title: "Outlook"}}
+  new_message_shortcut:
+    goal: "Start a new mail with Ctrl+N"
+    keys: [Ctrl+N]
+    done: {window: {process: outlook.exe, title: "^Untitled - Message"}}
+  new_message_ribbon:
+    goal: "Start a new mail with the New Email button on the Home tab"
+    done: {window: {process: outlook.exe, title: "^Untitled - Message"}}
+  fill_to:
+    goal: "Type {to} into the To field of the new mail"
+    text: to
+    done: {typed: true}
+  fill_subject:
+    goal: "Type the subject into the Subject field: {subject}"
+    text: subject
+    done: {typed: true}
+  write_body:
+    goal: "Type the mail text into the message body (below the Subject field)"
+    text: body
+    done: {typed: true}
+  send_shortcut:
+    goal: "Send the mail with Alt+S"
+    keys: [Alt+S]
+    allow_destructive: ["Send"]
+    done: {mail: {mailbox: "{to}"}}
+  send_button:
+    goal: "Send the mail with the Send button"
+    allow_destructive: ["Send"]
+    done: {mail: {mailbox: "{to}"}}
+  close_outlook:
+    goal: "Close Outlook"
+    done: {window: {process: outlook.exe, absent: true}}

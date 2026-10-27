@@ -1,0 +1,51 @@
+# Reply in Outlook (classic) to a colleague's mail already in the Inbox, found by its subject.
+# Done is checked on the range server, not in the UI: the reply (same subject without RE:) is in the colleague's
+# inbox with the typed text (ludius.mail). Variants: Ctrl+R vs the Reply button in the opened message.
+task: outlook_reply_mail
+app: outlook
+processes: [outlook.exe]
+params: [to, subject, body]
+about: "Reply in Outlook to a colleague's mail in the Inbox. to: the address of the colleague who sent it (<user>@corp.ludius.test); subject: that mail's exact subject, without RE:; body: the reply text (ASCII, a few short lines)."
+defaults: {launch_query: outlook}
+example: {to: mvellinga@corp.ludius.test, subject: lund office accruals q4, body: "hi marcus\nyes, lund accruals for q4 are in the close file\n- anna"}
+variants:
+  - [open_outlook, open_message, reply_shortcut, write_reply, send_shortcut, close_message, close_outlook]
+  - [open_outlook, open_message, reply_button, write_reply, send_shortcut, close_message, close_outlook]
+budget_steps: 40
+budget_minutes: 8
+on_abandon: close_without_saving
+subgoals:
+  open_outlook:
+    goal: "Open Outlook by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    steps: 8
+    done: {foreground: {process: outlook.exe, title: "Outlook"}}
+  open_message:
+    goal: "In the Inbox, open the mail with the subject {subject} in its own window (double-click it)"
+    keys: [Enter]
+    done: {window: {process: outlook.exe, title: '^{subject}\s*-\s*Message'}}
+  reply_shortcut:
+    goal: "Reply to the open mail with Ctrl+R"
+    keys: [Ctrl+R]
+    done: {window: {process: outlook.exe, title: '^RE: {subject}\s*-\s*Message'}}
+  reply_button:
+    goal: "Reply to the open mail with the Reply button on its Message tab"
+    done: {window: {process: outlook.exe, title: '^RE: {subject}\s*-\s*Message'}}
+  write_reply:
+    goal: "Type the reply at the top of the message body, above the quoted mail"
+    text: body
+    done: {typed: true}
+  send_shortcut:
+    goal: "Send the reply with Alt+S"
+    keys: [Alt+S]
+    allow_destructive: ["Send"]
+    done: {mail: {mailbox: "{to}"}}
+  close_message:
+    goal: "Close the original mail's window"
+    keys: [Esc]
+    done: {window: {process: outlook.exe, title: '^{subject}\s*-\s*Message', absent: true}}
+  close_outlook:
+    goal: "Close Outlook"
+    done: {window: {process: outlook.exe, absent: true}}

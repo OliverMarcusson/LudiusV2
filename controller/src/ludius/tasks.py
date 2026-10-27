@@ -9,11 +9,12 @@ from __future__ import annotations
 import random
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ludius import mail
 from ludius.v1 import observation_pb2 as obs
 
 
@@ -61,10 +62,23 @@ class Pixels(Strict):
     hints: dict[str, str] = Field(default_factory=dict[str, str])
 
 
+class MailCheck(Strict):
+    """A message is in a mailbox on the range server (ludius.mail), checked there and never in the UI.
+
+    Fields are filled from the task's values: mailbox is an address, subject exact without RE:, body contained.
+    """
+
+    mailbox: str
+    folder: Literal["inbox", "sent"] = "inbox"
+    subject: str = "{subject}"
+    body: str = "{body}"
+
+
 class Done(Strict):
     """All given conditions must hold. `typed` means the content landed in the target element.
 
-    `pixels` applies only to pixels-only snapshots and comes from the template's pixels block.
+    `pixels` applies only to pixels-only snapshots and comes from the template's pixels block. `mail` is read on
+    the range server, so it holds the same on any snapshot.
     """
 
     window: WindowCheck | None = None
@@ -72,6 +86,7 @@ class Done(Strict):
     element: ElementCheck | None = None
     typed: bool = False
     pixels: PixelsCheck | None = None
+    mail: MailCheck | None = None
 
 
 class Subgoal(Strict):
@@ -270,6 +285,8 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
     """True/False when the subgoal has a code check, None when it has none (Jev decides)."""
     if done is None:
         return None
+    if done.mail and not (done.window or done.foreground or done.element or done.typed or done.pixels):
+        return _mail_ok(done.mail, task)
     on_pixels = any(pixels_window(w) for w in snap.windows)
     if done.pixels and not on_pixels and not (done.window or done.foreground or done.element or done.typed):
         return None  # a completion only pixels mode checks: with an accessibility tree, Jev decides as before
@@ -309,4 +326,8 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
 
         if not any(ok(e) for e in snap.elements):
             return False
-    return True
+    return done.mail is None or _mail_ok(done.mail, task)
+
+
+def _mail_ok(c: MailCheck, task: Task) -> bool:
+    return mail.delivered(task.fmt(c.mailbox), c.folder, task.fmt(c.subject), task.fmt(c.body))

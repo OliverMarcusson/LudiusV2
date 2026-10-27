@@ -26,6 +26,10 @@ apps:
     process: msedge.exe
     start_query: edge
     features: [web search, open a result, open a site by address, add a favorite, download a public document, read a page]
+  - name: outlook
+    process: outlook.exe
+    start_query: outlook
+    features: [send a mail to a colleague, reply to a mail, read the inbox, file a mail in a folder]
 # Subgoal vocabulary: what a subgoal may contain (the Subgoal schema), and the code-checkable completions.
 checks:
   window: "{process, title (regex), class_name, absent} - such a window exists (or not), foreground or background"

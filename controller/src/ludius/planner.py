@@ -26,10 +26,12 @@ import yaml
 from pydantic import Field, field_validator
 
 from ludius.llm import LlmClient
+from ludius.mail import DOMAIN as MAIL_DOMAIN
 from ludius.policy import Policy
 from ludius.tasks import Persona, Strict, Task, TaskInstance, Template
 
 BREAK = "break"  # pseudo-template: away from the desk, screen locked
+REPLY = "outlook_reply_mail"  # answers a real inbox mail: the planner sees mail only as follow-ups
 NEAR_DUPLICATE = 0.85  # SequenceMatcher ratio at or above this is "too similar"
 MIN_COMPARE = 12  # shorter values (app names, short queries) may repeat
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -192,7 +194,8 @@ def plan_day(
         + (
             f" Colleagues with accounts: {', '.join(sorted(colleagues))}. When an item produces something one of "
             "them should act on (a note or folder for them, a lookup they asked for), set handoff to their account. "
-            "Pick up threads colleagues handed to this persona."
+            "Pick up threads colleagues handed to this persona. Mail (outlook_*) goes to one colleague: to is "
+            f"<account>@{MAIL_DOMAIN} and handoff is that account; reply only to a due follow-up's mail."
             if colleagues
             else ""
         )
@@ -251,6 +254,10 @@ def validate(
     taken = taken_names(existing)  # grows with each accepted item: a second item with the same name would overwrite
     for i, it in enumerate(items):
         why = _check_item(it, templates, seen, policy)
+        if not why:
+            why = _recipient(it, colleagues or set[str]())
+        if not why and it.template == REPLY and not it.followup:
+            why = "a reply answers a colleague's mail: set followup to that open follow-up"
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
         if not why and it.followup and it.followup not in (followups or set[str]()):
@@ -272,6 +279,19 @@ def validate(
             for key, value in targets(it):
                 taken |= taken_names([value], stem=key != "folder_name")
     return rejects
+
+
+def _recipient(it: PlanItem, colleagues: set[str]) -> str | None:
+    """A mail item's `to` is a colleague's range address, and its handoff (if any) is that colleague."""
+    to = {**it.params, **it.content}.get("to")
+    if to is None:
+        return None
+    user, _, domain = to.strip().lower().partition("@")
+    if domain != MAIL_DOMAIN or user not in colleagues:
+        return f"to {to!r} is not a colleague's address (<account>@{MAIL_DOMAIN})"
+    if it.handoff and it.handoff != user:
+        return f"handoff {it.handoff!r} must be the mail's recipient {user!r}"
+    return None
 
 
 def targets(it: PlanItem) -> list[tuple[str, str]]:

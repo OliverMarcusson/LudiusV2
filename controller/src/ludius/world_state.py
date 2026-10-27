@@ -118,7 +118,11 @@ def build(world: World, narrative: Narrative, personas: list[Persona], before: d
             if it.handoff:
                 fid = f"{date}-{user}-{it.at.replace(':', '')}"
                 about = it.context or it.template
-                state.messages.append(Message(id=fid, date=date, sender=user, to=it.handoff, subject=about[:80],
+                subject = it.params.get("subject", "") if it.template == "outlook_send_mail" else ""
+                if subject:
+                    about = f"mail {subject!r}: {about}"  # the subject a reply must use
+                state.messages.append(Message(id=fid, date=date, sender=user, to=it.handoff,
+                                              subject=subject or about[:80],
                                               body=about + (f" See {doc}." if doc else "")))  # fmt: skip
                 due = next_workday(dt.date.fromisoformat(date)).isoformat()
                 handoffs.append(Followup(id=fid, user=it.handoff, sender=user, due=due, about=about, document=doc))
