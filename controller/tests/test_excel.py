@@ -14,7 +14,7 @@ from ludius import cli, guestfile, tasks
 from ludius.options import build_options, view
 from ludius.planner import PlanItem, load_plan, validate
 from ludius.policy import Policy
-from ludius.tasks import Task, TaskInstance, check_done, file_baseline
+from ludius.tasks import Task, TaskInstance, Template, check_done, file_baseline
 from ludius.v1 import observation_pb2 as obs
 
 ROWS = "item\tcount\npens\t12\npads\t3"
@@ -189,3 +189,48 @@ def test_load_plan_checks_items(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("LUDIUS_SCENARIO", str(scenario))
     with pytest.raises(ValueError, match="scenario-reserved file"):
         load_plan(plan_file(tmp_path / "reserved", ROWS))
+
+
+def test_declared_writes_cover_templates_without_a_file_check(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Notepad has no file done check: its declared write Documents\\{file_name}.txt is what the reservation sees."""
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text(r"reserved: [{path: 'C:\Users\*\Documents\x.txt'}, {path: 'Documents\keep\old.txt'}]",
+                        encoding="utf-8")  # fmt: skip
+    p = Policy.load(scenario)
+    templates = cli.plan_sources().templates
+    note = {"at": "09:00", "template": "notepad_write_note", "context": "note", "params": {"file_name": "x"},
+            "content": {"body": "a short note"}}  # fmt: skip
+    assert [w for _, w in validate([PlanItem.model_validate(note)], templates, [], p, user="aberg")] == [
+        r"Documents\x.txt: scenario-reserved file, choose a different name"
+    ]
+    rename = {"at": "09:00", "template": "explorer_rename_move", "context": "tidy",
+              "params": {"file_name": "draft", "new_name": "old", "folder_name": "keep"}}  # fmt: skip
+    assert validate([PlanItem.model_validate(rename)], templates, [], p, user="aberg")  # the .txt it keeps: reserved
+    path = tmp_path / "plans" / "2026-10-28-aberg.yaml"
+    path.parent.mkdir()
+    path.write_text(yaml.safe_dump({"persona": "aberg", "date": "2026-10-28", "items": [note]}), encoding="utf-8")
+    monkeypatch.setenv("LUDIUS_SCENARIO", str(scenario))
+    with pytest.raises(ValueError, match=r"Documents\\x\.txt: scenario-reserved"):
+        load_plan(path)
+    reads: list[str] = []
+
+    def read(user: str, rel: str) -> guestfile.GuestFile | None:
+        reads.append(rel)
+        return None
+
+    monkeypatch.setattr(tasks.guestfile, "read", read)
+    tk = Task(templates["notepad_write_note"], PlanItem.model_validate(note), random.Random(0))
+    tk.owner = "aberg"
+    assert file_baseline(tk, p) == r"Documents\x.txt: scenario-reserved file" and reads == []
+    assert file_baseline(tk, Policy()) is None and reads == []  # no file check: nothing is read
+
+
+def test_template_load_refuses_undeclared_writes() -> None:
+    t = cli.plan_sources().templates["notepad_write_note"].model_dump()
+    with pytest.raises(ValueError, match="declares no writes"):
+        Template.model_validate({**t, "writes": []})
+    with pytest.raises(ValueError, match="not in a noise folder"):
+        Template.model_validate({**t, "writes": [r"Desktop\{file_name}.txt"]})
+    x = cli.plan_sources().templates["excel_new_workbook"].model_dump()
+    with pytest.raises(ValueError, match="not a declared write"):
+        Template.model_validate({**x, "writes": [r"Documents\{file_name}.xls"]})

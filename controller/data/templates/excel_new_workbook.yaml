@@ -8,6 +8,7 @@
 task: excel_new_workbook
 app: excel
 processes: [excel.exe]
+writes: ['Documents\{file_name}.xlsx']
 params: [file_name, rows]
 about: "Make a small new spreadsheet in Excel and save it to Documents. file_name: without extension; rows: 1-8 lines of 1-5 cells separated by a tab character (row 1 is usually headers), each cell a short ASCII text starting with a letter or a whole number, no empty cells, no dates, times, decimals or percentages."
 defaults: {launch_query: excel}

@@ -84,12 +84,16 @@ def _glob(g: str) -> str:
 class Policy:
     reserved_paths: list[str] = field(default_factory=list[str])  # regexes searched in typed text and values
     reserved_names: list[str] = field(default_factory=list[str])  # regexes an element's whole name must not match
+    reserved_stems: list[str] = field(default_factory=list[str])  # reserved paths without their extension
+    reserved_name_stems: list[str] = field(default_factory=list[str])  # reserved leaf names without their extension
 
     @classmethod
     def load(cls, path: Path) -> Policy:
         s = Scenario.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
         paths: list[str] = []
         names: list[str] = []
+        stems: list[str] = []
+        name_stems: list[str] = []
         for r in s.reserved:
             if not r.path.strip():
                 raise ValueError(f"{path}: empty reserved path")
@@ -98,10 +102,13 @@ class Policy:
             g = r.path.strip().rstrip("\\/")
             paths.append(_glob(g))
             names.append(_glob(re.split(r"[\\/]", g)[-1]))
+            stem = re.sub(r"\.[^.\\/]*$", "", g)
+            stems.append(_glob(stem))
+            name_stems.append(_glob(re.split(r"[\\/]", stem)[-1]))
         for m in s.mailboxes:
             paths.append(_glob(m.strip()))
             names.append(_glob(m.strip()))
-        return cls(reserved_paths=paths, reserved_names=names)
+        return cls(reserved_paths=paths, reserved_names=names, reserved_stems=stems, reserved_name_stems=name_stems)
 
     @classmethod
     def from_env(cls) -> Policy:
@@ -110,7 +117,15 @@ class Policy:
         return cls.load(Path(path)) if path else cls()
 
     def path_reserved(self, path: str) -> bool:
-        """A file path (as the app will write it) is reserved: by a path glob, or by its leaf name."""
+        """A file path (as the app will write it) is reserved: by a path glob, or by its leaf name. A path ending in
+        ".*" keeps an extension nobody knows (an Explorer rename): its stem is compared with reserved paths and leaf
+        names, each without their extension too."""
+        if path.endswith(".*"):
+            stem = path[:-2]
+            leaf = re.split(r"[\\/]", stem.strip())[-1]
+            return any(re.search(p, stem, re.I) for p in [*self.reserved_paths, *self.reserved_stems]) or any(
+                re.fullmatch(p, leaf, re.I) for p in [*self.reserved_names, *self.reserved_name_stems]
+            )
         leaf = re.split(r"[\\/]", path.strip())[-1]
         return self.reserved(path) or any(re.fullmatch(p, leaf, re.I) for p in self.reserved_names)
 

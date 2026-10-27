@@ -3,6 +3,7 @@
 task: explorer_new_folder
 app: explorer
 processes: [explorer.exe]
+writes: ['Documents\{folder_name}']
 params: [folder_name]
 about: "Create a new folder in Documents with File Explorer. folder_name: the folder's name in the persona's naming habit."
 example: {folder_name: admission test folder}

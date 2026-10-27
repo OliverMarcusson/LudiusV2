@@ -2,6 +2,8 @@ task: wordpad_formatted_note
 app: wordpad
 processes:
 - wordpad.exe
+writes:
+- Documents\{file_name}.rtf
 variants:
 - - open_from_start
   - bold_keys_heading

@@ -153,6 +153,9 @@ SEND_FORBID = [ElementCheck(name="^Cc$", value=r"\S"), ElementCheck(name="^Bcc$"
 SEND_AVOID = [ElementCheck(role="edit", name="^Info Bar$")]
 
 
+NAME_PARAMS = {"file_name", "folder_name", "new_name"}  # parameters that name a file or folder in the profile
+
+
 class Template(Strict):
     task: str
     app: str
@@ -170,6 +173,23 @@ class Template(Strict):
     resembles: str = ""  # signal type this legitimate work looks like (powershell, rdp, macro); spec section 6
     pixels: Pixels | None = None  # pixels-only mode opt-in; without it the task gets no rows in that mode
     sends_mail: bool = False  # the shared send contract applies (SEND_REQUIRE above); required with a mail check
+    # What the task creates, profile-relative in a noise folder, as the app writes it (with the extension it adds;
+    # ".*" for one it keeps, an Explorer rename). The shared reservation check (file_reserved) resolves these.
+    writes: list[str] = Field(default_factory=list[str])
+
+    @model_validator(mode="after")
+    def _writes_declared(self) -> Template:
+        """A template that names something it creates must declare where it lands; every write is in a noise folder,
+        and every file done check reads a declared write."""
+        if set(self.params) & NAME_PARAMS and not self.writes:
+            raise ValueError(f"{self.task}: creates {sorted(set(self.params) & NAME_PARAMS)} but declares no writes")
+        for w in self.writes:
+            if guestfile.profile_path("u", w.removesuffix(".*")) is None:
+                raise ValueError(f"{self.task}: write {w!r} is not in a noise folder {guestfile.NOISE_FOLDERS}")
+        for sg in self.subgoals.values():
+            if sg.done and sg.done.file and sg.done.file.path not in self.writes:
+                raise ValueError(f"{self.task}: file check {sg.done.file.path!r} is not a declared write")
+        return self
 
     @model_validator(mode="after")
     def _send_contract(self) -> Template:
@@ -464,26 +484,32 @@ def recipient_reserved(sg: Subgoal, task: Task, policy: Any) -> bool:
     return bool(sg.done and sg.done.mail and policy.reserved(task.fmt(sg.done.mail.mailbox)))
 
 
-def file_paths(task: Task) -> list[str]:
-    """The files the task creates, as the app writes them (with extension), profile-relative: its file checks."""
-    return [task.fmt(sg.done.file.path) for sg in task.template.subgoals.values() if sg.done and sg.done.file]
+def write_paths(task: Task) -> list[str]:
+    """What the task creates (its declared writes), profile-relative, as the app writes them."""
+    return [task.fmt(w) for w in task.template.writes]
 
 
 def file_reserved(user: str, rel: str, policy: Any) -> bool:
-    """The shared file-access rule: a created file's final path, relative and in `user`'s profile (when known), must
-    not be scenario-reserved; checked at plan load and before any guest read. `policy` is a ludius.policy.Policy."""
-    full = guestfile.profile_path(user, rel) if user else None
-    return bool(policy.path_reserved(rel) or (full and policy.path_reserved(full)))
+    """The shared write rule: a created file or folder's final path, relative and in `user`'s profile (when known),
+    must not be scenario-reserved; checked at generation, plan load and task start (before any guest read).
+    `policy` is a ludius.policy.Policy."""
+    any_ext = ".*" if rel.endswith(".*") else ""
+    full = guestfile.profile_path(user, rel.removesuffix(".*")) if user else None
+    return bool(policy.path_reserved(rel) or (full and policy.path_reserved(full + any_ext)))
 
 
 def file_baseline(task: Task, policy: Any) -> str | None:
-    """Why the task must not start (a file it would create is reserved, exists, or can't be read), else None; sets
-    Task.files_absent. The runner calls it before any input: a task never overwrites a file, and a reserved one is
-    never even read."""
-    absent: set[str] = set()
-    for rel in file_paths(task):
+    """Why the task must not start (something it would create is reserved; a file it checks exists or can't be
+    read), else None; sets Task.files_absent. The runner calls it before any input: a task never overwrites a file,
+    and a reserved one is never even read."""
+    for rel in write_paths(task):
         if file_reserved(task.owner, rel, policy):
             return f"{rel}: scenario-reserved file"
+    absent: set[str] = set()
+    for sg in task.template.subgoals.values():
+        if not (sg.done and sg.done.file):
+            continue
+        rel = task.fmt(sg.done.file.path)
         f = guestfile.read(task.owner, rel)
         if f is None:
             return f"{rel}: unreadable on the guest"

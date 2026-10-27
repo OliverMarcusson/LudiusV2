@@ -4,6 +4,7 @@
 task: notepad_write_note
 app: notepad
 processes: [notepad.exe]
+writes: ['Documents\{file_name}.txt']
 params: [file_name, body]
 about: "Write a short plain-text note in Notepad and save it to Documents. file_name: without extension; body: the note text (ASCII, several lines)."
 defaults: {launch_query: notepad}

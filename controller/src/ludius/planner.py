@@ -29,7 +29,7 @@ from pydantic import Field, field_validator
 from ludius.llm import LlmClient
 from ludius.mail import DOMAIN as MAIL_DOMAIN
 from ludius.policy import Policy
-from ludius.tasks import Persona, Strict, Task, TaskInstance, Template, file_paths, file_reserved, load_template
+from ludius.tasks import Persona, Strict, Task, TaskInstance, Template, file_reserved, load_template, write_paths
 
 BREAK = "break"  # pseudo-template: away from the desk, screen locked
 REPLY = "outlook_reply_mail"  # answers a real inbox mail: the planner sees mail only as follow-ups
@@ -411,7 +411,7 @@ def item_problem(it: PlanItem, templates: dict[str, Template], policy: Policy, u
             return f"{key}: not a valid file name"  # Windows would alias it (trailing dot/space) or reserve it
         if r := policy.text_allowed(value, None):
             return f"{key}: {r}"
-    for rel in file_paths(task):
+    for rel in write_paths(task):
         if file_reserved(user, rel, policy):
             return f"{rel}: scenario-reserved file, choose a different name"
     return None

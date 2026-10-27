@@ -4,6 +4,7 @@
 task: paint_quick_sketch
 app: paint
 processes: [mspaint.exe]
+writes: ['Pictures\{file_name}.png']
 params: [file_name, caption]
 about: "Make a quick sketch in Paint (a text caption) and save it as .png in Pictures. file_name: without extension; caption: one short line of text on the image (ASCII)."
 defaults: {launch_query: paint, run_query: mspaint}  # Run doesn't know "paint"
