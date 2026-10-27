@@ -254,6 +254,7 @@ async def _timer_across_restart(tmp_path: Path, now: dt.datetime) -> None:
                 return [e async for e in child.fetch_history_events()]
 
             # Server ground truth: the 00:00 slot finished, then the slot-B timer started; nothing else happened.
+            started: list[Any] = []
             for _ in range(300):
                 try:
                     started = [e for e in await events() if e.HasField("timer_started_event_attributes")]
