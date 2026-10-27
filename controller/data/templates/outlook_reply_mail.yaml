@@ -5,7 +5,7 @@ task: outlook_reply_mail
 app: outlook
 processes: [outlook.exe]
 params: [to, to_name, subject, body]
-about: "Reply in Outlook to a colleague's mail in the Inbox. to: the address of the colleague who sent it (<user>@corp.ludius.test); to_name: their full name as in the company story; subject: that mail's exact subject, without RE:; body: the reply text (ASCII, a few short lines)."
+about: "Reply in Outlook to a colleague's mail in the Inbox. to: the address of the colleague who sent it (<user>@corp.ludius.test); subject: that mail's exact subject, without RE:; body: the reply text (ASCII, a few short lines)."
 defaults: {launch_query: outlook}
 example: {to: mvellinga@corp.ludius.test, to_name: Marcus Vellinga, subject: lund office accruals q4, body: "hi marcus\nyes, lund accruals for q4 are in the close file\n- anna"}
 variants:
@@ -36,13 +36,15 @@ subgoals:
   write_reply:
     goal: "Type the reply at the top of the message body, above the quoted mail"
     text: body
+    unreadable_ok: true  # Word body: no UIA value; the server-side body check decides
     done: {typed: true}
   send_shortcut:
     goal: "Send the reply with Alt+S"
     keys: [Alt+S]
     allow_destructive: ["Send"]
     # No input unless To is exactly the planned colleague (address, or the name Outlook resolves it to) and Cc/Bcc
-    # are empty (absent counts).
+    # are empty when shown; a hidden Bcc shows in the Sent Items copy, which the done check requires to name {to}
+    # alone (ludius.mail), and srv01 refuses non-local recipients.
     require: [{name: "^To$", value: '^({to}|{to_name});?$'}]
     forbid: [{name: "^Cc$", value: '\S'}, {name: "^Bcc$", value: '\S'}]
     done: {mail: {mailbox: "{to}"}}

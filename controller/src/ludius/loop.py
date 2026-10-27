@@ -332,7 +332,7 @@ class Runner:
             changed, revisit = after != here, after in seen
             seen.add(after)
             if chosen.kind == "type":
-                typed_ok = _typed_landed(snap, chosen, task)
+                typed_ok = _typed_landed(snap, chosen, sg)
             outcome = "back to an earlier screen" if changed and revisit else "changed" if changed else "no change"
             last_result = "no visible change" if not changed else outcome
             if not snap.settled:
@@ -474,10 +474,10 @@ class Runner:
         )
 
 
-def _typed_landed(snap: obs.Snapshot, o: Option, _task: Task) -> bool:
-    if o.element is None or ("value" not in o.element.actions and not o.element.value):
-        # Typed at the focus, or into a control with no readable value (Outlook's Word body): no value can show
-        # the text landing, so the subgoal's own check decides.
+def _typed_landed(snap: obs.Snapshot, o: Option, sg: Subgoal) -> bool:
+    if o.element is None or (sg.unreadable_ok and "value" not in o.element.actions and not o.element.value):
+        # Typed at the focus, or into a control the template marks as having no readable value (Outlook's Word
+        # body): no value can show the text landing, so the subgoal's own check decides.
         return True
     target = next((e for e in snap.elements if e.key == o.element.key), None)
     return target is not None and target.value != o.element.value

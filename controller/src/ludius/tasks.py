@@ -101,6 +101,9 @@ class Subgoal(Strict):
     # Preconditions for any input in this subgoal (rescans excepted): every `require` check matches an element on
     # screen and no `forbid` check does, e.g. the To field holds exactly the planned address and Cc is empty.
     require: list[ElementCheck] = Field(default_factory=list[ElementCheck])
+    # The text target exposes no readable value (Outlook's Word body): typing there counts as landed and the
+    # subgoal's own check decides. Off everywhere else, where an unchanged value means the text did not land.
+    unreadable_ok: bool = False
     forbid: list[ElementCheck] = Field(default_factory=list[ElementCheck])
     done: Done | None = None
     steps: int = 12

@@ -16,6 +16,7 @@ from ludius.v1 import observation_pb2 as obs
 
 COLLEAGUES = {"mvellinga", "lnord"}
 THREADS = {"f1": ("mvellinga", "lund accruals q4 status")}  # f2: an open follow-up that is not a mail
+PEOPLE = {"mvellinga": "Marcus Vellinga", "lnord": "Lars Nord", "aberg": "Anna Berg"}
 
 
 def item(template: str = "outlook_send_mail", **extra: Any) -> dict[str, Any]:
@@ -29,7 +30,7 @@ def check(*items: dict[str, Any]) -> list[str]:
     templates = cli.plan_sources().templates
     its = [PlanItem.model_validate(i) for i in items]
     return [why for _, why in validate(its, templates, [], Policy(), COLLEAGUES, followups={"f1", "f2"},
-                                       mail_threads=THREADS)]  # fmt: skip
+                                       mail_threads=THREADS, people=PEOPLE)]  # fmt: skip
 
 
 def test_templates_load_with_server_side_send_checks() -> None:
@@ -53,6 +54,10 @@ def test_mail_to_a_colleague_is_valid() -> None:
         ({"params": {"to": "someone@example.com"}}, "not a colleague's address"),
         ({"params": {"to": "jdoe@corp.ludius.test"}}, "not a colleague's address"),
         ({"handoff": "lnord"}, "must be the mail's recipient"),
+        ({"params": {"to_name": "Marcus Vellinga; outside@example.com"}}, "name from the company story"),
+        ({"params": {"to_name": "Marcus Vellinga <outside@example.com>"}}, "to_name"),
+        ({"params": {"to_name": "Lars Nord"}}, "name from the company story"),  # another colleague's name
+        ({"params": {"to_name": ""}}, "missing parameters"),
     ],
 )
 def test_mail_recipient_is_checked(extra: dict[str, Any], why: str) -> None:
@@ -60,12 +65,24 @@ def test_mail_recipient_is_checked(extra: dict[str, Any], why: str) -> None:
     assert why in got
 
 
+def test_to_name_is_derived_from_the_narrative_not_the_llm() -> None:
+    from ludius.planner import catalog, fill_recipient_names
+
+    its = [PlanItem.model_validate(item(params={"to_name": "Marcus Vellinga; outside@example.com"})),
+           PlanItem.model_validate(item(params={"to": "jdoe@corp.ludius.test"}))]  # fmt: skip
+    fill_recipient_names(its, PEOPLE)
+    assert [it.params["to_name"] for it in its] == ["Marcus Vellinga", ""]
+    assert "to_name" not in catalog(cli.load_templates())  # the LLM is never asked for it
+
+
 def test_reply_must_answer_the_matching_mail_followup() -> None:
     assert check(item("outlook_reply_mail", followup="f1")) == []
     assert "set followup" in check(item("outlook_reply_mail"))[0]
     assert "set followup" in check(item("outlook_reply_mail", followup="f2"))[0]  # a folder handoff, not a mail
     wrong_subject = item("outlook_reply_mail", followup="f1", params={"subject": "other thing"})
-    wrong_sender = item("outlook_reply_mail", followup="f1", params={"to": "lnord@corp.ludius.test"})
+    wrong_sender = item(
+        "outlook_reply_mail", followup="f1", params={"to": "lnord@corp.ludius.test", "to_name": "Lars Nord"}
+    )
     for it in (wrong_subject, wrong_sender):
         assert "reply to that, with that subject" in check(it)[0]
 
@@ -102,7 +119,9 @@ def test_foreign_or_malformed_mailbox_never_queries(monkeypatch: pytest.MonkeyPa
 
 
 SEED = mail.Message("mvellinga@corp.ludius.test", 1_000, "Hi Anna,\r\nyes\r\n")
-REPLY = mail.Message("aberg@corp.ludius.test", 5_000, "Yes, booked.\r\n-----\r\nHi Anna, yes")
+REPLY = mail.Message(
+    "aberg@corp.ludius.test", 5_000, "Yes, booked.\r\n-----\r\nHi Anna, yes", ("mvellinga@corp.ludius.test",)
+)
 
 
 @pytest.mark.parametrize(
@@ -125,6 +144,29 @@ def test_delivered_needs_sender_time_and_a_real_body(
 
     monkeypatch.setattr(mail, "messages", messages)
     assert mail.delivered("mvellinga@corp.ludius.test", "inbox", "s", body, sender, since) is ok
+
+
+@pytest.mark.parametrize(
+    "sent_to",
+    [
+        ("mvellinga@corp.ludius.test", "outside@example.com"),  # a hidden Bcc: only the Sent Items copy shows it
+        ("lnord@corp.ludius.test", "mvellinga@corp.ludius.test"),  # an extra colleague in Cc
+        ("?",),  # a recipient without a readable address
+        (),  # no Sent Items copy recipients at all
+    ],
+)
+def test_sent_copy_must_go_to_the_planned_recipient_alone(
+    monkeypatch: pytest.MonkeyPatch, sent_to: tuple[str, ...]
+) -> None:
+    sent = mail.Message("aberg@corp.ludius.test", 5_000, "Yes, booked.", sent_to)
+
+    def messages(user: str, folder: str, _subject: str) -> list[mail.Message]:
+        return [sent] if (user, folder) == ("aberg", "sent") else [REPLY]
+
+    monkeypatch.setattr(mail, "messages", messages)
+    assert not mail.delivered("mvellinga@corp.ludius.test", "inbox", "s", "yes booked", "aberg@corp.ludius.test", 1)
+    sent = mail.Message("aberg@corp.ludius.test", 5_000, "Yes, booked.", ("mvellinga@corp.ludius.test",))
+    assert mail.delivered("mvellinga@corp.ludius.test", "inbox", "s", "yes booked", "aberg@corp.ludius.test", 1)
 
 
 @pytest.mark.parametrize("error", [FileNotFoundError("pwsh"), subprocess.TimeoutExpired("pwsh", 30)])
@@ -157,16 +199,23 @@ def test_send_is_blocked_unless_to_is_exact_and_cc_bcc_empty() -> None:
         assert preconditions(sg, bad, task) is not None
 
 
-def test_typing_into_a_body_without_a_readable_value_counts_as_landed() -> None:
+def test_value_less_typing_counts_only_where_the_template_says_so() -> None:
     from ludius.loop import _typed_landed  # pyright: ignore[reportPrivateUsage]
     from ludius.options import Option
 
+    templates = cli.load_templates()
     body = obs.Element(key="b", role="document", name="Untitled Message")  # Word editor: no Value pattern
     edit = obs.Element(key="e", role="edit", name="Subject", actions=["value"])
-    after = obs.Snapshot(elements=[obs.Element(key="e", role="edit", name="Subject", actions=["value"])])
-    task = Task(cli.load_templates()["outlook_send_mail"], PlanItem.model_validate(item()), random.Random(0))
-    assert _typed_landed(after, Option("o1", "type", "t", element=body), task)
-    assert not _typed_landed(after, Option("o2", "type", "t", element=edit), task)  # value unchanged: not landed
+    after = obs.Snapshot(elements=[obs.Element(key="e", role="edit", name="Subject", actions=["value"]),
+                                   obs.Element(key="b", role="document", name="Untitled Message")])  # fmt: skip
+    outlook = templates["outlook_send_mail"].subgoals["write_body"]
+    assert _typed_landed(after, Option("o1", "type", "t", element=body), outlook)
+    assert not _typed_landed(after, Option("o2", "type", "t", element=edit), outlook)  # value unchanged
+    for sg in (templates["notepad_write_note"].subgoals["write_body"],
+               templates["wordpad_formatted_note"].subgoals["bold_keys_heading"],
+               templates["wordpad_formatted_note"].subgoals["bullets_body"]):  # fmt: skip
+        assert not sg.unreadable_ok
+        assert not _typed_landed(after, Option("o1", "type", "t", element=body), sg)
 
 
 def test_recipient_and_answered_subject_may_repeat() -> None:

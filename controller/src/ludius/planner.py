@@ -131,8 +131,13 @@ PLAN_SYSTEM = (
 )
 
 
+DERIVED = {"to_name"}  # filled in code from the narrative (fill_recipient_names), never written by the LLM
+_NOT_A_NAME = re.compile(r"[;,<>@]")  # a display name holding a second recipient or an address
+
+
 def catalog(templates: dict[str, Template]) -> str:
-    lines = [f"- {t.task}: {t.about} Parameters: {', '.join(t.params) or 'none'}." for t in templates.values()]
+    lines = [f"- {t.task}: {t.about} Parameters: {', '.join(p for p in t.params if p not in DERIVED) or 'none'}."
+             for t in templates.values()]  # fmt: skip
     lines.append(f"- {BREAK}: away from the desk (lunch, coffee, meeting), screen locked. Set minutes.")
     return "\n".join(lines)
 
@@ -176,6 +181,7 @@ def plan_day(
     window = scenario if scenario and scenario.date == date.isoformat() else None
     lookalikes = sorted(k for k, t in templates.items() if window and t.resembles == window.signal)
     colleagues = {p.user for p in narrative.people if p.user and p.user != persona.user}
+    people = {p.user: p.name for p in narrative.people if p.user}
     existing = list(existing)
     names = sorted({_leaf(e) for e in existing if _leaf(e)}, key=str.casefold)[:SHOWN_EXISTING]
     user = (
@@ -222,8 +228,9 @@ def plan_day(
         )
     )
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
+    fill_recipient_names(draft.items, people)
     rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                       mail_threads)  # fmt: skip
+                       mail_threads, people)  # fmt: skip
     missing = sorted(set(followups) - {it.followup for it in draft.items})
     if rejects or missing:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
@@ -231,8 +238,9 @@ def plan_day(
             + [f"- follow-up {k} is not scheduled" for k in missing]
         )
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
+        fill_recipient_names(draft.items, people)
         rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                           mail_threads)  # fmt: skip
+                           mail_threads, people)  # fmt: skip
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     missing = sorted(set(followups) - {it.followup for it in items})
@@ -259,16 +267,18 @@ def validate(
     followups: set[str] | None = None,
     existing: Iterable[str] = (),
     mail_threads: dict[str, tuple[str, str]] | None = None,
+    people: dict[str, str] | None = None,
 ) -> list[tuple[int, str]]:
     """Rejected items with the reason. A reply must answer a mail follow-up in `mail_threads` from its `to`
-    colleague with its subject; without mail threads no reply is valid."""
+    colleague with its subject; without mail threads no reply is valid. A mail's to_name must be exactly the
+    narrative name (`people`, account -> name) of its `to` colleague."""
     rejects: list[tuple[int, str]] = []
     seen = list(history)
     taken = taken_names(existing)  # grows with each accepted item: a second item with the same name would overwrite
     for i, it in enumerate(items):
         why = _check_item(it, templates, seen, policy)
         if not why:
-            why = _recipient(it, colleagues or set[str]())
+            why = _recipient(it, colleagues or set[str](), people or {})
         if not why and it.template == REPLY:
             why = _reply_thread(it, mail_threads or {})
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
@@ -294,14 +304,28 @@ def validate(
     return rejects
 
 
-def _recipient(it: PlanItem, colleagues: set[str]) -> str | None:
-    """A mail item's `to` is a colleague's range address, and its handoff (if any) is that colleague."""
-    to = {**it.params, **it.content}.get("to")
+def fill_recipient_names(items: Iterable[PlanItem], people: dict[str, str]) -> None:
+    """Set each mail item's to_name from the narrative (the display name Outlook resolves `to` to), replacing
+    anything the LLM wrote; an unknown account gets none, so the item fails validation."""
+    for it in items:
+        if "to" in it.params:
+            it.content.pop("to_name", None)
+            it.params["to_name"] = people.get(it.params["to"].strip().lower().partition("@")[0], "")
+
+
+def _recipient(it: PlanItem, colleagues: set[str], people: dict[str, str]) -> str | None:
+    """A mail item's `to` is a colleague's range address, its to_name exactly that colleague's narrative name, and
+    its handoff (if any) is that colleague."""
+    values = {**it.params, **it.content}
+    to = values.get("to")
     if to is None:
         return None
     user, _, domain = to.strip().lower().partition("@")
     if domain != MAIL_DOMAIN or user not in colleagues:
         return f"to {to!r} is not a colleague's address (<account>@{MAIL_DOMAIN})"
+    name = values.get("to_name", "")
+    if _NOT_A_NAME.search(name) or name != people.get(user):
+        return f"to_name {name!r} is not {user!r}'s name from the company story"
     if it.handoff and it.handoff != user:
         return f"handoff {it.handoff!r} must be the mail's recipient {user!r}"
     return None

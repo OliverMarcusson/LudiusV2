@@ -20,6 +20,7 @@ DOMAIN = "corp.ludius.test"
 FOLDERS = {"inbox": 13, "sent": 10}  # gromox private-store folder ids
 PR_NORMALIZED_SUBJECT, PR_BODY = 0x0E1D001F, 0x1000001F
 PR_SENDER_SMTP, PR_SENT_REPRESENTING_SMTP, PR_DELIVERY_TIME = 0x5D01001F, 0x5D02001F, 0x0E060040
+PR_SMTP_ADDRESS, PR_EMAIL_ADDRESS = 0x39FE001F, 0x3003001F  # per recipient (To, Cc and, in Sent Items, Bcc)
 FILETIME_UNIX_MS = 11_644_473_600_000  # 1601-01-01 to 1970-01-01, in ms
 _ASCII = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-"})
 
@@ -29,6 +30,7 @@ class Message:
     sender: str  # SMTP address, lower case
     delivered_ms: int  # Unix ms, the server's clock
     body: str
+    recipients: tuple[str, ...] = ()  # every recipient's SMTP address, lower case, sorted; "?" when unknown
 
 
 @functools.cache
@@ -48,7 +50,12 @@ def messages(user: str, folder: str, subject: str) -> list[Message]:
         return []
     db = f"/var/lib/gromox/user/{DOMAIN}/{user}"
     # Hex literal: the subject reaches neither the shell nor SQL as text.
-    sql = (f"select coalesce(d.propval, 0), coalesce(f.propval, r.propval, '-'), cast(b.propval as text) "
+    rcpt = (f"(select group_concat(coalesce(cast(a.propval as text), cast(e.propval as text), '?'), ',') "
+            f"from recipients x left join recipients_properties a on a.recipient_id=x.recipient_id "
+            f"and a.proptag={PR_SMTP_ADDRESS} left join recipients_properties e on e.recipient_id=x.recipient_id "
+            f"and e.proptag={PR_EMAIL_ADDRESS} where x.message_id=m.message_id)")  # fmt: skip
+    sql = (f"select coalesce(d.propval, 0), coalesce(f.propval, r.propval, '-'), coalesce({rcpt}, '-'), "
+           f"cast(b.propval as text) "
            f"from messages m join message_properties s on s.message_id=m.message_id "
            f"and s.proptag={PR_NORMALIZED_SUBJECT} join message_properties b on b.message_id=m.message_id "
            f"and b.proptag={PR_BODY} left join message_properties d on d.message_id=m.message_id "
@@ -57,7 +64,7 @@ def messages(user: str, folder: str, subject: str) -> list[Message]:
            f"and r.proptag={PR_SENT_REPRESENTING_SMTP} where m.parent_fid={FOLDERS[folder]} "
            f"and m.is_associated=0 and cast(s.propval as text)=cast(x'{subject.encode().hex()}' as text)")  # fmt: skip
     remote = (f"sudo sqlite3 -readonly -separator ' ' {db}/exmdb/exchange.sqlite3 \"{sql}\" | "
-              f"while read t s c; do printf '%s %s\\n' \"$t\" \"$s\"; sudo zstdcat -qf {db}/cid/$c; "
+              f"while read t s r c; do printf '%s %s %s\\n' \"$t\" \"$s\" \"$r\"; sudo zstdcat -qf {db}/cid/$c; "
               f"printf '\\036'; done")  # fmt: skip
     try:
         host = _host()
@@ -73,9 +80,10 @@ def messages(user: str, folder: str, subject: str) -> list[Message]:
     found: list[Message] = []
     for rec in out.stdout.decode("utf-8", "replace").split("\x1e"):
         head, _, body = rec.lstrip("\r\n").partition("\n")
-        t, _, sender = head.partition(" ")
+        t, sender, rcpt = (head.split(" ") + ["", ""])[:3]
         if t.isdigit() and int(t):
-            found.append(Message(sender.strip().lower(), int(t) // 10_000 - FILETIME_UNIX_MS, body))
+            to = tuple(sorted(x.strip().lower() for x in rcpt.split(",") if rcpt.strip() not in ("", "-")))
+            found.append(Message(sender.strip().lower(), int(t) // 10_000 - FILETIME_UNIX_MS, body, to))
     return found
 
 
@@ -87,12 +95,20 @@ def letters(s: str) -> str:
 
 def delivered(address: str, folder: str, subject: str, body: str, sender: str, since_ms: int) -> bool:
     """A message from `sender` with exactly this subject, delivered at or after `since_ms` (Unix ms) and whose
-    body contains `body`, is in the mailbox's folder. A body with no letters or digits never matches."""
-    user, _, domain = address.strip().lower().partition("@")
+    body contains `body`, is in the mailbox's folder; and every such copy in the sender's Sent Items went to
+    `address` alone (To, Cc and Bcc: a hidden Bcc shows there, not in the recipient's copy). A body with no
+    letters or digits never matches. srv01's only outgoing path (gromox LDA) refuses non-local recipients."""
+    address = address.strip().lower()
+    user, _, domain = address.partition("@")
+    me, _, my_domain = sender.strip().lower().partition("@")
     want = letters(body)
-    if domain != DOMAIN or not want or not sender or since_ms <= 0:
+    if domain != DOMAIN or my_domain != DOMAIN or not want or since_ms <= 0:
         return False
-    return any(
-        m.sender == sender.lower() and m.delivered_ms >= since_ms and want in letters(m.body)
-        for m in messages(user, folder, subject)
-    )
+
+    def ours(m: Message) -> bool:
+        return m.sender == sender.lower() and m.delivered_ms >= since_ms and want in letters(m.body)
+
+    if not any(ours(m) for m in messages(user, folder, subject)):
+        return False
+    sent = [m for m in messages(me, "sent", subject) if ours(m)]
+    return bool(sent) and all(m.recipients == (address,) for m in sent)
