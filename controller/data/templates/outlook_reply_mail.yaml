@@ -37,11 +37,13 @@ subgoals:
     goal: "Type the reply at the top of the message body, above the quoted mail"
     text: body
     unreadable_ok: true  # Word body: no UIA value; the server-side body check decides
+    avoid: [{role: edit, name: "^Info Bar$"}]  # "not responding to the latest message": its click opens that one
     done: {typed: true}
   send_shortcut:
     goal: "Send the reply with Alt+S"
     keys: [Alt+S]
     allow_destructive: ["Send"]
+    avoid: [{role: edit, name: "^Info Bar$"}]
     # No input unless the To, Cc and Bcc fields are all on screen (Bcc is shown: aberg's Outlook view option), To is
     # exactly the planned colleague (address, or the name Outlook resolves it to) and Cc and Bcc are empty. A field
     # that is not observed fails closed. Defense in depth: the done check requires the Sent Items copy to name {to}

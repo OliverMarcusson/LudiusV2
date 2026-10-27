@@ -376,3 +376,17 @@ def test_a_blocked_subgoal_waits_without_asking_jev(tmp_path: Path, monkeypatch:
     runner = Runner(Agent(), NoJev(), Persona(name="t", user="aberg"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
     status, steps, _ = runner._subgoal(task, "send_button", task.subgoal("send_button"), budget=12, t0=1e18)  # pyright: ignore[reportPrivateUsage]
     assert (status, steps, len(polls)) == ("done", 2, 3)
+
+
+def test_reply_never_offers_the_info_bar() -> None:
+    from ludius.options import StepView, build_options
+
+    t = cli.load_templates()["outlook_reply_mail"]
+    task = Task(t, PlanItem.model_validate(item("outlook_reply_mail", followup="f1")), random.Random(0))
+    bar = obs.Element(id=1, role="edit", name="Info Bar", value="You are not responding to the latest message",
+                      read_only=True, focused=True, bounds=obs.Rect(width=9, height=9))  # fmt: skip
+    body = obs.Element(id=2, role="document", name="RE: lund accruals q4 status", bounds=obs.Rect(width=9, height=9))
+    v = StepView(obs.Snapshot(elements=[bar, body]), allowed=[bar, body])
+    for name in ("write_reply", "send_shortcut"):
+        targets = {o.element.name for o in build_options(v, task, t.subgoals[name], Policy()) if o.element}
+        assert "Info Bar" not in targets and body.name in targets, name

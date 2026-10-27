@@ -105,6 +105,9 @@ class Subgoal(Strict):
     # subgoal's own check decides. Off everywhere else, where an unchanged value means the text did not land.
     unreadable_ok: bool = False
     forbid: list[ElementCheck] = Field(default_factory=list[ElementCheck])
+    # Elements never offered as a target in this subgoal, e.g. Outlook's Info Bar, whose click opens the
+    # conversation's latest message and took the caret away from the reply being typed.
+    avoid: list[ElementCheck] = Field(default_factory=list[ElementCheck])
     done: Done | None = None
     steps: int = 12
     pixels_hint: str = ""  # from the template's pixels hints
@@ -326,12 +329,12 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
     if done.element:
         c = done.element
 
-        if not any(_element_matches(e, c, task) for e in snap.elements):
+        if not any(element_matches(e, c, task) for e in snap.elements):
             return False
     return done.mail is None or _mail_ok(done.mail, task)
 
 
-def _element_matches(e: obs.Element, c: ElementCheck, task: Task, flags: int = re.I) -> bool:
+def element_matches(e: obs.Element, c: ElementCheck, task: Task, flags: int = re.I) -> bool:
     # Edit and RichEdit values end lines with \r or \r\n; multi-line params use \n.
     value = re.sub(r"\r\n?", "\n", e.value)
     return (
@@ -347,7 +350,7 @@ def _guard_matches(e: obs.Element, c: ElementCheck, task: Task) -> bool:
     as mvellınga (dotless i, which Unicode re.I folds to i) is not the planned address."""
     # ponytail: ASCII only; a colleague whose name needs non-ASCII (Åberg) can't be mailed until guards fold Unicode
     # without the lookalikes.
-    return "value" in e.actions and e.value.isascii() and _element_matches(e, c, task, re.I | re.A)
+    return "value" in e.actions and e.value.isascii() and element_matches(e, c, task, re.I | re.A)
 
 
 def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Element | None = None) -> str | None:
@@ -363,7 +366,7 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
         if not any(e.window == fg and _guard_matches(e, c, task) for e in snap.elements):
             return f"precondition: no readable {c.name or c.role!r} field with value {task.fmt(c.value or '')!r}"
     for c in sg.forbid:
-        if any(_element_matches(e, c, task) for e in snap.elements):
+        if any(element_matches(e, c, task) for e in snap.elements):
             return f"precondition: {c.name or c.role!r} must not match {task.fmt(c.value or '')!r}"
     return None
 

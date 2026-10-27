@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ludius.policy import SHELL_PROCESSES, Policy, alt_f4_safe
-from ludius.tasks import Subgoal, Task, pixels_region, pixels_window
+from ludius.tasks import Subgoal, Task, element_matches, pixels_region, pixels_window
 from ludius.v1 import observation_pb2 as obs
 
 CLICKABLE = {
@@ -129,6 +129,8 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
 
     content = task.text(sg)
     for e in v.allowed:
+        if any(element_matches(e, c, task) for c in sg.avoid):
+            continue
         # Words read from pixels (visual fallback) carry no role: clicking them is the only way in.
         if (e.role in CLICKABLE or (e.role == "text" and e.framework_id == "visual")) and e.bounds.width > 0:
             add("click", f"click {describe(e)}", element=e)
