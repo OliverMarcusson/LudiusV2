@@ -45,10 +45,16 @@ subgoals:
     goal: "Send the mail with Alt+S"
     keys: [Alt+S]
     allow_destructive: ["Send"]
+    # No input at all unless the To field holds exactly the planned address and Cc/Bcc are empty (absent counts).
+    require: [{name: "^To$", value: '^{to};?$'}]
+    forbid: [{name: "^Cc$", value: '\S'}, {name: "^Bcc$", value: '\S'}]
     done: {mail: {mailbox: "{to}"}}
   send_button:
     goal: "Send the mail with the Send button"
     allow_destructive: ["Send"]
+    # No input at all unless the To field holds exactly the planned address and Cc/Bcc are empty (absent counts).
+    require: [{name: "^To$", value: '^{to};?$'}]
+    forbid: [{name: "^Cc$", value: '\S'}, {name: "^Bcc$", value: '\S'}]
     done: {mail: {mailbox: "{to}"}}
   close_outlook:
     goal: "Close Outlook"

@@ -141,6 +141,7 @@ def generate_day(
         llm, auto.narrative, persona, date, src.templates, context, world.history(persona.user),
         policy=src.policy, scenario=scenario, existing=world_state.existing_files(world, persona.user),
         followups={f.id: f.about for f in world_state.due(state, persona.user, date)},
+        mail_threads=world_state.mail_threads(state, persona.user),
     )  # fmt: skip
     return Generated(plan, rejects, auto)
 
@@ -154,10 +155,12 @@ def check_existing(world: World, persona: Persona, date: dt.date, src: Sources) 
         raise PlanConflict(f"{path} exists but is not a readable plan: {e}") from e
     if (plan.persona, plan.date) != (persona.user, date.isoformat()):
         raise PlanConflict(f"{path} is the plan of {plan.persona} on {plan.date}, not {persona.user} on {date}")
-    colleagues = {p.user for p in world.narrative().people if p.user and p.user != persona.user}
+    narrative = world.narrative()
+    colleagues = {p.user for p in narrative.people if p.user and p.user != persona.user}
+    threads = world_state.mail_threads(world_state.build(world, narrative, src.personas, date), persona.user)
     rejects = planner.validate(
         plan.items, planner.role_templates(src.templates, persona), [], src.policy, colleagues,
-        followups={i.followup for i in plan.items if i.followup},
+        followups={i.followup for i in plan.items if i.followup}, mail_threads=threads,
     )  # fmt: skip  # no content history: this plan's own content is already in it
     if rejects:
         raise PlanConflict(f"{path} fails validation: " + "; ".join(f"item {i}: {why}" for i, why in rejects))

@@ -66,6 +66,8 @@ class MailCheck(Strict):
     """A message is in a mailbox on the range server (ludius.mail), checked there and never in the UI.
 
     Fields are filled from the task's values: mailbox is an address, subject exact without RE:, body contained.
+    It must come from the persona running the task and be delivered after the task started (Task.owner and
+    Task.started_ms, set by the runner): an older or seeded message with the same subject never counts.
     """
 
     mailbox: str
@@ -96,6 +98,10 @@ class Subgoal(Strict):
     launch: bool = False  # may use the shell (Start, taskbar, Run) to open apps
     copy_text: bool = False  # may copy text visible on screen into the focused field (type:copy[n])
     allow_destructive: list[str] = Field(default_factory=list[str])  # element names (regex) allowed despite the hint
+    # Preconditions for any input in this subgoal (rescans excepted): every `require` check matches an element on
+    # screen and no `forbid` check does, e.g. the To field holds exactly the planned address and Cc is empty.
+    require: list[ElementCheck] = Field(default_factory=list[ElementCheck])
+    forbid: list[ElementCheck] = Field(default_factory=list[ElementCheck])
     done: Done | None = None
     steps: int = 12
     pixels_hint: str = ""  # from the template's pixels hints
@@ -171,6 +177,8 @@ class Task:
             raise ValueError(f"{template.task}: missing parameters {missing}")
         self.template = template
         self.inst = inst
+        self.owner = ""  # persona account and task start (guest clock, Unix ms): set by the runner
+        self.started_ms = 0
         idx = (
             inst.variant
             if inst.variant is not None
@@ -315,19 +323,33 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
     if done.element:
         c = done.element
 
-        def ok(e: obs.Element) -> bool:
-            # Edit and RichEdit values end lines with \r or \r\n; multi-line params use \n.
-            value = re.sub(r"\r\n?", "\n", e.value)
-            return (
-                (not c.role or e.role == c.role)
-                and (not c.name or re.search(task.fmt_re(c.name), e.name, re.I) is not None)
-                and (not c.value or re.search(task.fmt_re(c.value), value, re.I) is not None)
-            )
-
-        if not any(ok(e) for e in snap.elements):
+        if not any(_element_matches(e, c, task) for e in snap.elements):
             return False
     return done.mail is None or _mail_ok(done.mail, task)
 
 
+def _element_matches(e: obs.Element, c: ElementCheck, task: Task) -> bool:
+    # Edit and RichEdit values end lines with \r or \r\n; multi-line params use \n.
+    value = re.sub(r"\r\n?", "\n", e.value)
+    return (
+        (not c.role or e.role == c.role)
+        and (not c.name or re.search(task.fmt_re(c.name), e.name, re.I) is not None)
+        and (not c.value or re.search(task.fmt_re(c.value), value, re.I) is not None)
+    )
+
+
+def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task) -> str | None:
+    """Why input is not allowed in this subgoal right now, or None when its require/forbid checks hold."""
+    for c in sg.require:
+        if not any(_element_matches(e, c, task) for e in snap.elements):
+            return f"precondition: no {c.name or c.role!r} element with value {task.fmt(c.value or '')!r}"
+    for c in sg.forbid:
+        if any(_element_matches(e, c, task) for e in snap.elements):
+            return f"precondition: {c.name or c.role!r} must not match {task.fmt(c.value or '')!r}"
+    return None
+
+
 def _mail_ok(c: MailCheck, task: Task) -> bool:
-    return mail.delivered(task.fmt(c.mailbox), c.folder, task.fmt(c.subject), task.fmt(c.body))
+    sender = f"{task.owner}@{mail.DOMAIN}" if task.owner else ""
+    return mail.delivered(task.fmt(c.mailbox), c.folder, task.fmt(c.subject), task.fmt(c.body), sender,
+                          task.started_ms)  # fmt: skip

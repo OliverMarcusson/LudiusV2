@@ -155,10 +155,12 @@ def plan_day(
     scenario: Scenario | None = None,
     followups: dict[str, str] | None = None,
     existing: Iterable[str] = (),
+    mail_threads: dict[str, tuple[str, str]] | None = None,
 ) -> tuple[DayPlan, list[str]]:
     """Draft, validate, ask once to replace rejected items, drop what still fails. Returns the plan and rejects.
 
     `followups` (id -> what) are open tasks colleagues handed over; each must be scheduled with its id.
+    `mail_threads` (follow-up id -> sender, subject) are the mail ones, the only threads a reply may answer.
     `existing` are files and folders already on the persona's profile (names or paths): no item may create or
     rename to one of them, and an item that still does after the one repair is dropped, never run.
     """
@@ -214,7 +216,8 @@ def plan_day(
         )
     )
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
-    rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing)
+    rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
+                       mail_threads)  # fmt: skip
     missing = sorted(set(followups) - {it.followup for it in draft.items})
     if rejects or missing:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
@@ -222,7 +225,8 @@ def plan_day(
             + [f"- follow-up {k} is not scheduled" for k in missing]
         )
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
-        rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing)
+        rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
+                           mail_threads)  # fmt: skip
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     missing = sorted(set(followups) - {it.followup for it in items})
@@ -248,7 +252,10 @@ def validate(
     scenario: Scenario | None = None,
     followups: set[str] | None = None,
     existing: Iterable[str] = (),
+    mail_threads: dict[str, tuple[str, str]] | None = None,
 ) -> list[tuple[int, str]]:
+    """Rejected items with the reason. A reply must answer a mail follow-up in `mail_threads` from its `to`
+    colleague with its subject; without mail threads no reply is valid."""
     rejects: list[tuple[int, str]] = []
     seen = list(history)
     taken = taken_names(existing)  # grows with each accepted item: a second item with the same name would overwrite
@@ -256,8 +263,8 @@ def validate(
         why = _check_item(it, templates, seen, policy)
         if not why:
             why = _recipient(it, colleagues or set[str]())
-        if not why and it.template == REPLY and not it.followup:
-            why = "a reply answers a colleague's mail: set followup to that open follow-up"
+        if not why and it.template == REPLY:
+            why = _reply_thread(it, mail_threads or {})
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
         if not why and it.followup and it.followup not in (followups or set[str]()):
@@ -291,6 +298,17 @@ def _recipient(it: PlanItem, colleagues: set[str]) -> str | None:
         return f"to {to!r} is not a colleague's address (<account>@{MAIL_DOMAIN})"
     if it.handoff and it.handoff != user:
         return f"handoff {it.handoff!r} must be the mail's recipient {user!r}"
+    return None
+
+
+def _reply_thread(it: PlanItem, threads: dict[str, tuple[str, str]]) -> str | None:
+    values = {**it.params, **it.content}
+    sender = values.get("to", "").strip().lower().partition("@")[0]
+    thread = threads.get(it.followup)
+    if thread is None:
+        return "a reply answers a colleague's mail: set followup to that mail's open follow-up"
+    if thread != (sender, values.get("subject", "").strip()):
+        return f"followup {it.followup!r} is {thread[0]!r}'s mail {thread[1]!r}: reply to that, with that subject"
     return None
 
 

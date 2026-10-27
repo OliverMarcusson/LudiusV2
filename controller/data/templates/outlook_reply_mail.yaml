@@ -41,6 +41,9 @@ subgoals:
     goal: "Send the reply with Alt+S"
     keys: [Alt+S]
     allow_destructive: ["Send"]
+    # No input at all unless the To field holds exactly the planned address and Cc/Bcc are empty (absent counts).
+    require: [{name: "^To$", value: '^{to};?$'}]
+    forbid: [{name: "^Cc$", value: '\S'}, {name: "^Bcc$", value: '\S'}]
     done: {mail: {mailbox: "{to}"}}
   close_message:
     goal: "Close the original mail's window"

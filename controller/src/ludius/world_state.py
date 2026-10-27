@@ -59,6 +59,7 @@ class Followup(Strict):
     due: str  # YYYY-MM-DD
     about: str
     document: str = ""
+    subject: str = ""  # the mail's subject when the handoff was a sent mail: the thread a reply must answer
     done_on: str = ""
 
 
@@ -125,7 +126,8 @@ def build(world: World, narrative: Narrative, personas: list[Persona], before: d
                                               subject=subject or about[:80],
                                               body=about + (f" See {doc}." if doc else "")))  # fmt: skip
                 due = next_workday(dt.date.fromisoformat(date)).isoformat()
-                handoffs.append(Followup(id=fid, user=it.handoff, sender=user, due=due, about=about, document=doc))
+                handoffs.append(Followup(id=fid, user=it.handoff, sender=user, due=due, about=about, document=doc,
+                                         subject=subject))  # fmt: skip
     state.followups = [f.model_copy(update={"done_on": finished.get(f.id, "")}) for f in handoffs]
     state.calendar = calendar(narrative, personas)
     return state
@@ -154,6 +156,11 @@ def calendar(narrative: Narrative, personas: list[Persona]) -> list[CalendarEntr
         if who:
             out.append(CalendarEntry(date=e.date, what=e.what, attendees=who))
     return out
+
+
+def mail_threads(state: State, user: str) -> dict[str, tuple[str, str]]:
+    """Mail follow-ups addressed to `user`: id -> (sender account, subject), what a reply must match."""
+    return {f.id: (f.sender, f.subject) for f in state.followups if f.user == user and f.subject}
 
 
 def due(state: State, user: str, day: dt.date) -> list[Followup]:

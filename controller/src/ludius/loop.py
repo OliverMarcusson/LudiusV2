@@ -20,7 +20,7 @@ from ludius.assist import Assist
 from ludius.jev import Decision
 from ludius.options import Option, StepView, build_options, build_state, describe, view
 from ludius.policy import Policy, alt_f4_safe
-from ludius.tasks import Persona, Subgoal, Task, check_done, pixels_window
+from ludius.tasks import Persona, Subgoal, Task, check_done, pixels_window, preconditions
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
@@ -189,6 +189,8 @@ class Runner:
         t0 = time.monotonic()
         steps = 0
         done: list[str] = []
+        task.owner = self.persona.user
+        task.started_ms = self.observe().guest_time_ms or int(time.time() * 1000)  # the guest's clock, like the range's
         self.log.write(
             event="task_start",
             host_ms=_now(),
@@ -367,7 +369,9 @@ class Runner:
         return self.rng.choice(ties) if len(ties) > 1 else top
 
     def _post_check(self, o: Option, sg: Subgoal, task: Task) -> str | None:
-        """Defense in depth: re-check the chosen option against policy."""
+        """Defense in depth: re-check the chosen option against policy and the subgoal's preconditions."""
+        if o.kind != "rescan" and (r := preconditions(sg, self.snap, task)):
+            return r
         if o.element is not None:
             r = self.policy.element_allowed(o.element, sg.allow_destructive)
             if r:

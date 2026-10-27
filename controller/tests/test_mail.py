@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import subprocess
 from typing import Any
 
 import pytest
@@ -10,10 +11,11 @@ import pytest
 from ludius import cli, mail
 from ludius.planner import PlanItem, validate
 from ludius.policy import Policy
-from ludius.tasks import Task, check_done
+from ludius.tasks import Task, check_done, preconditions
 from ludius.v1 import observation_pb2 as obs
 
 COLLEAGUES = {"mvellinga", "lnord"}
+THREADS = {"f1": ("mvellinga", "lund accruals q4 status")}  # f2: an open follow-up that is not a mail
 
 
 def item(template: str = "outlook_send_mail", **extra: Any) -> dict[str, Any]:
@@ -26,7 +28,8 @@ def item(template: str = "outlook_send_mail", **extra: Any) -> dict[str, Any]:
 def check(*items: dict[str, Any]) -> list[str]:
     templates = cli.plan_sources().templates
     its = [PlanItem.model_validate(i) for i in items]
-    return [why for _, why in validate(its, templates, [], Policy(), COLLEAGUES, followups={"f1"})]
+    return [why for _, why in validate(its, templates, [], Policy(), COLLEAGUES, followups={"f1", "f2"},
+                                       mail_threads=THREADS)]  # fmt: skip
 
 
 def test_templates_load_with_server_side_send_checks() -> None:
@@ -35,6 +38,7 @@ def test_templates_load_with_server_side_send_checks() -> None:
         t = templates[name]
         sends = [sg for sg in t.subgoals.values() if sg.done and sg.done.mail]
         assert sends and all(sg.done and sg.done.mail and sg.done.mail.mailbox == "{to}" for sg in sends)
+        assert all(sg.require and sg.forbid for sg in sends)  # every send is guarded
         assert all(any(t.subgoals[n].done and t.subgoals[n].done.mail for n in v) for v in t.variants)  # pyright: ignore[reportOptionalMemberAccess]
 
 
@@ -56,17 +60,23 @@ def test_mail_recipient_is_checked(extra: dict[str, Any], why: str) -> None:
     assert why in got
 
 
-def test_reply_needs_an_open_followup() -> None:
-    assert "set followup" in check(item("outlook_reply_mail"))[0]
+def test_reply_must_answer_the_matching_mail_followup() -> None:
     assert check(item("outlook_reply_mail", followup="f1")) == []
+    assert "set followup" in check(item("outlook_reply_mail"))[0]
+    assert "set followup" in check(item("outlook_reply_mail", followup="f2"))[0]  # a folder handoff, not a mail
+    wrong_subject = item("outlook_reply_mail", followup="f1", params={"subject": "other thing"})
+    wrong_sender = item("outlook_reply_mail", followup="f1", params={"to": "lnord@corp.ludius.test"})
+    for it in (wrong_subject, wrong_sender):
+        assert "reply to that, with that subject" in check(it)[0]
 
 
 def test_done_is_read_on_the_server_whatever_the_screen(monkeypatch: pytest.MonkeyPatch) -> None:
     t = cli.load_templates()["outlook_send_mail"]
     task = Task(t, PlanItem.model_validate(item()), random.Random(0))
-    calls: list[tuple[str, ...]] = []
+    task.owner, task.started_ms = "aberg", 1_000
+    calls: list[tuple[object, ...]] = []
 
-    def delivered(*a: str) -> bool:
+    def delivered(*a: object) -> bool:
         calls.append(a)
         return len(calls) == 1
 
@@ -74,7 +84,7 @@ def test_done_is_read_on_the_server_whatever_the_screen(monkeypatch: pytest.Monk
     done = t.subgoals["send_shortcut"].done
     assert check_done(done, obs.Snapshot(), task, typed_ok=False) is True
     assert calls == [("mvellinga@corp.ludius.test", "inbox", "lund accruals q4 status",
-                      "hi marcus\nlund accruals for q4 are booked")]  # fmt: skip
+                      "hi marcus\nlund accruals for q4 are booked", "aberg@corp.ludius.test", 1_000)]  # fmt: skip
     assert check_done(done, obs.Snapshot(), task, typed_ok=True) is False
 
 
@@ -87,5 +97,59 @@ def test_body_match_ignores_outlook_autocorrect() -> None:
 
 def test_foreign_or_malformed_mailbox_never_queries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mail, "_host", lambda: pytest.fail("no query expected"))
-    assert not mail.delivered("aberg@example.com", "inbox", "s", "b")
-    assert mail.bodies("a;rm -rf", "inbox", "s") == []
+    assert not mail.delivered("aberg@example.com", "inbox", "s", "b", "aberg@corp.ludius.test", 1)
+    assert mail.messages("a;rm -rf", "inbox", "s") == []
+
+
+SEED = mail.Message("mvellinga@corp.ludius.test", 1_000, "Hi Anna,\r\nyes\r\n")
+REPLY = mail.Message("aberg@corp.ludius.test", 5_000, "Yes, booked.\r\n-----\r\nHi Anna, yes")
+
+
+@pytest.mark.parametrize(
+    ("body", "sender", "since", "ok"),
+    [
+        ("yes, booked", "aberg@corp.ludius.test", 4_000, True),
+        ("yes", "aberg@corp.ludius.test", 6_000, False),  # only the seed and an older reply: before the task
+        ("hi anna", "aberg@corp.ludius.test", 4_000, True),
+        ("yes", "mvellinga@corp.ludius.test", 4_000, False),  # the seed's sender is not the persona
+        ("yes", "aberg@corp.ludius.test", 0, False),  # no task start: never
+        ("- ...", "aberg@corp.ludius.test", 4_000, False),  # punctuation-only body normalises to nothing
+        ("yes", "", 4_000, False),  # no persona
+    ],
+)
+def test_delivered_needs_sender_time_and_a_real_body(
+    monkeypatch: pytest.MonkeyPatch, body: str, sender: str, since: int, ok: bool
+) -> None:
+    def messages(*_: str) -> list[mail.Message]:
+        return [SEED, REPLY]
+
+    monkeypatch.setattr(mail, "messages", messages)
+    assert mail.delivered("mvellinga@corp.ludius.test", "inbox", "s", body, sender, since) is ok
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError("pwsh"), subprocess.TimeoutExpired("pwsh", 30)])
+def test_host_discovery_failure_is_not_delivered(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    def boom(*_: object, **__: object) -> None:
+        raise error
+
+    mail._host.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(subprocess, "run", boom)
+    assert mail.messages("aberg", "inbox", "s") == []
+    mail._host.cache_clear()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_send_is_blocked_unless_to_is_exact_and_cc_bcc_empty() -> None:
+    t = cli.load_templates()["outlook_send_mail"]
+    task = Task(t, PlanItem.model_validate(item()), random.Random(0))
+    sg = t.subgoals["send_button"]
+
+    def snap(**fields: str) -> obs.Snapshot:
+        return obs.Snapshot(elements=[obs.Element(role="edit", name=k, value=v) for k, v in fields.items()])
+
+    assert preconditions(sg, snap(To="mvellinga@corp.ludius.test", Cc=""), task) is None
+    assert preconditions(sg, snap(To="mvellinga@corp.ludius.test;"), task) is None
+    for bad in (snap(To="mvellinga@corp.ludius.test; outside@example.com"),
+                snap(To="mvellinga@corp.ludius.test", Cc="outside@example.com"),
+                snap(To="mvellinga@corp.ludius.test", Bcc="lnord@corp.ludius.test"),
+                snap(To="lnord@corp.ludius.test"), snap()):  # fmt: skip
+        assert preconditions(sg, bad, task) is not None
