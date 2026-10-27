@@ -7,6 +7,7 @@ the virtual keyboard (real type 7 unlock logons). escalate: ladder steps 4-8.
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from collections.abc import Callable
@@ -24,6 +25,10 @@ DISMISS = re.compile(r"(cancel|close|ok|not now|no thanks|dismiss)", re.I)
 
 class VmUnhealthy(Exception):
     """Ladder step 8: the VM leaves the pool; the trace is in the ground-truth log."""
+
+
+class EscalationDenied(Exception):
+    """LUDIUS_NO_ESCALATE=1: the ladder (restart, sign out, reboot) was needed but is denied; no input was sent."""
 
 
 class Session:
@@ -158,6 +163,9 @@ class Session:
 
     def escalate(self) -> int:
         """Run ladder steps 4..8 until the desktop is clean. Returns the step that worked."""
+        if os.environ.get("LUDIUS_NO_ESCALATE") == "1":  # unattended deployments: fail the task, never sign out
+            self.log.write(event="escalate_blocked", host_ms=_now())
+            raise EscalationDenied("LUDIUS_NO_ESCALATE=1: ladder steps 4-8 denied, no input sent")
         # 4: restart the app (close it; the next task launches it again).
         self.log.write(event="ladder", step=4, action="restart app", host_ms=_now())
         if self.normalize():

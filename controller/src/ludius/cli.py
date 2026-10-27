@@ -603,8 +603,8 @@ def make_policy() -> Policy:
 
 
 def make_assist() -> Assist | None:
-    """Rare LLM help for open-ended subgoals; its HTTP client lives as long as the process."""
-    key = os.environ.get("OPENROUTER_API_KEY", "")
+    """Rare LLM help for open-ended subgoals (LUDIUS_ASSIST=0: none); its HTTP client lives as long as the process."""
+    key = os.environ.get("OPENROUTER_API_KEY", "") if os.environ.get("LUDIUS_ASSIST") != "0" else ""
     return Assist(LlmClient(key, model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))) if key else None
 
 
