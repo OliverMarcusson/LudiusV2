@@ -27,6 +27,9 @@ SHELL_PROCESSES = {
 }
 # Alt+F4 on the desktop or taskbar opens Shut Down Windows; one Enter or OK there powers the VM off.
 DESKTOP_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd"}
+# Shortcuts that open, rename or delete whatever is selected or focused; navigation and Esc are never in here.
+ACTIVATION_KEYS = {"enter", "space", "ctrl+o", "alt+enter", "ctrl+enter", "shift+enter", "f2", "delete", "shift+delete"}
+EDITABLE_ROLES = {"edit", "document", "combo box"}
 
 
 def alt_f4_safe(fg: obs.Window | None) -> bool:
@@ -86,13 +89,37 @@ class Policy:
     def reserved(self, text: str) -> bool:
         return any(re.search(p, text, re.I) for p in self.reserved_paths)
 
+    def reserved_element(self, e: obs.Element) -> bool:
+        return any(re.fullmatch(p, e.name.strip(), re.I) for p in self.reserved_names) or self.reserved(e.value)
+
+    def key_allowed(self, keys: str, snap: obs.Snapshot) -> str | None:
+        """Keyboard activation acts on the selection or focus, which click filtering never sees.
+
+        Refused while a visible reserved element is selected or focused in the window that receives keys (a modal
+        dialog, else the foreground window and any open menu), unless a non-reserved text field has the focus.
+        Pixels rows carry no selection or focus, so nothing is claimed about screens read from pixels.
+        """
+        if not (self.reserved_paths or self.reserved_names) or keys.lower() not in ACTIVATION_KEYS:
+            return None
+        owned = any(w.kind == obs.Window.OWNED for w in snap.windows)
+        live = {
+            i for i, w in enumerate(snap.windows)
+            if w.kind == obs.Window.POPUP or w.kind == (obs.Window.OWNED if owned else obs.Window.FOREGROUND)
+        }  # fmt: skip
+        here = [e for e in snap.elements if e.window in live and e.bounds.width > 0 and e.bounds.height > 0]
+        if any(e.focused and e.role in EDITABLE_ROLES and not self.reserved_element(e) for e in here):
+            return None
+        if any((e.selected or e.focused) and self.reserved_element(e) for e in here):
+            return "scenario-reserved path"
+        return None
+
     def element_allowed(self, e: obs.Element, allow_destructive: list[str]) -> str | None:
         """None if the element may be acted on, else the reason."""
         if e.password:
             return "password field"
         if NEVER.search(e.name):
             return "never-list"
-        if any(re.fullmatch(p, e.name.strip(), re.I) for p in self.reserved_names) or self.reserved(e.value):
+        if self.reserved_element(e):
             return "scenario-reserved path"
         if "destructive" in e.hints and not any(
             re.fullmatch(p, e.name.replace("&", ""), re.I) for p in allow_destructive

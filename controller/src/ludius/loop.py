@@ -363,6 +363,8 @@ class Runner:
                 return r
         if o.kind == "type":
             return self.policy.text_allowed(o.literal or task.values[o.content], o.element)
+        if o.kind == "key":
+            return self.policy.key_allowed(o.keys, self.snap)
         return None
 
     def _recovery_options(self, v: StepView) -> list[Option]:

@@ -158,6 +158,8 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
     for k in [*BASE_KEYS, *sg.keys]:
         if (k == "Win" and not sg.launch) or (k == "Alt+F4" and not alt_f4_safe(fg)):
             continue
+        if policy.key_allowed(k, v.snapshot):
+            continue
         add("key", f"press {k}", keys=k)
     if any("list continues" in h for e in v.allowed for h in e.hints) or any(e.role == "document" for e in v.allowed):
         add("scroll", "scroll down", notches=-3)
