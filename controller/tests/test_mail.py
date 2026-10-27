@@ -390,3 +390,7 @@ def test_reply_never_offers_the_info_bar() -> None:
     for name in ("write_reply", "send_shortcut"):
         targets = {o.element.name for o in build_options(v, task, t.subgoals[name], Policy()) if o.element}
         assert "Info Bar" not in targets and body.name in targets, name
+    send = cli.load_templates()["outlook_send_mail"]
+    for name in ("write_body", "send_shortcut", "send_button"):
+        targets = {o.element.name for o in build_options(v, task, send.subgoals[name], Policy()) if o.element}
+        assert "Info Bar" not in targets and body.name in targets, name
