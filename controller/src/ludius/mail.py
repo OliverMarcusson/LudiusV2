@@ -20,6 +20,9 @@ DOMAIN = "corp.ludius.test"
 FOLDERS = {"inbox": 13, "sent": 10}  # gromox private-store folder ids
 PR_NORMALIZED_SUBJECT, PR_BODY = 0x0E1D001F, 0x1000001F
 PR_SENDER_SMTP, PR_SENT_REPRESENTING_SMTP, PR_DELIVERY_TIME = 0x5D01001F, 0x5D02001F, 0x0E060040
+# Submit time first: on a Sent Items copy Outlook's delivery time is cut to the minute (22:04:00 for a mail sent
+# 22:04:34), which would date it before a task that started mid-minute.
+PR_CLIENT_SUBMIT_TIME = 0x00390040
 PR_SMTP_ADDRESS, PR_EMAIL_ADDRESS = 0x39FE001F, 0x3003001F  # per recipient (To, Cc and, in Sent Items, Bcc)
 FILETIME_UNIX_MS = 11_644_473_600_000  # 1601-01-01 to 1970-01-01, in ms
 _ASCII = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-"})
@@ -28,7 +31,7 @@ _ASCII = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "
 @dataclass(frozen=True)
 class Message:
     sender: str  # SMTP address, lower case
-    delivered_ms: int  # Unix ms, the server's clock
+    delivered_ms: int  # Unix ms, the server's clock: submit time, else delivery time
     body: str
     recipients: tuple[str, ...] = ()  # every recipient's SMTP address, lower case, sorted; "?" when unknown
 
@@ -54,12 +57,13 @@ def messages(user: str, folder: str, subject: str) -> list[Message]:
             f"from recipients x left join recipients_properties a on a.recipient_id=x.recipient_id "
             f"and a.proptag={PR_SMTP_ADDRESS} left join recipients_properties e on e.recipient_id=x.recipient_id "
             f"and e.proptag={PR_EMAIL_ADDRESS} where x.message_id=m.message_id)")  # fmt: skip
-    sql = (f"select coalesce(d.propval, 0), coalesce(f.propval, r.propval, '-'), coalesce({rcpt}, '-'), "
+    sql = (f"select coalesce(t.propval, d.propval, 0), coalesce(f.propval, r.propval, '-'), coalesce({rcpt}, '-'), "
            f"cast(b.propval as text) "
            f"from messages m join message_properties s on s.message_id=m.message_id "
            f"and s.proptag={PR_NORMALIZED_SUBJECT} join message_properties b on b.message_id=m.message_id "
            f"and b.proptag={PR_BODY} left join message_properties d on d.message_id=m.message_id "
-           f"and d.proptag={PR_DELIVERY_TIME} left join message_properties f on f.message_id=m.message_id "
+           f"and d.proptag={PR_DELIVERY_TIME} left join message_properties t on t.message_id=m.message_id "
+           f"and t.proptag={PR_CLIENT_SUBMIT_TIME} left join message_properties f on f.message_id=m.message_id "
            f"and f.proptag={PR_SENDER_SMTP} left join message_properties r on r.message_id=m.message_id "
            f"and r.proptag={PR_SENT_REPRESENTING_SMTP} where m.parent_fid={FOLDERS[folder]} "
            f"and m.is_associated=0 and cast(s.propval as text)=cast(x'{subject.encode().hex()}' as text)")  # fmt: skip
