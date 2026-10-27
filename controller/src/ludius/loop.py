@@ -475,8 +475,10 @@ class Runner:
 
 
 def _typed_landed(snap: obs.Snapshot, o: Option, _task: Task) -> bool:
-    if o.element is None:
-        return True  # typed at the focus: the subgoal's own check decides
+    if o.element is None or ("value" not in o.element.actions and not o.element.value):
+        # Typed at the focus, or into a control with no readable value (Outlook's Word body): no value can show
+        # the text landing, so the subgoal's own check decides.
+        return True
     target = next((e for e in snap.elements if e.key == o.element.key), None)
     return target is not None and target.value != o.element.value
 

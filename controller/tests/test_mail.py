@@ -153,3 +153,15 @@ def test_send_is_blocked_unless_to_is_exact_and_cc_bcc_empty() -> None:
                 snap(To="mvellinga@corp.ludius.test", Bcc="lnord@corp.ludius.test"),
                 snap(To="lnord@corp.ludius.test"), snap()):  # fmt: skip
         assert preconditions(sg, bad, task) is not None
+
+
+def test_typing_into_a_body_without_a_readable_value_counts_as_landed() -> None:
+    from ludius.loop import _typed_landed  # pyright: ignore[reportPrivateUsage]
+    from ludius.options import Option
+
+    body = obs.Element(key="b", role="document", name="Untitled Message")  # Word editor: no Value pattern
+    edit = obs.Element(key="e", role="edit", name="Subject", actions=["value"])
+    after = obs.Snapshot(elements=[obs.Element(key="e", role="edit", name="Subject", actions=["value"])])
+    task = Task(cli.load_templates()["outlook_send_mail"], PlanItem.model_validate(item()), random.Random(0))
+    assert _typed_landed(after, Option("o1", "type", "t", element=body), task)
+    assert not _typed_landed(after, Option("o2", "type", "t", element=edit), task)  # value unchanged: not landed
