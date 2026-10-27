@@ -411,6 +411,9 @@ def item_problem(it: PlanItem, templates: dict[str, Template], policy: Policy, u
             return f"{key}: not a valid file name"  # Windows would alias it (trailing dot/space) or reserve it
         if r := policy.text_allowed(value, None):
             return f"{key}: {r}"
+    for name, sg in t.subgoals.items():
+        if sg.search and (r := policy.text_allowed(sg.search, None)):
+            return f"{name}: search text: {r}"
     for rel in write_paths(task):
         if file_reserved(user, rel, policy):
             return f"{rel}: scenario-reserved file, choose a different name"

@@ -31,7 +31,7 @@ class Option:
     element: obs.Element | None = None
     keys: str = ""
     content: str = ""  # content key for type
-    literal: str = ""  # type:copy - text read from an on-screen element, not planner content
+    literal: str = ""  # type:copy text read from an on-screen element, or the subgoal's template `search` text
     notches: int = 0
 
 
@@ -128,8 +128,13 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
         opts.append(Option(key=f"o{len(opts) + 1}", kind=kind, text=text, **kw))
 
     content = task.text(sg)
+    literal = "" if sg.text else sg.search
     for e in v.allowed:
         if any(element_matches(e, c, task) for c in sg.avoid):
+            continue
+        # Nothing to type: Jev never writes text, so an edit field (a search box) leads nowhere (Excel run2: 12
+        # clicks on Microsoft search over F12). No template subgoal without text needs one focused by a click.
+        if content is None and not sg.copy_text and e.role == "edit":
             continue
         # Words read from pixels (visual fallback) carry no role: clicking them is the only way in.
         if (e.role in CLICKABLE or (e.role == "text" and e.framework_id == "visual")) and e.bounds.width > 0:
@@ -143,10 +148,11 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
             and e.enabled
             and policy.text_allowed(content, e) is None
         ):
-            add("type", f"type the text to enter into [{e.id}] {e.role} '{e.name}'", element=e, content=sg.text or "")
+            text = f"type the text to enter into [{e.id}] {e.role} '{e.name}'"
+            add("type", text, element=e, content=sg.text or "", literal=literal)
     if content is not None and policy.text_allowed(content, None) is None:
         # Where focus already is (Start search, a field without a usable tree).
-        add("type", "type the text to enter at the keyboard focus", content=sg.text or "")
+        add("type", "type the text to enter at the keyboard focus", content=sg.text or "", literal=literal)
     focus = next((e for e in v.allowed if e.focused and e.role in EDITABLE and not e.read_only), None)
     if sg.copy_text and focus is not None:
         # Visible text: element names, and the observer's non-actionable text lines ("role: text").

@@ -236,3 +236,50 @@ def test_template_load_refuses_undeclared_writes() -> None:
     x = cli.plan_sources().templates["excel_new_workbook"].model_dump()
     with pytest.raises(ValueError, match="saves .xlsx|not a declared write"):
         Template.model_validate({**x, "writes": [r"Documents\{file_name}.xls"]})
+
+
+def run2_snap() -> obs.Snapshot:
+    """The shape of Excel run2's save_as screen: the ribbon search box, the Name Box, the File tab, the grid."""
+    s = obs.Snapshot()
+    s.windows.add(process_name="EXCEL.EXE", title="Book1 - Excel", kind=obs.Window.FOREGROUND)
+    for i, (role, name, value) in enumerate([("edit", "Microsoft search", "Search"), ("edit", "Name Box", "A5"),
+                                             ("menu item", "Type to search and use the up and down arrow keys to "
+                                              "navigate", "collapsed"), ("button", "File Tab", ""),
+                                             ("button", "Save", ""), ("data item", "A5", "")], start=1):  # fmt: skip
+        e = s.elements.add(id=i, role=role, name=name, value=value, window=0)
+        e.bounds.width = e.bounds.height = 20
+    return s
+
+
+def test_no_text_no_edit_clicks_and_template_search_text(task: tuple[Task, dict[str, Any]]) -> None:
+    from ludius import growth
+
+    tk, _ = task
+    s, p = run2_snap(), Policy()
+    sg = tk.subgoal("save_as")
+
+    def offered(sg: tasks.Subgoal) -> list[str]:
+        return [o.text for o in build_options(view(s, tk, sg, p), tk, sg, p)]
+
+    opts = offered(sg)
+    assert "press F12" in opts and any("'A5'" in o for o in opts)
+    assert not any("Microsoft search" in o or "Name Box" in o or "File Tab" in o or "'Save'" in o for o in opts)
+    # Template text makes the search box a route: clicked, and typed as written, never planner content.
+    nav = sg.model_copy(update={"search": "save as"})
+    types = [o for o in build_options(view(s, tk, nav, p), tk, nav, p) if o.kind == "type"]
+    assert any("Microsoft search" in o for o in offered(nav)) and types
+    assert all(o.literal == "save as" and o.content == "" for o in types)
+    assert tk.text(nav) == "save as" and Policy(reserved_paths=["save as"]).text_allowed("save as", None)
+    with pytest.raises(ValueError):
+        tasks.Subgoal(goal="g", search="save as\n")
+    with pytest.raises(ValueError, match="not both"):
+        tasks.Subgoal(goal="g", text="file_name", search="save as")
+    # Ours to write: a proposal may not set it, and the scenario policy checks it at plan load.
+    caps = yaml.safe_load((cli.DATA / "capabilities.yaml").read_text(encoding="utf-8"))
+    t = tk.template.model_copy(update={"task": "excel_search_book"}, deep=True)
+    t.subgoals["save_as"].search = "save as"
+    assert any("search not permitted" in x for x in growth.check(t, caps, {}))
+    it = PlanItem.model_validate({"at": "09:00", "template": t.task, "context": "count",
+                                  "params": {"file_name": "stock count q4"}, "content": {"rows": ROWS}})  # fmt: skip
+    why = [w for _, w in validate([it], {t.task: t}, [], Policy(reserved_paths=["save as"]), user="aberg")]
+    assert why == ["save_as: search text: scenario-reserved path"]

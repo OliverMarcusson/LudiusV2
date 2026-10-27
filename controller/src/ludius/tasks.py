@@ -113,6 +113,10 @@ class Done(Strict):
 class Subgoal(Strict):
     goal: str
     text: str | None = None  # content key whose value may be typed
+    # Navigation text the template writes (never Jev or an LLM: growth refuses it), e.g. "save as" for an app's
+    # search box: the text to type in a subgoal without `text`. One printable ASCII line, no Enter; the scenario
+    # policy checks it at plan load (planner.item_problem) and on every step (options, loop._post_check).
+    search: str = Field(default="", pattern=r"^[ -~]{0,40}$")
     keys: list[str] = Field(default_factory=list[str])  # extra shortcuts worth offering
     launch: bool = False  # may use the shell (Start, taskbar, Run) to open apps
     copy_text: bool = False  # may copy text visible on screen into the focused field (type:copy[n])
@@ -133,6 +137,12 @@ class Subgoal(Strict):
     done: Done | None = None
     steps: int = 12
     pixels_hint: str = ""  # from the template's pixels hints
+
+    @model_validator(mode="after")
+    def _one_text(self) -> Subgoal:
+        if self.text and self.search:
+            raise ValueError("a subgoal types either a content value (text) or template text (search), not both")
+        return self
 
 
 # The shared send contract (AGENTS.md: one shared layer for anything that sends mail). A template that sends mail
@@ -304,7 +314,7 @@ class Task:
         return sg.model_copy(update={"goal": self.fmt(sg.goal)})
 
     def text(self, sg: Subgoal) -> str | None:
-        return self.values.get(sg.text) if sg.text else None
+        return self.values.get(sg.text) if sg.text else sg.search or None
 
 
 _ROWS = ["qwertyuiop", "asdfghjkl", "zxcvbnm"]

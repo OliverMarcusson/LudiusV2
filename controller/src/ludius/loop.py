@@ -262,7 +262,7 @@ class Runner:
         proposal = self.assist.next_subgoal(build_state(v, task, sg, [], "stuck: step budget used up"))
         self.log.write(event="llm_subgoal", host_ms=_now(), task=task.template.task, subgoal=name, goal=proposal.goal)
         helper = Subgoal(goal=proposal.goal, keys=sg.keys, launch=sg.launch, text=sg.text,
-                         allow_destructive=sg.allow_destructive, steps=6)  # fmt: skip
+                         search=sg.search, allow_destructive=sg.allow_destructive, steps=6)  # fmt: skip
         budget = min(helper.steps, task.template.budget_steps - steps)
         return self._subgoal(task, f"{name}/assist", helper, budget=budget, t0=t0)[1]
 
