@@ -14,6 +14,7 @@ $vm = $cfg.LUDIUS_VM
 if ($vm -notmatch '^ludius-[A-Za-z0-9-]+$') { throw "not a range VM: $vm" }
 if (-not $cfg.LUDIUS_SRV_ADDRESS) { throw 'no range server in .env (run new-srv.ps1)' }
 $admin = [pscredential]::new("$($cfg.LUDIUS_ADMIN_USER)", (ConvertTo-SecureString $cfg.LUDIUS_ADMIN_PASSWORD -AsPlainText -Force))
+if (-not $cfg.LUDIUS_SRV_DC_ADMIN_PASSWORD) { throw 'no LUDIUS_SRV_DC_ADMIN_PASSWORD in .env (run provision-srv.ps1)' }
 $domainAdmin = [pscredential]::new('CORP\Administrator', (ConvertTo-SecureString $cfg.LUDIUS_SRV_DC_ADMIN_PASSWORD -AsPlainText -Force))
 # The range CA, copied from the server: scp ludius@<srv>:/etc/grommunio-common/ssl/ca.crt build\srv\range-ca.crt
 $ca = Join-Path $PSScriptRoot 'build\srv\range-ca.crt'

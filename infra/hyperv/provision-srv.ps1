@@ -167,3 +167,5 @@ ss -lntup | awk 'NR>1 && /:(25|53|88|123|389|443|445|8443) / {print $1, $5}' | s
 $script = $script.Replace('__PERSONAS__', ($personas -join ' ')).Replace('__ADDR__', $addr).Replace('__PEOPLE__', ($people -join "`n")).Replace("`r`n", "`n")
 $script | ssh -i $key -o UserKnownHostsFile=$known -o StrictHostKeyChecking=accept-new -o BatchMode=yes "ludius@$ip" 'tr -d '''' | sudo bash -s'  # pwsh ends piped stdin with CRLF
 if ($LASTEXITCODE) { throw "provisioning failed on $vm ($LASTEXITCODE)" }
+# The domain Administrator password set above, for host scripts that join members (provision-client.ps1).
+if (-not $cfg.LUDIUS_SRV_DC_ADMIN_PASSWORD) { 'LUDIUS_SRV_DC_ADMIN_PASSWORD=Admin2026' | Add-Content (Join-Path $root '.env') }

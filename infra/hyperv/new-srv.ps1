@@ -2,7 +2,7 @@
 # official genericcloud image, configured by cloud-init. It will hold the Samba AD DC (domain, DNS, NTP) and grommunio
 # (Exchange-protocol mail/calendar for Outlook), replacing the separate Windows DC and Office VMs; provision-srv.ps1
 # does that. Exempt from the one-VM cap (one-vm.ps1). Two NICs: Default Switch (apt, host SSH) and ludius-range at
-# a static address (the range clients). Its clock is set directly for time-jump, never pulled from the host.
+# a static address (the range clients). Hyper-V time sync stays on (real time); set-clock.ps1 turns it off for a jump.
 #
 # Image: fetch once into the ignored build folder and check it against Debian's SHA512SUMS:
 #   https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.tar.xz -> build\srv\disk.raw
@@ -114,7 +114,6 @@ Add-VMNetworkAdapter -VMName $VMName -SwitchName $Switch -StaticMacAddress $macR
 Set-VMFirmware $VMName -EnableSecureBoot On -SecureBootTemplate MicrosoftUEFICertificateAuthority
 Add-VMDvdDrive $VMName -Path $seed
 Set-VMFirmware $VMName -FirstBootDevice (Get-VMHardDiskDrive $VMName)
-Disable-VMIntegrationService $VMName -Name 'Time Synchronization'
 Start-VM $VMName  # exempt from the one-VM cap
 Remove-Item $fixed
 Write-Output "Started $VMName; cloud-init configures user ludius (key build\srv\id_ed25519), range address $Address"

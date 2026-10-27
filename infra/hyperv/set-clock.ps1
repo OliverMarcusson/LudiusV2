@@ -2,9 +2,12 @@
 # PowerShell Direct, with Hyper-V time synchronization off so the host doesn't pull it back. Leaves
 # clock-change events (4616) in the guest; never used for delivery. -Reset sets host time and turns time
 # sync back on (re-enabling it alone doesn't pull a clock that is a day ahead back).
-# Range server first (spec section 7): when .env names a running range server (LUDIUS_SRV_VM: Samba AD DC + chrony,
-# the range's time source), its clock is set over SSH before the guest's, so a domain member that syncs from it
-# follows. Its Hyper-V time sync stays off (new-srv.ps1); chrony has no upstream, so it keeps the jumped time.
+# Range server first (spec section 7): when .env names a range server (LUDIUS_SRV_VM: Samba AD DC + chrony, the
+# range's time source), a jump sets its clock over SSH before the guest's, with its Hyper-V time sync off like the
+# guest's; chrony has no upstream, so it holds the jumped time. All or nothing: if the guest step fails, the server is
+# put back on real time before the error is raised (a DC/member split over 5 min breaks Kerberos). While the server
+# holds a jumped clock, build\srv\clock-jumped says so; -Reset fails (nonzero, so the clock lease is kept) if that
+# server can't be reset, e.g. it is saved. -Reset always tries both machines and turns both time syncs back on.
 param([string]$Time, [switch]$Reset, [string]$VM)  # -VM: another range member than .env LUDIUS_VM (the clock sweeper)
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
@@ -21,19 +24,54 @@ $set = {
     (Get-Date).ToString('s')
 }
 $srv = $cfg.LUDIUS_SRV_VM
-if ($srv -and (Get-VM -Name $srv -ErrorAction SilentlyContinue).State -eq 'Running') {
+$marker = Join-Path $PSScriptRoot 'build\srv\clock-jumped'
+function Set-SrvClock([datetime]$instant) {
+    if ((Get-VM -Name $srv).State -ne 'Running') { throw "$srv is not running" }
     $ip = (Get-VMNetworkAdapter -VMName $srv | Where-Object SwitchName -eq 'Default Switch').IPAddresses | Where-Object { $_ -match '^\d+\.' } | Select-Object -First 1
     if (-not $ip) { throw "$srv reports no Default Switch address" }
     # Epoch seconds: the server's timezone matches the guest's, but an absolute instant needs no agreement on it.
-    $epoch = if ($Reset) { [DateTimeOffset]::new($utc).ToUnixTimeSeconds() } else { [DateTimeOffset]::new($at).ToUnixTimeSeconds() }
+    $epoch = [DateTimeOffset]::new($instant).ToUnixTimeSeconds()
     $key, $known = (Join-Path $PSScriptRoot 'build\srv\id_ed25519'), (Join-Path $PSScriptRoot 'build\srv\known_hosts')
-    $dcTime = ssh -i $key -o "UserKnownHostsFile=$known" -o BatchMode=yes "ludius@$ip" "sudo date -s @$epoch +%Y-%m-%dT%H:%M:%S"
+    $t = ssh -i $key -o "UserKnownHostsFile=$known" -o BatchMode=yes "ludius@$ip" "sudo date -s @$epoch +%Y-%m-%dT%H:%M:%S"
     if ($LASTEXITCODE) { throw "could not set the clock on $srv" }
-    "dc $dcTime"
+    $t
 }
-Disable-VMIntegrationService $vm -Name 'Time Synchronization'
-$vmTime = Invoke-Command -VMName $vm -Credential $admin -ScriptBlock $set
-$vmTime
-# Bounded convergence: the guest must land within 10 s of the DC (both are set to the same instant).
-if ($dcTime -and [math]::Abs(([datetime]$vmTime - [datetime]$dcTime).TotalSeconds) -gt 10) { throw "guest $vmTime vs DC ${dcTime}: more than 10 s apart" }
-if ($Reset) { Enable-VMIntegrationService $vm -Name 'Time Synchronization' }
+function Reset-Srv {
+    $t = Set-SrvClock ([datetime]::UtcNow)
+    Enable-VMIntegrationService $srv -Name 'Time Synchronization'
+    Remove-Item -LiteralPath $marker -ErrorAction SilentlyContinue
+    "dc $t"
+}
+
+if ($Reset) {
+    $failed = @()
+    if ($srv -and (Get-VM -Name $srv -ErrorAction SilentlyContinue)) {
+        if ((Get-VM -Name $srv).State -eq 'Running') { try { Reset-Srv } catch { $failed += "$srv`: $_" } }
+        elseif (Test-Path -LiteralPath $marker) { $failed += "$srv holds a jumped clock but is not running; start it and reset again" }
+        else { Enable-VMIntegrationService $srv -Name 'Time Synchronization' }  # real time on its next start
+    }
+    try { Invoke-Command -VMName $vm -Credential $admin -ScriptBlock $set } catch { $failed += "$vm`: $_" }
+    try { Enable-VMIntegrationService $vm -Name 'Time Synchronization' } catch { $failed += "$vm time sync: $_" }
+    if ($failed) { throw "reset incomplete: $($failed -join '; ')" }
+    return
+}
+
+$dcTime = $null
+if ($srv -and (Get-VM -Name $srv -ErrorAction SilentlyContinue).State -eq 'Running') {
+    Disable-VMIntegrationService $srv -Name 'Time Synchronization'
+    New-Item -ItemType File -Force -Path $marker | Out-Null  # before the jump: a crash mid-jump still leaves it
+    try { $dcTime = Set-SrvClock $at; "dc $dcTime" }
+    catch { $e = $_; try { Reset-Srv | Out-Null } catch { throw "$e; and $srv could not be put back on real time: $_" }; throw $e }
+}
+try {
+    Disable-VMIntegrationService $vm -Name 'Time Synchronization'
+    $vmTime = Invoke-Command -VMName $vm -Credential $admin -ScriptBlock $set
+    $vmTime
+    # Bounded convergence: the guest must land within 10 s of the DC (both are set to the same instant).
+    if ($dcTime -and [math]::Abs(([datetime]$vmTime - [datetime]$dcTime).TotalSeconds) -gt 10) { throw "guest $vmTime vs DC ${dcTime}: more than 10 s apart" }
+}
+catch {
+    $e = $_
+    if ($dcTime) { try { Reset-Srv | Out-Null } catch { throw "$e; and $srv could not be put back on real time: $_" } }
+    throw $e
+}
