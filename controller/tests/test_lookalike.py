@@ -21,3 +21,14 @@ def test_lookalike_work_follows_risk_profile_and_avoids_scenario() -> None:
     assert validate([near], for_admin, [], Policy(), scenario=s) == []
     assert "overlap the scenario" in validate([inside], for_admin, [], Policy(), scenario=s)[0][1]
     assert "unknown template" in validate([near], role_templates(templates, finance), [], Policy())[0][1]
+
+
+def test_checked_text_must_fit_the_observer_value_cap() -> None:
+    """Acceptance 20261027-1442: a 381-char WordPad note could never pass its exact-document check."""
+    templates = load_templates()
+    body = "\n".join(f"point {i} - something to settle with the auditors before the close" for i in range(5))
+    params = {"file_name": "cost policy", "heading": "ERP costs - draft policy", "body": body}
+    long = PlanItem(at="14:00", template="wordpad_formatted_note", params=params)
+    assert "text too long" in validate([long], templates, [], Policy())[0][1]
+    short = long.model_copy(update={"params": {**long.params, "body": "\n".join(body.splitlines()[:2])}})
+    assert validate([short], templates, [], Policy()) == []

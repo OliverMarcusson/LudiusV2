@@ -34,6 +34,7 @@ NEAR_DUPLICATE = 0.85  # SequenceMatcher ratio at or above this is "too similar"
 MIN_COMPARE = 12  # shorter values (app names, short queries) may repeat
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")  # the virtual keyboard types ASCII only
+VALUE_MAX = 300  # guest observer Snapshotter.MaxValue: longest element value a snapshot carries
 
 
 class Person(Strict):
@@ -255,9 +256,16 @@ def _check_item(it: PlanItem, templates: dict[str, Template], seen: list[str], p
     if t is None:
         return f"unknown template {it.template!r}"
     try:
-        Task(t, it, random.Random(0))
+        task = Task(t, it, random.Random(0))
     except ValueError as e:
         return str(e)
+    for name, sg in t.subgoals.items():
+        # The observer reports at most VALUE_MAX chars of a value, so a longer checked value can never pass
+        # (acceptance 20261027-1442: a 381-char WordPad note was retyped until the step budget ran out).
+        # ponytail: counts the filled pattern, a few regex chars over the real text; fine as a cap.
+        check = sg.done.element.value if sg.done and sg.done.element else None
+        if check and len(task.fmt(check)) > VALUE_MAX:
+            return f"{name}: text too long, keep it under {VALUE_MAX - 20} characters in total"
     for key, value in {**it.params, **it.content}.items():
         if not _PRINTABLE.match(value):
             return f"{key}: non-ASCII text cannot be typed"
