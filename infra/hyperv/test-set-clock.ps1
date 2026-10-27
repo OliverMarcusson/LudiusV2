@@ -18,7 +18,7 @@ function Get-VM { [CmdletBinding()] param($Name) if ($Name -eq 'ludius-srv01') {
 function Get-VMNetworkAdapter { param($VMName) [pscustomobject]@{ SwitchName = 'Default Switch'; IPAddresses = @('172.20.0.5') } }
 function Disable-VMIntegrationService { param([Parameter(Position = 0)]$VMName, $Name) Log "disable $VMName" }
 function Enable-VMIntegrationService { param([Parameter(Position = 0)]$VMName, $Name) Log "enable $VMName" }
-function Invoke-Command { param($VMName, $Credential, $ScriptBlock) Log "guest-set $VMName"; if ($s.guestFail) { throw 'guest unreachable' }; $s.guestTime }
+function Invoke-Command { param($VMName, $Credential, $ScriptBlock, $ArgumentList) Log "guest-set $VMName"; if ($s.guestFail) { throw 'guest unreachable' }; $s.guestTime }
 function ssh {
     $epoch = [long](($args[-1] -split '@')[1] -split ' ')[0]
     $t = [DateTimeOffset]::FromUnixTimeSeconds($epoch).LocalDateTime
@@ -35,19 +35,19 @@ $cases = @(
     @{ what = 'jump: server then guest, marker left'; srv = 'Running'; guestTime = $T; time = $T
        ok = $true; calls = "disable ludius-srv01|ssh $T|disable ludius-a|guest-set ludius-a"; markerAfter = $true },
     @{ what = 'jump: guest fails, server put back'; srv = 'Running'; guestFail = $true; time = $T
-       ok = $false; calls = "disable ludius-srv01|ssh $T|disable ludius-a|guest-set ludius-a|ssh now|enable ludius-srv01"; markerAfter = $false },
-    @{ what = 'jump: guest 1 h off, server put back'; srv = 'Running'; guestTime = '2026-10-28T10:00:00'; time = $T
-       ok = $false; calls = "disable ludius-srv01|ssh $T|disable ludius-a|guest-set ludius-a|ssh now|enable ludius-srv01"; markerAfter = $false },
+       ok = $false; calls = "disable ludius-srv01|ssh $T|disable ludius-a|guest-set ludius-a|guest-set ludius-a|ssh now|enable ludius-srv01"; markerAfter = $false },
+    @{ what = 'jump: guest 1 h off, both put back'; srv = 'Running'; guestTime = '2026-10-28T10:00:00'; time = $T
+       ok = $false; calls = "disable ludius-srv01|ssh $T|disable ludius-a|guest-set ludius-a|guest-set ludius-a|enable ludius-a|ssh now|enable ludius-srv01"; markerAfter = $false },
     @{ what = 'jump: server ssh fails, guest untouched'; srv = 'Running'; sshFail = $true; time = $T
        ok = $false; calls = "disable ludius-srv01|ssh $T|ssh now"; markerAfter = $true },
     @{ what = 'reset: saved server holding a jump fails, guest still reset'; srv = 'Saved'; markerBefore = $true; guestTime = 'x'; reset = $true
-       ok = $false; calls = 'guest-set ludius-a|enable ludius-a'; markerAfter = $true },
+       ok = $false; calls = 'enable ludius-srv01|guest-set ludius-a|enable ludius-a'; markerAfter = $true },
     @{ what = 'reset: saved server, no jump: ok'; srv = 'Saved'; guestTime = 'x'; reset = $true
        ok = $true; calls = 'enable ludius-srv01|guest-set ludius-a|enable ludius-a'; markerAfter = $false },
     @{ what = 'reset: server ssh fails, guest still reset'; srv = 'Running'; markerBefore = $true; sshFail = $true; guestTime = 'x'; reset = $true
-       ok = $false; calls = 'ssh now|guest-set ludius-a|enable ludius-a'; markerAfter = $true },
+       ok = $false; calls = 'ssh now|enable ludius-srv01|guest-set ludius-a|enable ludius-a'; markerAfter = $true },
     @{ what = 'reset: guest fails, server reset, guest sync still on'; srv = 'Running'; markerBefore = $true; guestFail = $true; reset = $true
-       ok = $false; calls = 'ssh now|enable ludius-srv01|guest-set ludius-a|enable ludius-a'; markerAfter = $false }
+       ok = $false; calls = 'ssh now|enable ludius-srv01|enable ludius-srv01|guest-set ludius-a|enable ludius-a'; markerAfter = $false }
 )
 try {
     foreach ($c in $cases) {

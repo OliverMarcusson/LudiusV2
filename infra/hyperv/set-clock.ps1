@@ -48,7 +48,8 @@ if ($Reset) {
     if ($srv -and (Get-VM -Name $srv -ErrorAction SilentlyContinue)) {
         if ((Get-VM -Name $srv).State -eq 'Running') { try { Reset-Srv } catch { $failed += "$srv`: $_" } }
         elseif (Test-Path -LiteralPath $marker) { $failed += "$srv holds a jumped clock but is not running; start it and reset again" }
-        else { Enable-VMIntegrationService $srv -Name 'Time Synchronization' }  # real time on its next start
+        # Always back on, whatever failed above: real time on its next start, and the only recovery left if SSH failed.
+        try { Enable-VMIntegrationService $srv -Name 'Time Synchronization' } catch { $failed += "$srv time sync: $_" }
     }
     try { Invoke-Command -VMName $vm -Credential $admin -ScriptBlock $set } catch { $failed += "$vm`: $_" }
     try { Enable-VMIntegrationService $vm -Name 'Time Synchronization' } catch { $failed += "$vm time sync: $_" }
@@ -71,7 +72,15 @@ try {
     if ($dcTime -and [math]::Abs(([datetime]$vmTime - [datetime]$dcTime).TotalSeconds) -gt 10) { throw "guest $vmTime vs DC ${dcTime}: more than 10 s apart" }
 }
 catch {
-    $e = $_
-    if ($dcTime) { try { Reset-Srv | Out-Null } catch { throw "$e; and $srv could not be put back on real time: $_" } }
+    # The guest may already be jumped (or diverged): put both back on real time, or the DC/member split stays.
+    $e, $also = $_, @()
+    try {
+        Invoke-Command -VMName $vm -Credential $admin -ArgumentList ([datetime]::UtcNow.ToString('o')) -ScriptBlock {
+            param($u) Set-Date -Date ([datetime]::Parse($u, $null, 'RoundtripKind').ToLocalTime()) | Out-Null
+        }
+        Enable-VMIntegrationService $vm -Name 'Time Synchronization'
+    } catch { $also += "$vm could not be put back on real time: $_" }
+    if ($dcTime) { try { Reset-Srv | Out-Null } catch { $also += "$srv could not be put back on real time: $_" } }
+    if ($also) { throw "$e; and $($also -join '; ')" }
     throw $e
 }
