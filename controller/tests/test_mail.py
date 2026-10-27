@@ -464,3 +464,22 @@ def test_reply_click_puts_the_caret_at_the_top(tmp_path: Path) -> None:
         agent.chords.clear()
         runner.act(Option("o1", "click", "click", element=e), None, sg)  # type: ignore[arg-type]
         assert agent.chords == expected
+
+
+def test_mail_templates_get_the_shared_send_contract() -> None:
+    from ludius.tasks import SEND_AVOID, SEND_FORBID, SEND_REQUIRE, Template
+
+    for name in ("outlook_send_mail", "outlook_reply_mail"):
+        t = cli.load_templates()[name]
+        assert t.sends_mail
+        for n, sg in t.subgoals.items():
+            assert sg.avoid[: len(SEND_AVOID)] == SEND_AVOID, n
+            sends = bool(sg.done and sg.done.mail)
+            assert (sg.require[:3] == SEND_REQUIRE and sg.forbid[:2] == SEND_FORBID) is sends, n
+    raw = {"task": "x", "app": "outlook", "processes": ["outlook.exe"], "variants": [["s"]],
+           "subgoals": {"s": {"goal": "send", "done": {"mail": {"mailbox": "{to}"}}}}}  # fmt: skip
+    with pytest.raises(ValueError, match="needs sends_mail"):
+        Template.model_validate(raw)  # a mail check cannot opt out of the contract
+    with pytest.raises(ValueError, match="without a subgoal"):
+        Template.model_validate(raw | {"sends_mail": True, "subgoals": {"s": {"goal": "type"}}})
+    assert Template.model_validate(raw | {"sends_mail": True}).subgoals["s"].require == SEND_REQUIRE

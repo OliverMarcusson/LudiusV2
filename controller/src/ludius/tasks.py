@@ -117,6 +117,24 @@ class Subgoal(Strict):
     pixels_hint: str = ""  # from the template's pixels hints
 
 
+# The shared send contract (AGENTS.md: one shared layer for anything that sends mail). A template that sends mail
+# sets `sends_mail`; every subgoal whose done check is a mail check then allows no input unless the To, Cc and Bcc
+# fields are all readable in the foreground window, To is exactly the planned colleague (as typed, or as Outlook
+# resolves it) and Cc and Bcc are empty. Bcc must be visible (aberg's Outlook view option): the range reserves
+# scenario mailboxes, so a hidden Bcc is unknown, never empty. preconditions() reads them readable-only, in the
+# foreground window and ASCII-only. Defense in depth: the done check requires the Sent Items copy to name {to}
+# alone (ludius.mail), and srv01 refuses non-local recipients.
+SEND_REQUIRE = [
+    ElementCheck(role="edit", name="^To$", value="^({to}|{to_name}|{to_name} <{to}>);?$"),
+    ElementCheck(role="edit", name="^Cc$", value="^$"),
+    ElementCheck(role="edit", name="^Bcc$", value="^$"),
+]
+SEND_FORBID = [ElementCheck(name="^Cc$", value=r"\S"), ElementCheck(name="^Bcc$", value=r"\S")]
+# Outlook's notice bar ("You are not responding to the latest message..."): its click opens that message and took
+# the caret away from the reply being typed. Never a target in a mail-sending task.
+SEND_AVOID = [ElementCheck(role="edit", name="^Info Bar$")]
+
+
 class Template(Strict):
     task: str
     app: str
@@ -133,6 +151,22 @@ class Template(Strict):
     example: dict[str, str] = Field(default_factory=dict[str, str])  # parameters for admission test runs
     resembles: str = ""  # signal type this legitimate work looks like (powershell, rdp, macro); spec section 6
     pixels: Pixels | None = None  # pixels-only mode opt-in; without it the task gets no rows in that mode
+    sends_mail: bool = False  # the shared send contract applies (SEND_REQUIRE above); required with a mail check
+
+    @model_validator(mode="after")
+    def _send_contract(self) -> Template:
+        sends = [n for n, sg in self.subgoals.items() if sg.done and sg.done.mail]
+        if sends and not self.sends_mail:
+            raise ValueError(f"{self.task}: a mail done check needs sends_mail (the shared send contract)")
+        if self.sends_mail:
+            if not sends:
+                raise ValueError(f"{self.task}: sends_mail without a subgoal whose done check is a mail check")
+            for name, sg in self.subgoals.items():
+                sg.avoid = [*SEND_AVOID, *sg.avoid]
+                if name in sends:
+                    sg.require = [*SEND_REQUIRE, *sg.require]
+                    sg.forbid = [*SEND_FORBID, *sg.forbid]
+        return self
 
     @model_validator(mode="after")
     def _pixels_done(self) -> Template:
