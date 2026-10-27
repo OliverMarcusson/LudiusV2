@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -222,3 +223,52 @@ def test_recipient_and_answered_subject_may_repeat() -> None:
     first, again = item(), item(at="11:00", params={"subject": "lund accruals q4 reversal", "body": "reversal done"})
     reply = item("outlook_reply_mail", at="13:00", followup="f1", params={"body": "thanks, noted"})
     assert check(first, again, reply) == []  # same colleague, and the reply reuses the answered subject
+
+
+def _range(tmp_path: Path, to_name: str, narrative: bool = True) -> Path:
+    import yaml
+
+    from ludius.planner import Narrative, Person
+
+    people = [Person(name=n, role="r", department="d", user=u) for u, n in PEOPLE.items()]
+    if narrative:
+        n = Narrative(company="c", city="Lund", summary="s", people=people, projects=[], events=[])
+        (tmp_path / "world").mkdir()
+        (tmp_path / "world" / "narrative.yaml").write_text(yaml.safe_dump(n.model_dump()), encoding="utf-8")
+    plan = {"persona": "aberg", "date": "2026-10-29", "items": [item(params={"to_name": to_name})]}
+    path = tmp_path / "plans" / "2026-10-29-aberg.yaml"
+    path.parent.mkdir()
+    path.write_text(yaml.safe_dump(plan), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    ("to_name", "narrative"),
+    [("Marcus Vellinga; outside@example.com", True), ("Lars Nord", True), ("Marcus Vellinga", False)],
+)
+def test_ludius_day_refuses_a_plan_with_a_bad_recipient(tmp_path: Path, to_name: str, narrative: bool) -> None:
+    import argparse
+
+    path = _range(tmp_path, to_name, narrative)
+    args = argparse.Namespace(plan=str(path), canary=False, temporal=None)
+    with pytest.raises(ValueError, match="company story|colleague.s address"):
+        cli.cmd_day(args)  # raises in the shared loader, before any agent, Jev or VM
+
+
+def test_a_plan_with_the_narrative_name_loads(tmp_path: Path) -> None:
+    from ludius.planner import load_plan
+
+    assert load_plan(_range(tmp_path, "Marcus Vellinga")).items[0].params["to_name"] == "Marcus Vellinga"
+
+
+def test_proposals_may_not_mark_typing_unreadable() -> None:
+    import yaml
+
+    from ludius import growth
+
+    caps = yaml.safe_load((cli.DATA / "capabilities.yaml").read_text(encoding="utf-8"))
+    note = cli.load_templates()["notepad_write_note"]
+    proposal = note.model_copy(update={"task": "notepad_blind_note"}, deep=True)
+    assert growth.check(proposal, caps, {}) == []
+    proposal.subgoals["write_body"].unreadable_ok = True
+    assert any("unreadable_ok not permitted" in p for p in growth.check(proposal, caps, {}))

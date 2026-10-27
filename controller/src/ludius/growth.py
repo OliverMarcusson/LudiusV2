@@ -92,6 +92,8 @@ def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Templa
             problems.append(f"{name}: unknown placeholders {sorted(unknown)}")
         if extra := set(sg.allow_destructive) - {COOKIE_CONSENT}:
             problems.append(f"{name}: allow_destructive not permitted for proposals: {sorted(extra)}")
+        if sg.unreadable_ok:  # would let typing count as landed with nothing on screen to show it
+            problems.append(f"{name}: unreadable_ok not permitted for proposals")
         if sg.done is None:
             open_ended += 1
         for rx in _regexes(sg.done):

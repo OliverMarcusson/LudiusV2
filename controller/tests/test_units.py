@@ -166,7 +166,7 @@ def test_growth_checker_accepts_catalog_templates() -> None:
         others = {k: v for k, v in templates.items() if k != name}
         problems = growth.check(t, caps, others)
         if t.app == "outlook":  # hand-written: sending is allowlisted, which proposals may never do
-            problems = [p for p in problems if "allow_destructive not permitted" not in p]
+            problems = [p for p in problems if "not permitted for proposals" not in p]
         assert problems == [], name
     bad = templates["explorer_new_folder"].model_copy(update={"processes": ["regedit.exe"]})
     assert any("outside the catalog" in p for p in growth.check(bad, caps, {}))
