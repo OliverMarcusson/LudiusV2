@@ -74,6 +74,7 @@ class MailCheck(Strict):
     folder: Literal["inbox", "sent"] = "inbox"
     subject: str = "{subject}"
     body: str = "{body}"
+    above_quote: bool = False  # a reply: the body must come before the quoted original's From:/Sent: header
 
 
 class Done(Strict):
@@ -104,6 +105,9 @@ class Subgoal(Strict):
     # The text target exposes no readable value (Outlook's Word body): typing there counts as landed and the
     # subgoal's own check decides. Off everywhere else, where an unchanged value means the text did not land.
     unreadable_ok: bool = False
+    # Where a click in a document leaves the caret: at the end (writers append), or at the start (a reply goes
+    # above the quoted mail).
+    caret: Literal["end", "start"] = "end"
     forbid: list[ElementCheck] = Field(default_factory=list[ElementCheck])
     # Elements never offered as a target in this subgoal, e.g. Outlook's Info Bar, whose click opens the
     # conversation's latest message and took the caret away from the reply being typed.
@@ -374,4 +378,4 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
 def _mail_ok(c: MailCheck, task: Task) -> bool:
     sender = f"{task.owner}@{mail.DOMAIN}" if task.owner else ""
     return mail.delivered(task.fmt(c.mailbox), c.folder, task.fmt(c.subject), task.fmt(c.body), sender,
-                          task.started_ms)  # fmt: skip
+                          task.started_ms, c.above_quote)  # fmt: skip

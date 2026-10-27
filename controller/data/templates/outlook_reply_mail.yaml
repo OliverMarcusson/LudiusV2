@@ -37,6 +37,7 @@ subgoals:
     goal: "Type the reply at the top of the message body, above the quoted mail"
     text: body
     unreadable_ok: true  # Word body: no UIA value; the server-side body check decides
+    caret: start  # a click lands anywhere, often in the quote: Ctrl+Home back to the top of the reply
     avoid: [{role: edit, name: "^Info Bar$"}]  # "not responding to the latest message": its click opens that one
     done: {typed: true}
   send_shortcut:
@@ -53,7 +54,7 @@ subgoals:
       - {role: edit, name: "^Cc$", value: '^$'}
       - {role: edit, name: "^Bcc$", value: '^$'}
     forbid: [{name: "^Cc$", value: '\S'}, {name: "^Bcc$", value: '\S'}]
-    done: {mail: {mailbox: "{to}"}}
+    done: {mail: {mailbox: "{to}", above_quote: true}}
   close_message:
     goal: "Close the original mail's window"
     keys: [Esc]

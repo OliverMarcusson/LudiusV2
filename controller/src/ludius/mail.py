@@ -101,11 +101,17 @@ def letters(s: str) -> str:
     return re.sub(r"[^0-9a-z]", "", s.translate(_ASCII).casefold())
 
 
-def delivered(address: str, folder: str, subject: str, body: str, sender: str, since_ms: int) -> bool:
+QUOTE_HEADER = re.compile(r"^From:[^\n]*\r?\nSent:", re.M)  # Outlook's header above the quoted original
+
+
+def delivered(
+    address: str, folder: str, subject: str, body: str, sender: str, since_ms: int, above_quote: bool = False
+) -> bool:
     """A message from `sender` with exactly this subject, delivered at or after `since_ms` (Unix ms) and whose
     body contains `body`, is in the mailbox's folder; and every such copy in the sender's Sent Items went to
     `address` alone (To, Cc and Bcc: a hidden Bcc shows there, not in the recipient's copy). A body with no
-    letters or digits never matches. srv01's only outgoing path (gromox LDA) refuses non-local recipients."""
+    letters or digits never matches. srv01's only outgoing path (gromox LDA) refuses non-local recipients.
+    `above_quote`: only the text before the quoted original's header counts (a reply written above the quote)."""
     address = address.strip().lower()
     user, _, domain = address.partition("@")
     me, _, my_domain = sender.strip().lower().partition("@")
@@ -121,7 +127,8 @@ def delivered(address: str, folder: str, subject: str, body: str, sender: str, s
                 and m.submit_ms <= m.delivery_ms + MINUTE_MS)  # fmt: skip
 
     def ours(m: Message) -> bool:
-        return m.sender == sender.lower() and recent(m) and want in letters(m.body)
+        text = QUOTE_HEADER.split(m.body, maxsplit=1)[0] if above_quote else m.body
+        return m.sender == sender.lower() and recent(m) and want in letters(text)
 
     if not any(ours(m) for m in messages(user, folder, subject)):
         return False

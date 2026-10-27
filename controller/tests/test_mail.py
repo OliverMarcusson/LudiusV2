@@ -102,7 +102,8 @@ def test_done_is_read_on_the_server_whatever_the_screen(monkeypatch: pytest.Monk
     done = t.subgoals["send_shortcut"].done
     assert check_done(done, obs.Snapshot(), task, typed_ok=False) is True
     assert calls == [("mvellinga@corp.ludius.test", "inbox", "lund accruals q4 status",
-                      "hi marcus\nlund accruals for q4 are booked", "aberg@corp.ludius.test", 1_000)]  # fmt: skip
+                      "hi marcus\nlund accruals for q4 are booked", "aberg@corp.ludius.test", 1_000,
+                      False)]  # fmt: skip
     assert check_done(done, obs.Snapshot(), task, typed_ok=True) is False
 
 
@@ -394,3 +395,72 @@ def test_reply_never_offers_the_info_bar() -> None:
     for name in ("write_body", "send_shortcut", "send_button"):
         targets = {o.element.name for o in build_options(v, task, send.subgoals[name], Policy()) if o.element}
         assert "Info Bar" not in targets and body.name in targets, name
+
+
+QUOTED = (
+    "\r\nFrom: Marcus Vellinga <mvellinga@corp.ludius.test>\r\nSent: 27 October 2026 21:23\r\n"
+    "Hi Anna,\r\nThanks,\r\nMarcus"
+)
+
+
+@pytest.mark.parametrize(
+    ("body", "ok"),
+    [
+        ("Hi Marcus\r\nAll booked.\r\n" + QUOTED, True),  # written above the quote
+        (QUOTED + "Hi Marcus\r\nAll booked.", False),  # typed into the end of the quote (reply-r6)
+        ("Hi Marcus\r\n" + QUOTED + "All booked.", False),  # split around the quote
+        ("Hi Marcus\r\nAll booked.", True),  # no quote at all
+    ],
+)
+def test_reply_text_must_come_before_the_quoted_original(monkeypatch: pytest.MonkeyPatch, body: str, ok: bool) -> None:
+    m = mail.Message("aberg@corp.ludius.test", 5_000, 5_000, body, ("mvellinga@corp.ludius.test",))
+
+    def messages(*_: str) -> list[mail.Message]:
+        return [m]
+
+    monkeypatch.setattr(mail, "messages", messages)
+    args = ("mvellinga@corp.ludius.test", "inbox", "s", "hi marcus\nall booked", "aberg@corp.ludius.test", 1)
+    assert mail.delivered(*args, above_quote=True) is ok
+    assert mail.delivered(*args) is (ok or body.startswith(QUOTED))  # a send's check: anywhere in the body
+    done = cli.load_templates()["outlook_reply_mail"].subgoals["send_shortcut"].done
+    assert done and done.mail and done.mail.above_quote
+    send = cli.load_templates()["outlook_send_mail"].subgoals["send_shortcut"].done
+    assert send and send.mail and not send.mail.above_quote
+
+
+def test_reply_click_puts_the_caret_at_the_top(tmp_path: Path) -> None:
+    from ludius import keys
+    from ludius.loop import GroundTruth, Runner
+    from ludius.options import Option
+    from ludius.tasks import Persona
+
+    class FakeAgent:
+        vm = "t"
+
+        def __init__(self) -> None:
+            self.chords: list[list[int]] = []
+
+        def move(self, x: int, y: int, duration_ms: int = 0) -> int:
+            return 0
+
+        def click(self, count: int = 1) -> int:
+            return 0
+
+        def chord(self, vks: list[int]) -> int:
+            self.chords.append(vks)
+            return 0
+
+    agent = FakeAgent()
+    runner = Runner(agent, None, Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    box = obs.Rect(x=0, y=0, width=800, height=600)
+    body = obs.Element(key="d", role="document", name="RE: s - Message", bounds=box)  # Word body: no value
+    note = obs.Element(key="n", role="document", value="heading\r", bounds=box)
+    templates = cli.load_templates()
+    reply = templates["outlook_reply_mail"].subgoals["write_reply"]
+    notepad = templates["notepad_write_note"].subgoals["write_body"]
+    assert reply.caret == "start" and notepad.caret == "end"
+    for e, sg, expected in ((body, reply, [keys.chord("Ctrl+Home")]), (note, notepad, [keys.chord("Ctrl+End")]),
+                            (note, None, [keys.chord("Ctrl+End")])):  # fmt: skip
+        agent.chords.clear()
+        runner.act(Option("o1", "click", "click", element=e), None, sg)  # type: ignore[arg-type]
+        assert agent.chords == expected

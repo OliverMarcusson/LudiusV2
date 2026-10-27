@@ -151,27 +151,31 @@ class Runner:
             mean, jitter = 25, 10
         self.agent.type(text, mean, jitter)
 
-    def _caret_to_end(self, e: obs.Element) -> None:
+    def _caret_to_end(self, e: obs.Element, sg: Subgoal | None = None) -> None:
         # A click lands at a random spot, so in a text document it moved the caret into earlier text and the next
         # Enter split a heading (fidelity 20261027-1259). Writers append, so put the caret back at the end.
-        # ponytail: always the end; a template that edits mid-document needs its own caret move.
-        if e.role == "document" and not e.read_only and e.value:
+        # A reply is written above the quoted mail (caret: start): Outlook's Word body has no value, so a click in
+        # the quote left the caret there (fidelity 20261027 reply-r6); Ctrl+Home puts it back at the top.
+        if sg is not None and sg.caret == "start":
+            if e.role == "document" and not e.read_only:
+                self.agent.chord(keys.chord("Ctrl+Home"))
+        elif e.role == "document" and not e.read_only and e.value:
             self.agent.chord(keys.chord("Ctrl+End"))
 
-    def act(self, o: Option, task: Task) -> None:
+    def act(self, o: Option, task: Task, sg: Subgoal | None = None) -> None:
         e = o.element
         if o.kind in ("click", "double_click") and e is not None:
             self._move_to(e)
             self.agent.click(count=2 if o.kind == "double_click" else 1)
             if o.kind == "click":
-                self._caret_to_end(e)
+                self._caret_to_end(e, sg)
         elif o.kind == "type":
             text = o.literal or task.values[o.content]
             if e is not None and not e.focused:
                 self._move_to(e)
                 self.agent.click()
                 time.sleep(0.15)
-                self._caret_to_end(e)
+                self._caret_to_end(e, sg)
             self._type(text)
         elif o.kind == "key":
             self.agent.chord(keys.chord(o.keys))
@@ -335,7 +339,7 @@ class Runner:
 
             self.think()
             host_ms = _now()
-            self.act(chosen, task)
+            self.act(chosen, task, sg)
             snap = self.observe(timeout_ms=10000 if chosen.kind == "rescan" else 5000)
             after = fingerprint(snap)
             changed, revisit = after != here, after in seen
