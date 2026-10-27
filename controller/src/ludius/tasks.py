@@ -299,10 +299,12 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
         c = done.element
 
         def ok(e: obs.Element) -> bool:
+            # Edit and RichEdit values end lines with \r or \r\n; multi-line params use \n.
+            value = re.sub(r"\r\n?", "\n", e.value)
             return (
                 (not c.role or e.role == c.role)
                 and (not c.name or re.search(task.fmt_re(c.name), e.name, re.I) is not None)
-                and (not c.value or re.search(task.fmt_re(c.value), e.value, re.I) is not None)
+                and (not c.value or re.search(task.fmt_re(c.value), value, re.I) is not None)
             )
 
         if not any(ok(e) for e in snap.elements):

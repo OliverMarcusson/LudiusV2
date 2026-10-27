@@ -65,6 +65,11 @@ subgoals:
     text: body
     done:
       typed: true
+      # The whole document, in order: a click that moved the caret into the heading splits or reorders it.
+      # ponytail: the observer trims values to 300 chars, so a longer heading+body can never pass (fails, never false done).
+      element:
+        role: document
+        value: ^{heading}\n{body}\n?$
   save_shortcut:
     goal: Open the Save As dialog with the keyboard shortcut
     keys:

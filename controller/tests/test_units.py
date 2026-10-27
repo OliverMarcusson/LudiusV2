@@ -93,6 +93,26 @@ def test_absent_window_check() -> None:
     assert check_done(None, open_np, task, False) is None
 
 
+def test_wordpad_body_rejects_a_split_heading() -> None:
+    """Acceptance 20261027-1255: a click after the heading put the caret inside it, so Enter split the heading
+    and the body landed in the gap. Every keystroke landed (typed_ok), but the document is wrong: never done."""
+    t = load_template(DATA / "templates" / "wordpad_formatted_note.yaml")
+    heading = "finance team - erp test results 28/10"
+    body = "vendor master mapping - dupes?\nbank rec test run - matched ok?\nwho signs off test results"
+    inst = TaskInstance(template=t.task, params={"file_name": "agenda", "heading": heading, "body": body})
+    task, done = Task(t, inst, random.Random(0)), t.subgoals["bullets_body"].done
+
+    def doc(value: str) -> obs.Snapshot:
+        return obs.Snapshot(elements=[obs.Element(role="document", name="Rich Text Window", value=value)])
+
+    split = "finance team - erp test resu\rvendor master mapping - dupes?\rbank rec test run - matched ok?\r" \
+            "who signs off test resultslts 28/10\r"  # fmt: skip
+    assert check_done(done, doc(split), task, typed_ok=True) is False
+    assert check_done(done, doc(heading + "\r" + body.replace("\n", "\r") + "\r"), task, typed_ok=True) is True
+    assert check_done(done, doc(heading + "\r" + body.replace("\n", "\r")), task, typed_ok=True) is True
+    assert check_done(done, doc(heading + "\r" + body.replace("\n", "\r")), task, typed_ok=False) is False
+
+
 def test_policy() -> None:
     p = Policy(reserved_paths=[r"\\finance\\payroll"])
     save = obs.Element(name="Don't Save", hints=["destructive"])
