@@ -178,7 +178,8 @@ def ensure_day(llm: Callable[[], LlmClient], world: World, persona: Persona, src
         g = generate_day(client, world, persona, src, date)
     # A plan written meanwhile (a manual `ludius plan day`) wins: FileExistsError, and the retry keeps it.
     # A crash between this write and the history append is repaired by the retry's existing-plan path.
-    # ponytail: manual `ludius plan day` takes no nightly lock; racing a repair it can duplicate (never lose) rows.
+    # ponytail: manual `ludius plan day` takes no nightly lock and appends unconditionally; the journal lock keeps
+    # reads whole, but a manual save after a repair still duplicates (never loses) rows. HistoryBusy is retryable.
     world.save_plan(g.plan, src.templates, new=True)
     return Planned(
         persona=persona.user, date=g.plan.date, path=str(path), generated=True,

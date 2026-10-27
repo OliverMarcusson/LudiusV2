@@ -14,7 +14,10 @@ import os
 import random
 import re
 import tempfile
+import time
 from collections import Counter
+from collections.abc import Generator
+from contextlib import contextmanager
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -298,8 +301,18 @@ def _norm(s: str) -> str:
 # World state and persistence ------------------------------------------------------------
 
 
+class HistoryBusy(RuntimeError):
+    """The content journal stayed locked past `World.lock_wait`: retryable, says nothing about the journal."""
+
+
+def _nap() -> None:
+    time.sleep(0.01)
+
+
 class World:
     """Range state on disk: narrative, content history and per-day ground truth (runs/ is gitignored)."""
+
+    lock_wait = 10.0  # seconds a journal reader or writer waits for another before HistoryBusy
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -325,7 +338,8 @@ class World:
         """new=True never replaces an existing plan file (FileExistsError), even one written concurrently."""
         path = self.plan_path(plan.persona, plan.date)
         _dump(path, plan.model_dump(exclude_defaults=True), mode="x" if new else "w")
-        self._append(plan, [v for it in plan.items for v in content_values(it, templates)])
+        with self._journal():
+            self._append(plan, [v for it in plan.items for v in content_values(it, templates)])
         return path
 
     def repair_history(self, plan: DayPlan, templates: dict[str, Template]) -> int:
@@ -336,18 +350,52 @@ class World:
         or of another persona stay as they are. Existing rows are never rewritten; an unreadable journal raises
         ValueError before anything is written.
         """
-        have = Counter(r["text"] for r in self._rows() if (r["date"], r["persona"]) == (plan.date, plan.persona))
-        missing: list[str] = []
-        for v in (v for it in plan.items for v in content_values(it, templates)):
-            if have[v]:
-                have[v] -= 1
-            else:
-                missing.append(v)
-        self._append(plan, missing)
+        with self._journal():  # read + append as one step: a manual save landing between them is seen, not doubled
+            have = Counter(r["text"] for r in self._rows() if (r["date"], r["persona"]) == (plan.date, plan.persona))
+            missing: list[str] = []
+            for v in (v for it in plan.items for v in content_values(it, templates)):
+                if have[v]:
+                    have[v] -= 1
+                else:
+                    missing.append(v)
+            self._append(plan, missing)
         return len(missing)
 
     def history(self, user: str) -> list[str]:
-        return [r["text"] for r in self._rows() if r["persona"] == user]
+        with self._journal():
+            return [r["text"] for r in self._rows() if r["persona"] == user]
+
+    @contextmanager
+    def _journal(self) -> Generator[None]:
+        """Cross-process lock over the journal (readers, appends, repair), so no one reads a half-written append.
+
+        Not reentrant: _rows and _append are the unlocked halves and must only run inside it. The OS drops it with
+        the process; a crash mid-append still leaves a torn tail, which readers keep refusing (no fsync or rollback).
+        ponytail: only lock-taking writers are excluded; bounded poll, a fair queue if contention ever matters.
+        """
+        path = self.root / "world" / "content.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT)
+        try:
+            deadline = time.monotonic() + self.lock_wait
+            while True:
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+
+                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as e:
+                    if time.monotonic() >= deadline:
+                        raise HistoryBusy(f"another process is using the content history ({path}); retry") from e
+                    _nap()
+            yield
+        finally:
+            os.close(fd)  # closing drops the lock
 
     def _rows(self) -> list[dict[str, str]]:
         if not self.history_path.exists():
