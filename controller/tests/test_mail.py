@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import random
 import subprocess
 from pathlib import Path
@@ -91,7 +92,7 @@ def test_reply_must_answer_the_matching_mail_followup() -> None:
 def test_done_is_read_on_the_server_whatever_the_screen(monkeypatch: pytest.MonkeyPatch) -> None:
     t = cli.load_templates()["outlook_send_mail"]
     task = Task(t, PlanItem.model_validate(item()), random.Random(0))
-    task.owner, task.started_ms = "aberg", 1_000
+    task.owner, task.started_ms, task.mail_before = "aberg", 1_000, frozenset()
     calls: list[tuple[object, ...]] = []
 
     def delivered(*a: object) -> bool:
@@ -103,7 +104,7 @@ def test_done_is_read_on_the_server_whatever_the_screen(monkeypatch: pytest.Monk
     assert check_done(done, obs.Snapshot(), task, typed_ok=False) is True
     assert calls == [("mvellinga@corp.ludius.test", "inbox", "lund accruals q4 status",
                       "hi marcus\nlund accruals for q4 are booked", "aberg@corp.ludius.test", 1_000,
-                      False)]  # fmt: skip
+                      False, frozenset())]  # fmt: skip
     assert check_done(done, obs.Snapshot(), task, typed_ok=True) is False
 
 
@@ -483,3 +484,54 @@ def test_mail_templates_get_the_shared_send_contract() -> None:
     with pytest.raises(ValueError, match="without a subgoal"):
         Template.model_validate(raw | {"sends_mail": True, "subgoals": {"s": {"goal": "type"}}})
     assert Template.model_validate(raw | {"sends_mail": True}).subgoals["s"].require == SEND_REQUIRE
+
+
+def test_mail_from_an_earlier_playback_never_counts_after_a_clock_rewind(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ludius.tasks import mail_baseline
+
+    # The guest clock was rewound to 1_000 (time-jump replay); the earlier playback's mail is dated after that.
+    old_in = mail.Message("aberg@corp.ludius.test", 5_000, 5_000, "Yes, booked.", ("mvellinga@corp.ludius.test",), 7)
+    old_sent = mail.Message("aberg@corp.ludius.test", 5_000, 0, "Yes, booked.", ("mvellinga@corp.ludius.test",), 3)
+    store = {("mvellinga", "inbox"): [old_in], ("aberg", "sent"): [old_sent]}
+
+    def query(user: str, folder: str, _subject: str) -> list[mail.Message] | None:
+        return list(store.get((user, folder), []))
+
+    def messages(user: str, folder: str, subject: str) -> list[mail.Message]:
+        return query(user, folder, subject) or []
+
+    def unreadable(*_: str) -> None:
+        return None
+
+    monkeypatch.setattr(mail, "_query", query)
+    monkeypatch.setattr(mail, "messages", messages)
+    t = cli.load_templates()["outlook_send_mail"]
+    task = Task(t, PlanItem.model_validate(item(params={"body": "yes, booked"})), random.Random(0))
+    task.owner, task.started_ms = "aberg", 1_000
+    task.mail_before = mail_baseline(task)
+    assert task.mail_before == {("mvellinga", "inbox", 7), ("aberg", "sent", 3)}
+    done = t.subgoals["send_shortcut"].done
+    assert not check_done(done, obs.Snapshot(), task, typed_ok=False)  # recent by the clock, but not new
+    store[("mvellinga", "inbox")].append(dataclasses.replace(old_in, id=8))
+    assert not check_done(done, obs.Snapshot(), task, typed_ok=False)  # no new Sent Items copy yet
+    store[("aberg", "sent")].append(dataclasses.replace(old_sent, id=4))
+    assert check_done(done, obs.Snapshot(), task, typed_ok=False)
+    task.mail_before = None  # the baseline could not be read: never done
+    assert not check_done(done, obs.Snapshot(), task, typed_ok=False)
+    monkeypatch.setattr(mail, "_query", unreadable)
+    assert mail_baseline(task) is None
+
+
+def test_send_is_refused_when_the_recipient_became_reserved(tmp_path: Path) -> None:
+    from ludius.tasks import RESERVED_RECIPIENT, recipient_reserved
+
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text("mailboxes: [mvellinga@corp.ludius.test]\n", encoding="utf-8")
+    reserved = Policy.load(scenario)
+    t = cli.load_templates()["outlook_reply_mail"]
+    task = Task(t, PlanItem.model_validate(item("outlook_reply_mail", followup="f1")), random.Random(0))
+    send, write = t.subgoals["send_shortcut"], t.subgoals["write_reply"]
+    assert recipient_reserved(send, task, reserved)
+    assert not recipient_reserved(write, task, reserved)  # only the sending step is refused
+    assert not recipient_reserved(send, task, Policy())
+    assert RESERVED_RECIPIENT.startswith("precondition")

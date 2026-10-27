@@ -20,7 +20,17 @@ from ludius.assist import Assist
 from ludius.jev import Decision
 from ludius.options import Option, StepView, build_options, build_state, describe, view
 from ludius.policy import Policy, alt_f4_safe
-from ludius.tasks import Persona, Subgoal, Task, check_done, pixels_window, preconditions
+from ludius.tasks import (
+    RESERVED_RECIPIENT,
+    Persona,
+    Subgoal,
+    Task,
+    check_done,
+    mail_baseline,
+    pixels_window,
+    preconditions,
+    recipient_reserved,
+)
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
@@ -196,6 +206,8 @@ class Runner:
         done: list[str] = []
         task.owner = self.persona.user
         task.started_ms = self.observe().guest_time_ms or int(time.time() * 1000)  # the guest's clock, like the range's
+        if task.template.sends_mail:  # by identity: a rewound guest clock makes earlier mail look recent
+            task.mail_before = mail_baseline(task)
         self.log.write(
             event="task_start",
             host_ms=_now(),
@@ -286,6 +298,10 @@ class Runner:
                     steps=step - 1,
                 )
                 return "done", step - 1, ""
+            if recipient_reserved(sg, task, self.policy):
+                self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
+                               reason=RESERVED_RECIPIENT)  # fmt: skip
+                return "failed", step - 1, RESERVED_RECIPIENT
             if blocked := preconditions(sg, snap, task):
                 # No input is allowed (e.g. the mail is sent, its window closed, delivery still on its way): a Jev
                 # call could only pick a blocked action. Wait and look again; the step budget still bounds it.
@@ -383,6 +399,8 @@ class Runner:
 
     def _post_check(self, o: Option, sg: Subgoal, task: Task) -> str | None:
         """Defense in depth: re-check the chosen option against policy and the subgoal's preconditions."""
+        if o.kind != "rescan" and recipient_reserved(sg, task, self.policy):
+            return RESERVED_RECIPIENT
         if o.kind != "rescan" and (r := preconditions(sg, self.snap, task, o.element)):
             return r
         if o.element is not None:

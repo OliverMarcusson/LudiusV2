@@ -36,6 +36,7 @@ class Message:
     delivery_ms: int  # Unix ms, delivery time (cut to the minute on a Sent Items copy); 0 when missing
     body: str
     recipients: tuple[str, ...] = ()  # every recipient's SMTP address, lower case, sorted; "?" when unknown
+    id: int = 0  # the store's message id (unique per mailbox)
 
 
 @functools.cache
@@ -50,16 +51,21 @@ def _host() -> str:
 
 
 def messages(user: str, folder: str, subject: str) -> list[Message]:
-    """Messages in `user`'s folder whose subject (without RE:/FW:) is exactly `subject`."""
+    """Messages in `user`'s folder whose subject (without RE:/FW:) is exactly `subject`; [] on any error."""
+    return _query(user, folder, subject) or []
+
+
+def _query(user: str, folder: str, subject: str) -> list[Message] | None:
+    """As messages(), but None when the server could not be read."""
     if not re.fullmatch(r"[a-z0-9]+", user):
-        return []
+        return None
     db = f"/var/lib/gromox/user/{DOMAIN}/{user}"
     # Hex literal: the subject reaches neither the shell nor SQL as text.
     rcpt = (f"(select group_concat(coalesce(cast(a.propval as text), cast(e.propval as text), '?'), ',') "
             f"from recipients x left join recipients_properties a on a.recipient_id=x.recipient_id "
             f"and a.proptag={PR_SMTP_ADDRESS} left join recipients_properties e on e.recipient_id=x.recipient_id "
             f"and e.proptag={PR_EMAIL_ADDRESS} where x.message_id=m.message_id)")  # fmt: skip
-    sql = (f"select coalesce(t.propval, 0), coalesce(d.propval, 0), coalesce(f.propval, r.propval, '-'), "
+    sql = (f"select m.message_id, coalesce(t.propval, 0), coalesce(d.propval, 0), coalesce(f.propval, r.propval, '-'), "
            f"coalesce({rcpt}, '-'), cast(b.propval as text) "
            f"from messages m join message_properties s on s.message_id=m.message_id "
            f"and s.proptag={PR_NORMALIZED_SUBJECT} join message_properties b on b.message_id=m.message_id "
@@ -70,28 +76,28 @@ def messages(user: str, folder: str, subject: str) -> list[Message]:
            f"and r.proptag={PR_SENT_REPRESENTING_SMTP} where m.parent_fid={FOLDERS[folder]} "
            f"and m.is_associated=0 and cast(s.propval as text)=cast(x'{subject.encode().hex()}' as text)")  # fmt: skip
     remote = (f"sudo sqlite3 -readonly -separator ' ' {db}/exmdb/exchange.sqlite3 \"{sql}\" | "
-              f"while read t d s r c; do printf '%s %s %s %s\\n' \"$t\" \"$d\" \"$s\" \"$r\"; "
+              f"while read i t d s r c; do printf '%s %s %s %s %s\\n' \"$i\" \"$t\" \"$d\" \"$s\" \"$r\"; "
               f"sudo zstdcat -qf {db}/cid/$c; "
               f"printf '\\036'; done")  # fmt: skip
     try:
         host = _host()
         if not host:
-            return []
+            return None
         cmd = ["ssh", "-i", str(SRV / "id_ed25519"), "-o", f"UserKnownHostsFile={SRV / 'known_hosts'}",
                "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", f"ludius@{host}", remote]  # fmt: skip
         out = subprocess.run(cmd, capture_output=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
-        return []
+        return None
     if out.returncode:
-        return []
+        return None
     found: list[Message] = []
     for rec in out.stdout.decode("utf-8", "replace").split("\x1e"):
         head, _, body = rec.lstrip("\r\n").partition("\n")
-        t, d, sender, rcpt = (head.split(" ") + ["", "", ""])[:4]
-        if t.isdigit() and d.isdigit():
+        i, t, d, sender, rcpt = (head.split(" ") + ["", "", "", ""])[:5]
+        if i.isdigit() and t.isdigit() and d.isdigit():
             to = tuple(sorted(x.strip().lower() for x in rcpt.split(",") if rcpt.strip() not in ("", "-")))
             ms = [int(x) // 10_000 - FILETIME_UNIX_MS if int(x) else 0 for x in (t, d)]
-            found.append(Message(sender.strip().lower(), ms[0], ms[1], body, to))
+            found.append(Message(sender.strip().lower(), ms[0], ms[1], body, to, int(i)))
     return found
 
 
@@ -104,20 +110,46 @@ def letters(s: str) -> str:
 QUOTE_HEADER = re.compile(r"^From:[^\n]*\r?\nSent:", re.M)  # Outlook's header above the quoted original
 
 
+Seen = frozenset[tuple[str, str, int]]  # (user, folder, message id)
+
+
+def present(address: str, folder: str, subject: str, sender: str) -> Seen | None:
+    """Ids of the messages a done check could match that exist already (recipient's folder and sender's Sent
+    Items), read at task start; None when the server could not be read (then done can never pass)."""
+    user, me = address.strip().lower().partition("@")[0], sender.strip().lower().partition("@")[0]
+    seen: set[tuple[str, str, int]] = set()
+    for u, f in ((user, folder), (me, "sent")):
+        found = _query(u, f, subject)
+        if found is None:
+            return None
+        seen |= {(u, f, m.id) for m in found}
+    return frozenset(seen)
+
+
 def delivered(
-    address: str, folder: str, subject: str, body: str, sender: str, since_ms: int, above_quote: bool = False
+    address: str,
+    folder: str,
+    subject: str,
+    body: str,
+    sender: str,
+    since_ms: int,
+    above_quote: bool = False,
+    before: Seen | None = frozenset(),
 ) -> bool:
     """A message from `sender` with exactly this subject, delivered at or after `since_ms` (Unix ms) and whose
     body contains `body`, is in the mailbox's folder; and every such copy in the sender's Sent Items went to
     `address` alone (To, Cc and Bcc: a hidden Bcc shows there, not in the recipient's copy). A body with no
     letters or digits never matches. srv01's only outgoing path (gromox LDA) refuses non-local recipients.
-    `above_quote`: only the text before the quoted original's header counts (a reply written above the quote)."""
+    `above_quote`: only the text before the quoted original's header counts (a reply written above the quote).
+    `before`: messages present at task start (present()) never count: the guest clock can be rewound (time-jump
+    replay), so a mail from an earlier playback can look recent. None (unknown) never passes."""
     address = address.strip().lower()
     user, _, domain = address.partition("@")
     me, _, my_domain = sender.strip().lower().partition("@")
     want = letters(body)
-    if domain != DOMAIN or my_domain != DOMAIN or not want or since_ms <= 0:
+    if domain != DOMAIN or my_domain != DOMAIN or not want or since_ms <= 0 or before is None:
         return False
+    seen = before
 
     def recent(m: Message) -> bool:
         # The submit time (client-set) and the delivery time (server-set, minute-cut on Sent Items) must both fall
@@ -126,11 +158,11 @@ def delivered(
         return (m.submit_ms >= since_ms and m.delivery_ms // MINUTE_MS >= since_ms // MINUTE_MS
                 and m.submit_ms <= m.delivery_ms + MINUTE_MS)  # fmt: skip
 
-    def ours(m: Message) -> bool:
+    def ours(m: Message, u: str, f: str) -> bool:
         text = QUOTE_HEADER.split(m.body, maxsplit=1)[0] if above_quote else m.body
-        return m.sender == sender.lower() and recent(m) and want in letters(text)
+        return (u, f, m.id) not in seen and m.sender == sender.lower() and recent(m) and want in letters(text)
 
-    if not any(ours(m) for m in messages(user, folder, subject)):
+    if not any(ours(m, user, folder) for m in messages(user, folder, subject)):
         return False
-    sent = [m for m in messages(me, "sent", subject) if ours(m)]
+    sent = [m for m in messages(me, "sent", subject) if ours(m, me, "sent")]
     return bool(sent) and all(m.recipients == (address,) for m in sent)

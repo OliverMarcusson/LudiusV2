@@ -223,6 +223,7 @@ class Task:
         self.inst = inst
         self.owner = ""  # persona account and task start (guest clock, Unix ms): set by the runner
         self.started_ms = 0
+        self.mail_before: mail.Seen | None = None  # mail present at task start (mail_baseline), set by the runner
         idx = (
             inst.variant
             if inst.variant is not None
@@ -412,4 +413,26 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
 def _mail_ok(c: MailCheck, task: Task) -> bool:
     sender = f"{task.owner}@{mail.DOMAIN}" if task.owner else ""
     return mail.delivered(task.fmt(c.mailbox), c.folder, task.fmt(c.subject), task.fmt(c.body), sender,
-                          task.started_ms, c.above_quote)  # fmt: skip
+                          task.started_ms, c.above_quote, task.mail_before)  # fmt: skip
+
+
+def mail_baseline(task: Task) -> mail.Seen | None:
+    """What every mail done check of the task could already match at its start (mail.present); None if unread."""
+    sender = f"{task.owner}@{mail.DOMAIN}"
+    seen: set[tuple[str, str, int]] = set()
+    for sg in task.template.subgoals.values():
+        if sg.done and (c := sg.done.mail):
+            found = mail.present(task.fmt(c.mailbox), c.folder, task.fmt(c.subject), sender)
+            if found is None:
+                return None
+            seen |= found
+    return frozenset(seen)
+
+
+RESERVED_RECIPIENT = "precondition: the planned recipient is scenario-reserved"
+
+
+def recipient_reserved(sg: Subgoal, task: Task, policy: Any) -> bool:
+    """The shared send contract's policy check, at send time: a plan made before a mailbox became reserved must
+    not send to it. `policy` is a ludius.policy.Policy (which imports this module)."""
+    return bool(sg.done and sg.done.mail and policy.reserved(task.fmt(sg.done.mail.mailbox)))
