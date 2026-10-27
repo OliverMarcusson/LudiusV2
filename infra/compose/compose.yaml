@@ -1,0 +1,78 @@
+# Temporal + PostgreSQL for `ludius day --temporal` and `ludius store sync`. Config only: NOT run or pulled yet.
+# Layout follows temporalio/samples-server compose/docker-compose-postgres.yml (auto-setup is stale at 1.23, so
+# schema setup is its own one-shot). Pins: tags verified on Docker Hub 2026-10-27, digests are the multi-arch index.
+# Host ports bind loopback only. Data lives in the named volume `pgdata`; never remove it with `down -v`.
+name: ludius
+
+services:
+  postgres:
+    image: postgres:16.15-alpine3.24@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: temporal # superuser; owns the temporal + temporal_visibility databases
+      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD in .env}
+      LUDIUS_DB_PASSWORD: ${LUDIUS_DB_PASSWORD:?set LUDIUS_DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro # creates role + database `ludius`, first start of an empty volume only
+    ports:
+      - "127.0.0.1:${LUDIUS_PG_PORT:-5432}:5432"
+    healthcheck: # -h 127.0.0.1: the init-time server listens on the socket only, so this waits for the real one
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U temporal -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  temporal-setup: # one-shot, runs again on every `up`
+    image: temporalio/admin-tools:1.32.1@sha256:9ef0dc5b063bf4ffd5c1512de72e0e73e225bd2c7006a18ce69bd592a8862a83
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+    environment:
+      SQL_PASSWORD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD in .env}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        t="temporal-sql-tool --plugin postgres12 --ep postgres -p 5432 -u temporal"
+        for db in temporal temporal_visibility; do
+          $$t --db $$db create
+          $$t --db $$db setup-schema -v 0.0
+          $$t --db $$db update-schema -d /etc/temporal/schema/postgresql/v12/$${db#temporal_}/versioned
+        done
+
+  temporal:
+    image: temporalio/server:1.32.1@sha256:acecbab5b0b8ae9cf4012b508866ca97feda3709577bf157b537239f40029049
+    restart: unless-stopped
+    depends_on:
+      temporal-setup: {condition: service_completed_successfully}
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD in .env}
+      POSTGRES_SEEDS: postgres
+      BIND_ON_IP: 0.0.0.0
+    ports:
+      - "127.0.0.1:${LUDIUS_TEMPORAL_PORT:-7233}:7233"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  temporal-namespace: # one-shot: the `default` namespace the CLI uses (the server does not create it)
+    image: temporalio/admin-tools:1.32.1@sha256:9ef0dc5b063bf4ffd5c1512de72e0e73e225bd2c7006a18ce69bd592a8862a83
+    depends_on:
+      temporal: {condition: service_healthy}
+    restart: "on-failure:5"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        a="--address temporal:7233"
+        temporal operator cluster health $$a
+        temporal operator namespace describe -n default $$a >/dev/null 2>&1 || temporal operator namespace create -n default $$a
+
+volumes:
+  pgdata:
