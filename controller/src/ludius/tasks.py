@@ -156,6 +156,10 @@ SEND_AVOID = [ElementCheck(role="edit", name="^Info Bar$")]
 NAME_PARAMS = {"file_name", "folder_name", "new_name"}  # parameters that name a file or folder in the profile
 
 
+# What each saving app appends to the typed file name (its Save As default type).
+SAVE_EXTENSIONS = {"notepad": ".txt", "wordpad": ".rtf", "paint": ".png", "excel": ".xlsx"}
+
+
 class Template(Strict):
     task: str
     app: str
@@ -186,6 +190,11 @@ class Template(Strict):
         for w in self.writes:
             if guestfile.profile_path("u", w.removesuffix(".*")) is None:
                 raise ValueError(f"{self.task}: write {w!r} is not in a noise folder {guestfile.NOISE_FOLDERS}")
+            # The extension is the app's, not the template's: a write without it would check `x`, not the `x.txt`
+            # the app saves, and miss a reservation (re-check of 97820c6).
+            ext = SAVE_EXTENSIONS.get(self.app)
+            if ext and "{file_name}" in w and not w.lower().endswith(ext):
+                raise ValueError(f"{self.task}: {self.app} saves {ext}, so write {w!r} must end with it")
         for sg in self.subgoals.values():
             if sg.done and sg.done.file and sg.done.file.path not in self.writes:
                 raise ValueError(f"{self.task}: file check {sg.done.file.path!r} is not a declared write")

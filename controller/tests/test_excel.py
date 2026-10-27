@@ -231,6 +231,8 @@ def test_template_load_refuses_undeclared_writes() -> None:
         Template.model_validate({**t, "writes": []})
     with pytest.raises(ValueError, match="not in a noise folder"):
         Template.model_validate({**t, "writes": [r"Desktop\{file_name}.txt"]})
+    with pytest.raises(ValueError, match="saves .txt"):  # re-check of 97820c6: no extension misses x.txt
+        Template.model_validate({**t, "writes": [r"Documents\{file_name}"]})
     x = cli.plan_sources().templates["excel_new_workbook"].model_dump()
-    with pytest.raises(ValueError, match="not a declared write"):
+    with pytest.raises(ValueError, match="saves .xlsx|not a declared write"):
         Template.model_validate({**x, "writes": [r"Documents\{file_name}.xls"]})
