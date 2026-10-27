@@ -14,7 +14,7 @@ import pytest
 from ludius.cli import load_templates
 from ludius.jev import Decision
 from ludius.loop import FILENAME_ROWS, FILENAME_TEXT, Runner
-from ludius.options import Option, build_options, build_state, view
+from ludius.options import Option, build_options, build_state, describe, view
 from ludius.policy import Policy
 from ludius.tasks import Done, PixelsCheck, Task, TaskInstance, Template, check_done
 from ludius.v1 import observation_pb2 as obs
@@ -355,3 +355,28 @@ def test_only_pixels_filename_steps_get_the_diagnostic() -> None:
     # With an accessibility tree there is no pixels diagnostic either.
     tree = obs.Snapshot(windows=[obs.Window(title="Save As", process_name="notepad.exe", kind=obs.Window.FOREGROUND)])
     assert "filename" not in _step_log(tree, t, "name_file", True)
+
+
+def test_unnamed_title_bar_icons_are_told_apart_by_their_visible_bounds() -> None:
+    # Live saved-note Notepad (runs/visual/20261027-close-perception.txt, UIA ground truth: Minimise 1501,209,
+    # Maximise 1548,209, Close 1594,209): the detector's unnamed caption icons, two of them with the same id
+    # (outer button and glyph share a 16 px key cell). Without bounds their lines were identical, Jev could not
+    # pick the Close icon, and the merged menu row's 52 px box (284,239) said nothing about where File is.
+    icons = [(50003, 1511, 209, 34, 31), (50004, 1555, 209, 34, 30), (50004, 1566, 215, 14, 16),
+             (50005, 1603, 209, 33, 30), (50005, 1612, 214, 14, 18)]  # fmt: skip
+    rows = [obs.Element(id=i, key=f"i{n}", role="button", enabled=True, framework_id="visual", window=0,
+                        hints=["read from pixels, no accessibility data", "icon without text"],
+                        bounds=obs.Rect(x=x, y=y, width=w, height=h))
+            for n, (i, x, y, w, h) in enumerate(icons)]  # fmt: skip
+    named = screen(["pixels-jev3-20261027-102749 - Notepad", "FileEdit FormatViewHelp"])
+    named.elements.extend(rows)
+    t, p = task(), Policy()
+    s = t.subgoal("close_app")
+    st = build_state(view(named, t, s, p), t, s, [], "")
+    icon_lines = [e for e in st["elements"] if "icon without text" in e]
+    assert len(icon_lines) == 5 and len(set(icon_lines)) == 5  # no two options read the same
+    assert any("at 1603,209 33x30" in e for e in icon_lines)  # the far-right caption button, as a fact
+    assert len({o.text for o in build_options(view(named, t, s, p), t, s, p) if o.kind == "click"}) == 7
+    # An accessibility-tree element is unchanged: bounds are only added where pixels are all there is.
+    uia = obs.Element(id=1, role="button", name="Close", enabled=True, bounds=obs.Rect(x=1, y=2, width=3, height=4))
+    assert describe(uia) == "[1] button 'Close'"

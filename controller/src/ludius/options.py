@@ -52,6 +52,8 @@ def describe(e: obs.Element) -> str:
                              ("read-only", e.read_only), ("disabled", not e.enabled)) if on]  # fmt: skip
     if flags:
         s += " " + ",".join(flags)
+    if e.framework_id == "visual":  # pixels have only a place to be known by: unnamed icons look alike without it
+        s += f" at {e.bounds.x},{e.bounds.y} {e.bounds.width}x{e.bounds.height}"
     if e.hints:
         s += " hint=" + "; ".join(e.hints)
     return s
