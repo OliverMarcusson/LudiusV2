@@ -196,8 +196,16 @@ def cmd_plan(args: argparse.Namespace) -> int:
         else:
             persona = load_persona(args.persona)
             templates = load_templates()
-            narrative = world.narrative()
             personas = [load_yaml(Persona, p) for p in sorted((DATA / "personas").glob("*.yaml"))]
+            try:  # weekly revision first, so this plan sees the revised story; one planner at a time
+                auto = revision.revise_if_due(llm, world, personas, date)
+            except revision.RevisionBusy as e:
+                print(e, file=sys.stderr)
+                return 2
+            print(f"narrative: {auto.note}")
+            for d in auto.dropped:
+                print(f"  dropped {d}")
+            narrative = auto.narrative
             state = world_state.build(world, narrative, personas, date)
             world_state.save(state, world)
             context = "\n".join(x for x in (world.summary(persona.user, date),

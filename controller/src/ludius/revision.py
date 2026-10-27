@@ -10,6 +10,10 @@ are sent back once, then dropped and reported.
 from __future__ import annotations
 
 import datetime as dt
+import os
+from collections.abc import Generator
+from contextlib import contextmanager
+from typing import NamedTuple
 
 from ludius.llm import LlmClient
 from ludius.planner import NARRATIVE_SYSTEM, Event, Narrative, Person, World, near_duplicate
@@ -130,5 +134,67 @@ def revise(
 
 def happened(world: World, personas: list[Persona], day: dt.date) -> str:
     """The last week of every persona's day logs and handed-off threads, as the revision's evidence."""
-    parts = [f"{p.name} ({p.user}):\n{s}" for p in personas if (s := world.summary(p.user, day, days=7))]
+    start = (day - dt.timedelta(days=7)).isoformat()  # World.summary keeps the last N items, however old
+    parts: list[str] = []
+    for p in personas:
+        lines = [x for x in world.summary(p.user, day, days=7).splitlines() if x[2:12] >= start or x[:2] != "- "]
+        if any(x.startswith("- ") for x in lines):
+            parts.append(f"{p.name} ({p.user}):\n" + "\n".join(lines))
     return "\n\n".join(parts)
+
+
+class RevisionBusy(RuntimeError):
+    """Another planner holds the revision lock; it may be mid-revision, so this one must not start a second."""
+
+
+class AutoRevision(NamedTuple):
+    narrative: Narrative  # the narrative the day plan must use: freshly revised, or re-read unchanged
+    revised: bool
+    note: str  # one line saying what happened and why
+    dropped: list[str]
+
+
+@contextmanager
+def revision_lock(world: World) -> Generator[None]:
+    """Exclusive, non-blocking, cross-process lock (OS drops it with the process) around due check, revise, save."""
+    path = world.root / "world" / "revision.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT)
+    try:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            raise RevisionBusy(f"another planner is revising the narrative (lock {path}); try again shortly") from e
+        yield
+    finally:
+        os.close(fd)  # closing drops the lock
+
+
+def revise_if_due(llm: LlmClient, world: World, personas: list[Persona], day: dt.date) -> AutoRevision:
+    """Revise the narrative before planning `day` when it is due, at most once per week across all planners.
+
+    Under the lock the narrative is re-read from disk, so a planner that waited behind a revision sees it and does
+    not spend a second one. A revision dated this week or later (including after `day`) is never repeated or
+    rewound, and nothing is revised without logged evidence: an unrevised narrative (no revision yet) or a quiet
+    week keeps the story as is rather than letting the model invent what happened. Raises RevisionBusy if the lock
+    is held; the manual `plan revise` stays the way to force the first revision.
+    """
+    with revision_lock(world):
+        n = world.narrative()
+        if not due(n, day):
+            when = "after" if n.revised > day.isoformat() else "this week, on"
+            return AutoRevision(n, False, f"not due: narrative last revised {when} {n.revised}", [])
+        evidence = happened(world, personas, day)
+        since = f"since the revision of {n.revised}" if n.revised else "narrative has no revision yet"
+        if not evidence:
+            return AutoRevision(n, False, f"due but no logged work in the 7 days before ({since}); kept as is", [])
+        revised, dropped = revise(llm, n, personas, day, evidence)
+        world.save_narrative(revised)
+        return AutoRevision(revised, True, f"revised {revised.revised}: {revised.history[-1].what}", dropped)
