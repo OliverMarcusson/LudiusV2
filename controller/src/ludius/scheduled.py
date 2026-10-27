@@ -4,13 +4,15 @@ The desktop's OS lock fences controller processes. A small persistent owner reco
 days, including durable timers: one activity thread alone would still interleave two workflows' clocks.
 The record freezes the plan/input for crash recovery and is removed only on successful finish/abort. Shutdown
 closes local resources and resets the clock but keeps ownership for that workflow's next worker. A terminated
-workflow can therefore leave a reservation requiring operator reconciliation; it is never stolen automatically.
+workflow can therefore leave a reservation requiring operator reconciliation (reconcile, `ludius reservation`);
+it is never stolen automatically.
 """
 
 from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, ExitStack
@@ -20,13 +22,14 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 from temporalio import activity, workflow
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.common import RetryPolicy, SearchAttributeKey, TypedSearchAttributes, WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError
 from temporalio.worker import Worker
 
 with workflow.unsafe.imports_passed_through():
     from ludius import durable
+    from ludius.clocklease import STALE_S
     from ludius.day import DayRunner
     from ludius.planner import DayPlan
 
@@ -223,3 +226,80 @@ async def serve(client: Client, runs: Path, persona: str, desk: Path, factory: D
         finally:
             pool.shutdown(wait=True)  # no cleanup/reset while an activity still touches the desktop
             acts.close()  # retain reservation: shutting down a worker does not finish its server-side day
+
+
+# Only a server-confirmed closed run may lose its reservation. CONTINUED_AS_NEW has a successor run; RUNNING is live.
+CLOSED = frozenset(
+    {
+        WorkflowExecutionStatus.COMPLETED,
+        WorkflowExecutionStatus.FAILED,
+        WorkflowExecutionStatus.CANCELED,
+        WorkflowExecutionStatus.TERMINATED,
+        WorkflowExecutionStatus.TIMED_OUT,
+    }
+)
+Status = Callable[[str, str], WorkflowExecutionStatus | None]  # (namespace, workflow id) -> server status
+
+
+def _lease_live(lease: Path) -> bool:
+    """A lease renewed within STALE_S belongs to a live controller. A malformed one fails closed as live."""
+    if not lease.exists():
+        return False
+    try:
+        renewed = dt.datetime.fromisoformat(json.loads(lease.read_text(encoding="utf-8"))["renewed"])
+        return dt.datetime.now(dt.UTC) - renewed < dt.timedelta(seconds=STALE_S)
+    except (ValueError, KeyError, TypeError):
+        return True
+
+
+def reconcile(
+    desk: Path, lease: Path, status: Status, reset: Callable[[], None], *, confirm: tuple[str, str] | None = None
+) -> dict[str, Any]:
+    """Operator inspection of a desktop's day reservation; a dry run unless confirm=(vm, owner) repeats both.
+
+    Holds the desktop lock throughout, so it refuses while a worker/controller drives the desktop. A missing,
+    unreachable, unknown or open workflow never clears. A time-jump day's clock is reset first; a failed reset
+    keeps both reservation and lease for the sweeper/next attempt.
+    """
+    vm = desk.stem
+    with durable.desk_lock(desk):
+        owner = DayOwner(desk)
+        rec = owner.read()
+        if rec is None:
+            if confirm is not None:
+                raise ValueError(f"{vm}: no reservation to clear")
+            return {"vm": vm, "reservation": None}
+        st: WorkflowExecutionStatus | None = None
+        try:
+            ns, _, wid = rec.owner.partition("/")
+            if not ns or not wid:
+                raise ValueError("owner is not namespace/workflow-id")
+            st = status(ns, wid)
+            state = st.name if st is not None else "UNKNOWN"
+        except Exception as e:  # unreachable server, missing workflow, timeout: all unknown
+            state = f"UNKNOWN ({type(e).__name__}: {e})"
+        out: dict[str, Any] = {
+            "vm": vm,
+            "owner": rec.owner,
+            "persona": rec.day.plan.persona,
+            "date": rec.day.plan.date,
+            "clock": rec.day.clock,
+            "workflow": state,
+            "clearable": st in CLOSED,
+            "cleared": False,
+        }
+        if confirm is None:
+            return out
+        if confirm != (vm, rec.owner):
+            raise ValueError("clear must repeat this VM and the exact reservation owner")
+        if st not in CLOSED:
+            raise ValueError(f"{rec.owner} is {state}, not confirmed closed; reservation kept")
+        if owner.read() != rec:
+            raise ValueError("reservation changed during reconciliation; refusing")
+        if rec.day.clock == "time-jump":
+            if _lease_live(lease):
+                raise ValueError("a live controller holds this VM's clock lease; not resetting its clock")
+            reset()  # raises on failure: the reservation (and lease) stay
+        owner.release(rec.owner)
+        out["cleared"] = True
+        return out

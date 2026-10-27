@@ -397,6 +397,39 @@ def cmd_worker(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reservation(args: argparse.Namespace) -> int:
+    from temporalio.client import WorkflowExecutionStatus
+
+    from ludius import durable, scheduled
+
+    vm = args.vm or os.environ["LUDIUS_VM"]
+    confirm = None
+    if args.what == "clear":
+        if not (args.confirm_vm and args.confirm_owner):
+            raise ValueError("clear needs --confirm-vm and --confirm-owner repeating the reservation")
+        confirm = (args.confirm_vm, args.confirm_owner)
+
+    def status(namespace: str, workflow_id: str) -> WorkflowExecutionStatus | None:
+        async def describe() -> WorkflowExecutionStatus | None:
+            client = await durable.connect(durable.Target(args.temporal, namespace))
+            desc = await client.get_workflow_handle(workflow_id).describe()
+            if desc.namespace != namespace or desc.id != workflow_id:
+                raise ValueError("server described a different workflow")
+            return desc.status
+
+        return asyncio.run(asyncio.wait_for(describe(), timeout=30))
+
+    out = scheduled.reconcile(
+        RUNS / "locks" / f"{vm}.lock",
+        _clock_lease(vm).path,
+        status,
+        functools.partial(set_clock, None, vm=vm),
+        confirm=confirm,
+    )
+    print(json.dumps(out, indent=2))
+    return 0
+
+
 def cmd_canary(args: argparse.Namespace) -> int:
     """Drift canaries: one admitted task per app on the VM as it is; results to runs/health.json."""
     agent = start_agent(args)
@@ -642,6 +675,13 @@ def main(argv: list[str] | None = None) -> int:
     wk.add_argument("--vm", default=argparse.SUPPRESS, help="already-running VM (or global --vm/LUDIUS_VM)")
     wk.add_argument("--model", default=DEFAULT_MODEL)
     wk.set_defaults(fn=cmd_worker)
+
+    rv = sub.add_parser("reservation", help="inspect (default, dry run) or clear a closed workflow's day reservation")
+    rv.add_argument("what", nargs="?", choices=["inspect", "clear"], default="inspect")
+    rv.add_argument("--temporal", required=True, metavar="HOST:PORT")
+    rv.add_argument("--confirm-vm", default="", help="clear: this VM's name again")
+    rv.add_argument("--confirm-owner", default="", help="clear: the exact namespace/workflow-id owner again")
+    rv.set_defaults(fn=cmd_reservation)
 
     ca = sub.add_parser("canary", help="drift canaries: one admitted task per app, results to runs/health.json")
     ca.add_argument("app", nargs="*", help="only these apps (default: every app with an admitted template)")

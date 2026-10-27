@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 import random
+import subprocess
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -14,9 +16,10 @@ from temporalio.client import ScheduleActionStartWorkflow, ScheduleOverlapPolicy
 from temporalio.common import SearchAttributeKey, SearchAttributePair, TypedSearchAttributes
 from test_day import FakeRunner, FakeSession, note
 
-from ludius import durable, scheduled
+from ludius import cli, durable, scheduled
 from ludius.cli import load_templates
 from ludius.day import DayRunner
+from ludius.loop import Clock
 from ludius.planner import DayPlan
 
 
@@ -278,3 +281,148 @@ def test_retried_day_end_after_release_is_a_no_op(tmp_path: Path, monkeypatch: p
     acts.finish(end)
     acts.abort()
     assert calls.count("clock reset") == 1 and acts.owner.read().owner == "default/day-aberg-2026-10-28"  # type: ignore[union-attr]
+
+
+OWNER = "default/day-aberg-2026-10-27"
+S = scheduled.WorkflowExecutionStatus
+
+
+def _reserve(tmp_path: Path, clock: Clock = "time-jump") -> tuple[Path, Path, durable.DayInput]:
+    desk, lease = tmp_path / "vm1.lock", tmp_path / "clock-vm1.json"
+    inp = durable.DayInput(plan=DayPlan(persona="aberg", date="2026-10-27", items=[]), clock=clock, utc_offset_s=0)
+    scheduled.DayOwner(desk).claim(OWNER, inp)
+    return desk, lease, inp
+
+
+def _lease(path: Path, age_s: int) -> None:
+    at = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=age_s)
+    path.write_text(json.dumps({"vm": "vm1", "pid": 1, "renewed": at.isoformat(timespec="seconds")}), "utf-8")
+
+
+def _no_reset() -> None:
+    pytest.fail("clock reset must not run")
+
+
+def test_reservation_inspect_is_a_dry_run_and_clear_needs_both_confirmations(tmp_path: Path) -> None:
+    desk, lease, _ = _reserve(tmp_path)
+    asked: list[tuple[str, str]] = []
+    resets: list[str] = []
+
+    def status(ns: str, wid: str) -> S:
+        asked.append((ns, wid))
+        return S.TERMINATED
+
+    out = scheduled.reconcile(desk, lease, status, _no_reset)
+    assert asked == [("default", "day-aberg-2026-10-27")]  # exact namespace/workflow identity
+    assert out["clearable"] and not out["cleared"] and out["workflow"] == "TERMINATED"
+    assert scheduled.DayOwner(desk).read() is not None
+    for confirm in [("vm2", OWNER), ("vm1", "default/day-aberg-2026-10-28"), ("vm1", "other/day-aberg-2026-10-27")]:
+        with pytest.raises(ValueError, match="repeat"):
+            scheduled.reconcile(desk, lease, status, _no_reset, confirm=confirm)
+    assert scheduled.DayOwner(desk).read() is not None
+    _lease(lease, 3600)  # orphaned lease of the dead controller: the reset (which drops it) precedes the clear
+    out = scheduled.reconcile(desk, lease, status, lambda: resets.append("reset"), confirm=("vm1", OWNER))
+    assert out["cleared"] and resets == ["reset"] and scheduled.DayOwner(desk).read() is None
+    with pytest.raises(ValueError, match="no reservation"):
+        scheduled.reconcile(desk, lease, status, _no_reset, confirm=("vm1", OWNER))
+
+
+def _unreachable(ns: str, wid: str) -> S:
+    raise RuntimeError("connection refused")  # also NOT_FOUND (missing workflow) and timeouts
+
+
+@pytest.mark.parametrize("result", [S.RUNNING, S.CONTINUED_AS_NEW, None, "raise"])
+def test_reservation_never_clears_without_a_confirmed_closed_workflow(tmp_path: Path, result: S | str | None) -> None:
+    desk, lease, _ = _reserve(tmp_path)
+
+    def status(ns: str, wid: str) -> S | None:
+        return _unreachable(ns, wid) if result == "raise" else result  # type: ignore[return-value]
+
+    assert not scheduled.reconcile(desk, lease, status, _no_reset)["clearable"]
+    with pytest.raises(ValueError, match="not confirmed closed"):
+        scheduled.reconcile(desk, lease, status, _no_reset, confirm=("vm1", OWNER))
+    assert scheduled.DayOwner(desk).read() is not None
+
+
+def _closed(ns: str, wid: str) -> S:
+    return S.COMPLETED
+
+
+def test_reservation_clear_refuses_held_desk_changed_owner_live_lease_and_failed_reset(tmp_path: Path) -> None:
+    desk, lease, inp = _reserve(tmp_path)
+    with durable.desk_lock(desk), pytest.raises(durable.DeskBusy):  # a worker/controller owns the desktop
+        scheduled.reconcile(desk, lease, _closed, _no_reset)
+
+    def swap(ns: str, wid: str) -> S:  # a different owner appears while the server is queried
+        other = scheduled.Reservation(owner="default/day-aberg-2026-10-28", day=inp)
+        scheduled.DayOwner(desk).path.write_text(other.model_dump_json(), "utf-8")
+        return S.COMPLETED
+
+    with pytest.raises(ValueError, match="changed"):
+        scheduled.reconcile(desk, lease, swap, _no_reset, confirm=("vm1", OWNER))
+    assert scheduled.DayOwner(desk).read() is not None
+    scheduled.DayOwner(desk).path.unlink()
+    _reserve(tmp_path)
+
+    _lease(lease, 5)  # another live controller still renews this VM's clock lease: never reset its clock
+    with pytest.raises(ValueError, match="live controller"):
+        scheduled.reconcile(desk, lease, _closed, _no_reset, confirm=("vm1", OWNER))
+    lease.write_text("{partial", "utf-8")  # a malformed lease fails closed as live
+    with pytest.raises(ValueError, match="live controller"):
+        scheduled.reconcile(desk, lease, _closed, _no_reset, confirm=("vm1", OWNER))
+
+    _lease(lease, 3600)
+
+    def failed_reset() -> None:
+        raise subprocess.CalledProcessError(1, "set-clock.ps1")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        scheduled.reconcile(desk, lease, _closed, failed_reset, confirm=("vm1", OWNER))
+    assert scheduled.DayOwner(desk).read() is not None and lease.exists()  # both kept for the sweeper/retry
+
+
+def test_reservation_without_a_jumped_clock_clears_without_reset(tmp_path: Path) -> None:
+    desk, lease, _ = _reserve(tmp_path, "compressed")
+    _lease(lease, 5)  # irrelevant: a compressed day never jumped this clock
+    out = scheduled.reconcile(desk, lease, _closed, _no_reset, confirm=("vm1", OWNER))
+    assert out["cleared"] and scheduled.DayOwner(desk).read() is None and lease.exists()
+
+
+def test_reservation_cli_defaults_to_inspect_and_queries_the_exact_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, Any]] = []
+    targets: list[durable.Target] = []
+
+    def fake(desk: Path, lease: Path, status: scheduled.Status, reset: Any, *, confirm: Any = None) -> dict[str, Any]:
+        calls.append({"desk": desk, "lease": lease, "confirm": confirm, "status": status("ns1", "day-x")})
+        return {}
+
+    class Handle:
+        async def describe(self) -> Any:
+            return SimpleNamespace(namespace=targets[-1].namespace, id="day-x", status=S.TERMINATED)
+
+    async def connect(t: durable.Target) -> Any:
+        targets.append(t)
+        return SimpleNamespace(get_workflow_handle=lambda wid: Handle())  # pyright: ignore[reportUnknownLambdaType]
+
+    monkeypatch.setattr(cli, "load_env", lambda: None)
+    monkeypatch.setattr(cli, "RUNS", tmp_path)
+    monkeypatch.setattr(scheduled, "reconcile", fake)
+    monkeypatch.setattr(durable, "connect", connect)
+    base = ["--vm", "vm1", "reservation"]
+    assert cli.main([*base, "--temporal", "h:7233"]) == 0
+    assert calls[-1] == {
+        "desk": tmp_path / "locks" / "vm1.lock",
+        "lease": tmp_path / "locks" / "clock-vm1.json",
+        "confirm": None,
+        "status": S.TERMINATED,
+    }
+    assert targets == [durable.Target("h:7233", "ns1")]
+    for partial in ([], ["--confirm-vm", "vm1"], ["--confirm-owner", OWNER]):
+        with pytest.raises(ValueError, match="confirm"):
+            cli.main([*base, "clear", "--temporal", "h:7233", *partial])
+    cli.main([*base, "clear", "--temporal", "h:7233", "--confirm-vm", "vm1", "--confirm-owner", OWNER])
+    assert len(calls) == 2 and calls[-1]["confirm"] == ("vm1", OWNER)
+    with pytest.raises(SystemExit):
+        cli.main([*base, "clear"])  # --temporal is required: no server status, no clear
