@@ -14,6 +14,7 @@ import os
 import random
 import re
 import tempfile
+from collections import Counter
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -324,18 +325,53 @@ class World:
         """new=True never replaces an existing plan file (FileExistsError), even one written concurrently."""
         path = self.plan_path(plan.persona, plan.date)
         _dump(path, plan.model_dump(exclude_defaults=True), mode="x" if new else "w")
-        self.history_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.history_path.open("a", encoding="utf-8") as f:
-            for it in plan.items:
-                for v in content_values(it, templates):
-                    f.write(json.dumps({"date": plan.date, "persona": plan.persona, "text": v}) + "\n")
+        self._append(plan, [v for it in plan.items for v in content_values(it, templates)])
         return path
 
+    def repair_history(self, plan: DayPlan, templates: dict[str, Template]) -> int:
+        """Append the plan's content values missing from the journal; returns how many were appended.
+
+        Recovers a crash after the plan was published but before (or during) its history append. Matched as a
+        multiset per (date, persona), so repeated repair appends nothing and rows of an overwritten manual plan
+        or of another persona stay as they are. Existing rows are never rewritten; an unreadable journal raises
+        ValueError before anything is written.
+        """
+        have = Counter(r["text"] for r in self._rows() if (r["date"], r["persona"]) == (plan.date, plan.persona))
+        missing: list[str] = []
+        for v in (v for it in plan.items for v in content_values(it, templates)):
+            if have[v]:
+                have[v] -= 1
+            else:
+                missing.append(v)
+        self._append(plan, missing)
+        return len(missing)
+
     def history(self, user: str) -> list[str]:
+        return [r["text"] for r in self._rows() if r["persona"] == user]
+
+    def _rows(self) -> list[dict[str, str]]:
         if not self.history_path.exists():
             return []
-        rows = [json.loads(line) for line in self.history_path.read_text(encoding="utf-8").splitlines() if line]
-        return [r["text"] for r in rows if r["persona"] == user]
+        rows: list[dict[str, str]] = []
+        for n, line in enumerate(self.history_path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+                rows.append({k: str(r[k]) for k in ("date", "persona", "text")})
+            except (ValueError, KeyError, TypeError) as e:
+                raise ValueError(f"{self.history_path} line {n} is not a history row: {e}") from e
+        return rows
+
+    def _append(self, plan: DayPlan, values: list[str]) -> None:
+        self.history_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.history_path.open("a+b") as f:
+            if f.seek(0, os.SEEK_END):
+                f.seek(-1, os.SEEK_END)
+                if f.read(1) != b"\n":  # never glue a new row onto an unterminated last line
+                    f.write(b"\n")
+            for v in values:
+                f.write((json.dumps({"date": plan.date, "persona": plan.persona, "text": v}) + "\n").encode())
 
     def summary(self, user: str, before: dt.date, days: int = 3) -> str:
         """What really happened on the persona's last few days, from the day ground-truth logs."""

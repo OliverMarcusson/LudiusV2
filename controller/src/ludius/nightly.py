@@ -165,15 +165,20 @@ def check_existing(world: World, persona: Persona, date: dt.date, src: Sources) 
 
 
 def ensure_day(llm: Callable[[], LlmClient], world: World, persona: Persona, src: Sources, date: dt.date) -> Planned:
-    """Keep a valid existing plan (no model call), refuse an invalid one, else generate and create it exclusively."""
+    """Keep a valid existing plan (no model call, history repaired), refuse an invalid one, else create one."""
     path = world.plan_path(persona.user, date.isoformat())
     if path.exists():
         plan = check_existing(world, persona, date, src)
+        try:  # a crash after publishing, before the history append, left its content out of the duplicate check
+            world.repair_history(plan, src.templates)
+        except ValueError as e:
+            raise PlanConflict(f"cannot restore the content history of {path}: {e}") from e
         return Planned(persona=persona.user, date=plan.date, path=str(path), generated=False, items=len(plan.items))
     with closing(llm()) as client:
         g = generate_day(client, world, persona, src, date)
     # A plan written meanwhile (a manual `ludius plan day`) wins: FileExistsError, and the retry keeps it.
-    # ponytail: a crash between this write and the content-history append loses that day's history lines.
+    # A crash between this write and the history append is repaired by the retry's existing-plan path.
+    # ponytail: manual `ludius plan day` takes no nightly lock; racing a repair it can duplicate (never lose) rows.
     world.save_plan(g.plan, src.templates, new=True)
     return Planned(
         persona=persona.user, date=g.plan.date, path=str(path), generated=True,

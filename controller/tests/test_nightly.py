@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,7 +16,7 @@ from temporalio.exceptions import ApplicationError
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from ludius import cli, durable, nightly
-from ludius.planner import Narrative, Person, World
+from ludius.planner import DayPlan, Narrative, Person, World
 
 DAY = dt.date(2026, 10, 28)
 ITEM = {"at": "09:00", "template": "edge_web_lookup", "params": {"search_query": "ifrs 16 lease accounting"},
@@ -100,6 +101,67 @@ def test_generated_plan_is_kept_on_retry_and_never_overwritten(tmp_path: Path) -
     with pytest.raises(FileExistsError):  # a plan written meanwhile wins over a concurrent generation
         world.save_plan(plan.model_copy(update={"items": []}), src.templates, new=True)
     assert path.read_bytes() == before
+
+
+QUERIES = ("ifrs 16 lease accounting", "supplier payment terms netherlands")
+ITEMS = [{**ITEM, "params": {"search_query": QUERIES[0]}},
+         {**ITEM, "at": "10:30", "params": {"search_query": QUERIES[1]}}]  # fmt: skip
+PLAN = DayPlan.model_validate({"persona": "aberg", "date": DAY.isoformat(), "items": ITEMS})
+
+
+def test_crash_after_publish_before_history_append_is_repaired_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world, _, src = _setup(tmp_path)
+
+    def crash(*_: Any) -> None:
+        raise RuntimeError("crash after publish")
+
+    with monkeypatch.context() as m:
+        m.setattr(World, "_append", crash)
+        for p in src.personas:  # both personas publish the same content, then die before the append
+            with pytest.raises(RuntimeError, match="crash"):
+                nightly.ensure_day(lambda: ScriptedLlm({"items": ITEMS}), world, p, src, DAY)  # type: ignore[arg-type, return-value]
+            assert world.plan_path(p.user, DAY.isoformat()).exists()
+    assert not world.history_path.exists()
+    for _ in range(2):  # the retry restores the history without the model; a repeated recovery appends nothing
+        for p in src.personas:
+            assert not nightly.ensure_day(no_llm, world, p, src, DAY).generated
+        assert world.history("aberg") == world.history("lnord") == list(QUERIES)
+
+
+@pytest.mark.parametrize("end", ["\n", ""])
+def test_partial_append_keeps_every_row_and_adds_only_the_missing(tmp_path: Path, end: str) -> None:
+    world, anna, src = _setup(tmp_path)
+    world.save_plan(PLAN, {}, new=True)  # {} templates: no history rows of its own
+    rows = [("2026-10-27", "aberg", "an earlier day"), (DAY.isoformat(), "aberg", "an overwritten manual plan"),
+            (DAY.isoformat(), "lnord", QUERIES[1]), (DAY.isoformat(), "aberg", QUERIES[0])]  # fmt: skip
+    old = "\n".join(json.dumps({"date": d, "persona": u, "text": t}) for d, u, t in rows) + end
+    world.history_path.write_text(old, encoding="utf-8", newline="")
+    for _ in range(2):
+        nightly.ensure_day(no_llm, world, anna, src, DAY)
+        assert world.history_path.read_text(encoding="utf-8").startswith(old)
+        assert world.history("aberg") == ["an earlier day", "an overwritten manual plan", *QUERIES]
+        assert world.history("lnord") == [QUERIES[1]]
+
+
+@pytest.mark.parametrize("tail", ['{"date": "2026-10-28", "pers', "[1, 2]", '{"date": "2026-10-28"}'])
+def test_unreadable_history_fails_closed_untouched(tmp_path: Path, tail: str) -> None:
+    world, anna, src = _setup(tmp_path)
+    plan = world.save_plan(PLAN, {}, new=True)
+    old = json.dumps({"date": "2026-10-27", "persona": "aberg", "text": "an earlier day"}) + "\n" + tail
+    world.history_path.write_text(old, encoding="utf-8", newline="")
+    before = plan.read_bytes()
+    with pytest.raises(nightly.PlanConflict, match="line 2 is not a history row"):
+        nightly.ensure_day(no_llm, world, anna, src, DAY)
+    acts = nightly.PlanActivities(tmp_path, cli.plan_sources, no_llm)
+    fire = nightly.PlanFire(
+        persona="aberg", tz="Europe/Stockholm", occurrence=dt.datetime(2026, 10, 27, 21, tzinfo=dt.UTC)
+    )
+    with pytest.raises(ApplicationError, match="cannot restore") as e:
+        acts.plan(fire)
+    assert e.value.non_retryable
+    assert world.history_path.read_text(encoding="utf-8") == old and plan.read_bytes() == before
 
 
 @pytest.mark.parametrize(
