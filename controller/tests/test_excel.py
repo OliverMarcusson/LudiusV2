@@ -337,3 +337,70 @@ def test_search_text_only_into_a_checked_field_of_the_task_app(task: tuple[Task,
     assert post_check(Option("o1", "type", "t", element=r.snap.elements[0], literal="save as"), nav, tk) is None
     with pytest.raises(ValueError):
         tasks.Subgoal(goal="g", keys=["F1"] * 17)  # capped, so keys always fit beside Jev's option limit
+
+
+@pytest.mark.parametrize("planner_text", [True, False])
+def test_typing_rechecks_its_target_on_a_fresh_snapshot(
+    task: tuple[Task, dict[str, Any]], tmp_path: Any, planner_text: bool
+) -> None:
+    """Sol re-check: the screen changes while Jev decides. Right before typing, a fresh snapshot must still show the
+    decided foreground window and the target by its key (an id is per snapshot), passing the element policy."""
+    from ludius.loop import GroundTruth, Runner
+    from ludius.options import Option
+    from ludius.tasks import Persona
+    from ludius.v1 import agent_pb2 as pb
+
+    tk, _ = task
+    sg = tk.subgoal("name_file") if planner_text else tk.subgoal("save_as").model_copy(update={"search": "save as"})
+
+    def snap(process: str = "EXCEL.EXE", key: str = "k1", name: str = "File name:", pw: bool = False) -> obs.Snapshot:
+        s = obs.Snapshot(screen_width=1920, screen_height=1080, dpi=96)
+        s.windows.add(process_name=process, title="Book1 - Excel", kind=obs.Window.FOREGROUND)
+        e = s.elements.add(id=1, key=key, role="edit", name=name, window=0, enabled=True, password=pw)
+        e.bounds.width = e.bounds.height = 20
+        return s
+
+    class Agent:
+        vm = "t"
+
+        def __init__(self) -> None:
+            self.fresh, self.typed = snap(), list[str]()
+
+        def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
+            return pb.ObserveResult(snapshot=self.fresh)
+
+        def move(self, x: int, y: int, duration_ms: int = 0) -> int:
+            return 0
+
+        def click(self, button: int = 0, count: int = 1) -> int:
+            return 0
+
+        def chord(self, vks: list[int]) -> int:
+            return 0
+
+        def type(self, text: str, mean_ms: int, jitter_ms: int) -> int:
+            self.typed.append(text)
+            return 0
+
+    agent = Agent()
+    r = Runner(agent, None, Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    content, literal = ("file_name", "") if planner_text else ("", "save as")
+    for fresh in [
+        snap(key="k2", name="Password", pw=True),  # same id, another field: a password box
+        snap(name="Password", pw=True),  # same key, now a password field
+        snap(name="q4 payroll"),  # reserved by the scenario
+        snap(process="notepad.exe"),  # another app came to the front
+    ]:
+        r.snap = snap()
+        agent.fresh = fresh
+        o = Option("o1", "type", "t", element=r.snap.elements[0], content=content, literal=literal)
+        r.policy = Policy(reserved_names=["q4 payroll"])
+        assert r.act(o, tk, sg) is not None and agent.typed == []
+        if planner_text:  # typing at the focus: the fresh foreground and focused field are checked too
+            agent.fresh.elements[0].focused = True
+            assert r.act(Option("o2", "type", "t", content=content), tk, sg) is not None and agent.typed == []
+    agent.fresh = snap()
+    assert (
+        r.act(Option("o1", "type", "t", element=r.snap.elements[0], content=content, literal=literal), tk, sg) is None
+    )
+    assert agent.typed == [tk.values["file_name"] if planner_text else "save as"]

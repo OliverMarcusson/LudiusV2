@@ -173,7 +173,8 @@ class Runner:
         elif e.role == "document" and not e.read_only and e.value:
             self.agent.chord(keys.chord("Ctrl+End"))
 
-    def act(self, o: Option, task: Task, sg: Subgoal | None = None) -> None:
+    def act(self, o: Option, task: Task, sg: Subgoal | None = None) -> str | None:
+        """Send the option's input; for typing, the reason it was not sent (_type_target), else None."""
         e = o.element
         if o.kind in ("click", "double_click") and e is not None:
             self._move_to(e)
@@ -182,6 +183,11 @@ class Runner:
                 self._caret_to_end(e, sg)
         elif o.kind == "type":
             text = o.literal or task.values[o.content]
+            if sg is None:
+                return "typing needs its subgoal"
+            why, e = self._type_target(o, task, sg, text)
+            if why:
+                return why
             if e is not None and not e.focused:
                 self._move_to(e)
                 self.agent.click()
@@ -197,6 +203,34 @@ class Runner:
                 self._move_to(target)
             self.agent.scroll(o.notches)
         # rescan: no input
+        return None
+
+    def _type_target(self, o: Option, task: Task, sg: Subgoal, text: str) -> tuple[str | None, obs.Element | None]:
+        """Typed input is checked again on a fresh snapshot right before it is sent, since the screen can change
+        while Jev decides: the foreground window is still the one decided on and in the task's scope, and the
+        target, found again by its stable key (ids are per snapshot), is still that element and passes the element
+        and text policy (password, reserved, template text's own rule). Typing at the focus needs the focused
+        element, if any, to pass the same. Returns (reason not to type, the fresh target)."""
+        fresh = self.agent.observe(wait_settle=False).snapshot
+        v = view(fresh, task, sg, self.policy)
+        fg = next((i for i, w in enumerate(fresh.windows) if w.kind == obs.Window.FOREGROUND), None)
+        was = next((w for w in self.snap.windows if w.kind == obs.Window.FOREGROUND), None)
+        if fg is None or was is None or _window_id(fresh.windows[fg]) != _window_id(was) or fg not in v.windows:
+            return "the foreground window changed before typing", None
+        allowed = {e.key: e for e in v.allowed}
+        if o.element is None:
+            focus = next((e for e in fresh.elements if e.focused), None)
+            if focus is not None and (focus.key not in allowed or self.policy.text_allowed(text, focus)):
+                return "the keyboard focus is not a field this task may type into", None
+            return None, None
+        target = allowed.get(o.element.key)
+        if target is None or (target.role, target.name) != (o.element.role, o.element.name):
+            return "the target field changed before typing", None
+        if r := self.policy.text_allowed(text, target):
+            return r, None
+        if not sg.text and not sg.copy_text and not search_target(target, fresh, task):
+            return "template text goes into an edit field of the task's foreground app only", None
+        return None, target
 
     # The loop ---------------------------------------------------------------------
 
@@ -365,15 +399,17 @@ class Runner:
 
             self.think()
             host_ms = _now()
-            self.act(chosen, task, sg)
+            refused = self.act(chosen, task, sg)
             snap = self.observe(timeout_ms=10000 if chosen.kind == "rescan" else 5000)
             after = fingerprint(snap)
             changed, revisit = after != here, after in seen
             seen.add(after)
             if chosen.kind == "type":
-                typed_ok = _typed_landed(snap, chosen, sg)
+                typed_ok = not refused and _typed_landed(snap, chosen, sg)
             outcome = "back to an earlier screen" if changed and revisit else "changed" if changed else "no change"
             last_result = "no visible change" if not changed else outcome
+            if refused:  # nothing typed: counts as no progress from here, so the ladder (rescan, recovery) applies
+                outcome, last_result = f"not typed: {refused}", f"not typed: {refused}"
             if not snap.settled:
                 last_result += " (screen still busy)"
             history.append(f"{_short(chosen)} -> {outcome}")
@@ -517,6 +553,11 @@ class Runner:
             },
             result=result,
         )
+
+
+def _window_id(w: obs.Window) -> tuple[Any, ...]:
+    # Pixels windows have no process or class; their OCR'd title can vary between reads, the region check holds them.
+    return w.process_name.lower(), w.class_name, w.kind, "" if pixels_window(w) else w.title
 
 
 def _typed_landed(snap: obs.Snapshot, o: Option, sg: Subgoal) -> bool:
