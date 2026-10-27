@@ -87,12 +87,10 @@ def occurrence_time(attrs: TypedSearchAttributes) -> dt.datetime:
 def load_day(runs: Path, persona: str, fire: Fire) -> durable.DayInput:
     if fire.schedule.persona != persona:
         raise ValueError("schedule persona differs from this worker")
-    at = fire.occurrence
-    date = durable.plan_date(at, fire.schedule.tz)
-    if fire.schedule.day_offset:
-        date = (dt.date.fromisoformat(date) + dt.timedelta(days=fire.schedule.day_offset)).isoformat()
-    plan = durable.scheduled_plan(runs, persona, date)
-    offset = at.astimezone(ZoneInfo(fire.schedule.tz)).utcoffset()
+    # Wall-clock arithmetic in the zone: the target day gets its own UTC offset across a DST change.
+    at = fire.occurrence.astimezone(ZoneInfo(fire.schedule.tz)) + dt.timedelta(days=fire.schedule.day_offset)
+    plan = durable.scheduled_plan(runs, persona, durable.plan_date(at, fire.schedule.tz))
+    offset = at.utcoffset()
     assert offset is not None
     return durable.DayInput(
         plan=plan, clock=fire.schedule.clock, utc_offset_s=int(offset.total_seconds()), canary=fire.schedule.canary

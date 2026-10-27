@@ -362,6 +362,8 @@ def schedule_for(
     ZoneInfo(tz)  # an unknown zone fails here, not on the server
     if not re.fullmatch(r"\d{2}:\d{2}", at):
         raise ValueError("schedule time must be HH:MM")
+    if not 0 <= day_offset <= 7 or (day_offset and clock != "time-jump"):
+        raise ValueError("--day-offset is 0-7 and needs --clock time-jump (realtime would wait for that day)")
     t = dt.time.fromisoformat(at)
     return Schedule(
         action=ScheduleActionStartWorkflow(

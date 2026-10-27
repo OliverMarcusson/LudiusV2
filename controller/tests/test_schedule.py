@@ -442,3 +442,18 @@ def test_reservation_cli_defaults_to_inspect_and_queries_the_exact_namespace(
     assert len(calls) == 2 and calls[-1]["confirm"] == ("vm1", OWNER)
     with pytest.raises(SystemExit):
         cli.main([*base, "clear"])  # --temporal is required: no server status, no clear
+
+
+def test_day_offset_is_bounded_time_jump_only_and_takes_the_target_days_dst_offset(tmp_path: Path) -> None:
+    # Review of 64325f3: realtime would hold the desktop a day, huge offsets overflowed, DST kept the fire's offset.
+    cases: list[tuple[durable.Clock, int]] = [("realtime", 1), ("time-jump", -1), ("time-jump", 8)]
+    for clock, n in cases:
+        with pytest.raises(ValueError, match="day-offset"):
+            durable.schedule_for("aberg", "19:30", "Europe/Stockholm", clock, day_offset=n)
+    folder = tmp_path / "plans"
+    folder.mkdir()
+    (folder / "2026-03-29-aberg.yaml").write_text("persona: aberg\ndate: '2026-03-29'\nitems: []\n", encoding="utf-8")
+    sched = durable.ScheduledInput(persona="aberg", tz="Europe/Stockholm", clock="time-jump", day_offset=1)
+    at = dt.datetime(2026, 3, 28, 18, 30, tzinfo=dt.UTC)  # 19:30 CET; the 29th is CEST
+    day = scheduled.load_day(tmp_path, "aberg", scheduled.Fire(schedule=sched, occurrence=at))
+    assert day.plan.date == "2026-03-29" and day.utc_offset_s == 7200
