@@ -78,6 +78,7 @@ class ScheduledInput(BaseModel):
     tz: str  # IANA zone the persona's day (and the plan's date) lives in
     clock: Clock = "realtime"
     canary: bool = False
+    day_offset: int = 0  # play the plan this many days after the fire's local date (time warp with time-jump)
 
 
 class SlotInput(BaseModel):
@@ -346,7 +347,14 @@ def schedule_id(persona: str) -> str:
 
 
 def schedule_for(
-    persona: str, at: str, tz: str, clock: Clock = "realtime", *, paused: bool = True, canary: bool = False
+    persona: str,
+    at: str,
+    tz: str,
+    clock: Clock = "realtime",
+    *,
+    paused: bool = True,
+    canary: bool = False,
+    day_offset: int = 0,
 ) -> Schedule:
     """Every day at `at` (HH:MM) in `tz`, start that persona's day. A day still running when the next fires is
     not doubled (SKIP); created paused unless asked, so defining a schedule never starts a desktop by itself."""
@@ -358,7 +366,7 @@ def schedule_for(
     return Schedule(
         action=ScheduleActionStartWorkflow(
             SCHEDULED_DAY,
-            ScheduledInput(persona=persona, tz=tz, clock=clock, canary=canary),
+            ScheduledInput(persona=persona, tz=tz, clock=clock, canary=canary, day_offset=day_offset),
             id=schedule_id(persona),
             task_queue=f"ludius-day-{persona}",
         ),  # fmt: skip

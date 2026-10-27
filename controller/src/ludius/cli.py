@@ -324,14 +324,15 @@ def cmd_schedule(args: argparse.Namespace) -> int:
 
     # Validate definitions before opening a connection. Creation never triggers immediately.
     if args.nightly:
-        if args.canary or args.clock != "realtime":
-            raise ValueError("--clock/--canary configure the day schedule, not --nightly planning")
+        if args.canary or args.clock != "realtime" or args.day_offset:
+            raise ValueError("--clock/--canary/--day-offset configure the day schedule, not --nightly planning")
         definition = nightly.schedule_for(args.persona, args.at or "22:00", args.timezone, paused=not args.unpause)
         name = nightly.schedule_id(args.persona)
     else:
         definition = durable.schedule_for(
-            args.persona, args.at or "08:30", args.timezone, args.clock, paused=not args.unpause, canary=args.canary
-        )
+            args.persona, args.at or "08:30", args.timezone, args.clock, paused=not args.unpause, canary=args.canary,
+            day_offset=args.day_offset,
+        )  # fmt: skip
         name = durable.schedule_id(args.persona)
 
     async def manage() -> None:
@@ -697,6 +698,7 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--timezone", default="Europe/Stockholm", help="IANA zone (create only)")
     sc.add_argument("--clock", choices=["realtime", "compressed", "time-jump"], default="realtime")
     sc.add_argument("--canary", action="store_true", help="run drift canaries before each scheduled day")
+    sc.add_argument("--day-offset", type=int, default=0, help="play the plan N days after the fire's date")
     sc.add_argument("--unpause", action="store_true", help="create active; default is paused")
     sc.set_defaults(fn=cmd_schedule)
 

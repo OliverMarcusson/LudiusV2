@@ -89,6 +89,8 @@ def load_day(runs: Path, persona: str, fire: Fire) -> durable.DayInput:
         raise ValueError("schedule persona differs from this worker")
     at = fire.occurrence
     date = durable.plan_date(at, fire.schedule.tz)
+    if fire.schedule.day_offset:
+        date = (dt.date.fromisoformat(date) + dt.timedelta(days=fire.schedule.day_offset)).isoformat()
     plan = durable.scheduled_plan(runs, persona, date)
     offset = at.astimezone(ZoneInfo(fire.schedule.tz)).utcoffset()
     assert offset is not None

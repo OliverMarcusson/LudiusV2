@@ -94,6 +94,22 @@ def test_intended_occurrence_drives_child_id_even_after_midnight(
     assert calls == ["day-aberg-2026-10-26"]
 
 
+def test_day_offset_plays_a_later_dates_plan(tmp_path: Path) -> None:
+    folder = tmp_path / "plans"
+    folder.mkdir()
+    (folder / "2026-10-28-aberg.yaml").write_text("persona: aberg\ndate: '2026-10-28'\nitems: []\n", encoding="utf-8")
+    at = dt.datetime(2026, 10, 27, 18, 30, tzinfo=dt.UTC)  # local 19:30 on the 27th
+    s = durable.schedule_for("aberg", "19:30", "Europe/Stockholm", "time-jump", day_offset=1)
+    assert isinstance(s.action, ScheduleActionStartWorkflow)
+    sched = s.action.args[0]
+    assert isinstance(sched, durable.ScheduledInput) and sched.day_offset == 1
+    day = scheduled.load_day(tmp_path, "aberg", scheduled.Fire(schedule=sched, occurrence=at))
+    assert day.plan.date == "2026-10-28" and day.clock == "time-jump" and day.utc_offset_s == 3600
+    with pytest.raises(FileNotFoundError, match="no plan"):  # default offset 0 keeps the fire's own date
+        scheduled.load_day(tmp_path, "aberg", scheduled.Fire(schedule=durable.ScheduledInput(
+            persona="aberg", tz="Europe/Stockholm"), occurrence=at))  # fmt: skip
+
+
 def test_worker_reservation_survives_shutdown_and_rejects_competing_days(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
