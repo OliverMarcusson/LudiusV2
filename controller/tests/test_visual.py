@@ -306,3 +306,49 @@ def test_pixels_factory_reads_only_screenshots_and_rows_need_the_template_opt_in
 
     assert clicks("explorer_new_folder", "go_documents") == []  # no pixels block: nothing, even "New folder"
     assert clicks("notepad_write_note", "write_body")  # opted in, title and anchor visible
+
+
+def _caption(dx: int = 0) -> list[visual.Box]:
+    # Reported geometry: the outer caption button and its inner glyph fall in the same 16 px origin cell.
+    return [
+        visual.Box(1603 + dx, 209, 33, 30, "", 0.9, control=True),
+        visual.Box(1612 + dx, 214, 12, 12, "", 0.9, control=True),
+    ]
+
+
+def test_nested_unnamed_icons_in_one_grid_cell_keep_distinct_keys_and_ids_across_snapshots() -> None:
+    rows = visual.elements(_caption(), window=0)
+    assert len({r.key for r in rows}) == 2
+    scene = [_caption()]
+    agent = visual.VisualAgent(FakeScreens([_png(1920, 1080, b"a")] * 9), "pixels", read=lambda png: scene[0])
+    first = agent.observe(quiet_ms=1).snapshot
+    assert len({e.id for e in first.elements}) == 2
+    scene[0] = _caption(dx=2)  # small jitter keeps the same cells, hence the same identities
+    again = agent.observe(quiet_ms=1).snapshot
+    assert [e.id for e in again.elements] == [e.id for e in first.elements]
+    assert [e.key for e in again.elements] == [e.key for e in first.elements]
+
+
+def test_same_named_and_same_cell_rows_in_several_fallback_windows_stay_distinct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_crop(png: bytes, *_: int) -> bytes:  # synthetic reader needs no pixels
+        return png
+
+    monkeypatch.setattr(visual, "crop", no_crop)
+    scene = [visual.Box(10, 10, 40, 20, "OK", 0.9, control=True), *_caption()]
+
+    class Tree(FakeScreens):
+        def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
+            snap = obs.Snapshot(screen_width=1920, screen_height=1080)
+            for _ in range(2):  # two stacked windows at the same place, so even icon cells coincide
+                w = snap.windows.add(no_tree=True)
+                w.bounds.width, w.bounds.height = 800, 600
+            return pb.ObserveResult(snapshot=snap)
+
+    agent = visual.VisualAgent(Tree([_png(1920, 1080, b"a")]), "fallback", read=lambda png: scene)
+    runs = [agent.observe().snapshot.elements for _ in range(2)]
+    assert len(runs[0]) == 6
+    for rows in runs:
+        assert len({e.key for e in rows}) == len({e.id for e in rows}) == 6
+    assert [(e.key, e.id) for e in runs[0]] == [(e.key, e.id) for e in runs[1]]

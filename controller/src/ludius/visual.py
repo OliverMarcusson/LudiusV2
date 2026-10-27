@@ -241,19 +241,25 @@ def crop(png: bytes, x: int, y: int, width: int, height: int) -> bytes:
     return out.getvalue()
 
 
-def elements(boxes: list[Box], window: int, dx: int = 0, dy: int = 0, scale: float = 1.0) -> list[obs.Element]:
-    """Rows for one window. Image pixels map to guest pixels by offset and scale; keys repeat across snapshots."""
+def elements(
+    boxes: list[Box], window: int, dx: int = 0, dy: int = 0, scale: float = 1.0, seen: dict[str, int] | None = None
+) -> list[obs.Element]:
+    """Rows for one window. Image pixels map to guest pixels by offset and scale; keys repeat across snapshots. Pass one
+    `seen` for all windows of a snapshot so same-named rows in different windows get different keys."""
     out: list[obs.Element] = []
-    seen: dict[str, int] = {}
+    seen = {} if seen is None else seen
     for b in sorted(boxes, key=lambda b: (b.y // 8, b.x)):  # reading order, lines within 8 px
         masked = set(b.text.replace(" ", "")) <= MASK
         if not b.control and (b.score < MIN_SCORE or masked):
             continue
         name = "" if masked else b.text[:200]
         role = "button" if b.control else "text"
-        n = seen[role + name] = seen.get(role + name, 0) + 1
-        # A control without text has only its place to be known by: keyed by a 16 px grid cell.
-        ident = f"{role}/{name}/{n}" if name else f"icon/{(dx + b.x * scale) // 16:.0f}/{(dy + b.y * scale) // 16:.0f}"
+        # A control without text has only its place to be known by: keyed by a 16 px grid cell. Boxes nested in one
+        # cell (a caption button and its glyph) share it, so the k-th in reading order gets "/k". ponytail: if jitter
+        # flips the reading order of such a pair, their keys swap.
+        base = f"{role}/{name}" if name else f"icon/{(dx + b.x * scale) // 16:.0f}/{(dy + b.y * scale) // 16:.0f}"
+        n = seen[base] = seen.get(base, 0) + 1
+        ident = f"{base}/{n}" if name or n > 1 else base
         e = obs.Element(
             id=ID_BASE + len(out),
             key=hashlib.sha1(f"{FRAMEWORK}/{ident}".encode()).hexdigest()[:16],
@@ -275,6 +281,7 @@ def fill_no_tree(snap: obs.Snapshot, png: bytes, read: Reader) -> int:
     pw = png_size(png)[0]
     scale = snap.screen_width / pw if snap.screen_width else 1.0  # guest pixels per screenshot pixel
     added = 0
+    seen: dict[str, int] = {}
     for i, w in enumerate(snap.windows):
         if not w.no_tree or w.bounds.width <= 0 or w.bounds.height <= 0:
             continue
@@ -284,7 +291,8 @@ def fill_no_tree(snap: obs.Snapshot, png: bytes, read: Reader) -> int:
         x1, y1 = min(pw, round((b.x + b.width) / scale)), min(ph, round((b.y + b.height) / scale))
         if x1 <= x0 or y1 <= y0:
             continue
-        rows = elements(read(crop(png, x0, y0, x1 - x0, y1 - y0)), i, round(x0 * scale), round(y0 * scale), scale)
+        crop_rows = read(crop(png, x0, y0, x1 - x0, y1 - y0))
+        rows = elements(crop_rows, i, round(x0 * scale), round(y0 * scale), scale, seen)
         for e in rows:
             e.id = ID_BASE + added
             added += 1
