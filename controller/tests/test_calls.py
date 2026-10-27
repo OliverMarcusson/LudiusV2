@@ -43,3 +43,15 @@ def test_counts_each_request_and_keeps_kinds_apart(tmp_path: Path, monkeypatch: 
     llm._http = _replies(_chat("nope"), _chat('{"ok": true}'))  # pyright: ignore[reportPrivateUsage]
     assert llm.json(_Answer, "s", "u").ok
     assert _counts(calls.PATH) == (2, 2)  # the validation re-ask posted again
+
+
+@pytest.mark.parametrize("stored", [None, "{}", '{"llm": -1}', '{"llm": 1.5}', '{"llm": true}', "not json"])
+def test_capped_counter_fails_closed_when_lost_or_invalid(
+    stored: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(calls, "PATH", tmp_path / "calls.json")
+    monkeypatch.setenv("LUDIUS_CAP_LLM", "21")
+    if stored is not None:
+        calls.PATH.write_text(stored, encoding="utf-8")
+    with pytest.raises(calls.CapReached):
+        calls.count("llm")  # a lost counter must not grant the whole ceiling again

@@ -47,11 +47,15 @@ def count(kind: Kind) -> None:
             try:
                 old: dict[str, Any] = json.loads(PATH.read_text(encoding="utf-8"))
             except (OSError, ValueError):
-                if cap is not None and PATH.exists():
+                if cap is not None:  # a lost counter would restart from 0 and grant the whole ceiling again
                     raise
                 old = {}
-            if cap is not None and int(old.get(kind, 0)) >= int(cap):
-                raise CapReached(f"{kind} request cap LUDIUS_CAP_{kind.upper()}={cap} reached; nothing sent")
+            if cap is not None:
+                total = old.get(kind)
+                if type(total) is not int or total < 0:
+                    raise ValueError(f"{kind} total {total!r} is not a count")
+                if total >= int(cap):
+                    raise CapReached(f"{kind} request cap LUDIUS_CAP_{kind.upper()}={cap} reached; nothing sent")
             now = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
             data = {
                 "jev": int(old.get("jev", 0)) + (kind == "jev"),
