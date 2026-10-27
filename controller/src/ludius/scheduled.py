@@ -174,27 +174,33 @@ class WorkerActivities(durable.DayActivities):
 
     @activity.defn(name="day_end")
     def finish(self, e: durable.DayEnd) -> None:
+        if not self._reserved():
+            return  # a retry after this day finished and released: never log/reset again or touch the next day
         super().finish(e)
-        self.close(release=True)
+        self.close(release=self._key())
 
     @activity.defn(name="day_abort")
     def abort(self) -> None:
         # A rejected competing workflow must never reset the active day's clock or release its reservation.
-        rec = self.owner.read()
-        if rec is None or rec.owner != self._key():
+        rec = self._reserved()
+        if rec is None:
             return
-        super().clock_reset()
-        self.close(release=True)
+        if rec.day.clock == "time-jump":
+            super().clock_reset()  # an unopenable runner fails closed here: the reservation stays for recovery
+        self.close(release=rec.owner)  # other clocks never jumped, so release even if the runner never opened
 
-    def close(self, *, release: bool = False) -> None:
-        key = self._bound
+    def _reserved(self) -> Reservation | None:
+        rec = self.owner.read()
+        return rec if rec and rec.owner == self._key() else None
+
+    def close(self, *, release: str | None = None) -> None:
         try:
             if self._context:
                 self._context.close()  # the factory resets its own clock before releasing resources
         finally:
             self._context = self._day = self._bound = None
-        if release and key:
-            self.owner.release(key)
+        if release:
+            self.owner.release(release)
 
     def all(self) -> list[Callable[..., Any]]:
         return [*super().all(), self.load]

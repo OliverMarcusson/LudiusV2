@@ -210,3 +210,71 @@ def test_one_shot_worker_refuses_another_dates_activity(tmp_path: Path, monkeypa
         assert calls == []  # rejected work must neither touch the desktop nor reset its clock
     finally:
         log.close()
+
+
+def test_unopenable_runner_still_releases_a_day_without_a_jumped_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Prepare claims, then the runner cannot open (wrong logon, agent down). Abort must not need that runner
+    # for a realtime day, or every retry fails and the desktop stays reserved by a failed workflow forever.
+    plan = DayPlan(persona="aberg", date="2026-10-27", items=[note("09:00")])
+    info = SimpleNamespace(workflow_namespace="default", workflow_id=durable.workflow_id(plan))
+    monkeypatch.setattr(scheduled.activity, "info", lambda: info)
+    opened: list[str] = []
+
+    @contextmanager
+    def factory(day: durable.DayInput) -> Generator[DayRunner]:
+        opened.append(day.clock)
+        raise RuntimeError("persona not logged on")
+        yield  # type: ignore[unreachable]
+
+    acts = scheduled.WorkerActivities(tmp_path, "aberg", tmp_path / "desk.lock", factory, lambda d, a: {})
+    for clock in ("realtime", "compressed"):
+        with pytest.raises(RuntimeError, match="logged on"):
+            acts.prepare(durable.DayInput(plan=plan, clock=clock, utc_offset_s=0))
+        acts.abort()
+        assert not acts.owner.path.exists()
+    assert opened == ["realtime", "compressed"]  # abort never reopened the runner
+    # A time-jump day may have a jumped clock this process cannot reset: fail closed, keep the reservation.
+    with pytest.raises(RuntimeError):
+        acts.prepare(durable.DayInput(plan=plan, clock="time-jump", utc_offset_s=0))
+    with pytest.raises(RuntimeError):
+        acts.abort()
+    assert acts.owner.read() is not None
+
+
+def test_retried_day_end_after_release_is_a_no_op(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # day_end released the reservation but its completion was lost; the retry must neither fail forever
+    # nor finish (reset/log) again, even when the next day already owns the desktop.
+    calls: list[str] = []
+    plan = DayPlan(persona="aberg", date="2026-10-27", items=[])
+    info = SimpleNamespace(workflow_namespace="default", workflow_id=durable.workflow_id(plan))
+    monkeypatch.setattr(scheduled.activity, "info", lambda: info)
+
+    @contextmanager
+    def factory(day: durable.DayInput) -> Generator[DayRunner]:
+        log = durable.HeartbeatLog(tmp_path / f"{day.plan.date}.jsonl")
+        try:
+            yield DayRunner(
+                FakeRunner(log, calls),  # type: ignore[arg-type]
+                FakeSession(calls),  # type: ignore[arg-type]
+                load_templates(),
+                log,
+                day.clock,
+                0,
+                set_clock=lambda t: calls.append("clock reset" if t is None else "clock"),
+            )  # type: ignore[arg-type]
+        finally:
+            log.close()
+
+    acts = scheduled.WorkerActivities(tmp_path, "aberg", tmp_path / "desk.lock", factory, lambda d, a: {})
+    acts.prepare(durable.DayInput(plan=plan, clock="time-jump", utc_offset_s=0))
+    end = durable.DayEnd(plan=plan, done=[])
+    acts.finish(end)
+    assert calls.count("clock reset") == 1 and not acts.owner.path.exists()
+    acts.finish(end)
+    nxt = durable.DayInput(plan=plan.model_copy(update={"date": "2026-10-28"}), clock="time-jump", utc_offset_s=0)
+    acts.owner.claim("default/day-aberg-2026-10-28", nxt)
+    acts.finish(end)
+    acts.abort()
+    assert calls.count("clock reset") == 1 and acts.owner.read().owner == "default/day-aberg-2026-10-28"  # type: ignore[union-attr]
