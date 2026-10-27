@@ -1,4 +1,6 @@
 # Temporal + PostgreSQL for `ludius day --temporal` and `ludius store sync`. Config only: NOT run or pulled yet.
+# Checked against the v1.32.1 sources, not by running containers: no bash in the server/admin-tools images (all
+# commands here are POSIX sh), temporal-sql-tool create/setup/update are rerun-safe, the dynamic config file is mounted below.
 # Layout follows temporalio/samples-server compose/docker-compose-postgres.yml (auto-setup is stale at 1.23, so
 # schema setup is its own one-shot). Pins: tags verified on Docker Hub 2026-10-27, digests are the multi-arch index.
 # Host ports bind loopback only. Data lives in the named volume `pgdata`; never remove it with `down -v`.
@@ -53,6 +55,8 @@ services:
       POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD in .env}
       POSTGRES_SEEDS: postgres
       BIND_ON_IP: 0.0.0.0
+    volumes: # 1.32.1 ships no dynamic config file but its env-built config points at this path; a missing file aborts startup
+      - ./dynamicconfig/docker.yaml:/etc/temporal/config/dynamicconfig/docker.yaml:ro
     ports:
       - "127.0.0.1:${LUDIUS_TEMPORAL_PORT:-7233}:7233"
     healthcheck:
