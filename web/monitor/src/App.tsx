@@ -155,8 +155,9 @@ export default function App() {
   const [paused, setPaused] = useState(false)
   const [columns, setColumns] = useState(() => localStorage.getItem("monitor.columns") ?? "3")
   const [focused, setFocused] = useFocused()
-  const running = vms.filter((v) => v.state === "running").length
-  const focusVm = focused ? vms.find((v) => v.name === focused) : undefined
+  const runningVms = vms.filter((v) => v.state === "running")
+  const running = runningVms.length
+  const focusVm = focused ? runningVms.find((v) => v.name === focused) : undefined
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && focused && setFocused(null)
@@ -229,16 +230,16 @@ export default function App() {
               <Feed vm={focusVm} now={now} paused={paused} maxWidth={1280} large />
             </div>
           ) : (
-            loaded && <p className="text-sm text-muted-foreground">No VM named {focused} on this host.</p>
+            loaded && <p className="text-sm text-muted-foreground">VM {focused} is not running or is unavailable.</p>
           )}
         </main>
       ) : (
         <main>
-          {loaded && vms.length === 0 && !error && (
-            <p className="text-sm text-muted-foreground">No virtual machines on this host.</p>
+          {loaded && runningVms.length === 0 && !error && (
+            <p className="text-sm text-muted-foreground">No running virtual machines.</p>
           )}
           <ul className={`grid gap-x-5 gap-y-7 ${GRID[columns] ?? GRID["3"]}`}>
-            {vms.map((vm) => (
+            {runningVms.map((vm) => (
               <li key={vm.name}>
                 <a
                   href={`#/vm/${encodeURIComponent(vm.name)}`}
