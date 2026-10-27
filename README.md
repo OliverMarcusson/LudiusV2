@@ -90,6 +90,17 @@ cd web\monitor; bun run lint; bun run build
 - Keys use virtual-key codes (the Hyper-V WMI API), not scancodes.
 - Completion checks are structured YAML (`window`, `foreground`, `element`, `typed`), not free-form strings.
 
-## Not built yet
+## Status
 
-Cross-persona threads, Outlook/Office templates, template growth, Temporal/Postgres, Proxmox backend and vsock, visual fallback (OCR/detector), clone/delete lifecycle, non-ASCII typing, and the analysis/filterability pipeline.
+Current evidence is in the tracker, [`docs/progress.html`](docs/progress.html), published at https://marcusson.dev/ludius-progress. The Verified section above is a dated snapshot from 2026-10-26.
+
+Built, with partial verification (the tracker has the limits):
+- Hyper-V guest, host and controller layers; visual fallback (PP-OCR and OmniParser) when a window has no UI tree; template growth with code admission; `ludius day --temporal` runs, on demand; a PostgreSQL mirror of ground truth.
+- Partial: cross-persona handoffs (mistake admission pending), clone lifecycle (guarded delete tested, no real deletion), pixels-only mode, and filterability (provenance and a held-out split only).
+
+Not built, or not verified:
+- Outlook/Office and mail templates; Proxmox backend and vsock (both deferred by the owner).
+- The deployed Temporal, PostgreSQL and MinIO stack is not running. The compose file is config only. The S3 content-hash test passed once against the stock MinIO binary; no official container tag is claimed.
+- The pixels-only close task still fails.
+- Human baseline (deferred); Plaso, DuckDB, Polars and LightGBM analysis.
+- Non-ASCII typing (the planner rejects it).
