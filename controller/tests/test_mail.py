@@ -19,7 +19,7 @@ THREADS = {"f1": ("mvellinga", "lund accruals q4 status")}  # f2: an open follow
 
 
 def item(template: str = "outlook_send_mail", **extra: Any) -> dict[str, Any]:
-    params = {"to": "mvellinga@corp.ludius.test", "subject": "lund accruals q4 status",
+    params = {"to": "mvellinga@corp.ludius.test", "to_name": "Marcus Vellinga", "subject": "lund accruals q4 status",
               "body": "hi marcus\nlund accruals for q4 are booked"}  # fmt: skip
     return {"at": "09:00", "template": template, "params": params | extra.pop("params", {}),
             "context": "Marcus asked for the status.", **extra}  # fmt: skip
@@ -148,7 +148,9 @@ def test_send_is_blocked_unless_to_is_exact_and_cc_bcc_empty() -> None:
 
     assert preconditions(sg, snap(To="mvellinga@corp.ludius.test", Cc=""), task) is None
     assert preconditions(sg, snap(To="mvellinga@corp.ludius.test;"), task) is None
+    assert preconditions(sg, snap(To="Marcus Vellinga", Cc=""), task) is None  # Outlook resolved the address
     for bad in (snap(To="mvellinga@corp.ludius.test; outside@example.com"),
+                snap(To="Marcus Vellinga; outside@example.com"), snap(To="Lars Nord"),
                 snap(To="mvellinga@corp.ludius.test", Cc="outside@example.com"),
                 snap(To="mvellinga@corp.ludius.test", Bcc="lnord@corp.ludius.test"),
                 snap(To="lnord@corp.ludius.test"), snap()):  # fmt: skip
@@ -165,3 +167,9 @@ def test_typing_into_a_body_without_a_readable_value_counts_as_landed() -> None:
     task = Task(cli.load_templates()["outlook_send_mail"], PlanItem.model_validate(item()), random.Random(0))
     assert _typed_landed(after, Option("o1", "type", "t", element=body), task)
     assert not _typed_landed(after, Option("o2", "type", "t", element=edit), task)  # value unchanged: not landed
+
+
+def test_recipient_and_answered_subject_may_repeat() -> None:
+    first, again = item(), item(at="11:00", params={"subject": "lund accruals q4 reversal", "body": "reversal done"})
+    reply = item("outlook_reply_mail", at="13:00", followup="f1", params={"body": "thanks, noted"})
+    assert check(first, again, reply) == []  # same colleague, and the reply reuses the answered subject

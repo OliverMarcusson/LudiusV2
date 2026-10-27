@@ -4,10 +4,10 @@
 task: outlook_send_mail
 app: outlook
 processes: [outlook.exe]
-params: [to, subject, body]
-about: "Write a new mail to one colleague in Outlook and send it. to: the colleague's address <user>@corp.ludius.test; subject: one line; body: the mail text (ASCII, a few short lines)."
+params: [to, to_name, subject, body]
+about: "Write a new mail to one colleague in Outlook and send it. to: the colleague's address <user>@corp.ludius.test; to_name: their full name as in the company story; subject: one line; body: the mail text (ASCII, a few short lines)."
 defaults: {launch_query: outlook}
-example: {to: mvellinga@corp.ludius.test, subject: lund accruals q4 status, body: "hi marcus\nlund accruals for q4 are booked\n- anna"}
+example: {to: mvellinga@corp.ludius.test, to_name: Marcus Vellinga, subject: lund accruals q4 status, body: "hi marcus\nlund accruals for q4 are booked\n- anna"}
 variants:
   - [open_outlook, new_message_shortcut, fill_to, fill_subject, write_body, send_shortcut, close_outlook]
   - [open_outlook, new_message_ribbon, fill_to, fill_subject, write_body, send_button, close_outlook]
@@ -45,15 +45,17 @@ subgoals:
     goal: "Send the mail with Alt+S"
     keys: [Alt+S]
     allow_destructive: ["Send"]
-    # No input at all unless the To field holds exactly the planned address and Cc/Bcc are empty (absent counts).
-    require: [{name: "^To$", value: '^{to};?$'}]
+    # No input unless To is exactly the planned colleague (address, or the name Outlook resolves it to) and Cc/Bcc
+    # are empty (absent counts).
+    require: [{name: "^To$", value: '^({to}|{to_name});?$'}]
     forbid: [{name: "^Cc$", value: '\S'}, {name: "^Bcc$", value: '\S'}]
     done: {mail: {mailbox: "{to}"}}
   send_button:
     goal: "Send the mail with the Send button"
     allow_destructive: ["Send"]
-    # No input at all unless the To field holds exactly the planned address and Cc/Bcc are empty (absent counts).
-    require: [{name: "^To$", value: '^{to};?$'}]
+    # No input unless To is exactly the planned colleague (address, or the name Outlook resolves it to) and Cc/Bcc
+    # are empty (absent counts).
+    require: [{name: "^To$", value: '^({to}|{to_name});?$'}]
     forbid: [{name: "^Cc$", value: '\S'}, {name: "^Bcc$", value: '\S'}]
     done: {mail: {mailbox: "{to}"}}
   close_outlook:

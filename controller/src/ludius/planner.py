@@ -38,7 +38,13 @@ _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")  # the virtual keyboard types ASCII only
 VALUE_MAX = 300  # guest observer Snapshotter.MaxValue: longest element value a snapshot carries
 _NAME_KEYS = ("file_name", "folder_name", "new_name")
-_REFERS_TO_EXISTING = {"explorer_rename_move": {"file_name", "folder_name"}}  # acts on these, creates new_name only
+# Values that name something existing rather than new content: a rename's source, a mail's recipient, the subject
+# of the mail a reply answers. They may repeat, so the near-duplicate check skips them.
+_REFERS_TO_EXISTING = {
+    "explorer_rename_move": {"file_name", "folder_name"},  # acts on these, creates new_name only
+    "outlook_send_mail": {"to", "to_name"},
+    "outlook_reply_mail": {"to", "to_name", "subject"},
+}
 _DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)  # Windows reserved, any extension
 SHOWN_EXISTING = 80  # existing names listed in the prompt; validation checks all of them
 
