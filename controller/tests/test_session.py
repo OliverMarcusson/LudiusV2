@@ -1,5 +1,5 @@
-"""Session.normalize on the clean source-VM desktop (runs/hygiene/20261027-123759-normalize.txt). The agent below answers only
-observe: any input or escalation fails the test before it could reach a VM."""
+"""Session.normalize on the clean source-VM desktop (runs/hygiene/20261027-123759-normalize.txt).
+The agent below answers only observe: any input or escalation fails the test before it could reach a VM."""
 
 from pathlib import Path
 

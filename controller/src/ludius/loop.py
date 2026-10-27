@@ -150,17 +150,27 @@ class Runner:
             mean, jitter = 25, 10
         self.agent.type(text, mean, jitter)
 
+    def _caret_to_end(self, e: obs.Element) -> None:
+        # A click lands at a random spot, so in a text document it moved the caret into earlier text and the next
+        # Enter split a heading (fidelity 20261027-1259). Writers append, so put the caret back at the end.
+        # ponytail: always the end; a template that edits mid-document needs its own caret move.
+        if e.role == "document" and not e.read_only and e.value:
+            self.agent.chord(keys.chord("Ctrl+End"))
+
     def act(self, o: Option, task: Task) -> None:
         e = o.element
         if o.kind in ("click", "double_click") and e is not None:
             self._move_to(e)
             self.agent.click(count=2 if o.kind == "double_click" else 1)
+            if o.kind == "click":
+                self._caret_to_end(e)
         elif o.kind == "type":
             text = o.literal or task.values[o.content]
             if e is not None and not e.focused:
                 self._move_to(e)
                 self.agent.click()
                 time.sleep(0.15)
+                self._caret_to_end(e)
             self._type(text)
         elif o.kind == "key":
             self.agent.chord(keys.chord(o.keys))

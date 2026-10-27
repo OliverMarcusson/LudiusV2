@@ -217,6 +217,39 @@ def test_mapping_recheck_on_display_change(tmp_path: Any) -> None:
     assert not runner.mapping_ok
 
 
+def test_document_click_keeps_the_caret_at_the_end(tmp_path: Any) -> None:
+    """A click inside a WordPad heading moved the caret there and the next Enter split it (fidelity 20261027-1259)."""
+    from ludius.loop import GroundTruth, Runner
+    from ludius.options import Option
+
+    class FakeAgent:
+        vm = "t"
+
+        def __init__(self) -> None:
+            self.chords: list[list[int]] = []
+
+        def move(self, x: int, y: int, duration_ms: int = 0) -> int:
+            return 0
+
+        def click(self, count: int = 1) -> int:
+            return 0
+
+        def chord(self, vks: list[int]) -> int:
+            self.chords.append(vks)
+            return 0
+
+    agent = FakeAgent()
+    runner = Runner(agent, None, Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    box = obs.Rect(x=0, y=0, width=800, height=600)
+    doc = obs.Element(key="d", role="document", value="heading\r", bounds=box)
+    web = obs.Element(key="w", role="document", value="https://intranet/", read_only=True, bounds=box)
+    button = obs.Element(key="b", role="button", bounds=box)
+    for e, expected in ((doc, [keys.chord("Ctrl+End")]), (web, []), (button, [])):
+        agent.chords.clear()
+        runner.act(Option("o1", "click", "click", element=e), None)  # type: ignore[arg-type]
+        assert agent.chords == expected, e.role
+
+
 def test_no_alt_f4_on_the_desktop() -> None:
     """Alt+F4 on the desktop opens Shut Down Windows; an OK there powered the test VM off once."""
     from ludius.options import build_options, view
