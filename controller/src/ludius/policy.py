@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +31,22 @@ DESKTOP_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd"}
 # Shortcuts that open, rename or delete whatever is selected or focused; navigation and Esc are never in here.
 ACTIVATION_KEYS = {"enter", "space", "ctrl+o", "alt+enter", "ctrl+enter", "shift+enter", "f2", "delete", "shift+delete"}
 EDITABLE_ROLES = {"edit", "document", "combo box"}
+# A replace/overwrite confirmation (Windows' Confirm Save As, Office's "already exists ... replace it?"): its
+# confirming button or Enter would overwrite an existing file, wherever Save As was navigated to. While one is on
+# screen only these may be clicked, only Esc pressed, and the runner abandons the task (loop.Runner._subgoal).
+OVERWRITE = re.compile(
+    r"already exists.*replace|replace (it|the file|the existing)|overwrite (it|the|existing)", re.I | re.S
+)
+OVERWRITE_TITLES = re.compile(r"^(Confirm Save As|Replace or Skip Files|Confirm File Replace)$", re.I)
+OVERWRITE_SAFE = re.compile(r"(no|cancel|close|don't replace|skip.*)", re.I)
+OVERWRITE_REASON = "overwrite confirmation: abandon, never replace"
+
+
+def overwrite_prompt(snap: obs.Snapshot) -> bool:
+    """A replace/overwrite confirmation is on screen, by window title or by its text (element names, context)."""
+    return (any(OVERWRITE_TITLES.match(w.title) for w in snap.windows)
+            or any(OVERWRITE.search(e.name) for e in snap.elements)
+            or any(OVERWRITE.search(c) for c in snap.context))  # fmt: skip
 
 
 def alt_f4_safe(fg: obs.Window | None) -> bool:
@@ -86,6 +103,17 @@ class Policy:
             names.append(_glob(m.strip()))
         return cls(reserved_paths=paths, reserved_names=names)
 
+    @classmethod
+    def from_env(cls) -> Policy:
+        """The scenario file in LUDIUS_SCENARIO (no reservations when unset)."""
+        path = os.environ.get("LUDIUS_SCENARIO")
+        return cls.load(Path(path)) if path else cls()
+
+    def path_reserved(self, path: str) -> bool:
+        """A file path (as the app will write it) is reserved: by a path glob, or by its leaf name."""
+        leaf = re.split(r"[\\/]", path.strip())[-1]
+        return self.reserved(path) or any(re.fullmatch(p, leaf, re.I) for p in self.reserved_names)
+
     def reserved(self, text: str) -> bool:
         return any(re.search(p, text, re.I) for p in self.reserved_paths)
 
@@ -98,7 +126,10 @@ class Policy:
         Refused while a visible reserved element is selected or focused in the window that receives keys (a modal
         dialog, else the foreground window and any open menu), unless a non-reserved text field has the focus.
         Pixels rows carry no selection or focus, so nothing is claimed about screens read from pixels.
+        Any key but Esc is refused while an overwrite confirmation is on screen.
         """
+        if overwrite_prompt(snap) and keys.lower() != "esc":
+            return OVERWRITE_REASON
         if not (self.reserved_paths or self.reserved_names) or keys.lower() not in ACTIVATION_KEYS:
             return None
         owned = any(w.kind == obs.Window.OWNED for w in snap.windows)
@@ -113,8 +144,16 @@ class Policy:
             return "scenario-reserved path"
         return None
 
-    def element_allowed(self, e: obs.Element, allow_destructive: list[str]) -> str | None:
-        """None if the element may be acted on, else the reason."""
+    def element_allowed(
+        self, e: obs.Element, allow_destructive: list[str], snap: obs.Snapshot | None = None
+    ) -> str | None:
+        """None if the element may be acted on, else the reason. `snap`: the screen it is on (overwrite rule)."""
+        if (
+            snap is not None
+            and overwrite_prompt(snap)
+            and not OVERWRITE_SAFE.fullmatch(e.name.replace("&", "").strip())
+        ):
+            return OVERWRITE_REASON
         if e.password:
             return "password field"
         if NEVER.search(e.name):

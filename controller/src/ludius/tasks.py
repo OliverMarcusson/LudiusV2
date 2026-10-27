@@ -464,19 +464,32 @@ def recipient_reserved(sg: Subgoal, task: Task, policy: Any) -> bool:
     return bool(sg.done and sg.done.mail and policy.reserved(task.fmt(sg.done.mail.mailbox)))
 
 
-def file_baseline(task: Task) -> str | None:
-    """Why the task must not start (a file it would create exists, or can't be read), else None; sets
-    Task.files_absent. The runner calls it before any input: a task never overwrites a file."""
+def file_paths(task: Task) -> list[str]:
+    """The files the task creates, as the app writes them (with extension), profile-relative: its file checks."""
+    return [task.fmt(sg.done.file.path) for sg in task.template.subgoals.values() if sg.done and sg.done.file]
+
+
+def file_reserved(user: str, rel: str, policy: Any) -> bool:
+    """The shared file-access rule: a created file's final path, relative and in `user`'s profile (when known), must
+    not be scenario-reserved; checked at plan load and before any guest read. `policy` is a ludius.policy.Policy."""
+    full = guestfile.profile_path(user, rel) if user else None
+    return bool(policy.path_reserved(rel) or (full and policy.path_reserved(full)))
+
+
+def file_baseline(task: Task, policy: Any) -> str | None:
+    """Why the task must not start (a file it would create is reserved, exists, or can't be read), else None; sets
+    Task.files_absent. The runner calls it before any input: a task never overwrites a file, and a reserved one is
+    never even read."""
     absent: set[str] = set()
-    for sg in task.template.subgoals.values():
-        if sg.done and (c := sg.done.file):
-            rel = task.fmt(c.path)
-            f = guestfile.read(task.owner, rel)
-            if f is None:
-                return f"{rel}: unreadable on the guest"
-            if f.exists:
-                return f"{rel}: already exists, never overwritten"
-            absent.add(rel)
+    for rel in file_paths(task):
+        if file_reserved(task.owner, rel, policy):
+            return f"{rel}: scenario-reserved file"
+        f = guestfile.read(task.owner, rel)
+        if f is None:
+            return f"{rel}: unreadable on the guest"
+        if f.exists:
+            return f"{rel}: already exists, never overwritten"
+        absent.add(rel)
     task.files_absent = frozenset(absent)
     return None
 
@@ -484,7 +497,7 @@ def file_baseline(task: Task) -> str | None:
 def _file_ok(c: FileCheck, task: Task) -> bool:
     rel = task.fmt(c.path)
     if task.files_absent is None or rel not in task.files_absent:
-        return False  # not proven absent at start: it could be pre-existing state
+        return False  # not proven absent (and not reserved) at start: pre-existing state, or never to be read
     f = guestfile.read(task.owner, rel)
     if f is None or not f.exists or f.written_ms < task.started_ms:
         return False

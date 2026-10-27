@@ -161,7 +161,7 @@ def check_existing(world: World, persona: Persona, date: dt.date, src: Sources) 
     rejects = planner.validate(
         plan.items, planner.role_templates(src.templates, persona), [], src.policy, colleagues,
         followups={i.followup for i in plan.items if i.followup}, mail_threads=threads,
-        people={p.user: p.name for p in narrative.people if p.user},
+        people={p.user: p.name for p in narrative.people if p.user}, user=persona.user,
     )  # fmt: skip  # no content history: this plan's own content is already in it
     if rejects:
         raise PlanConflict(f"{path} fails validation: " + "; ".join(f"item {i}: {why}" for i, why in rejects))

@@ -599,8 +599,7 @@ def cmd_contract(args: argparse.Namespace) -> int:
 
 def make_policy() -> Policy:
     """Scenario-reserved paths and mailboxes from the scenario file in LUDIUS_SCENARIO (none when unset)."""
-    path = os.environ.get("LUDIUS_SCENARIO")
-    return Policy.load(Path(path)) if path else Policy()
+    return Policy.from_env()
 
 
 def make_assist() -> Assist | None:

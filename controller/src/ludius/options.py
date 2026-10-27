@@ -86,7 +86,7 @@ def view(snap: obs.Snapshot, task: Task, sg: Subgoal, policy: Policy) -> StepVie
             v.windows[i] = w
     for e in snap.elements:
         in_region = e.window in v.windows and (e.id in region or not pixels_window(v.windows[e.window]))
-        if in_region and policy.element_allowed(e, sg.allow_destructive) is None:
+        if in_region and policy.element_allowed(e, sg.allow_destructive, snap) is None:
             v.allowed.append(e)
     return v
 

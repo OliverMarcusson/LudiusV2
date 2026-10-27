@@ -19,7 +19,7 @@ from ludius import keys
 from ludius.assist import Assist
 from ludius.jev import Decision
 from ludius.options import Option, StepView, build_options, build_state, describe, view
-from ludius.policy import Policy, alt_f4_safe
+from ludius.policy import OVERWRITE_REASON, Policy, alt_f4_safe, overwrite_prompt
 from ludius.tasks import (
     RESERVED_RECIPIENT,
     Persona,
@@ -218,7 +218,7 @@ class Runner:
             variant=task.variant,
             subgoals=task.subgoal_names,
         )
-        if why := file_baseline(task):  # before any input: the file it would create exists, or is unknown
+        if why := file_baseline(task, self.policy):  # before any input: its file is reserved, exists or is unknown
             self.log.write(event="blocked", host_ms=_now(), task=task.template.task, reason=why)
             self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status="abandoned",
                            reason=f"start: {why}", steps=0)  # fmt: skip
@@ -308,6 +308,10 @@ class Runner:
                 self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
                                reason=RESERVED_RECIPIENT)  # fmt: skip
                 return "failed", step - 1, RESERVED_RECIPIENT
+            if overwrite_prompt(snap):  # never answered with Yes: abandon, whose discard step clicks No
+                self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
+                               reason=OVERWRITE_REASON)  # fmt: skip
+                return "failed", step - 1, OVERWRITE_REASON
             if blocked := preconditions(sg, snap, task):
                 # No input is allowed (e.g. the mail is sent, its window closed, delivery still on its way): a Jev
                 # call could only pick a blocked action. Wait and look again; the step budget still bounds it.
@@ -410,10 +414,12 @@ class Runner:
         if o.kind != "rescan" and (r := preconditions(sg, self.snap, task, o.element)):
             return r
         if o.element is not None:
-            r = self.policy.element_allowed(o.element, sg.allow_destructive)
+            r = self.policy.element_allowed(o.element, sg.allow_destructive, self.snap)
             if r:
                 return r
         if o.kind == "type":
+            if overwrite_prompt(self.snap):
+                return OVERWRITE_REASON
             return self.policy.text_allowed(o.literal or task.values[o.content], o.element)
         if o.kind == "key":
             return self.policy.key_allowed(o.keys, self.snap)

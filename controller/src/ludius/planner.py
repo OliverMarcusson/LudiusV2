@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import errno
+import functools
 import json
 import os
 import random
@@ -28,7 +29,7 @@ from pydantic import Field, field_validator
 from ludius.llm import LlmClient
 from ludius.mail import DOMAIN as MAIL_DOMAIN
 from ludius.policy import Policy
-from ludius.tasks import Persona, Strict, Task, TaskInstance, Template
+from ludius.tasks import Persona, Strict, Task, TaskInstance, Template, file_paths, file_reserved, load_template
 
 BREAK = "break"  # pseudo-template: away from the desk, screen locked
 REPLY = "outlook_reply_mail"  # answers a real inbox mail: the planner sees mail only as follow-ups
@@ -230,7 +231,7 @@ def plan_day(
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
     fill_recipient_names(draft.items, people)
     rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                       mail_threads, people)  # fmt: skip
+                       mail_threads, people, persona.user)  # fmt: skip
     missing = sorted(set(followups) - {it.followup for it in draft.items})
     if rejects or missing:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
@@ -240,7 +241,7 @@ def plan_day(
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
         fill_recipient_names(draft.items, people)
         rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                           mail_threads, people)  # fmt: skip
+                           mail_threads, people, persona.user)  # fmt: skip
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     missing = sorted(set(followups) - {it.followup for it in items})
@@ -268,6 +269,7 @@ def validate(
     existing: Iterable[str] = (),
     mail_threads: dict[str, tuple[str, str]] | None = None,
     people: dict[str, str] | None = None,
+    user: str = "",
 ) -> list[tuple[int, str]]:
     """Rejected items with the reason. A reply must answer a mail follow-up in `mail_threads` from its `to`
     colleague with its subject; without mail threads no reply is valid. A mail's to_name must be exactly the
@@ -276,7 +278,7 @@ def validate(
     seen = list(history)
     taken = taken_names(existing)  # grows with each accepted item: a second item with the same name would overwrite
     for i, it in enumerate(items):
-        why = _check_item(it, templates, seen, policy)
+        why = _check_item(it, templates, seen, policy, user)
         if not why:
             why = _recipient(it, colleagues or set[str](), people or {})
         if not why and it.template == REPLY:
@@ -365,7 +367,21 @@ def taken_names(paths: Iterable[str], stem: bool = True) -> set[str]:
     return out
 
 
-def _check_item(it: PlanItem, templates: dict[str, Template], seen: list[str], policy: Policy) -> str | None:
+def _check_item(
+    it: PlanItem, templates: dict[str, Template], seen: list[str], policy: Policy, user: str = ""
+) -> str | None:
+    if why := item_problem(it, templates, policy, user):
+        return why
+    for value in content_values(it, templates):
+        if dup := near_duplicate(value, seen):
+            return f"too similar to earlier content {dup[:60]!r}"
+    return None
+
+
+def item_problem(it: PlanItem, templates: dict[str, Template], policy: Policy, user: str = "") -> str | None:
+    """What makes one item unplayable on its own, checked at generation and again at every plan load: the template
+    and its parameters, typeable values, spreadsheet rows, and files it would create that the scenario reserves
+    (their final path, with the extension the app adds, in `user`'s profile)."""
     if it.template == BREAK:
         return None if 1 <= it.minutes <= 120 else "break needs 1-120 minutes"
     t = templates.get(it.template)
@@ -395,9 +411,9 @@ def _check_item(it: PlanItem, templates: dict[str, Template], seen: list[str], p
             return f"{key}: not a valid file name"  # Windows would alias it (trailing dot/space) or reserve it
         if r := policy.text_allowed(value, None):
             return f"{key}: {r}"
-    for value in content_values(it, templates):
-        if dup := near_duplicate(value, seen):
-            return f"too similar to earlier content {dup[:60]!r}"
+    for rel in file_paths(task):
+        if file_reserved(user, rel, policy):
+            return f"{rel}: scenario-reserved file, choose a different name"
     return None
 
 
@@ -623,11 +639,18 @@ class World:
 
 
 def load_plan(path: Path) -> DayPlan:
-    """Every entry point (day, worker, nightly reuse, world state) loads plans here, so mail recipients are checked
-    here too: each mail item's `to` must be a colleague and its to_name exactly their name in the narrative beside
-    the plan (<root>/world/narrative.yaml for <root>/plans/<plan>.yaml). No narrative: a plan with mail is refused.
+    """Every entry point (day, worker, nightly reuse, world state) loads plans here, so each item's own checks
+    (item_problem, under the LUDIUS_SCENARIO policy) and mail recipients are checked here too: each mail item's `to`
+    must be a colleague and its to_name exactly their name in the narrative beside the plan
+    (<root>/world/narrative.yaml for <root>/plans/<plan>.yaml). No narrative: a plan with mail is refused.
     """
     plan = DayPlan.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    # The plan as written may never have passed generation (hand-edited, older code): the item checks run again.
+    # An unknown template can't be played at all; validate() reports it with the role's template set.
+    policy, templates = Policy.from_env(), _templates()
+    for it in plan.items:
+        if it.template in templates and (why := item_problem(it, templates, policy, plan.persona)):
+            raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
     mail = [it for it in plan.items if "to" in {**it.params, **it.content}]
     if mail:
         narrative = path.parent.parent / "world" / "narrative.yaml"
@@ -644,6 +667,12 @@ def load_plan(path: Path) -> DayPlan:
             if why := _recipient(it, set(people) - {plan.persona}, people):
                 raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
     return plan
+
+
+@functools.cache
+def _templates() -> dict[str, Template]:
+    ts = [load_template(p) for p in sorted((Path(__file__).resolve().parents[2] / "data" / "templates").glob("*.yaml"))]
+    return {t.task: t for t in ts}
 
 
 def _dump(path: Path, data: Any, mode: str = "w") -> None:
