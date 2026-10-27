@@ -22,7 +22,7 @@ from typing import Any
 
 import yaml
 
-from ludius.planner import Narrative, World, load_plan
+from ludius.planner import Narrative, World, load_plan, targets
 from ludius.tasks import Persona, Strict
 
 # Where each template's result lands, relative to the persona's profile. Templates without a lasting
@@ -125,6 +125,20 @@ def build(world: World, narrative: Narrative, personas: list[Persona], before: d
     state.followups = [f.model_copy(update={"done_on": finished.get(f.id, "")}) for f in handoffs]
     state.calendar = calendar(narrative, personas)
     return state
+
+
+def existing_files(world: World, user: str) -> list[str]:
+    """Names a new item must not reuse: every target in any of the persona's plans (done or not: a failed save may
+    have left a file) plus the optional guest inventory world/guest-files-<user>.txt (one name or path per line,
+    written from a read-only listing of the profile). The controller never sees the guest disk itself."""
+    out: list[str] = []
+    for path in sorted(world.root.glob("plans/*.yaml")):
+        if path.stem[11:] == user:
+            out += [v for it in load_plan(path).items for _, v in targets(it)]
+    inventory = world.root / "world" / f"guest-files-{user}.txt"
+    if inventory.exists():
+        out += [x for x in inventory.read_text(encoding="utf-8-sig").splitlines() if x.strip()]
+    return out
 
 
 def calendar(narrative: Narrative, personas: list[Persona]) -> list[CalendarEntry]:

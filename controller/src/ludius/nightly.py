@@ -139,7 +139,7 @@ def generate_day(
     context = "\n".join(x for x in (summary, world_state.brief(state, persona.user, date)) if x)
     plan, rejects = planner.plan_day(
         llm, auto.narrative, persona, date, src.templates, context, world.history(persona.user),
-        policy=src.policy, scenario=scenario,
+        policy=src.policy, scenario=scenario, existing=world_state.existing_files(world, persona.user),
         followups={f.id: f.about for f in world_state.due(state, persona.user, date)},
     )  # fmt: skip
     return Generated(plan, rejects, auto)

@@ -16,7 +16,7 @@ import re
 import tempfile
 import time
 from collections import Counter
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -35,6 +35,10 @@ MIN_COMPARE = 12  # shorter values (app names, short queries) may repeat
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")  # the virtual keyboard types ASCII only
 VALUE_MAX = 300  # guest observer Snapshotter.MaxValue: longest element value a snapshot carries
+_NAME_KEYS = ("file_name", "folder_name", "new_name")
+_REFERS_TO_EXISTING = {"explorer_rename_move": {"file_name", "folder_name"}}  # acts on these, creates new_name only
+_DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)  # Windows reserved, any extension
+SHOWN_EXISTING = 80  # existing names listed in the prompt; validation checks all of them
 
 
 class Person(Strict):
@@ -148,10 +152,13 @@ def plan_day(
     policy: Policy | None = None,
     scenario: Scenario | None = None,
     followups: dict[str, str] | None = None,
+    existing: Iterable[str] = (),
 ) -> tuple[DayPlan, list[str]]:
     """Draft, validate, ask once to replace rejected items, drop what still fails. Returns the plan and rejects.
 
     `followups` (id -> what) are open tasks colleagues handed over; each must be scheduled with its id.
+    `existing` are files and folders already on the persona's profile (names or paths): no item may create or
+    rename to one of them, and an item that still does after the one repair is dropped, never run.
     """
     policy = policy or Policy()
     followups = followups or {}
@@ -159,6 +166,8 @@ def plan_day(
     window = scenario if scenario and scenario.date == date.isoformat() else None
     lookalikes = sorted(k for k, t in templates.items() if window and t.resembles == window.signal)
     colleagues = {p.user for p in narrative.people if p.user and p.user != persona.user}
+    existing = list(existing)
+    names = sorted({_leaf(e) for e in existing if _leaf(e)}, key=str.casefold)[:SHOWN_EXISTING]
     user = (
         f"Company story:\n{narrative.model_dump_json(indent=1)}\n\n"
         f"Persona: {persona.name}, {persona.role} ({persona.department}). Usual hours {persona.hours[0]}-"
@@ -168,6 +177,13 @@ def plan_day(
         f"Task catalog:\n{catalog(templates)}\n\n"
         f"Recent content the persona already wrote (do not repeat or paraphrase it):\n"
         + ("\n".join(f"- {h[:120]}" for h in history[-40:]) or "- none")
+        + (
+            "\n\nThese files and folders already exist for the persona. Never create, save or rename anything to one "
+            "of these names, with or without an extension; only explorer_rename_move may name one of them as the "
+            "existing file_name or folder_name it acts on:\n" + "\n".join(f"- {n}" for n in names)
+            if names
+            else ""
+        )
         + '\n\nReturn JSON {"items": [...]} with 5-10 items inside the usual hours, sorted by time. Each item: '
         "at (HH:MM), template (a catalog name), params (object with every listed parameter as a string), "
         "context (one sentence: why the persona does this now), and for breaks minutes instead of params. "
@@ -195,7 +211,7 @@ def plan_day(
         )
     )
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
-    rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups))
+    rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing)
     missing = sorted(set(followups) - {it.followup for it in draft.items})
     if rejects or missing:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
@@ -203,7 +219,7 @@ def plan_day(
             + [f"- follow-up {k} is not scheduled" for k in missing]
         )
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
-        rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups))
+        rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing)
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     missing = sorted(set(followups) - {it.followup for it in items})
@@ -228,9 +244,11 @@ def validate(
     colleagues: set[str] | None = None,
     scenario: Scenario | None = None,
     followups: set[str] | None = None,
+    existing: Iterable[str] = (),
 ) -> list[tuple[int, str]]:
     rejects: list[tuple[int, str]] = []
     seen = list(history)
+    taken = taken_names(existing)  # grows with each accepted item: a second item with the same name would overwrite
     for i, it in enumerate(items):
         why = _check_item(it, templates, seen, policy)
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
@@ -242,11 +260,36 @@ def validate(
         t = templates.get(it.template)
         if not why and scenario and t and t.resembles and scenario.start <= it.at <= scenario.end:
             why = f"{t.resembles}-like work must not overlap the scenario window {scenario.start}-{scenario.end}"
+        if not why:
+            for key, value in targets(it):
+                if taken_names([value]) & taken:
+                    why = f"{key}: {value!r} already exists or is used by another item, choose a different name"
+                    break
         if why:
             rejects.append((i, why))
         else:
             seen += content_values(it, templates)
+            taken |= taken_names(v for _, v in targets(it))
     return rejects
+
+
+def targets(it: PlanItem) -> list[tuple[str, str]]:
+    """(param, name) of what the item creates in the profile; the existing file/folder a rename acts on is not one."""
+    skip = _REFERS_TO_EXISTING.get(it.template, set[str]())
+    return [(k, v) for k, v in it.params.items() if k in _NAME_KEYS and k not in skip]
+
+
+def _leaf(path: str) -> str:
+    return re.split(r"[\\/]", path.strip())[-1].strip().rstrip(" .")  # Windows ignores trailing dot/space
+
+
+def taken_names(paths: Iterable[str]) -> set[str]:
+    """Casefolded leaf names, each also without a trailing extension: Explorer hides it, and Save As may add one."""
+    out: set[str] = set()
+    for p in paths:
+        leaf = _leaf(p).casefold()
+        out |= {n for n in (leaf, re.sub(r"\.[a-z0-9]{1,5}$", "", leaf)) if n}
+    return out
 
 
 def _check_item(it: PlanItem, templates: dict[str, Template], seen: list[str], policy: Policy) -> str | None:
@@ -273,6 +316,8 @@ def _check_item(it: PlanItem, templates: dict[str, Template], seen: list[str], p
             return f"{key}: must be one line"
         if key.endswith("_name") and re.search(r'[<>:"/\\|?*]', value):
             return f"{key}: not a valid file name"
+        if key.endswith("_name") and (value != value.strip() or value.endswith(".") or _DEVICE.fullmatch(value)):
+            return f"{key}: not a valid file name"  # Windows would alias it (trailing dot/space) or reserve it
         if r := policy.text_allowed(value, None):
             return f"{key}: {r}"
     for value in content_values(it, templates):
