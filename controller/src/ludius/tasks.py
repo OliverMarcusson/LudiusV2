@@ -331,21 +331,37 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
     return done.mail is None or _mail_ok(done.mail, task)
 
 
-def _element_matches(e: obs.Element, c: ElementCheck, task: Task) -> bool:
+def _element_matches(e: obs.Element, c: ElementCheck, task: Task, flags: int = re.I) -> bool:
     # Edit and RichEdit values end lines with \r or \r\n; multi-line params use \n.
     value = re.sub(r"\r\n?", "\n", e.value)
     return (
         (not c.role or e.role == c.role)
-        and (not c.name or re.search(task.fmt_re(c.name), e.name, re.I) is not None)
-        and (not c.value or re.search(task.fmt_re(c.value), value, re.I) is not None)
+        and (not c.name or re.search(task.fmt_re(c.name), e.name, flags) is not None)
+        and (not c.value or re.search(task.fmt_re(c.value), value, flags) is not None)
     )
 
 
-def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task) -> str | None:
-    """Why input is not allowed in this subgoal right now, or None when its require/forbid checks hold."""
+def _guard_matches(e: obs.Element, c: ElementCheck, task: Task) -> bool:
+    """A require check reads the field itself: only an element exposing its value (UIA Value pattern) counts, since
+    an unreadable field reads "" and would pass as empty; and only ASCII, case-folded as ASCII, so a lookalike such
+    as mvellınga (dotless i, which Unicode re.I folds to i) is not the planned address."""
+    # ponytail: ASCII only; a colleague whose name needs non-ASCII (Åberg) can't be mailed until guards fold Unicode
+    # without the lookalikes.
+    return "value" in e.actions and e.value.isascii() and _element_matches(e, c, task, re.I | re.A)
+
+
+def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Element | None = None) -> str | None:
+    """Why input is not allowed in this subgoal right now, or None when its require/forbid checks hold.
+
+    Every require check must hold in the foreground window, and a clicked or typed-into `target` must be in that
+    same window: fields in an owned dialog or popup must not authorise the foreground window's Send.
+    """
+    fg = next((i for i, w in enumerate(snap.windows) if w.kind == obs.Window.FOREGROUND), None)
+    if sg.require and target is not None and target.window != fg:
+        return "precondition: the target is not in the foreground window"
     for c in sg.require:
-        if not any(_element_matches(e, c, task) for e in snap.elements):
-            return f"precondition: no {c.name or c.role!r} element with value {task.fmt(c.value or '')!r}"
+        if not any(e.window == fg and _guard_matches(e, c, task) for e in snap.elements):
+            return f"precondition: no readable {c.name or c.role!r} field with value {task.fmt(c.value or '')!r}"
     for c in sg.forbid:
         if any(_element_matches(e, c, task) for e in snap.elements):
             return f"precondition: {c.name or c.role!r} must not match {task.fmt(c.value or '')!r}"

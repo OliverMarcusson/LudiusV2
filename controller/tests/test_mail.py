@@ -119,9 +119,9 @@ def test_foreign_or_malformed_mailbox_never_queries(monkeypatch: pytest.MonkeyPa
     assert mail.messages("a;rm -rf", "inbox", "s") == []
 
 
-SEED = mail.Message("mvellinga@corp.ludius.test", 1_000, "Hi Anna,\r\nyes\r\n")
+SEED = mail.Message("mvellinga@corp.ludius.test", 1_000, 1_000, "Hi Anna,\r\nyes\r\n")
 REPLY = mail.Message(
-    "aberg@corp.ludius.test", 5_000, "Yes, booked.\r\n-----\r\nHi Anna, yes", ("mvellinga@corp.ludius.test",)
+    "aberg@corp.ludius.test", 5_000, 5_000, "Yes, booked.\r\n-----\r\nHi Anna, yes", ("mvellinga@corp.ludius.test",)
 )
 
 
@@ -159,15 +159,43 @@ def test_delivered_needs_sender_time_and_a_real_body(
 def test_sent_copy_must_go_to_the_planned_recipient_alone(
     monkeypatch: pytest.MonkeyPatch, sent_to: tuple[str, ...]
 ) -> None:
-    sent = mail.Message("aberg@corp.ludius.test", 5_000, "Yes, booked.", sent_to)
+    sent = mail.Message("aberg@corp.ludius.test", 5_000, 0, "Yes, booked.", sent_to)
 
     def messages(user: str, folder: str, _subject: str) -> list[mail.Message]:
         return [sent] if (user, folder) == ("aberg", "sent") else [REPLY]
 
     monkeypatch.setattr(mail, "messages", messages)
     assert not mail.delivered("mvellinga@corp.ludius.test", "inbox", "s", "yes booked", "aberg@corp.ludius.test", 1)
-    sent = mail.Message("aberg@corp.ludius.test", 5_000, "Yes, booked.", ("mvellinga@corp.ludius.test",))
+    sent = mail.Message("aberg@corp.ludius.test", 5_000, 0, "Yes, booked.", ("mvellinga@corp.ludius.test",))
     assert mail.delivered("mvellinga@corp.ludius.test", "inbox", "s", "yes booked", "aberg@corp.ludius.test", 1)
+
+
+MIN = mail.MINUTE_MS
+START = 100 * MIN + 8_000  # the task started 8 s into a minute
+
+
+@pytest.mark.parametrize(
+    ("submit", "delivery", "ok"),
+    [
+        (START + 26_000, START + 27_000, True),  # recipient copy: delivered a second after submit
+        (START + 26_000, 100 * MIN, True),  # Sent Items copy: delivery cut to the minute, before the task start
+        (START + 30 * MIN, 50 * MIN, False),  # an old message with a forged future submit time
+        (50 * MIN, START + MIN, False),  # an old submit time, delivered (again) during the task
+        (START + 5 * MIN, START + MIN, False),  # submit long after delivery: times disagree
+        (START + 1_000, 0, False),  # no delivery time
+        (0, START + 1_000, False),  # no submit time
+    ],
+)
+def test_delivered_needs_submit_and_delivery_times_in_the_task(
+    monkeypatch: pytest.MonkeyPatch, submit: int, delivery: int, ok: bool
+) -> None:
+    m = mail.Message("aberg@corp.ludius.test", submit, delivery, "Yes, booked.", ("mvellinga@corp.ludius.test",))
+
+    def messages(*_: str) -> list[mail.Message]:
+        return [m]
+
+    monkeypatch.setattr(mail, "messages", messages)
+    assert mail.delivered("mvellinga@corp.ludius.test", "inbox", "s", "yes", "aberg@corp.ludius.test", START) is ok
 
 
 @pytest.mark.parametrize("error", [FileNotFoundError("pwsh"), subprocess.TimeoutExpired("pwsh", 30)])
@@ -186,8 +214,10 @@ def test_send_is_blocked_unless_to_is_exact_and_cc_bcc_empty() -> None:
     task = Task(t, PlanItem.model_validate(item()), random.Random(0))
     sg = t.subgoals["send_button"]
 
-    def snap(**fields: str) -> obs.Snapshot:
-        return obs.Snapshot(elements=[obs.Element(role="edit", name=k, value=v) for k, v in fields.items()])
+    def snap(**fields: str) -> obs.Snapshot:  # the fields, readable, in the foreground window (index 1)
+        return obs.Snapshot(windows=[obs.Window(kind=obs.Window.POPUP), obs.Window(kind=obs.Window.FOREGROUND)],
+                            elements=[obs.Element(role="edit", name=k, value=v, actions=["value"], window=1)
+                                      for k, v in fields.items()])  # fmt: skip
 
     resolved = ("Marcus Vellinga", "Marcus Vellinga <mvellinga@corp.ludius.test>")  # how Outlook shows it, resolved
     for to in ("mvellinga@corp.ludius.test", "mvellinga@corp.ludius.test;", *resolved):
@@ -208,6 +238,38 @@ def test_send_is_blocked_unless_to_is_exact_and_cc_bcc_empty() -> None:
     assert preconditions(sg, toggle, task) is not None
     reply = cli.load_templates()["outlook_reply_mail"].subgoals["send_shortcut"]
     assert reply.require == sg.require and reply.forbid == sg.forbid
+
+
+def test_send_guard_reads_readable_ascii_fields_in_the_foreground_window() -> None:
+    t = cli.load_templates()["outlook_send_mail"]
+    task = Task(t, PlanItem.model_validate(item()), random.Random(0))
+    sg = t.subgoals["send_button"]
+    fields = {"To": "mvellinga@corp.ludius.test", "Cc": "", "Bcc": ""}
+
+    def snap(where: dict[str, int] | None = None, readable: str = "To Cc Bcc", **values: str) -> obs.Snapshot:
+        f = fields | values
+        return obs.Snapshot(windows=[obs.Window(kind=obs.Window.FOREGROUND), obs.Window(kind=obs.Window.OWNED)],
+                            elements=[obs.Element(role="edit", name=k, value=v, window=(where or {}).get(k, 0),
+                                                  actions=["value"] if k in readable.split() else [])
+                                      for k, v in f.items()])  # fmt: skip
+
+    assert preconditions(sg, snap(), task) is None
+    # The observer reads "" for a field without a Value pattern: that is not an empty Bcc.
+    assert preconditions(sg, snap(readable="To Cc"), task) is not None
+    assert preconditions(sg, snap(readable="To Bcc"), task) is not None
+    # Fields in another window do not authorise the foreground one; nor does a Send button in another window.
+    assert preconditions(sg, snap(where={"To": 1}), task) is not None
+    assert preconditions(sg, snap(where={"Bcc": 1}), task) is not None
+    send = obs.Element(role="button", name="Send", actions=["invoke"])
+    assert preconditions(sg, snap(), task, send) is None
+    send.window = 1
+    assert preconditions(sg, snap(), task, send) is not None
+    assert preconditions(sg, obs.Snapshot(elements=snap().elements), task) is not None  # no foreground window
+    # Lookalikes: Unicode re.I folds dotless i (U+0131) to i and the Kelvin sign to k.
+    for to in ("mvell\u0131nga@corp.ludius.test", "mvellinga@corp.lud\u0131us.test", "Marcus Vell\u0131nga",
+               "Marcus Vellinga <mvellinga@corp.ludius.test>\u200b"):  # fmt: skip
+        assert preconditions(sg, snap(To=to), task) is not None, to
+    assert preconditions(sg, snap(To="MVellinga@Corp.Ludius.Test"), task) is None  # ASCII case still folds
 
 
 def test_value_less_typing_counts_only_where_the_template_says_so() -> None:

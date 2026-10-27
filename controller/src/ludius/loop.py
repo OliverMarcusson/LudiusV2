@@ -379,7 +379,7 @@ class Runner:
 
     def _post_check(self, o: Option, sg: Subgoal, task: Task) -> str | None:
         """Defense in depth: re-check the chosen option against policy and the subgoal's preconditions."""
-        if o.kind != "rescan" and (r := preconditions(sg, self.snap, task)):
+        if o.kind != "rescan" and (r := preconditions(sg, self.snap, task, o.element)):
             return r
         if o.element is not None:
             r = self.policy.element_allowed(o.element, sg.allow_destructive)
