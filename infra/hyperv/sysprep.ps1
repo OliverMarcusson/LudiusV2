@@ -20,7 +20,7 @@ foreach ($line in Get-Content (Join-Path $root '.env')) { if ($line -match '^\s*
 
 if ($Confirm -ne $VM) { throw "sysprep needs -Confirm $VM (the VM name again)" }
 if ($VM -notmatch '^ludius-[A-Za-z0-9-]+$') { throw "not a range VM: $VM" }
-if ($VM -in $cfg.LUDIUS_VM, $cfg.LUDIUS_DC_VM) { throw "$VM is the source test VM or the range DC: never generalized" }
+if ($VM -in $cfg.LUDIUS_VM, $cfg.LUDIUS_SRV_VM) { throw "$VM is the source test VM or the range server: never generalized" }
 $state = (Get-VM -Name $VM).State
 if ($state -ne 'Running') { throw "$VM is $state; start it yourself (one-VM cap) before generalizing" }
 if ($Unattend -and -not (Test-Path $Unattend)) { throw "no answer file at $Unattend" }

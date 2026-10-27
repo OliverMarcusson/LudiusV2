@@ -29,7 +29,7 @@ if (Test-Path $envFile) {
     foreach ($line in Get-Content $envFile) { if ($line -match '^\s*([A-Z0-9_]+)=(.*)$') { $values[$Matches[1]] = $Matches[2] } }
 }
 $values['LUDIUS_VM'] = $VMName
-$values['LUDIUS_ADMIN_USER'] = $AdminUser
+$values['LUDIUS_ADMIN_USER'] = ".\$AdminUser"  # local account: a bare name means the domain once the VM is joined
 $values['LUDIUS_ADMIN_PASSWORD'] = New-Password
 $values['LUDIUS_PERSONA_USER'] = $PersonaUser
 $values['LUDIUS_PERSONA_PASSWORD'] = New-Password

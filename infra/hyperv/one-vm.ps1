@@ -1,6 +1,6 @@
 # Owner's cap: at most one Ludius VM up on this host; anything not Off or Saved counts (Paused, Starting, Saving).
 # Every activation (start, restore) runs through Invoke-OneVm: a host-wide named mutex is held across the recheck and
-# the activation, so two processes (host agent, new-vm.ps1, new-dc.ps1) can't both see an idle host and both start.
+# the activation, so two processes (host agent, new-vm.ps1, new-srv.ps1) can't both see an idle host and both start.
 # Fails closed: if the lock can't be taken within -LockSeconds, nothing is activated.
 # Exempt: the range's Linux infrastructure server (Samba AD DC + grommunio, owner-approved 27 Oct 2026) runs beside
 # the one persona VM, in either start order. It is identified by the Hyper-V VM Id new-srv.ps1 recorded when it
