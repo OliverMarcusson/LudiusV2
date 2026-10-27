@@ -189,15 +189,23 @@ def test_send_is_blocked_unless_to_is_exact_and_cc_bcc_empty() -> None:
     def snap(**fields: str) -> obs.Snapshot:
         return obs.Snapshot(elements=[obs.Element(role="edit", name=k, value=v) for k, v in fields.items()])
 
-    assert preconditions(sg, snap(To="mvellinga@corp.ludius.test", Cc=""), task) is None
-    assert preconditions(sg, snap(To="mvellinga@corp.ludius.test;"), task) is None
-    assert preconditions(sg, snap(To="Marcus Vellinga", Cc=""), task) is None  # Outlook resolved the address
-    for bad in (snap(To="mvellinga@corp.ludius.test; outside@example.com"),
-                snap(To="Marcus Vellinga; outside@example.com"), snap(To="Lars Nord"),
-                snap(To="mvellinga@corp.ludius.test", Cc="outside@example.com"),
-                snap(To="mvellinga@corp.ludius.test", Bcc="lnord@corp.ludius.test"),
-                snap(To="lnord@corp.ludius.test"), snap()):  # fmt: skip
+    for to in ("mvellinga@corp.ludius.test", "mvellinga@corp.ludius.test;", "Marcus Vellinga"):  # resolved name ok
+        assert preconditions(sg, snap(To=to, Cc="", Bcc=""), task) is None
+    for bad in (snap(To="mvellinga@corp.ludius.test; outside@example.com", Cc="", Bcc=""),
+                snap(To="Marcus Vellinga; outside@example.com", Cc="", Bcc=""), snap(To="Lars Nord", Cc="", Bcc=""),
+                snap(To="mvellinga@corp.ludius.test", Cc="outside@example.com", Bcc=""),
+                snap(To="mvellinga@corp.ludius.test", Cc="", Bcc="lnord@corp.ludius.test"),
+                snap(To="lnord@corp.ludius.test", Cc="", Bcc=""),
+                snap(To="mvellinga@corp.ludius.test", Cc=""),  # Bcc not on screen: fails closed
+                snap(To="mvellinga@corp.ludius.test", Bcc=""),  # Cc not on screen
+                snap()):  # fmt: skip
         assert preconditions(sg, bad, task) is not None
+    # A toggle button named Bcc (the ribbon's Show Fields) is not the field.
+    toggle = obs.Snapshot(elements=[*snap(To="mvellinga@corp.ludius.test", Cc="").elements,
+                                    obs.Element(role="button", name="Bcc", value="")])  # fmt: skip
+    assert preconditions(sg, toggle, task) is not None
+    reply = cli.load_templates()["outlook_reply_mail"].subgoals["send_shortcut"]
+    assert reply.require == sg.require and reply.forbid == sg.forbid
 
 
 def test_value_less_typing_counts_only_where_the_template_says_so() -> None:
