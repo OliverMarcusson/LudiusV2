@@ -75,7 +75,8 @@ def _query(user: str, folder: str, subject: str) -> list[Message] | None:
            f"and f.proptag={PR_SENDER_SMTP} left join message_properties r on r.message_id=m.message_id "
            f"and r.proptag={PR_SENT_REPRESENTING_SMTP} where m.parent_fid={FOLDERS[folder]} "
            f"and m.is_associated=0 and cast(s.propval as text)=cast(x'{subject.encode().hex()}' as text)")  # fmt: skip
-    remote = (f"sudo sqlite3 -readonly -separator ' ' {db}/exmdb/exchange.sqlite3 \"{sql}\" | "
+    # pipefail: a locked or failing database must fail the query, never read as "no messages" (the baseline).
+    remote = (f"set -o pipefail; sudo sqlite3 -readonly -separator ' ' {db}/exmdb/exchange.sqlite3 \"{sql}\" | "
               f"while read i t d s r c; do printf '%s %s %s %s %s\\n' \"$i\" \"$t\" \"$d\" \"$s\" \"$r\"; "
               f"sudo zstdcat -qf {db}/cid/$c; "
               f"printf '\\036'; done")  # fmt: skip

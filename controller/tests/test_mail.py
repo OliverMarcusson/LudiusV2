@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import random
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -535,3 +537,22 @@ def test_send_is_refused_when_the_recipient_became_reserved(tmp_path: Path) -> N
     assert not recipient_reserved(write, task, reserved)  # only the sending step is refused
     assert not recipient_reserved(send, task, Policy())
     assert RESERVED_RECIPIENT.startswith("precondition")
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash to run the remote pipeline")
+def test_failing_database_is_unreadable_not_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Re-check of a3b6b7d: a locked database exited 0 with no output through the pipe, so the baseline read as
+    # empty and an earlier playback's mail could pass done.
+    fake = tmp_path / "sudo"
+    fake.write_text('#!/bin/sh\necho "Error: database is locked" >&2\nexit 5\n', encoding="utf-8", newline="\n")
+    fake.chmod(0o755)
+    bash, real_run = shutil.which("bash"), subprocess.run
+    assert bash
+
+    def run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[bytes]:
+        env = {**os.environ, "PATH": f"{tmp_path.as_posix()}:/usr/bin:/bin"}
+        return real_run([bash, "-c", cmd[-1]], capture_output=True, timeout=30, env=env)
+
+    monkeypatch.setattr(mail, "_host", lambda: "10.0.0.1")
+    monkeypatch.setattr(mail.subprocess, "run", run)
+    assert mail._query("aberg", "sent", "x") is None  # pyright: ignore[reportPrivateUsage]
