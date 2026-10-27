@@ -194,3 +194,120 @@ async def _scheduled_worker(tmp_path: Path) -> None:
             for t in live:
                 t.cancel()
             await asyncio.gather(*live, return_exceptions=True)
+
+
+@pytest.mark.service
+def test_realtime_day_waits_on_a_durable_timer_across_a_worker_restart(tmp_path: Path) -> None:
+    if not CLI.exists():
+        pytest.skip(f"no cached Temporal CLI at {CLI}; not downloading one")
+    now = dt.datetime.now(ZoneInfo(TZ))
+    if now.hour == 23 and now.minute >= 55:
+        pytest.skip("slot would land after midnight, on the next plan date")
+    asyncio.run(_timer_across_restart(tmp_path, now))
+
+
+async def _timer_across_restart(tmp_path: Path, now: dt.datetime) -> None:
+    """Real wait, no clock tricks: the slot is due at the next whole minute (plus the workflow's own 0-120 s jitter)."""
+    runs, desk, calls = tmp_path / "runs", tmp_path / "desk" / "vm.lock", list[str]()
+    today = durable.plan_date(dt.datetime.now(dt.UTC), TZ)
+    later = (now + dt.timedelta(minutes=1)).strftime("%H:%M")  # at least a few seconds ahead
+    plan = tmp_path / "runs" / "plans" / f"{today}-aberg.yaml"
+    plan.parent.mkdir(parents=True)
+    plan.write_text(DayPlan(persona="aberg", date=today, items=[note("00:00"), note(later)]).model_dump_json(),
+                    encoding="utf-8")  # fmt: skip
+
+    @contextmanager
+    def factory(day: durable.DayInput) -> Generator[DayRunner]:
+        calls.append("open")
+        log = durable.HeartbeatLog(tmp_path / "day.jsonl")
+        try:
+            yield DayRunner(FakeRunner(log, calls), FakeSession(calls), load_templates(), log, day.clock, 0,  # type: ignore[arg-type]
+                            sleep=lambda s: None)  # fmt: skip
+        finally:
+            calls.append("close")
+            log.close()
+
+    async def stop(task: asyncio.Task[None]) -> None:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    def reservation() -> str | None:
+        rec = scheduled.DayOwner(desk).read()
+        return rec and rec.owner
+
+    live: list[asyncio.Task[None]] = []
+    async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
+        data_converter=pydantic_data_converter, ui=False, ip="127.0.0.1",
+        dev_server_existing_path=str(CLI), dev_server_database_filename=str(tmp_path / "temporal.db"),
+    ) as env:  # fmt: skip
+        client = env.client
+        sched = await client.create_schedule(
+            durable.schedule_id("aberg"), durable.schedule_for("aberg", "09:00", TZ, "realtime")
+        )
+        try:
+            live.append(asyncio.create_task(scheduled.serve(client, runs, "aberg", desk, factory, lambda d, a: {})))
+            await sched.trigger()
+            child = client.get_workflow_handle(f"day-aberg-{today}", result_type=list[durable.Done])
+
+            async def events() -> list[Any]:
+                return [e async for e in child.fetch_history_events()]
+
+            # Server ground truth: the 00:00 slot finished, then the slot-B timer started; nothing else happened.
+            for _ in range(300):
+                try:
+                    started = [e for e in await events() if e.HasField("timer_started_event_attributes")]
+                except Exception:  # noqa: BLE001 - the child does not exist until the schedule fires
+                    started = []
+                if started:
+                    break
+                await asyncio.sleep(0.1)
+            assert started, "the day never reached its durable timer"
+            timer = started[0]
+            fire_at = timer.event_time.ToDatetime(dt.UTC) + dt.timedelta(
+                seconds=timer.timer_started_event_attributes.start_to_fire_timeout.ToTimedelta().total_seconds()
+            )
+            assert dt.datetime.now(dt.UTC) < fire_at - dt.timedelta(seconds=3), (
+                "timer too close to due to prove a restart"
+            )
+            assert calls == ["open", "normalize", "run note 0000"] and reservation() == f"default/day-aberg-{today}"
+
+            await stop(live[0])  # the workflow stays open on the server while no worker exists
+            assert (await child.describe()).status == WorkflowExecutionStatus.RUNNING
+            assert (
+                calls == ["open", "normalize", "run note 0000", "close"]
+                and reservation() == f"default/day-aberg-{today}"
+            )
+            live.append(asyncio.create_task(scheduled.serve(client, runs, "aberg", desk, factory, lambda d, a: {})))
+            await asyncio.sleep(2)  # worker back, replaying with the timer still pending
+            assert (
+                "run note" + later.replace(":", "") not in calls
+                and (await child.describe()).status == WorkflowExecutionStatus.RUNNING
+            )
+
+            assert [d.status for d in await asyncio.wait_for(child.result(), 300)] == ["done", "done"]
+            fired = dt.datetime.now(dt.UTC)
+            assert fired >= fire_at - dt.timedelta(seconds=1), "the slot ran before its durable timer was due"
+            # Slot A is never replayed onto the desktop; B runs once after the restart, then the owner is released.
+            runs_seen = [c for c in calls if c.startswith("run")]
+            assert runs_seen == ["run note 0000", f"run note {later.replace(':', '')}"] and calls[-1] == "close", calls
+            assert calls.index("close") < calls.index(runs_seen[1]) and reservation() is None
+            # Server order: slot A scheduled, TimerStarted, TimerFired, slot B scheduled; one timer, no second slot A.
+            seq: list[str] = []
+            for e in await events():
+                if e.HasField("timer_started_event_attributes"):
+                    seq.append("timer_started")
+                elif e.HasField("timer_fired_event_attributes"):
+                    seq.append("timer_fired")
+                elif e.HasField("activity_task_scheduled_event_attributes"):
+                    seq.append("scheduled:" + e.activity_task_scheduled_event_attributes.activity_type.name)
+            slots_at = [i for i, x in enumerate(seq) if x == "scheduled:slot"]
+            assert seq.count("timer_started") == 1 and len(slots_at) == 2, seq
+            assert slots_at[0] < seq.index("timer_started") < seq.index("timer_fired") < slots_at[1], seq
+            print("calls", calls, "events", seq, "timer fires", fire_at.isoformat())
+            await stop(live[-1])
+            await sched.delete()
+        finally:
+            for t in live:
+                t.cancel()
+            await asyncio.gather(*live, return_exceptions=True)
