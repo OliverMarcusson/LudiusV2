@@ -106,7 +106,7 @@
 <body>
 <main>
   <h1>Ludius V2: progress against the spec</h1>
-  <p class="meta"><span>Updated 27 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/d10103b"><code>d10103b</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
+  <p class="meta"><span>Updated 27 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/4acab58"><code>4acab58</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
 
   <div class="summary" id="summary"></div>
 
@@ -129,6 +129,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-27">27 Oct 2026</time><span>4acab58 narrows optional BASH in the compose-init test and wraps two owned test files without assertion/skip changes. Targeted offline21 tests pass; reported full-project ruff check/format and strict pyright are clean with the correct venv interpreter. No service/VM/model calls. Haiku cleanup worker archived; Sonnet-high history-concurrency work continues in separate uncommitted files.</span></li>
       <li><time datetime="2026-10-27">27 Oct 2026</time><span>d10103b repairs missing history after published-plan retry, without model calls, preserving prior/manual/other-persona rows and appending no duplicates on repeated recovery. Simulated publish-before-append crash, partial content sets/newline tails and corrupt journals covered;142 offline tests pass. Corrupt/truncated journal still fails closed, appends lack fsync and manual races remain qualified. Completed worker archived; Sonnet-high concurrency-integrity investigation and Haiku-xhigh test lint/type cleanup assigned.</span></li>
       <li><time datetime="2026-10-27">27 Oct 2026</time><span>67ffbbe proves actual calendar-fired nightly generation on cached private Temporal with scripted LLM, then synthetic next-day ScheduledDay playback reads the exact plan; two runs pass, no extra model call on retry, workers/server stopped. No real-model/next-day-calendar/deployment claim. 67fda85 atomically publishes complete exclusive new plans using same-directory temp/fsync/hard-link, preserving concurrent winner; six regressions,18 focused tests. Completed workers archived. Offline Opus-medium task addresses the remaining plan-publication/content-history crash gap.</span></li>
       <li><time datetime="2026-10-27">27 Oct 2026</time><span>49461e8 stops local/new durable days after failed break unlock, including late/nested interruptions; clock cleanup/abort remains active. Legacy failed-break replay passes with a version patch, mutated no-patch control fails; old histories intentionally preserve recorded continuation. Real private-server failed-unlock variant stops before later slot and releases ownership;130 offline tests pass. No VM/paid calls. Worker archived; next scoped offline task protects exclusive new-plan publication from partial final files.</span></li>
