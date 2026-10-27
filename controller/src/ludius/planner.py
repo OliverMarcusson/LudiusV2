@@ -262,14 +262,15 @@ def validate(
             why = f"{t.resembles}-like work must not overlap the scenario window {scenario.start}-{scenario.end}"
         if not why:
             for key, value in targets(it):
-                if taken_names([value]) & taken:
+                if taken_names([value], stem=key != "folder_name") & taken:
                     why = f"{key}: {value!r} already exists or is used by another item, choose a different name"
                     break
         if why:
             rejects.append((i, why))
         else:
             seen += content_values(it, templates)
-            taken |= taken_names(v for _, v in targets(it))
+            for key, value in targets(it):
+                taken |= taken_names([value], stem=key != "folder_name")
     return rejects
 
 
@@ -283,12 +284,16 @@ def _leaf(path: str) -> str:
     return re.split(r"[\\/]", path.strip())[-1].strip().rstrip(" .")  # Windows ignores trailing dot/space
 
 
-def taken_names(paths: Iterable[str]) -> set[str]:
-    """Casefolded leaf names, each also without a trailing extension: Explorer hides it, and Save As may add one."""
+def taken_names(paths: Iterable[str], stem: bool = True) -> set[str]:
+    """Casefolded leaf names, each also without a trailing extension: Explorer hides it, and Save As may add one.
+
+    A planned folder keeps its literal name (`finance.receivables` is not `finance.payables`); an inventory entry
+    may be either, so it gets both. ponytail: a dotted planned file name may be over-rejected; costs one repair.
+    """
     out: set[str] = set()
     for p in paths:
         leaf = _leaf(p).casefold()
-        out |= {n for n in (leaf, re.sub(r"\.[^.]+$", "", leaf)) if n}
+        out |= {n for n in (leaf, re.sub(r"\.[^.]+$", "", leaf) if stem else leaf) if n}
     return out
 
 
