@@ -106,6 +106,7 @@ def s3_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         log.close()
 
 
+@pytest.mark.service
 def test_traces_and_world_round_trip_incrementally(pg: str, tmp_path: Path) -> None:
     runs = tmp_path / "runs"
     log = GroundTruth(runs / "days" / "2026-11-02-aberg.jsonl")
@@ -137,6 +138,7 @@ def test_traces_and_world_round_trip_incrementally(pg: str, tmp_path: Path) -> N
     log.close()
 
 
+@pytest.mark.service
 def test_rewritten_log_is_refused(pg: str, tmp_path: Path) -> None:
     log = tmp_path / "a.jsonl"
     log.write_text('{"event": "x"}\n{"event": "y"}\n', encoding="utf-8")
@@ -151,6 +153,7 @@ def test_rewritten_log_is_refused(pg: str, tmp_path: Path) -> None:
         assert [r["event"] for r in store.trace(conn, "a.jsonl")] == ["x", "y"]  # the failed sync left nothing
 
 
+@pytest.mark.service
 def test_screenshots_go_to_s3_once_and_read_back_checked(pg: str, s3_server: str, tmp_path: Path) -> None:
     runs = tmp_path / "runs"
     (runs / "visual").mkdir(parents=True)

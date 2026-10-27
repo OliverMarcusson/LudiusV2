@@ -49,6 +49,7 @@ class FlakyRunner(FakeRunner):
         return super().run(task, between)
 
 
+@pytest.mark.service
 def test_realtime_day_keeps_the_timeline_and_retries_in_place(tmp_path: Path) -> None:
     asyncio.run(_realtime_day(tmp_path))
 
@@ -117,6 +118,7 @@ def controller_a(address: str, tmp: str) -> None:
                 Path(tmp) / "desk.lock", heartbeat_s=2, retry_s=1)  # fmt: skip
 
 
+@pytest.mark.service
 def test_killed_controller_resumes_the_day_and_desktop_has_one_controller(tmp_path: Path) -> None:
     asyncio.run(_killed(tmp_path))
 
@@ -178,6 +180,7 @@ class HungRunner(FakeRunner):
         return super().run(task, between)
 
 
+@pytest.mark.service
 def test_hung_attempt_is_stopped_before_its_retry_types(tmp_path: Path) -> None:
     asyncio.run(_hung(tmp_path))
 
@@ -215,6 +218,7 @@ class BusyRunner(FakeRunner):
         return super().run(task, between)
 
 
+@pytest.mark.service
 def test_cancelled_time_jump_day_resets_the_clock_after_the_task_stops(tmp_path: Path) -> None:
     asyncio.run(_cancelled(tmp_path))
 
@@ -250,6 +254,7 @@ class CanaryRunner(FakeRunner):
         return Outcome("failed" if task.template.app.lower() == "notepad" else "done", 1)
 
 
+@pytest.mark.service
 def test_day_starts_with_its_canaries_and_skips_drifted_apps(tmp_path: Path) -> None:
     asyncio.run(_canary_day(tmp_path))
 
@@ -329,6 +334,7 @@ def _break_day(tmp_path: Path, calls: list[str], fail_at: str = "") -> DayRunner
     return DayRunner(runner, session, load_templates(), gt, "time-jump", 0, set_clock=rng.set_clock)  # type: ignore[arg-type]
 
 
+@pytest.mark.service
 def test_every_desktop_step_of_a_time_jump_day_sets_the_clock_first(tmp_path: Path) -> None:
     asyncio.run(_reassert(tmp_path))
 
@@ -349,6 +355,7 @@ async def _reassert(tmp_path: Path) -> None:
         ]  # fmt: skip
 
 
+@pytest.mark.service
 def test_a_failed_clock_set_stops_the_step_before_it_touches_the_desktop(tmp_path: Path) -> None:
     asyncio.run(_fail_closed(tmp_path))
 

@@ -67,7 +67,8 @@ The header also shows two OpenRouter counters, **Jev calls** (Decisions API) and
 
 ```powershell
 cd controller
-uv run ruff check src tests; uv run ruff format --check src tests; uv run pyright; uv run pytest
+uv run ruff check src tests; uv run ruff format --check src tests; uv run pyright; uv run pytest    # full: starts temporary Temporal, PostgreSQL and MinIO servers; skips any it cannot start
+uv run pytest -m "not service"    # offline: same suite minus the tests marked service, starts nothing
 $env:LUDIUS_LIVE_JEV=1; uv run pytest -k jev_choice    # live Jev replay on fixtures
 dotnet build Ludius.sln
 cd web\monitor; bun run lint; bun run build

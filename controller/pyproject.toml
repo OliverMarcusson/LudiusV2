@@ -53,3 +53,4 @@ reportMissingTypeStubs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["service: starts a real Temporal, PostgreSQL or MinIO server; deselect with -m 'not service'"]
