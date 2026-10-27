@@ -14,7 +14,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ludius import mail
+from ludius import guestfile, mail
 from ludius.v1 import observation_pb2 as obs
 
 
@@ -77,11 +77,28 @@ class MailCheck(Strict):
     above_quote: bool = False  # a reply: the body must come before the quoted original's From:/Sent: header
 
 
+class FileCheck(Strict):
+    """A file the task creates, read on the guest and never in the UI (ludius.guestfile). It declares the template's
+    write: `path` is profile-relative in a noise folder. The runner refuses to start the task if the file exists
+    (a task never overwrites); done needs it written after the task started, with `cells` (planned rows, cells split
+    by tabs) equal to the workbook's only sheet, case-insensitively (Excel's AutoCorrect and AutoComplete case).
+    """
+
+    path: str
+    cells: str = "{rows}"
+
+    @model_validator(mode="after")
+    def _noise_folder(self) -> FileCheck:
+        if guestfile.profile_path("u", self.path) is None or not self.path.lower().endswith(".xlsx"):
+            raise ValueError(f"file check {self.path!r}: an .xlsx in a noise folder {guestfile.NOISE_FOLDERS}")
+        return self
+
+
 class Done(Strict):
     """All given conditions must hold. `typed` means the content landed in the target element.
 
     `pixels` applies only to pixels-only snapshots and comes from the template's pixels block. `mail` is read on
-    the range server, so it holds the same on any snapshot.
+    the range server and `file` on the guest's disk, so they hold the same on any snapshot.
     """
 
     window: WindowCheck | None = None
@@ -90,6 +107,7 @@ class Done(Strict):
     typed: bool = False
     pixels: PixelsCheck | None = None
     mail: MailCheck | None = None
+    file: FileCheck | None = None
 
 
 class Subgoal(Strict):
@@ -224,6 +242,7 @@ class Task:
         self.owner = ""  # persona account and task start (guest clock, Unix ms): set by the runner
         self.started_ms = 0
         self.mail_before: mail.Seen | None = None  # mail present at task start (mail_baseline), set by the runner
+        self.files_absent: frozenset[str] | None = None  # file checks' paths proven absent at start (file_baseline)
         idx = (
             inst.variant
             if inst.variant is not None
@@ -234,6 +253,8 @@ class Task:
         # Mistake variants (spec section 6): `{p}_typo` is the value with one stray neighbouring key at the end,
         # typed first and then fixed (Backspace, rename) by a later subgoal.
         self.values = have | {f"{k}_typo": v + _neighbour(v[-1]) for k, v in have.items() if v and "\n" not in v}
+        # `{p}_enter`: the value ending in one Enter, so a spreadsheet's last cell is committed, not left in edit mode.
+        self.values |= {f"{k}_enter": v.rstrip("\n") + "\n" for k, v in have.items() if v}
         # Pixels read one row per line and a long line is cut at the window edge: `{p}_head` is the first
         # non-blank line, capped, for visible-text checks. A blank value has none, so its check can't match.
         self.values |= {f"{k}_head": next(x.strip() for x in v.splitlines() if x.strip())[:HEAD]
@@ -338,8 +359,8 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
     """True/False when the subgoal has a code check, None when it has none (Jev decides)."""
     if done is None:
         return None
-    if done.mail and not (done.window or done.foreground or done.element or done.typed or done.pixels):
-        return _mail_ok(done.mail, task)
+    if (done.mail or done.file) and not (done.window or done.foreground or done.element or done.typed or done.pixels):
+        return _outside_ok(done, task)
     on_pixels = any(pixels_window(w) for w in snap.windows)
     if done.pixels and not on_pixels and not (done.window or done.foreground or done.element or done.typed):
         return None  # a completion only pixels mode checks: with an accessibility tree, Jev decides as before
@@ -370,7 +391,12 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
 
         if not any(element_matches(e, c, task) for e in snap.elements):
             return False
-    return done.mail is None or _mail_ok(done.mail, task)
+    return _outside_ok(done, task)
+
+
+def _outside_ok(done: Done, task: Task) -> bool:
+    """The checks read outside the UI (range server, guest disk); last, since they cost a remote call."""
+    return (done.mail is None or _mail_ok(done.mail, task)) and (done.file is None or _file_ok(done.file, task))
 
 
 def element_matches(e: obs.Element, c: ElementCheck, task: Task, flags: int = re.I) -> bool:
@@ -436,3 +462,36 @@ def recipient_reserved(sg: Subgoal, task: Task, policy: Any) -> bool:
     """The shared send contract's policy check, at send time: a plan made before a mailbox became reserved must
     not send to it. `policy` is a ludius.policy.Policy (which imports this module)."""
     return bool(sg.done and sg.done.mail and policy.reserved(task.fmt(sg.done.mail.mailbox)))
+
+
+def file_baseline(task: Task) -> str | None:
+    """Why the task must not start (a file it would create exists, or can't be read), else None; sets
+    Task.files_absent. The runner calls it before any input: a task never overwrites a file."""
+    absent: set[str] = set()
+    for sg in task.template.subgoals.values():
+        if sg.done and (c := sg.done.file):
+            rel = task.fmt(c.path)
+            f = guestfile.read(task.owner, rel)
+            if f is None:
+                return f"{rel}: unreadable on the guest"
+            if f.exists:
+                return f"{rel}: already exists, never overwritten"
+            absent.add(rel)
+    task.files_absent = frozenset(absent)
+    return None
+
+
+def _file_ok(c: FileCheck, task: Task) -> bool:
+    rel = task.fmt(c.path)
+    if task.files_absent is None or rel not in task.files_absent:
+        return False  # not proven absent at start: it could be pre-existing state
+    f = guestfile.read(task.owner, rel)
+    if f is None or not f.exists or f.written_ms < task.started_ms:
+        return False
+    cells = guestfile.xlsx_cells(f.data)
+    want = guestfile.grid_cells(task.fmt(c.cells))
+    return cells is not None and bool(want) and _fold(cells) == _fold(want)
+
+
+def _fold(cells: dict[str, str]) -> dict[str, str]:
+    return {k: v.casefold() for k, v in cells.items()}

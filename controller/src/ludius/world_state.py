@@ -30,6 +30,7 @@ from ludius.tasks import Persona, Strict
 ARTIFACTS = {
     "notepad_write_note": "Documents\\{file_name}.txt",
     "wordpad_formatted_note": "Documents\\{file_name}.rtf",
+    "excel_new_workbook": "Documents\\{file_name}.xlsx",
     "paint_quick_sketch": "Pictures\\{file_name}.png",
     "explorer_new_folder": "Documents\\{folder_name}",
     "explorer_rename_move": "Documents\\{folder_name}\\{new_name}",

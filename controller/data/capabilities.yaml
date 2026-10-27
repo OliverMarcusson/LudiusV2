@@ -30,6 +30,10 @@ apps:
     process: outlook.exe
     start_query: outlook
     features: [send a mail to a colleague, reply to a mail, read the inbox, file a mail in a folder]
+  - name: excel
+    process: excel.exe
+    start_query: excel
+    features: [make a small new workbook with a few rows, save as .xlsx, enter numbers and short labels]
 # Subgoal vocabulary: what a subgoal may contain (the Subgoal schema), and the code-checkable completions.
 checks:
   window: "{process, title (regex), class_name, absent} - such a window exists (or not), foreground or background"

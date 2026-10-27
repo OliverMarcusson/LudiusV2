@@ -383,10 +383,12 @@ def _check_item(it: PlanItem, templates: dict[str, Template], seen: list[str], p
         if check and len(task.fmt(check)) > VALUE_MAX:
             return f"{name}: text too long, keep it under {VALUE_MAX - 20} characters in total"
     for key, value in {**it.params, **it.content}.items():
-        if not _PRINTABLE.match(value):
+        if not _PRINTABLE.match(value.replace("\t", " ") if key == "rows" else value):
             return f"{key}: non-ASCII text cannot be typed"
-        if "\n" in value and key != "body":
+        if "\n" in value and key not in ("body", "rows"):
             return f"{key}: must be one line"
+        if key == "rows" and (why := _grid(value)):
+            return f"rows: {why}"
         if key.endswith("_name") and re.search(r'[<>:"/\\|?*]', value):
             return f"{key}: not a valid file name"
         if key.endswith("_name") and (value != value.strip() or value.endswith(".") or _DEVICE.fullmatch(value)):
@@ -396,6 +398,29 @@ def _check_item(it: PlanItem, templates: dict[str, Template], seen: list[str], p
     for value in content_values(it, templates):
         if dup := near_duplicate(value, seen):
             return f"too similar to earlier content {dup[:60]!r}"
+    return None
+
+
+GRID_ROWS, GRID_COLS, CELL_MAX = 8, 5, 30
+# What Excel stores as typed: text from a letter (no leading = + - @, a formula), or a whole number. Excel turns
+# 1/11, 8:30, 30% or 1,000 into dates, times and numbers; the done check compares stored values and would fail.
+_CELL = re.compile(rf"[A-Za-z][A-Za-z0-9 .,'&/-]{{0,{CELL_MAX - 1}}}|0|[1-9][0-9]{{0,8}}")
+
+
+def _grid(rows: str) -> str | None:
+    """Spreadsheet rows typed from A1 (cells split by tabs): bounded, every cell non-empty and stored as typed."""
+    lines = rows.strip("\n").split("\n")
+    grid = [line.split("\t") for line in lines]
+    if not 1 <= len(grid) <= GRID_ROWS or any(not 1 <= len(r) <= GRID_COLS for r in grid):
+        return f"1-{GRID_ROWS} lines of 1-{GRID_COLS} tab-separated cells"
+    for r, row in enumerate(grid):
+        for c, cell in enumerate(row):
+            if not _CELL.fullmatch(cell) or cell != cell.strip():
+                return f"cell {cell!r}: a short text starting with a letter, or a whole number"
+            # AutoComplete finishes a text cell that starts a longer text above it in the column.
+            above = [g[c].casefold() for g in grid[:r] if c < len(g)]
+            if cell[0].isalpha() and any(a != cell.casefold() and a.startswith(cell.casefold()) for a in above):
+                return f"cell {cell!r}: Excel would complete it to a longer cell above it"
     return None
 
 

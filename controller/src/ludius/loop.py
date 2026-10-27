@@ -26,6 +26,7 @@ from ludius.tasks import (
     Subgoal,
     Task,
     check_done,
+    file_baseline,
     mail_baseline,
     pixels_window,
     preconditions,
@@ -217,6 +218,11 @@ class Runner:
             variant=task.variant,
             subgoals=task.subgoal_names,
         )
+        if why := file_baseline(task):  # before any input: the file it would create exists, or is unknown
+            self.log.write(event="blocked", host_ms=_now(), task=task.template.task, reason=why)
+            self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status="abandoned",
+                           reason=f"start: {why}", steps=0)  # fmt: skip
+            return Outcome("abandoned", 0, f"start: {why}", done)
         assisted = False
         for name in task.subgoal_names:
             sg = task.subgoal(name)
