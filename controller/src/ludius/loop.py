@@ -192,6 +192,13 @@ class Runner:
                 self._move_to(e)
                 self.agent.click()
                 time.sleep(0.15)
+                # The click is input too and can move the focus or bring up another window: check again, and type
+                # only if the focus is now on that field.
+                why, e = self._type_target(o, task, sg, text)
+                if why:
+                    return why
+                if e is None or not e.focused:
+                    return "the focusing click did not put the keyboard focus in the target field"
                 self._caret_to_end(e, sg)
             self._type(text)
         elif o.kind == "key":

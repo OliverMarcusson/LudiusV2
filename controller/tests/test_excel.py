@@ -365,6 +365,7 @@ def test_typing_rechecks_its_target_on_a_fresh_snapshot(
 
         def __init__(self) -> None:
             self.fresh, self.typed = snap(), list[str]()
+            self.after_click: obs.Snapshot | None = None
 
         def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
             return pb.ObserveResult(snapshot=self.fresh)
@@ -373,6 +374,8 @@ def test_typing_rechecks_its_target_on_a_fresh_snapshot(
             return 0
 
         def click(self, button: int = 0, count: int = 1) -> int:
+            self.fresh = self.after_click or self.fresh
+            self.fresh.elements[0].focused = True
             return 0
 
         def chord(self, vks: list[int]) -> int:
@@ -399,7 +402,11 @@ def test_typing_rechecks_its_target_on_a_fresh_snapshot(
         if planner_text:  # typing at the focus: the fresh foreground and focused field are checked too
             agent.fresh.elements[0].focused = True
             assert r.act(Option("o2", "type", "t", content=content), tk, sg) is not None and agent.typed == []
-    agent.fresh = snap()
+    for after in [snap(process="notepad.exe"), snap(name="Password", pw=True)]:  # the focusing click changed it
+        r.snap, agent.fresh, agent.after_click = snap(), snap(), after
+        assert r.act(Option("o1", "type", "t", element=r.snap.elements[0], content=content, literal=literal), tk, sg)
+        assert agent.typed == []
+    agent.fresh, agent.after_click = snap(), None
     assert (
         r.act(Option("o1", "type", "t", element=r.snap.elements[0], content=content, literal=literal), tk, sg) is None
     )
