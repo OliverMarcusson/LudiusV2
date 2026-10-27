@@ -50,10 +50,10 @@ subgoals:
   save_as:
     goal: "Open the Save As dialog with F12"
     keys: [F12]
-    # Keys only: for a new workbook the File tab and the toolbar Save open the Backstage, where F12 does nothing
-    # (run1, 12 steps there), and Jev clicked the search box over F12 (run2). Only F12 reaches the dialog.
+    # For a new workbook the File tab and the toolbar Save open the Backstage, where F12 does nothing (run1:
+    # 12 steps there); only F12 reaches the dialog. The search box (run2) is the shared no-text rule (options).
     avoid:
-      - {name: '.*'}
+      - {name: '^(File Tab|Save)$'}
     done: {window: {process: excel.exe, title: "^Save As$"}}
   name_file:
     goal: "Enter {file_name} as the file name in the Save As dialog"
