@@ -5,13 +5,16 @@ from __future__ import annotations
 import json
 import random
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pydantic
 import pytest
 
 from ludius.cli import load_templates
-from ludius.options import build_options, build_state, view
+from ludius.jev import Decision
+from ludius.loop import FILENAME_ROWS, FILENAME_TEXT, Runner
+from ludius.options import Option, build_options, build_state, view
 from ludius.policy import Policy
 from ludius.tasks import Done, PixelsCheck, Task, TaskInstance, Template, check_done
 from ludius.v1 import observation_pb2 as obs
@@ -248,3 +251,92 @@ def test_notepad_template_pixels_checks_for_body_and_file_name_on_real_rows() ->
     assert done(t, "fix_file_name", rows("notepad-save-as", name)) is True
     assert done(t, "name_file_typo", rows("notepad-save-as", name)) is False
     assert done(t, "fix_file_name", empty_ocr) is False
+
+
+def _step_log(snap: obs.Snapshot, t: Task, sg: str, typed_ok: bool, kind: str = "type") -> dict[str, Any]:
+    """The step event Runner._log_step writes after an action, without a live loop."""
+    events: list[dict[str, Any]] = []
+
+    def write(**kw: Any) -> None:
+        events.append(kw)
+
+    me = SimpleNamespace(log=SimpleNamespace(write=write), persona=SimpleNamespace(user="u"),
+                         agent=SimpleNamespace(vm="vm"))  # fmt: skip
+    d = Decision(choice="o1", confidence=1.0, probabilities={"o1": 1.0}, subgoal_done=0.0, off_track=0.0, model="m")
+    Runner._log_step(me, t, sg, snap, Option("o1", kind, "type the text"), d, "changed", 3,  # type: ignore[arg-type]
+                   check=(t.subgoal(sg), typed_ok))  # fmt: skip
+    return events[0]
+
+
+def _row(i: int, name: str, x: int, y: int, w: int, h: int = 20, password: bool = False) -> obs.Element:
+    return obs.Element(id=i, key=f"x{i}", role="text", name=name, framework_id="visual", password=password,
+                       bounds=obs.Rect(x=x, y=y, width=w, height=h))  # fmt: skip
+
+
+def test_filename_step_logs_the_verdict_and_bounded_rows_beside_the_label() -> None:
+    name = "pixels-walk-20261026-230211"
+    t = task(file_name=name, body="x")
+    typed = rf"C:\Users\aberg\Documents\{name}"  # as read live (runs/visual/20261026-230211-pixels-walk.txt)
+    snap = real("notepad-save-as")
+    for e in snap.elements:
+        if e.name == "*.txt":
+            e.name = typed
+    ev = _step_log(snap, t, "name_file", typed_ok=True)
+    f = ev["filename"]
+    assert f["verdict"] is True and f["typed_ok"] is True and f["geometry_only"] is True
+    assert f["labels"] == 1 and f["label"]["name"] == "File name:"
+    # Level with the label and reaching right of it: the value row only, not "Save as type:" below.
+    assert [c["name"] for c in f["candidates"]] == [typed]
+    assert "Save as type:" not in json.dumps(f)
+    # The verdict is check_done with the loop's typed_ok; this check has no `typed` condition, so it is unaffected.
+    assert _step_log(snap, t, "name_file", typed_ok=False)["filename"]["typed_ok"] is False
+    assert _step_log(snap, task(file_name=name + "-other", body="x"), "name_file", True)["filename"]["verdict"] is False
+
+
+def test_filename_step_before_typing_shows_the_placeholder_and_misread_rows() -> None:
+    t = task(file_name="meeting notes", body="x")
+    f = _step_log(real("notepad-save-as"), t, "name_file", True)["filename"]
+    assert f["verdict"] is False and [c["name"] for c in f["candidates"]] == ["*.txt"]
+    # A label merged with an appended-extension value: it is the label row itself, shown as read.
+    snap = screen([])
+    snap.elements.extend(
+        [
+            _row(1, "File name: meeting notes.txt.txt", 288, 688, 200),
+            _row(2, "meeting notes", 700, 690, 80),
+            _row(3, "meeting notes.txt", 400, 684, 200),
+        ]
+    )
+    f = _step_log(snap, t, "name_file", True)["filename"]
+    assert f["label"]["name"] == "File name: meeting notes.txt.txt" and f["labels"] == 1
+    assert [c["name"] for c in f["candidates"]] == ["meeting notes.txt", "meeting notes"]  # by x
+
+
+def test_filename_step_missing_label_empty_ocr_and_bounds() -> None:
+    t = task(file_name="meeting notes", body="x")
+    gone = real("notepad-save-as")
+    gone.elements.remove(next(e for e in gone.elements if e.name == "File name:"))
+    f = _step_log(gone, t, "name_file", True)["filename"]
+    assert f["verdict"] is False and f["label"] is None and f["labels"] == 0 and "candidates" not in f
+    empty = real("notepad-save-as")
+    del empty.elements[:]
+    f = _step_log(empty, t, "name_file", True)["filename"]
+    assert f == {"verdict": False, "typed_ok": True, "rows": 0, "labels": 0, "label": None, "geometry_only": True}
+    # Capped rows and text; masked or password rows beside the label are never listed.
+    snap = real("notepad-save-as")
+    label = next(e for e in snap.elements if e.name == "File name:").bounds
+    snap.elements.extend(_row(900 + i, "y" * 200, 400 + i, label.y, 50) for i in range(10))
+    snap.elements.extend(_row(950 + i, n, 300, label.y, 90, password=n == "hunter2")
+                         for i, n in enumerate(["••••••", "***", "hunter2"]))  # fmt: skip
+    f = _step_log(snap, t, "name_file", True)["filename"]
+    assert len(f["candidates"]) == FILENAME_ROWS and f["candidates_dropped"] == 11 - FILENAME_ROWS  # 10 + '*.txt'
+    assert all(len(c["name"]) <= FILENAME_TEXT for c in f["candidates"])
+    assert not {"••••••", "***", "hunter2"} & {c["name"] for c in f["candidates"]}
+
+
+def test_only_pixels_filename_steps_get_the_diagnostic() -> None:
+    t = task(file_name="meeting notes", body="x")
+    for sg in ("save_shortcut", "write_body", "confirm_save", "close_app"):
+        assert "filename" not in _step_log(real("notepad-save-as"), t, sg, True)
+    # With an accessibility tree there is no pixels diagnostic either.
+    tree = obs.Snapshot(windows=[obs.Window(title="Save As", process_name="notepad.exe", kind=obs.Window.FOREGROUND)])
+    assert "filename" not in _step_log(tree, t, "name_file", True)

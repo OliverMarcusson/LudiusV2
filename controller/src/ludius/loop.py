@@ -326,7 +326,8 @@ class Runner:
             if not snap.settled:
                 last_result += " (screen still busy)"
             history.append(f"{_short(chosen)} -> {outcome}")
-            self._log_step(task, name, snap, chosen, decision, last_result, step, host_ms=host_ms, options=options)
+            self._log_step(task, name, snap, chosen, decision, last_result, step, host_ms=host_ms, options=options,
+                           check=(sg, typed_ok))  # fmt: skip
             recovering = False
 
             progress = changed and not revisit
@@ -417,6 +418,7 @@ class Runner:
         step: int,
         host_ms: int = 0,
         options: list[Option] | None = None,
+        check: tuple[Subgoal, bool] | None = None,
     ) -> None:
         fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
         pixels = fg is not None and pixels_window(fg)
@@ -427,6 +429,7 @@ class Runner:
             if pixels and options
             else None
         )
+        filename = _filename_diag(snap, task, *check) if pixels and check else None
         e = o.element
         self.log.write(
             event="step",
@@ -441,6 +444,7 @@ class Runner:
             process=fg.process_name if fg else "",
             **({"trust": "pixels"} if pixels else {}),
             **({"offered": offered} if offered else {}),
+            **({"filename": filename} if filename else {}),
             element={"id": e.id, "key": e.key, "role": e.role, "name": e.name} if e else None,
             action=o.kind,
             option=o.text,
@@ -461,6 +465,54 @@ def _typed_landed(snap: obs.Snapshot, o: Option, _task: Task) -> bool:
         return True  # typed at the focus: the subgoal's own check decides
     target = next((e for e in snap.elements if e.key == o.element.key), None)
     return target is not None and target.value != o.element.value
+
+
+FILENAME_ROWS = 6  # candidate rows logged per step
+FILENAME_TEXT = 80  # characters kept of a logged row
+_MASKED = re.compile(r"[\s*•●∙·]+")
+
+
+def _filename_diag(snap: obs.Snapshot, task: Task, sg: Subgoal, typed_ok: bool) -> dict[str, Any] | None:
+    """Pixels steps of a file-name subgoal (its visible check wants a `^Filename:` label and a {file_name…} value):
+    the check's verdict as the next step will see it, plus the rows beside the label, so a failed check can be
+    told apart (typed elsewhere, appended text, merged or misread OCR) from the log alone.
+
+    The candidates are geometry only: rows level with the label and reaching right of it. They say nothing about
+    which control has the keyboard focus. Capped, named rows only, password and masked rows never logged.
+    """
+    pats = sg.done.pixels.present if sg.done and sg.done.pixels else []
+    label_rx = next((task.pixels_re(p) for p in pats if p.startswith("^Filename:")), None)
+    if label_rx is None or not any("{file_name" in p for p in pats) or not any(map(pixels_window, snap.windows)):
+        return None
+    rows = [e for e in snap.elements if e.window < len(snap.windows) and pixels_window(snap.windows[e.window])]
+    labels = [e for e in rows if re.search(label_rx, re.sub(r"\s+", "", e.name), re.I)]
+    out: dict[str, Any] = {
+        "verdict": check_done(sg.done, snap, task, typed_ok),
+        "typed_ok": typed_ok,
+        "rows": len(rows),
+        "labels": len(labels),
+        "label": None,
+        "geometry_only": True,
+    }
+
+    def shown(e: obs.Element) -> dict[str, Any]:
+        b = e.bounds
+        return {"name": e.name[:FILENAME_TEXT], "x": b.x, "y": b.y, "w": b.width, "h": b.height}
+
+    if labels:
+        lab = labels[0]
+        b = lab.bounds
+        near = sorted(
+            (e for e in rows
+             if e is not lab and e.name.strip() and not e.password and not _MASKED.fullmatch(e.name)
+             and abs(e.bounds.y + e.bounds.height / 2 - (b.y + b.height / 2)) <= b.height
+             and e.bounds.x + e.bounds.width > b.x + b.width),
+            key=lambda e: (e.bounds.x, e.bounds.y),
+        )  # fmt: skip
+        out["label"] = shown(lab) if not lab.password else None
+        out["candidates"] = [shown(e) for e in near[:FILENAME_ROWS]]
+        out["candidates_dropped"] = max(0, len(near) - FILENAME_ROWS)
+    return out
 
 
 def _equivalent(a: Option, b: Option) -> bool:
