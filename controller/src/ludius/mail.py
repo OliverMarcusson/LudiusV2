@@ -217,6 +217,8 @@ def invited(
     want = letters(body)
     if domain != DOMAIN or my_domain != DOMAIN or user == me or since_ms <= 0 or before is None or start_ms >= end_ms:
         return False
+    if body and not want:  # a planned body with no letters can't be told from an empty one: never done
+        return False
 
     def ours(m: Message, u: str, f: str) -> bool:
         return ((u, f, m.id) not in before and (m.start_ms, m.end_ms) == (start_ms, end_ms)

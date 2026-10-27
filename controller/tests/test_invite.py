@@ -132,6 +132,10 @@ def test_invite_done_only_on_new_request_and_appointment(monkeypatch: pytest.Mon
     assert not check_done(done, obs.Snapshot(), t2, typed_ok=False)  # planned body missing from the request
     store[("mvellinga", "inbox")] = [dataclasses.replace(req, body="Walk through the Lund accruals.\r\n")]
     assert check_done(done, obs.Snapshot(), t2, typed_ok=False)
+    t3 = task(body="???")  # no letters: can't be told from an empty body
+    t3.mail_before = frozenset()
+    store[("mvellinga", "inbox")] = [req]
+    assert not check_done(done, obs.Snapshot(), t3, typed_ok=False)
 
 
 class FakeAgent:

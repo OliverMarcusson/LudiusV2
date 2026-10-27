@@ -202,6 +202,8 @@ class Runner:
                     return "the focusing click did not put the keyboard focus in the target field"
                 self._caret_to_end(e, sg)
             if sg.replace:  # the focus is checked to be the target: the text replaces its old value
+                if e is None:
+                    return "replacing text needs a target field that holds the keyboard focus"
                 self.agent.chord(keys.chord("Ctrl+A"))
             self._type(text)
         elif o.kind == "key":
