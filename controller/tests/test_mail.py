@@ -470,22 +470,38 @@ def test_reply_click_puts_the_caret_at_the_top(tmp_path: Path) -> None:
 
 
 def test_mail_templates_get_the_shared_send_contract() -> None:
-    from ludius.tasks import SEND_AVOID, SEND_FORBID, SEND_REQUIRE, Template
+    from ludius.tasks import Dialogs, ElementCheck, Form, Template
 
+    # The contract as it was hardcoded before app profiles (d5620c0): the Outlook profile must give exactly this.
+    require = [
+        ElementCheck(role="edit", name="^To$", value="^({to}|{to_name}|{to_name} <{to}>);?$"),
+        ElementCheck(role="edit", name="^Cc$", value="^$"),
+        ElementCheck(role="edit", name="^Bcc$", value="^$"),
+    ]
+    forbid = [ElementCheck(name="^Cc$", value=r"\S"), ElementCheck(name="^Bcc$", value=r"\S")]
+    avoid = [ElementCheck(role="edit", name="^Info Bar$")]  # fmt: skip
     for name in ("outlook_send_mail", "outlook_reply_mail"):
         t = cli.load_templates()[name]
-        assert t.sends_mail
+        assert t.sends_mail and t.processes == ["outlook.exe"] and t.defaults["launch_query"] == "outlook"
         for n, sg in t.subgoals.items():
-            assert sg.avoid[: len(SEND_AVOID)] == SEND_AVOID, n
+            assert sg.avoid[: len(avoid)] == avoid, n
             sends = bool(sg.done and sg.done.mail)
-            assert (sg.require[:3] == SEND_REQUIRE and sg.forbid[:2] == SEND_FORBID) is sends, n
-    raw = {"task": "x", "app": "outlook", "processes": ["outlook.exe"], "variants": [["s"]],
+            assert (sg.require[:3] == require and sg.forbid[:2] == forbid) is sends, n
+            assert sg.keys == (["Alt+S"] if n == "send_shortcut" else sg.keys), n
+    raw = {"task": "x", "app": "outlook", "variants": [["s"]],
            "subgoals": {"s": {"goal": "send", "done": {"mail": {"mailbox": "{to}"}}}}}  # fmt: skip
-    with pytest.raises(ValueError, match="needs sends_mail"):
+    with pytest.raises(ValueError, match="needs a sending capability"):
         Template.model_validate(raw)  # a mail check cannot opt out of the contract
     with pytest.raises(ValueError, match="without a subgoal"):
-        Template.model_validate(raw | {"sends_mail": True, "subgoals": {"s": {"goal": "type"}}})
-    assert Template.model_validate(raw | {"sends_mail": True}).subgoals["s"].require == SEND_REQUIRE
+        Template.model_validate(raw | {"capability": "mail.send", "subgoals": {"s": {"goal": "type"}}})
+    assert Template.model_validate(raw | {"capability": "mail.send"}).subgoals["s"].require == require
+    with pytest.raises(ValueError, match="no mail form"):  # an app without a profile form can't send
+        Template.model_validate(raw | {"app": "notepad", "processes": ["notepad.exe"], "capability": "mail.send"})
+    # A profile only places fields: it can't set their values, and abandon's words never name a committing button.
+    with pytest.raises(ValueError, match="selectors"):
+        Form.model_validate({"to": {"name": "^To$"}, "empty": [{"name": "^Cc$", "value": ".*"}]})
+    with pytest.raises(ValueError, match="commits"):
+        Dialogs.model_validate({"discard": ["don'?t save", "send( anyway)?"], "choice_ok": "OK", "leave": []})
 
 
 def test_mail_from_an_earlier_playback_never_counts_after_a_clock_rewind(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -539,14 +555,26 @@ def test_send_is_refused_when_the_recipient_became_reserved(tmp_path: Path) -> N
     assert RESERVED_RECIPIENT.startswith("precondition")
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash to run the remote pipeline")
+# Git Bash on Windows, never whatever `bash` resolves to: System32's WSL bash made the test pass without the fix (Sol
+# on d5620c0).
+def _git_bash() -> str | None:
+    if os.name != "nt":
+        return shutil.which("bash")
+    git = shutil.which("git")
+    return next((str(b) for d in Path(git).parents if (b := d / "bin" / "bash.exe").exists()), None) if git else None
+
+
+GIT_BASH = _git_bash()
+
+
+@pytest.mark.skipif(GIT_BASH is None, reason="needs (Git) bash to run the remote pipeline")
 def test_failing_database_is_unreadable_not_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Re-check of a3b6b7d: a locked database exited 0 with no output through the pipe, so the baseline read as
     # empty and an earlier playback's mail could pass done.
     fake = tmp_path / "sudo"
     fake.write_text('#!/bin/sh\necho "Error: database is locked" >&2\nexit 5\n', encoding="utf-8", newline="\n")
     fake.chmod(0o755)
-    bash, real_run = shutil.which("bash"), subprocess.run
+    bash, real_run = GIT_BASH, subprocess.run
     assert bash
 
     def run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[bytes]:

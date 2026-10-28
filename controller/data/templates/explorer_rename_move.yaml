@@ -3,6 +3,7 @@
 # Ctrl+X/Ctrl+V or the context menu. The file and folder must already exist (planner: from world state).
 task: explorer_rename_move
 app: explorer
+capability: file.move  # names an existing file and folder (planner: not new content)
 processes: [explorer.exe]
 writes: ['Documents\{folder_name}\{new_name}.*']  # the renamed file keeps the extension Explorer hides
 params: [file_name, new_name, folder_name]

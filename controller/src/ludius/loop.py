@@ -31,6 +31,7 @@ from ludius.tasks import (
     mail_baseline,
     pixels_window,
     preconditions,
+    profile,
     recipient_reserved,
     send_confirmation,
 )
@@ -266,7 +267,7 @@ class Runner:
             subgoals=task.subgoal_names,
         )
         why = None
-        if task.template.task_content == "reply":  # before any input: the mail it answers and the text it types
+        if task.template.capability == "mail.reply":  # before any input: the mail it answers and the text it types
             why, rec = (self.composer.prepare(task, self.persona, self.jev, self.policy) if self.composer
                         else ("no reply composer (LLM) configured", {}))  # fmt: skip
             self.log.write(event="task_content", host_ms=_now(), task=task.template.task, reason=why, **rec)
@@ -368,7 +369,7 @@ class Runner:
                                reason=OVERWRITE_REASON)  # fmt: skip
                 return "failed", step - 1, OVERWRITE_REASON
             if (blocked := preconditions(sg, snap, task)) and guarded and (ok := send_confirmation(snap, task)):
-                # The guarded send's own prompt (SEND_CONFIRM), right after the input the contract allowed: answer
+                # The guarded send's own prompt (its form's confirm), right after the input the contract allowed: answer
                 # it once, without Jev.
                 guarded = False
                 self._move_to(ok)
@@ -517,6 +518,8 @@ class Runner:
             task=task.template.task,
         )
         apps = {p.lower() for p in task.template.processes}
+        words = profile(task.template.app).dialogs  # what the app's prompts call discard, OK and leave
+        close = profile(task.template.app).keys["close"]
         keyed: tuple[Any, ...] | None = None  # the screen a close key was last pressed on
         for _ in range(6):  # a meeting: Don't Send, close, Don't save changes, OK
             snap = self.observe()
@@ -524,19 +527,20 @@ class Runner:
             fgi = next((i for i, w in enumerate(snap.windows) if w is fg), None)
             discard = next(
                 (e for e in snap.elements
-                 if re.fullmatch(r"(don'?t save( changes)?|don'?t send|no|discard)", e.name.replace("&", ""), re.I)),
+                 if re.fullmatch("|".join(words.discard), e.name.replace("&", ""), re.I)),
                 None,
             )  # fmt: skip
             if discard is not None and discard.role == "radio button" and discard.selected:
                 # Outlook's meeting close prompt: "Don't save changes" is a choice, confirmed with the dialog's OK
                 # (its other choices save or send the meeting; Enter would confirm whichever is selected).
                 discard = next((e for e in snap.elements if e.window == discard.window and e.role == "button"
-                                and e.name.replace("&", "") == "OK"), None)  # fmt: skip
+                                and e.name.replace("&", "") == words.choice_ok), None)  # fmt: skip
             if discard is None and keyed == fingerprint(snap):
                 # A modal that ignores Alt+F4 and Esc (Outlook's "send without a location?" has only Don't Send and
                 # Send Anyway): leave it by its own Cancel or Close button. Names match exactly, never a send.
+                leave = "|".join(words.leave)
                 discard = next((e for e in snap.elements if e.window == fgi and e.role == "button"
-                                and re.fullmatch(r"cancel|close", e.name.replace("&", ""), re.I)), None)  # fmt: skip
+                                and re.fullmatch(leave, e.name.replace("&", ""), re.I)), None)  # fmt: skip
                 if discard is None:
                     break
             keyed = None
@@ -544,7 +548,7 @@ class Runner:
                 self._move_to(discard)
                 self.agent.click()
             elif fg is not None and fg.process_name.lower() in apps and alt_f4_safe(fg):  # not the desktop
-                self.agent.chord(keys.chord("Esc") if fg.kind != obs.Window.FOREGROUND else keys.chord("Alt+F4"))
+                self.agent.chord(keys.chord("Esc") if fg.kind != obs.Window.FOREGROUND else keys.chord(close))
                 keyed = fingerprint(snap)
             else:
                 return

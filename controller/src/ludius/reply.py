@@ -1,4 +1,4 @@
-"""Task-time reply content (template field task_content: reply): the reply answers a real mail on the range server.
+"""Task-time reply content (template capability mail.reply): the reply answers a real mail on the range server.
 
 Before any input the runner calls Composer.prepare(), which
 1. picks the mail: the newest recent one in the persona's Inbox (read on the server, ludius.mail) from the planned

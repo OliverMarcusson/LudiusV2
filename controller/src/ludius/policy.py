@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from ludius.tasks import Strict, pixels_window
+from ludius.tasks import Strict, pixels_window, profile
 from ludius.v1 import observation_pb2 as obs
 
 # Actions noise must never take, whatever the task says (spec section 5).
@@ -34,17 +34,16 @@ EDITABLE_ROLES = {"edit", "document", "combo box"}
 # A replace/overwrite confirmation (Windows' Confirm Save As, Office's "already exists ... replace it?"): its
 # confirming button or Enter would overwrite an existing file, wherever Save As was navigated to. While one is on
 # screen only these may be clicked, only Esc pressed, and the runner abandons the task (loop.Runner._subgoal).
-OVERWRITE = re.compile(
-    r"already exists.*replace|replace (it|the file|the existing)|overwrite (it|the|existing)", re.I | re.S
-)
-OVERWRITE_TITLES = re.compile(r"^(Confirm Save As|Replace or Skip Files|Confirm File Replace)$", re.I)
-OVERWRITE_SAFE = re.compile(r"(no|cancel|close|don't replace|skip.*)", re.I)
+_OW = profile("default").overwrite  # the English words (data/apps/default.yaml), range-wide
+OVERWRITE = re.compile(_OW.text, re.I | re.S)
+OVERWRITE_TITLES = re.compile(f"(?:{_OW.titles})", re.I)  # whole title
+OVERWRITE_SAFE = re.compile(f"(?:{_OW.safe})", re.I)  # whole button name
 OVERWRITE_REASON = "overwrite confirmation: abandon, never replace"
 
 
 def overwrite_prompt(snap: obs.Snapshot) -> bool:
     """A replace/overwrite confirmation is on screen, by window title or by its text (element names, context)."""
-    return (any(OVERWRITE_TITLES.match(w.title) for w in snap.windows)
+    return (any(OVERWRITE_TITLES.fullmatch(w.title) for w in snap.windows)
             or any(OVERWRITE.search(e.name) for e in snap.elements)
             or any(OVERWRITE.search(c) for c in snap.context))  # fmt: skip
 

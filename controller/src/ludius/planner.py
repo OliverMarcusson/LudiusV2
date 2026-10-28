@@ -29,24 +29,26 @@ from pydantic import Field, field_validator
 from ludius.llm import LlmClient
 from ludius.mail import DOMAIN as MAIL_DOMAIN
 from ludius.policy import Policy
-from ludius.tasks import Persona, Strict, Task, TaskInstance, Template, file_reserved, load_template, write_paths
+from ludius.tasks import (
+    REFERS_TO_EXISTING,
+    SENDS,
+    Persona,
+    Strict,
+    Task,
+    TaskInstance,
+    Template,
+    file_reserved,
+    load_template,
+    write_paths,
+)
 
 BREAK = "break"  # pseudo-template: away from the desk, screen locked
-REPLY = "outlook_reply_mail"  # answers a real inbox mail: the planner sees mail only as follow-ups
 NEAR_DUPLICATE = 0.85  # SequenceMatcher ratio at or above this is "too similar"
 MIN_COMPARE = 12  # shorter values (app names, short queries) may repeat
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")  # the virtual keyboard types ASCII only
 VALUE_MAX = 300  # guest observer Snapshotter.MaxValue: longest element value a snapshot carries
 _NAME_KEYS = ("file_name", "folder_name", "new_name")
-# Values that name something existing rather than new content: a rename's source, a mail's recipient, the subject
-# of the mail a reply answers. They may repeat, so the near-duplicate check skips them.
-_REFERS_TO_EXISTING = {
-    "explorer_rename_move": {"file_name", "folder_name"},  # acts on these, creates new_name only
-    "outlook_send_mail": {"to", "to_name"},
-    "outlook_reply_mail": {"to", "to_name", "subject"},
-    "outlook_send_invite": {"to", "to_name"},
-}
 _DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)  # Windows reserved, any extension
 # A meeting (date, start, end): a weekday inside the working day, of a sensible length, soon after the plan's day.
 WORK_DAY, MEETING_MINUTES, MEETING_DAYS_AHEAD = ("08:00", "17:00"), (15, 120), 14
@@ -190,6 +192,7 @@ def plan_day(
     people = {p.user: p.name for p in narrative.people if p.user}
     existing = list(existing)
     names = sorted({_leaf(e) for e in existing if _leaf(e)}, key=str.casefold)[:SHOWN_EXISTING]
+    mail_tasks = ", ".join(sorted(k for k, t in templates.items() if t.capability in SENDS)) or "none"
     user = (
         f"Company story:\n{narrative.model_dump_json(indent=1)}\n\n"
         f"Persona: {persona.name}, {persona.role} ({persona.department}). Usual hours {persona.hours[0]}-"
@@ -214,7 +217,7 @@ def plan_day(
         + (
             f" Colleagues with accounts: {', '.join(sorted(colleagues))}. When an item produces something one of "
             "them should act on (a note or folder for them, a lookup they asked for), set handoff to their account. "
-            "Pick up threads colleagues handed to this persona. Mail (outlook_*) goes to one colleague: to is "
+            f"Pick up threads colleagues handed to this persona. Mail ({mail_tasks}) goes to one colleague: to is "
             f"<account>@{MAIL_DOMAIN} and handoff is that account; reply only to a due follow-up's mail or a mail "
             "listed under Inbox on the mail server (to its sender, with its subject exactly)."
             if colleagues
@@ -293,7 +296,7 @@ def validate(
             why = _recipient(it, colleagues or set[str](), people or {})
         if not why:
             why = _meeting_day(it, day)
-        if not why and it.template == REPLY:
+        if not why and (t := templates.get(it.template)) and t.capability == "mail.reply":
             why = _reply_thread(it, mail_threads or {}, inbox or set[tuple[str, str]]())
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
@@ -305,7 +308,7 @@ def validate(
         if not why and scenario and t and t.resembles and scenario.start <= it.at <= scenario.end:
             why = f"{t.resembles}-like work must not overlap the scenario window {scenario.start}-{scenario.end}"
         if not why:
-            for key, value in targets(it):
+            for key, value in targets(it, templates):
                 if taken_names([value], stem=key != "folder_name") & taken:
                     why = f"{key}: {value!r} already exists or is used by another item, choose a different name"
                     break
@@ -313,7 +316,7 @@ def validate(
             rejects.append((i, why))
         else:
             seen += content_values(it, templates)
-            for key, value in targets(it):
+            for key, value in targets(it, templates):
                 taken |= taken_names([value], stem=key != "folder_name")
     return rejects
 
@@ -388,9 +391,9 @@ def _reply_thread(it: PlanItem, threads: dict[str, tuple[str, str]], inbox: set[
     return None
 
 
-def targets(it: PlanItem) -> list[tuple[str, str]]:
+def targets(it: PlanItem, templates: dict[str, Template]) -> list[tuple[str, str]]:
     """(param, name) of what the item creates in the profile; the existing file/folder a rename acts on is not one."""
-    skip = _REFERS_TO_EXISTING.get(it.template, set[str]())
+    skip = _refers_to_existing(templates.get(it.template))
     return [(k, v) for k, v in {**it.params, **it.content}.items() if k in _NAME_KEYS and k not in skip]
 
 
@@ -492,8 +495,12 @@ def _grid(rows: str) -> str | None:
 def content_values(it: PlanItem, templates: dict[str, Template]) -> list[str]:
     """Planner-written text (not template defaults), long enough to compare; a rename's existing source is not new."""
     t = templates.get(it.template)
-    keys = (set(t.params) if t else set[str]()) - _REFERS_TO_EXISTING.get(it.template, set[str]())
+    keys = (set(t.params) if t else set[str]()) - _refers_to_existing(t)
     return [v for k, v in {**it.params, **it.content}.items() if k in keys and len(v) >= MIN_COMPARE]
+
+
+def _refers_to_existing(t: Template | None) -> set[str]:
+    return REFERS_TO_EXISTING.get(t.capability or "", set[str]()) if t else set[str]()
 
 
 def near_duplicate(text: str, earlier: list[str]) -> str | None:

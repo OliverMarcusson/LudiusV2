@@ -3,11 +3,9 @@
 # Variants cover the new-message path (Ctrl+N vs the ribbon's New Email) and sending (Alt+S vs the Send button).
 task: outlook_send_mail
 app: outlook
-processes: [outlook.exe]
-sends_mail: true  # the shared send contract (ludius.tasks.SEND_REQUIRE): To/Cc/Bcc guard before Send, no Info Bar
+capability: mail.send  # the shared send contract on the profile's mail form (data/apps/outlook.yaml, ludius.tasks.Form)
 params: [to, to_name, subject, body]
 about: "Write a new mail to one colleague in Outlook and send it. to: the colleague's address <user>@corp.ludius.test; subject: one line; body: the mail text (ASCII, a few short lines)."
-defaults: {launch_query: outlook}
 example: {to: mvellinga@corp.ludius.test, to_name: Marcus Vellinga, subject: lund accruals q4 status, body: "hi marcus\nlund accruals for q4 are booked\n- anna"}
 variants:
   - [open_outlook, new_message_shortcut, fill_to, fill_subject, write_body, send_shortcut, close_outlook]
@@ -45,7 +43,7 @@ subgoals:
     done: {typed: true}
   send_shortcut:
     goal: "Send the mail with Alt+S"
-    keys: [Alt+S]
+    keys: [send]
     allow_destructive: ["Send"]
     done: {mail: {mailbox: "{to}"}}
   send_button:

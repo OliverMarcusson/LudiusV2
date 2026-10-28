@@ -1,0 +1,16 @@
+# What every app shares on the English (en-GB) Windows guest; an app profile (<app>.yaml, ludius.tasks.profile) adds
+# to it: its lists extend these, its values replace them. Words are regexes, matched whole and case-insensitively.
+locale:
+  date: "{d}/{m}/{y}"  # how a typed date is entered and shown, `{p}_ui` for an ISO date parameter
+keys:
+  close: Alt+F4  # abandon closes the task's foreground window with this (Esc for its owned windows)
+dialogs:
+  discard: ["don'?t save", "no", "discard"]  # abandon clicks these: leave without saving or sending
+  choice_ok: OK  # confirms a discard that is a selected radio choice rather than a button
+  leave: [cancel, close]  # a modal that ignores the close key is left by one of these
+# The shared overwrite guard (ludius.policy): a confirmation whose Yes or Enter replaces an existing file. Range-wide,
+# so an app profile can't set it.
+overwrite:
+  text: "already exists.*replace|replace (it|the file|the existing)|overwrite (it|the|existing)"  # searched
+  titles: "Confirm Save As|Replace or Skip Files|Confirm File Replace"
+  safe: "no|cancel|close|don't replace|skip.*"  # the only buttons clicked while one is on screen

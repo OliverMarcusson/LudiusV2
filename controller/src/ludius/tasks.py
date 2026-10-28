@@ -7,10 +7,11 @@ parameters, from the planner or a hand-written YAML file.
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import random
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -167,53 +168,110 @@ class Subgoal(Strict):
         return self
 
 
-# The shared send contract (AGENTS.md: one shared layer for anything that sends mail). A template that sends mail
-# sets `sends_mail`; every subgoal whose done check is a mail check then allows no input unless the To, Cc and Bcc
-# fields are all readable in the foreground window, To is exactly the planned colleague (as typed, or as Outlook
-# resolves it) and Cc and Bcc are empty. Bcc must be visible (aberg's Outlook view option): the range reserves
-# scenario mailboxes, so a hidden Bcc is unknown, never empty. preconditions() reads them readable-only, in the
-# foreground window and ASCII-only. Defense in depth: the done check requires the Sent Items copy to name {to}
-# alone (ludius.mail), and srv01 refuses non-local recipients.
-SEND_REQUIRE = [
-    ElementCheck(role="edit", name="^To$", value="^({to}|{to_name}|{to_name} <{to}>);?$"),
-    ElementCheck(role="edit", name="^Cc$", value="^$"),
-    ElementCheck(role="edit", name="^Bcc$", value="^$"),
-]
-SEND_FORBID = [ElementCheck(name="^Cc$", value=r"\S"), ElementCheck(name="^Bcc$", value=r"\S")]
-# Outlook's notice bar ("You are not responding to the latest message..."): its click opens that message and took
-# the caret away from the reply being typed. Never a target in a mail-sending task.
-SEND_AVOID = [ElementCheck(role="edit", name="^Info Bar$")]
-# The same contract on Outlook's meeting form, which has Required and Optional instead of To, Cc and Bcc: Required
-# exactly the planned colleague, Optional and Location empty (a room or resource picked from the address book lands
-# in Location and is invited too; a focused Location is hidden behind its suggestions popup, so typing there can't
-# be checked: run3). The buttons that open the address book, room finder or location picker, the Scheduling
-# Assistant and the form's data items (its attendee grid adds attendees, its date cells move the meeting: run2,
-# run1) are never targets: Jev never types an attendee, so those are the only ways to add one.
-MEETING_REQUIRE = [
-    ElementCheck(role="edit", name="^Required$", value=SEND_REQUIRE[0].value),
-    ElementCheck(role="edit", name="^Optional$", value="^$"),
-    ElementCheck(role="edit", name="^Location$", value="^$"),
-]
-MEETING_FORBID = [ElementCheck(name="^(Optional|Location|Resources)$", value=r"\S")]
-MEETING_AVOID = [
-    *SEND_AVOID,
-    ElementCheck(
-        role="button", name="^(Required|Optional|Location|Rooms|Room Finder|Address Book|Scheduling Assistant)$"
-    ),
-    ElementCheck(name="^Scheduling Assistant$"),
-    ElementCheck(role="data item"),
-]
-# Prompts the guarded send itself raises, answered once by code with this button: only right after an input that
-# passed the contract (the form is modal-blocked behind them, so it is the checked form that is sent). Run1: Outlook
-# asks before sending a meeting without a location.
-SEND_CONFIRM: dict[str, list[tuple[re.Pattern[str], str]]] = {
-    "mail": [],
-    "meeting": [(re.compile(r"Do you want to send this meeting request without a location\?"), "Send Anyway")],
+# The shared send contract (AGENTS.md: one shared layer for anything that sends mail). A template whose capability
+# sends (SENDS) gets it from its app profile's form: every subgoal whose done check is a mail or meeting check then
+# allows no input unless the form's recipient field holds exactly the planned colleague (as typed, or as the app
+# resolves it) and every `empty` field is readable and empty, all in the foreground window; no `empty` or
+# `never_filled` field anywhere holds a value. preconditions() reads them readable-only and ASCII-only, so an unknown
+# or unreadable field is never empty. A profile only says where the fields are: these rules and values are fixed here.
+# Defense in depth: the done check requires the Sent Items copy to name {to} alone (ludius.mail), and srv01 refuses
+# non-local recipients.
+RECIPIENT = "^({to}|{to_name}|{to_name} <{to}>);?$"
+Capability = Literal["mail.send", "mail.reply", "calendar.invite", "file.move"]
+SENDS: dict[str, Literal["mail", "meeting"]] = {"mail.send": "mail", "mail.reply": "mail", "calendar.invite": "meeting"}
+# Values a capability's parameters name rather than create (a recipient, the subject a reply answers, a rename's
+# source): they may repeat, so the planner's near-duplicate check skips them.
+REFERS_TO_EXISTING: dict[str, set[str]] = {
+    "mail.send": {"to", "to_name"},
+    "mail.reply": {"to", "to_name", "subject"},
+    "calendar.invite": {"to", "to_name"},
+    "file.move": {"file_name", "folder_name"},
 }
-SEND_FORMS = {
-    "mail": (SEND_REQUIRE, SEND_FORBID, SEND_AVOID),
-    "meeting": (MEETING_REQUIRE, MEETING_FORBID, MEETING_AVOID),
-}
+APPS = Path(__file__).resolve().parents[2] / "data" / "apps"
+# Buttons that commit something: no discard or leave word in a profile may name one (abandon clicks those).
+COMMITS = ["send", "send anyway", "save", "yes", "ok", "replace", "delete"]
+
+
+class Confirm(Strict):
+    prompt: str  # regex, the prompt's whole text
+    button: str  # exact name of the button that answers it
+
+
+class Form(Strict):
+    """Where an app keeps one send form's fields (selectors without values: the contract sets those)."""
+
+    recipients: Literal["value"] = "value"  # how the recipient field is read: its text value (chips: not yet)
+    to: ElementCheck
+    empty: list[ElementCheck] = Field(default_factory=list[ElementCheck])
+    never_filled: list[ElementCheck] = Field(default_factory=list[ElementCheck])
+    avoid: list[ElementCheck] = Field(default_factory=list[ElementCheck])  # never a target in the task
+    confirm: list[Confirm] = Field(default_factory=list[Confirm])  # prompts the guarded send raises (send_confirmation)
+
+    @model_validator(mode="after")
+    def _selectors(self) -> Form:
+        if any(c.value is not None or not c.name for c in [self.to, *self.empty, *self.never_filled]):
+            raise ValueError("form fields are selectors: a name and no value")
+        return self
+
+    def contract(self) -> tuple[list[ElementCheck], list[ElementCheck], list[ElementCheck]]:
+        """(require, forbid, avoid) for the subgoals that send."""
+        require = [self.to.model_copy(update={"value": RECIPIENT})]
+        require += [c.model_copy(update={"value": "^$"}) for c in self.empty]
+        forbid = [ElementCheck(name=c.name, value=r"\S") for c in [*self.empty, *self.never_filled]]
+        return require, forbid, list(self.avoid)
+
+
+class Dialogs(Strict):
+    discard: list[str]
+    choice_ok: str
+    leave: list[str]
+
+    @model_validator(mode="after")
+    def _no_commit(self) -> Dialogs:
+        for w in [*self.discard, *self.leave]:
+            if any(re.fullmatch(w, c, re.I) for c in COMMITS):
+                raise ValueError(f"dialog word {w!r} names a button that commits")
+        return self
+
+
+class Overwrite(Strict):
+    text: str
+    titles: str
+    safe: str
+
+
+class Profile(Strict):
+    """How one app does what the capabilities need (data/apps/<app>.yaml over default.yaml)."""
+
+    process: str = ""
+    launch_query: str = ""
+    keys: dict[str, str]
+    locale: dict[Literal["date"], str]
+    dialogs: Dialogs
+    forms: dict[Literal["mail", "meeting"], Form] = Field(default_factory=dict[Literal["mail", "meeting"], Form])
+    overwrite: Overwrite
+
+
+def _merge(base: Any, own: Any) -> Any:
+    """`own` over `base`: mappings merged, lists extended, anything else replaced."""
+    if isinstance(base, dict) and isinstance(own, dict):
+        b, o = cast(dict[str, Any], base), cast(dict[str, Any], own)
+        return {**b, **{k: _merge(b.get(k), v) for k, v in o.items()}}
+    if isinstance(base, list) and isinstance(own, list):
+        return [*cast(list[Any], base), *cast(list[Any], own)]
+    return own
+
+
+@functools.cache
+def profile(app: str) -> Profile:
+    """The app's profile over the shared one; an app without a file (or a name that isn't one) gets the shared one."""
+    base = yaml.safe_load((APPS / "default.yaml").read_text(encoding="utf-8"))
+    path = APPS / f"{app}.yaml"
+    mine = app != "default" and re.fullmatch(r"[a-z0-9_]+", app) and path.exists()
+    own: Any = yaml.safe_load(path.read_text(encoding="utf-8")) if mine else {}
+    if "overwrite" in own:
+        raise ValueError(f"{path}: the overwrite guard is range-wide, not an app's")
+    return Profile.model_validate(_merge(base, own))
 
 
 NAME_PARAMS = {"file_name", "folder_name", "new_name"}  # parameters that name a file or folder in the profile
@@ -226,7 +284,9 @@ SAVE_EXTENSIONS = {"notepad": ".txt", "wordpad": ".rtf", "paint": ".png", "excel
 class Template(Strict):
     task: str
     app: str
-    processes: list[str]  # foreground processes the task may act in (shell is added by `launch`)
+    capability: Capability | None = None  # what the task does; its app profile says how (profile)
+    # Foreground processes the task may act in (shell is added by `launch`); default: the profile's process.
+    processes: list[str] = Field(default_factory=list[str])
     variants: list[list[str]]
     weights: list[float] | None = None
     subgoals: dict[str, Subgoal]
@@ -239,14 +299,37 @@ class Template(Strict):
     example: dict[str, str] = Field(default_factory=dict[str, str])  # parameters for admission test runs
     resembles: str = ""  # signal type this legitimate work looks like (powershell, rdp, macro); spec section 6
     pixels: Pixels | None = None  # pixels-only mode opt-in; without it the task gets no rows in that mode
-    sends_mail: bool = False  # the shared send contract applies (SEND_REQUIRE above); required with a mail check
-    send_form: Literal["mail", "meeting"] = "mail"  # which form's fields the contract reads (SEND_FORMS)
     # What the task creates, profile-relative in a noise folder, as the app writes it (with the extension it adds;
     # ".*" for one it keeps, an Explorer rename). The shared reservation check (file_reserved) resolves these.
     writes: list[str] = Field(default_factory=list[str])
-    # Content written at task time, not plan time (ludius.reply): "reply" picks a real inbox mail and fills to,
-    # to_name, subject, body and reply_to before any input; the mail check must then require the reply link.
-    task_content: Literal["reply"] | None = None
+
+    @property
+    def sends_mail(self) -> bool:
+        """The shared send contract applies (the profile form's Form.contract); required with a mail check."""
+        return self.capability in SENDS
+
+    @property
+    def send_form(self) -> Literal["mail", "meeting"]:
+        return SENDS.get(self.capability or "", "mail")
+
+    @property
+    def task_content(self) -> Literal["reply"] | None:
+        """Content written at task time, not plan time (ludius.reply): a reply picks a real inbox mail and fills to,
+        to_name, subject, body and reply_to before any input; its mail check must then require the reply link."""
+        return "reply" if self.capability == "mail.reply" else None
+
+    @model_validator(mode="after")
+    def _profile(self) -> Template:
+        """Process, launch query and named keys (`keys: [send]`) from the app profile, where the template has none."""
+        p = profile(self.app)
+        self.processes = self.processes or ([p.process] if p.process else [])
+        if not self.processes:
+            raise ValueError(f"{self.task}: no processes, and app {self.app!r} has no profile process")
+        if p.launch_query:
+            self.defaults.setdefault("launch_query", p.launch_query)
+        for sg in self.subgoals.values():
+            sg.keys = [p.keys.get(k, k) for k in sg.keys]
+        return self
 
     @model_validator(mode="after")
     def _task_content(self) -> Template:
@@ -279,14 +362,17 @@ class Template(Strict):
     def _send_contract(self) -> Template:
         sends = [n for n, sg in self.subgoals.items() if sg.done and (sg.done.mail or sg.done.invite)]
         if sends and not self.sends_mail:
-            raise ValueError(f"{self.task}: a mail or meeting done check needs sends_mail (the shared send contract)")
+            raise ValueError(f"{self.task}: a mail or meeting done check needs a sending capability {sorted(SENDS)}")
         wrong = "invite" if self.send_form == "mail" else "mail"
         if any(getattr(sg.done, wrong) for sg in self.subgoals.values() if sg.done):
             raise ValueError(f"{self.task}: a {wrong} done check does not fit send_form {self.send_form!r}")
         if self.sends_mail:
             if not sends:
-                raise ValueError(f"{self.task}: sends_mail without a subgoal whose done check is a mail check")
-            require, forbid, avoid = SEND_FORMS[self.send_form]
+                raise ValueError(f"{self.task}: {self.capability} without a subgoal whose done check is a mail check")
+            form = profile(self.app).forms.get(self.send_form)
+            if form is None:
+                raise ValueError(f"{self.task}: app {self.app!r} has no {self.send_form} form in its profile")
+            require, forbid, avoid = form.contract()
             for name, sg in self.subgoals.items():
                 sg.avoid = [*avoid, *sg.avoid]
                 if name in sends:
@@ -369,8 +455,10 @@ class Task:
         self.values = have | {f"{k}_typo": v + _neighbour(v[-1]) for k, v in have.items() if v and "\n" not in v}
         # `{p}_enter`: the value ending in one Enter, so a spreadsheet's last cell is committed, not left in edit mode.
         self.values |= {f"{k}_enter": v.rstrip("\n") + "\n" for k, v in have.items() if v}
-        # `{p}_dmy`: an ISO date as the en-GB guest types and shows it (Outlook reads 2026-11-05 as 11 May).
-        self.values |= {f"{k}_dmy": f"{v[8:]}/{v[5:7]}/{v[:4]}" for k, v in have.items() if ISO_DATE.fullmatch(v)}
+        # `{p}_ui`: an ISO date as the app's locale types and shows it (en-GB Outlook reads 2026-11-05 as 11 May).
+        date = profile(template.app).locale["date"]
+        self.values |= {f"{k}_ui": date.format(y=v[:4], m=v[5:7], d=v[8:]) for k, v in have.items()
+                        if ISO_DATE.fullmatch(v)}  # fmt: skip
         # Pixels read one row per line and a long line is cut at the window edge: `{p}_head` is the first
         # non-blank line, capped, for visible-text checks. A blank value has none, so its check can't match.
         self.values |= {f"{k}_head": next(x.strip() for x in v.splitlines() if x.strip())[:HEAD]
@@ -600,16 +688,17 @@ def mail_baseline(task: Task) -> mail.Seen | None:
 
 
 def send_confirmation(snap: obs.Snapshot, task: Task) -> obs.Element | None:
-    """The button that confirms a prompt the guarded send raised (SEND_CONFIRM), in a foreground window of the
+    """The button that confirms a prompt the guarded send raised (its form's confirm), in a foreground window of the
     task's app; None for any other screen. The caller clicks it only right after an input the contract allowed."""
     fg = next((i for i, w in enumerate(snap.windows) if w.kind == obs.Window.FOREGROUND), None)
     apps = {p.lower() for p in task.template.processes}
     if fg is None or snap.windows[fg].process_name.lower() not in apps:
         return None
     mine = [e for e in snap.elements if e.window == fg]
-    for text, button in SEND_CONFIRM[task.template.send_form]:
-        if any(text.fullmatch(e.name) or text.fullmatch(e.value) for e in mine):
-            return next((e for e in mine if e.role == "button" and e.name.replace("&", "") == button), None)
+    form = profile(task.template.app).forms.get(task.template.send_form)
+    for c in form.confirm if form and task.template.sends_mail else []:
+        if any(re.fullmatch(c.prompt, e.name) or re.fullmatch(c.prompt, e.value) for e in mine):
+            return next((e for e in mine if e.role == "button" and e.name.replace("&", "") == c.button), None)
     return None
 
 

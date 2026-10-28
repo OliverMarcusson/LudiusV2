@@ -13,7 +13,7 @@ from ludius import cli, keys, mail
 from ludius.loop import GroundTruth, Runner
 from ludius.planner import PlanItem, validate
 from ludius.policy import Policy
-from ludius.tasks import MEETING_AVOID, MEETING_REQUIRE, Task, check_done, local_ms, mail_baseline, preconditions
+from ludius.tasks import ElementCheck, Task, check_done, local_ms, mail_baseline, preconditions
 from ludius.v1 import observation_pb2 as obs
 
 PEOPLE = {"mvellinga": "Marcus Vellinga", "aberg": "Anna Berg"}
@@ -41,8 +41,23 @@ def task(**params: str) -> Task:
 def test_template_gets_the_meeting_send_contract() -> None:
     t = cli.load_templates()["outlook_send_invite"]
     send = t.subgoals["send_shortcut"]
-    assert send.done and send.done.invite and send.require[:3] == MEETING_REQUIRE
-    assert all(sg.avoid[: len(MEETING_AVOID)] == MEETING_AVOID for sg in t.subgoals.values())
+    # As hardcoded before app profiles (d5620c0); the forbid regex ^(Optional|Location|Resources)$ is now one per field.
+    required = "^({to}|{to_name}|{to_name} <{to}>);?$"
+    meeting_require = [ElementCheck(role="edit", name="^Required$", value=required),
+                       ElementCheck(role="edit", name="^Optional$", value="^$"),
+                       ElementCheck(role="edit", name="^Location$", value="^$")]  # fmt: skip
+    meeting_forbid = [ElementCheck(name=f"^{n}$", value=r"\S") for n in ("Optional", "Location", "Resources")]
+    meeting_avoid = [
+        ElementCheck(role="edit", name="^Info Bar$"),
+        ElementCheck(
+            role="button", name="^(Required|Optional|Location|Rooms|Room Finder|Address Book|Scheduling Assistant)$"
+        ),
+        ElementCheck(name="^Scheduling Assistant$"),
+        ElementCheck(role="data item"),
+    ]
+    assert send.done and send.done.invite and send.require[:3] == meeting_require
+    assert send.forbid[:3] == meeting_forbid and t.processes == ["outlook.exe"]
+    assert all(sg.avoid[: len(meeting_avoid)] == meeting_avoid for sg in t.subgoals.values())
     assert all("send_shortcut" in v for v in t.variants)
 
 
@@ -66,7 +81,7 @@ def test_planned_meeting_is_valid_and_bounded() -> None:
 
 def test_dates_typed_as_the_guest_reads_them_and_empty_body_skipped() -> None:
     t = task()
-    assert t.values["date_dmy"] == "05/11/2026"  # Outlook read 2026-11-05 as 11 May on the en-GB guest
+    assert t.values["date_ui"] == "05/11/2026"  # Outlook read 2026-11-05 as 11 May on the en-GB guest
     assert "write_body" not in t.subgoal_names
     assert "write_body" in task(body="agenda").subgoal_names
     assert AT == (1793871000000, 1793873700000)  # 09:30Z-10:15Z: CET, the guest's zone in November

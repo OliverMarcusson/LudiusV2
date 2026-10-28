@@ -22,7 +22,7 @@ from typing import Any
 
 import yaml
 
-from ludius.planner import Narrative, World, load_plan, targets
+from ludius.planner import Narrative, World, _templates, load_plan, targets  # pyright: ignore[reportPrivateUsage]
 from ludius.tasks import Persona, Strict
 
 # Where each template's result lands, relative to the persona's profile. Templates without a lasting
@@ -98,6 +98,7 @@ def _done(log: Path) -> set[tuple[str, str]]:
 def build(world: World, narrative: Narrative, personas: list[Persona], before: dt.date) -> State:
     """Everything that happened on days before `before`."""
     state = State()
+    templates = _templates()
     finished: dict[str, str] = {}  # follow-up id -> date its follow-up item was done
     handoffs: list[Followup] = []
     for path in sorted(world.root.glob("plans/*.yaml")):
@@ -120,7 +121,8 @@ def build(world: World, narrative: Narrative, personas: list[Persona], before: d
             if it.handoff:
                 fid = f"{date}-{user}-{it.at.replace(':', '')}"
                 about = it.context or it.template
-                subject = it.params.get("subject", "") if it.template == "outlook_send_mail" else ""
+                t = templates.get(it.template)
+                subject = it.params.get("subject", "") if t and t.capability == "mail.send" else ""
                 if subject:
                     about = f"mail {subject!r}: {about}"  # the subject a reply must use
                 state.messages.append(Message(id=fid, date=date, sender=user, to=it.handoff,
@@ -139,9 +141,10 @@ def existing_files(world: World, user: str) -> list[str]:
     have left a file) plus the optional guest inventory world/guest-files-<user>.txt (one name or path per line,
     written from a read-only listing of the profile). The controller never sees the guest disk itself."""
     out: list[str] = []
+    templates = _templates()
     for path in sorted(world.root.glob("plans/*.yaml")):
         if path.stem[11:] == user:
-            out += [v for it in load_plan(path).items for _, v in targets(it)]
+            out += [v for it in load_plan(path).items for _, v in targets(it, templates)]
     inventory = world.root / "world" / f"guest-files-{user}.txt"
     if inventory.exists():
         out += [x for x in inventory.read_text(encoding="utf-8-sig").splitlines() if x.strip()]
