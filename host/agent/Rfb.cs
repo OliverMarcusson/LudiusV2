@@ -227,9 +227,17 @@ sealed class Captures
         }
         try { if (!c.Ready.Task.Wait(FirstFrame)) throw new InvalidOperationException("no console frame yet"); }
         catch (AggregateException e) { ExceptionDispatchInfo.Throw(e.InnerException!); }
-        if (c.Stop.IsCancellationRequested) // ended meanwhile: its last frame is no longer known to be current
+        Ended(c);
+        var jpeg = Encode(c, c.Ready.Task.Result, maxWidth);
+        Ended(c); // it may have ended while this request waited on another width's encode, or during its own
+        return jpeg;
+    }
+
+    // Ended: its last frame is no longer known to be current.
+    static void Ended(Capture c)
+    {
+        if (c.Stop.IsCancellationRequested)
             throw c.Error as InvalidOperationException ?? new InvalidOperationException("console capture ended");
-        return Encode(c, c.Ready.Task.Result, maxWidth);
     }
 
     // Ends the name's session now (its VM failed validation).
