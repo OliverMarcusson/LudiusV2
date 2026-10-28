@@ -370,7 +370,7 @@ class Runner:
         snap = self.observe()
         seen = {fingerprint(snap)}
         guarded = False  # the last input passed this subgoal's require/forbid checks (send_confirmation)
-        shot_why: str | None = "subgoal_start"  # why the next decision gets the screenshot (image_reason)
+        shot_why: str | None = None  # why the next decision gets the screenshot (image_reason)
         for step in range(1, budget + 1):
             if time.monotonic() - t0 > task.template.budget_minutes * 60:
                 return "failed", step - 1, "time budget"
@@ -679,9 +679,9 @@ class Runner:
 
 
 def image_reason(why: str | None, snap: obs.Snapshot, forced: bool = False) -> str | None:
-    """Why a step decision gets the screenshot, None for text only: the first step of a subgoal, the step after no
-    visible change or a refused step (`why`), or a foreground window UIA can't read (no tree, elevated, hung or
-    pixels-only)."""
+    """Why a step decision gets the screenshot, None for text only: the step after no visible change or a refused step
+    (`why`), or a foreground window UIA can't read (no tree, elevated, hung or pixels-only). Not on a subgoal's first
+    step: subgoals are one or two steps long, so that sent it with most decisions (bake-off b2: 6 of 8, 7 of 13)."""
     fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
     unreadable = fg is not None and (fg.no_tree or fg.elevated_unreadable or fg.unresponsive or pixels_window(fg))
     return why or ("unreadable" if unreadable else "forced" if forced else None)

@@ -114,14 +114,14 @@ def test_screenshot_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         assert [i is not None for i in jev.images] == [r is not None for r in steps]  # logged = sent
         return steps
 
-    # Every step makes progress: only the subgoal's first step gets the screenshot.
-    assert reasons("grows", ToggleAgent(grows=True)) == ["subgoal_start"] + [None] * 11
+    # Every step makes progress: text only.
+    assert reasons("grows", ToggleAgent(grows=True)) == [None] * 12
     # Nothing changes: every later step follows a "no visible change".
-    assert reasons("stuck", StuckAgent()) == ["subgoal_start"] + ["no_change"] * 11
+    assert reasons("stuck", StuckAgent()) == [None] + ["no_change"] * 11
     # A foreground window UIA can't read gets it too; LUDIUS_JEV_IMAGE=1 forces it on every step.
     fg = obs.Window(title="x", process_name="x.exe", kind=obs.Window.FOREGROUND, no_tree=True)
     assert image_reason(None, obs.Snapshot(windows=[fg])) == "unreadable"
     assert image_reason("refused", obs.Snapshot(windows=[fg])) == "refused"
     assert image_reason(None, obs.Snapshot(windows=[obs.Window(kind=obs.Window.FOREGROUND)])) is None
     monkeypatch.setenv("LUDIUS_JEV_IMAGE", "1")
-    assert reasons("forced", ToggleAgent(grows=True)) == ["subgoal_start"] + ["forced"] * 11
+    assert reasons("forced", ToggleAgent(grows=True)) == ["forced"] * 12
