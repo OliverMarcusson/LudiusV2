@@ -1,0 +1,18 @@
+---
+# Installing proxmox-ve drops /etc/apt/sources.list.d/pve-enterprise.sources (and, with Ceph, a ceph enterprise
+# source). Both point at enterprise.proxmox.com, which answers 401 without a subscription, so every later apt run fails.
+# (find matches `contains` from the start of a line, hence the leading .*)
+# The no-subscription repository is added in main.yml. Renaming (not deleting) keeps the files for a later subscription.
+- name: Enterprise repository files
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns: ["*.sources", "*.list"]
+    contains: '.*enterprise\.proxmox\.com'
+  register: enterprise_repos
+
+- name: Enterprise repositories disabled (401 without a subscription)
+  ansible.builtin.command: mv {{ item.path }} {{ item.path }}.disabled
+  loop: "{{ enterprise_repos.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+  changed_when: true

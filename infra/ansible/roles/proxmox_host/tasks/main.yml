@@ -57,6 +57,9 @@
   ansible.builtin.apt:
     name: [proxmox-ve, postfix, open-iscsi, chrony, dnsmasq, iptables, xorriso]
 
+- name: Enterprise apt sources off right after the install (they break every later apt run)
+  ansible.builtin.include_tasks: pve-repos.yml
+
 - name: Proxmox web UI on loopback, SPICE proxy and rpcbind off
   ansible.builtin.include_tasks: pve-exposure.yml
 
