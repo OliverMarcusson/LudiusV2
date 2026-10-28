@@ -87,18 +87,27 @@ def test_requests_are_validated_sent_once_and_capped(tmp_path: Path, monkeypatch
     assert reserved == "aberg@corp.ludius.test is scenario-reserved"
 
 
-def test_persona_maps_a_request_fail_closed(tmp_path: Path) -> None:
-    m = mail.Message("mvellinga@corp.ludius.test", 0, int(dt.datetime(2026, 10, 28, tzinfo=dt.UTC).timestamp() * 1000),
-                     BODY, cls="IPM.Note", subject="lund accruals note", msgid="<r1@corp.ludius.test>")  # fmt: skip
-    w, ts = World(tmp_path), cli.load_templates()
-    assert requests.pending(w, "aberg", BOSS, [m], Policy(), THU) == [m]
+def test_persona_maps_a_request_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mail, "deliver", lambda *a: True)  # type: ignore[misc]
+    msgid = ensure(tmp_path, FakeLlm({"requests": [ASK]})).requests[0].msgid
+    at = int(dt.datetime(2026, 10, 28, tzinfo=dt.UTC).timestamp() * 1000)
+    m = mail.Message("mvellinga@corp.ludius.test", 0, at, BODY, cls="IPM.Note", subject="lund accruals note",
+                     msgid=msgid)  # fmt: skip
+    seed = mail.Message(m.sender, 0, at, BODY, cls="IPM.Note", subject="seeded", msgid="<s1@corp.ludius.test>")
+    w, ts, book = World(tmp_path), cli.load_templates(), {"aberg": "Anna Berg"}
+    assert requests.pending(w, "aberg", BOSS, [m, seed], Policy(), THU) == [m]  # only mails sent as requests
     assert requests.pending(w, "aberg", BOSS, [m], Policy(reserved_subjects=["lund accruals note"]), THU) == []
     item = {"at": "09:30", "params": {"file_name": "lund accruals q4", "body": "lund totals\n- 12 400"}, "context": "c"}
     llm = FakeLlm(item)
-    items, notes = requests.candidates(llm, FakeJev("notepad_write_note"), w, ANNA, BOSS, [m], ts, THU)  # type: ignore[arg-type]
-    assert [(i.template, i.request) for i in items] == [("notepad_write_note", "<r1@corp.ludius.test>")] and not notes
+    items, notes = requests.candidates(llm, FakeJev("notepad_write_note"), w, ANNA, BOSS, [m], ts, THU, book)  # type: ignore[arg-type]
+    assert [(i.template, i.request) for i in items] == [("notepad_write_note", msgid)] and not notes
+    assert requests.planned(items[0], ts, tmp_path) is None
+    items[0].params["body"] = "lund sums"
+    assert requests.planned(items[0], ts, tmp_path) == "content lacks ['totals']"
+    items[0].params["file_name"] = "other"
+    assert "asked for 'lund accruals q4'" in str(requests.planned(items[0], ts, tmp_path))
     for jev in (FakeJev("none"), FakeJev("notepad_write_note", 0.4)):  # none, or too unsure: nothing, never asked again
-        assert requests.candidates(llm, jev, w, ANNA, BOSS, [m], ts, THU)[0] == []  # type: ignore[arg-type]
+        assert requests.candidates(llm, jev, w, ANNA, BOSS, [m], ts, THU, book)[0] == []  # type: ignore[arg-type]
         assert requests.pending(w, "aberg", BOSS, [m], Policy(), THU) == []
         (tmp_path / "world" / "requests" / "seen-aberg.yaml").unlink()
     assert llm.calls == 1
@@ -112,7 +121,7 @@ def test_fulfilled_reads_the_new_file(tmp_path: Path, monkeypatch: pytest.Monkey
     def task(name: str = "lund accruals q4", template: str = "notepad_write_note") -> Task:
         from ludius.tasks import TaskInstance
 
-        values = {"file_name": name, "body": "x", "rows": "a", "heading": "h"}
+        values = {"file_name": name, "body": "lund totals", "rows": "a", "heading": "h"}
         t = Task(ts[template], TaskInstance(template=template, params=values, request=msgid), random.Random(0))
         t.owner, t.started_ms, t.files_absent = "aberg", 1000, frozenset({f"Documents\\{name}.txt"})
         return t
@@ -125,9 +134,12 @@ def test_fulfilled_reads_the_new_file(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr(guestfile, "read", read)
     assert requests.fulfilled(task(), tmp_path) == (True, "matches the request")
     assert "asked for 'lund accruals q4'" in requests.fulfilled(task("other"), tmp_path)[1]
-    assert "asked for notepad_write_note" in requests.fulfilled(task(template="excel_new_workbook"), tmp_path)[1]
+    assert (
+        "asked for notepad_write_note, planned excel"
+        in requests.fulfilled(task(template="excel_new_workbook"), tmp_path)[1]
+    )
     files["lund accruals q4.txt"] = guestfile.GuestFile(True, 2000, b"lund sums")
-    assert requests.fulfilled(task(), tmp_path) == (False, "missing ['totals']")
+    assert requests.fulfilled(task(), tmp_path) == (False, "file lacks ['totals']")
     files["lund accruals q4.txt"] = guestfile.GuestFile(True, 500, b"totals")  # written before the task: not ours
     assert requests.fulfilled(task(), tmp_path)[0] is False
     t = task()

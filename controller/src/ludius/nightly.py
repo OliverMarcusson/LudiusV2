@@ -163,8 +163,8 @@ def generate_day(
         jev = src.jev()
         try:
             mails = requests.pending(world, persona.user, boss, inbox_mails, src.policy, date)
-            mapped, more = requests.candidates(llm, jev, world, persona, boss, mails,
-                                               planner.role_templates(src.templates, persona), date)  # fmt: skip
+            role = planner.role_templates(src.templates, persona)
+            mapped, more = requests.candidates(llm, jev, world, persona, boss, mails, role, date, people)
             notes += more
         finally:
             getattr(jev, "close", lambda: None)()
@@ -193,7 +193,7 @@ def generate_day(
             [*plan.items, it], planner.role_templates(src.templates, persona), world.history(persona.user),
             src.policy, colleagues, None, set(followups), existing, threads, people, persona.user, date.isoformat(),
             set(inbox),
-        )).get(len(plan.items))  # fmt: skip
+        )).get(len(plan.items)) or requests.planned(it, src.templates, world.root)  # fmt: skip
         if why:
             requests.remember(world.root, persona.user, it.request, f"rejected: {why}")
             rejects.append(f"request {it.template} at {it.at}: {why}")

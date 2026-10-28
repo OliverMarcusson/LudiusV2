@@ -36,7 +36,6 @@ from ludius import guestfile, mail
 from ludius.llm import LlmClient, LlmError
 from ludius.planner import (
     DERIVED,
-    MESSAGE_ID,
     Narrative,
     Person,
     PlanItem,
@@ -312,18 +311,19 @@ def remember(root: Path, user: str, msgid: str, why: str) -> None:
 def pending(
     world: World, user: str, boss: Person, inbox: list[mail.Message] | None, policy: Policy, date: dt.date
 ) -> list[mail.Message]:
-    """New mails from the manager in the persona's Inbox (as read on the server): recent, not reserved, neither
-    planned before (an item's `request`) nor decided before (seen); newest first (older ones were the earlier nights'
-    to take), at most MAPPED_MAX."""
+    """The manager's requests in the persona's Inbox (as read on the server; a request is a mail this module sent,
+    so its outcome can be checked): recent, not reserved, neither planned before (an item's `request`) nor decided
+    before (seen); newest first (older ones were earlier nights' to take), at most MAPPED_MAX."""
     done = set(seen(world.root, user))
     for p in sorted(world.root.glob(f"plans/*-{user}.yaml")):
         try:
             done |= {it.request for it in load_plan(p).items if it.request}
         except (OSError, ValueError, yaml.YAMLError):
             continue
+    sent = {r.msgid for d in _days(world.root) for r in d.requests if r.to == user and r.status == "sent"}
     since = dt.datetime.combine(date - dt.timedelta(days=RECENT_DAYS), dt.time(), dt.UTC).timestamp() * 1000
     out = [m for m in inbox or [] if m.sender == f"{boss.user}@{mail.DOMAIN}" and m.cls == "IPM.Note"
-           and MESSAGE_ID.fullmatch(m.msgid) and m.subject and m.msgid not in done and m.delivery_ms >= since
+           and m.msgid in sent and m.subject and m.msgid not in done and m.delivery_ms >= since
            and not policy.mail_reserved(m.sender, m.subject, m.body)]  # fmt: skip
     return sorted(out, key=lambda m: -m.delivery_ms)[:MAPPED_MAX]
 
@@ -337,9 +337,12 @@ def candidates(
     mails: list[mail.Message],
     templates: dict[str, Template],
     date: dt.date,
+    people: dict[str, str],
 ) -> tuple[list[PlanItem], list[str]]:
-    """Plan items for the manager's mails (`templates`: the persona's role templates), unvalidated, and notes."""
+    """Plan items for the manager's mails (`templates`: the persona's role templates; `people`: account -> name, the
+    address book a mail or invite is addressed from), unvalidated, and notes."""
     kinds = requestable(templates)
+    book = ", ".join(f"{name} <{u}@{mail.DOMAIN}>" for u, name in people.items() if u != persona.user)
     items: list[PlanItem] = []
     notes: list[str] = []
     for m in mails:
@@ -367,10 +370,11 @@ def candidates(
             f"Employee: {persona.name}, {persona.role} ({persona.department}). Usual hours {persona.hours[0]}-"
             f"{persona.hours[1]}. Style: {persona.style or 'ordinary'}\nDay: {date.strftime('%A')} {date.isoformat()}."
             f"\n\nMail from {boss.name} <{m.sender}>, subject {m.subject!r}:\n<<<\n{shown}\n>>>\n\n"
-            f"Task: {t.task}: {t.about}\n\n"
+            f"Task: {t.task}: {t.about}\nColleagues' addresses: {book}\n\n"
             f'Return JSON {{"at": "HH:MM", "params": {{{params}}}, "context": "..."}}: at within the usual hours; '
-            "params as strings, every one listed; use exactly the file name, recipient, subject and phrases the "
-            "mail gives, and write all other content in the employee's style; context: one sentence, why now." + reply
+            "params as strings, every one listed; use exactly the file name, recipient and subject the mail gives; "
+            "write the content in the employee's style, and repeat verbatim the words the mail uses for each thing "
+            "it asks to be covered; context: one sentence, why now." + reply
         )
         try:
             x = llm.json(_Item, MAP_SYSTEM, user, temperature=0.7, attempts=1)
@@ -383,6 +387,34 @@ def candidates(
 
 
 # Outcome ------------------------------------------------------------------------------
+
+
+def mismatch(ask: Request, template: Template, values: dict[str, str]) -> str | None:
+    """How the planned task differs from the request (exact rules): another task, file name or recipient, or a
+    phrase the request names that the planned content lacks. Checked at plan time and again on the outcome."""
+    if template.task != ask.task:
+        return f"asked for {ask.task}, planned {template.task}"
+    if template.capability == "mail.reply":
+        return None  # the reply's text is written at task time; the outcome checks it answers this very mail
+    if template.capability == "file.write":
+        if values.get("file_name", "").casefold() != ask.file_name.casefold():
+            return f"file {values.get('file_name')!r}, asked for {ask.file_name!r}"
+        content = [v for k, v in values.items() if k in template.params and k != "file_name"]
+    else:
+        if values.get("to", "").strip().lower() != f"{ask.colleague}@{mail.DOMAIN}":
+            return f"to {values.get('to')!r}, asked for {ask.colleague}"
+        content = [values.get("subject", ""), values.get("body", "")]
+    missing = [x for x in ask.include if mail.letters(x) not in mail.letters(" ".join(content))]
+    return f"content lacks {missing}" if missing else None
+
+
+def planned(it: PlanItem, templates: dict[str, Template], root: Path = ROOT) -> str | None:
+    """Plan-time check of a request item against its record (none: refused, its outcome could not be checked)."""
+    ask = find(it.request, root)
+    t = templates.get(it.template)
+    if ask is None or t is None:
+        return "no record of this request" if ask is None else f"unknown template {it.template!r}"
+    return mismatch(ask, t, {**t.defaults, **it.params, **it.content})
 
 
 def _text(rel: str, data: bytes) -> str:
@@ -408,15 +440,12 @@ def fulfilled(task: Task, root: Path = ROOT) -> tuple[bool, str]:
         return False, f"request records unreadable: {e}"
     if ask is None:
         return False, "no record of this request"
-    if task.template.task != ask.task:
-        return False, f"asked for {ask.task}, did {task.template.task}"
-    v = task.values
+    if why := mismatch(ask, task.template, task.values):
+        return False, why
     if task.template.capability == "mail.reply":
-        ok = v.get("reply_to") == ask.msgid
+        ok = task.values.get("reply_to") == ask.msgid
         return ok, "answers the request mail" if ok else "the reply answers another mail"
     if task.template.capability == "file.write":
-        if v.get("file_name", "").casefold() != ask.file_name.casefold():
-            return False, f"file {v.get('file_name')!r}, asked for {ask.file_name!r}"
         texts: list[str] = []
         for rel in write_paths(task):
             if task.files_absent is None or rel not in task.files_absent:
@@ -425,10 +454,6 @@ def fulfilled(task: Task, root: Path = ROOT) -> tuple[bool, str]:
             if f is None or not f.exists or f.written_ms < task.started_ms:
                 return False, f"{rel}: " + ("unreadable" if f is None else "not written in the task")
             texts.append(_text(rel, f.data))
-        have = mail.letters(" ".join(texts))
-    else:
-        if v.get("to", "").strip().lower() != f"{ask.colleague}@{mail.DOMAIN}":
-            return False, f"sent to {v.get('to')!r}, asked for {ask.colleague}"
-        have = mail.letters(" ".join(v.get(k, "") for k in ("subject", "body")))
-    missing = [x for x in ask.include if mail.letters(x) not in have]
-    return (False, f"missing {missing}") if missing else (True, "matches the request")
+        if missing := [x for x in ask.include if mail.letters(x) not in mail.letters(" ".join(texts))]:
+            return False, f"file lacks {missing}"
+    return True, "matches the request"
