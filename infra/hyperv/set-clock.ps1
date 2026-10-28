@@ -29,10 +29,12 @@ function Set-SrvClock([datetime]$instant) {
     if ((Get-VM -Name $srv).State -ne 'Running') { throw "$srv is not running" }
     $ip = (Get-VMNetworkAdapter -VMName $srv | Where-Object SwitchName -eq 'Default Switch').IPAddresses | Where-Object { $_ -match '^\d+\.' } | Select-Object -First 1
     if (-not $ip) { throw "$srv reports no Default Switch address" }
+    # The host key is pinned by name (build\srv\known_hosts "ludius-srv01"): the Default Switch address changes when
+    # the host reboots.
     # Epoch seconds: the server's timezone matches the guest's, but an absolute instant needs no agreement on it.
     $epoch = [DateTimeOffset]::new($instant).ToUnixTimeSeconds()
     $key, $known = (Join-Path $PSScriptRoot 'build\srv\id_ed25519'), (Join-Path $PSScriptRoot 'build\srv\known_hosts')
-    $t = ssh -i $key -o "UserKnownHostsFile=$known" -o BatchMode=yes "ludius@$ip" "sudo date -s @$epoch +%Y-%m-%dT%H:%M:%S"
+    $t = ssh -i $key -o "UserKnownHostsFile=$known" -o HostKeyAlias=ludius-srv01 -o BatchMode=yes "ludius@$ip" "sudo date -s @$epoch +%Y-%m-%dT%H:%M:%S"
     if ($LASTEXITCODE) { throw "could not set the clock on $srv" }
     $t
 }
