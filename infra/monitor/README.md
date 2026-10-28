@@ -19,7 +19,7 @@ browser --https--> Cloudflare DNS -> homelab Caddy  monitor.ludius.se
 | Input | Where |
 | --- | --- |
 | Tailscale auth key: tagged `tag:ludius-box`, pre-authorised, ephemeral, short expiry | `TS_AUTHKEY` env on the box, never committed |
-| Tailnet ACL entry for `tag:ludius-box` (below) | Tailscale admin console |
+| Tailnet policy: the grant, `tests` and removal of broad rules (below) | Tailscale admin console |
 | The box's tailnet IP after bring-up (`tailscale ip -4` on the box) | `BOX_IP` for the homelab steps |
 | Agent environment: `Monitor__Root=<checkout>/web/monitor/dist` and `Monitor__AllowedOrigins=https://monitor.ludius.se` | the agent's service unit (printed by `bring-up.sh`) |
 | Homelab: Caddy container name, the Cloudflare token that covers `ludius.se` | owner / orchestrator |
@@ -28,23 +28,46 @@ Optional overrides: `TS_HOSTNAME` (default `ludius-box`), `TS_PORT` (`8452`), `B
 
 ### Tailnet ACL (do this before the key is used)
 
-A rented box must not reach the owner's other devices. Only the homelab may reach the box, and only on the monitor port. Adapt to the existing policy; the point is `tag:ludius-box` as a destination for the homelab and never a source:
+Tailscale policy is deny-by-default and has no deny rule: access exists only if some rule grants it, in whichever direction, so a "deny" line does nothing against a broad allow. The requirement is that the **only** rule touching `tag:ludius-box` is the one below. A rented box must not reach the owner's devices, and the owner's other devices must not reach the box's port directly (that would bypass Claustra). Syntax: [grants](https://tailscale.com/kb/1324/grants) (used here; the older `acls` form is equivalent), [policy syntax](https://tailscale.com/kb/1337/policy-syntax) for `hosts`, `autogroup:member` / `autogroup:tagged` and `tests`.
+
+**1. Add** to the tailnet policy file (Admin console › Access controls). The homelab is named by its tailnet IP, so it needs no tag and keeps its current identity:
 
 ```json
 "tagOwners": { "tag:ludius-box": ["autogroup:admin"] },
-"acls": [ { "action": "accept", "src": ["<homelab tag or user>"], "dst": ["tag:ludius-box:8452"] } ]
+"hosts":     { "m0-homelab-cl": "100.101.88.26" },
+"grants": [
+  { "src": ["m0-homelab-cl"], "dst": ["tag:ludius-box"], "ip": ["tcp:8452"] }
+],
+"tests": [
+  { "src": "<owner login email>", "deny":   ["tag:ludius-box:8452", "tag:ludius-box:7452", "tag:ludius-box:22"] },
+  { "src": "m0-homelab-cl",       "accept": ["tag:ludius-box:8452"], "deny": ["tag:ludius-box:7452", "tag:ludius-box:22"] },
+  { "src": "tag:ludius-box",      "deny":   ["m0-homelab-cl:22", "m0-homelab-cl:443", "<owner login email>:22"] }
+]
 ```
 
-If the policy is the default allow-all, add a rule that denies `tag:ludius-box` as a source, or the box can reach everything on the tailnet.
+**2. Remove or narrow every broad rule, in `grants` and in `acls`, on both sides.** `tag:ludius-box` is matched by `*`, `autogroup:tagged` and `autogroup:danger-all` as a `src` (the box reaches out) and as a `dst` (everything reaches the box). Find any rule where `src` or `dst` contains one of those, or `tag:ludius-box` itself apart from the grant above, and change it:
+
+- The stock allow-all is `{ "action": "accept", "src": ["*"], "dst": ["*:*"] }` in `acls`, or `{ "src": ["*"], "dst": ["*"], "ip": ["*"] }` in `grants`. Delete it and put in its place `{ "src": ["autogroup:member"], "dst": ["autogroup:member"], "ip": ["*"] }`. `autogroup:member` is the user-owned devices and, unlike `*`, not tagged ones.
+- Anything the owner reaches today that is tagged (servers) or that tagged machines reach needs its own explicit rule naming the tag, for example `{ "src": ["autogroup:member"], "dst": ["tag:servers"], "ip": ["*"] }`. Never `autogroup:tagged` or `*`.
+- No `autoApprovers` entry for `tag:ludius-box`, no `ssh` rule with it, no `nodeAttrs` giving it `funnel`.
+
+The `tests` block is the proof at save time: Tailscale rejects a policy file where any assertion fails, so a leftover broad rule shows up as a rejected save naming the test. (`tag:` tests may not be meaningful while no device holds the tag yet. Save the policy again once the box has joined and confirm it is accepted.)
+
+**3. Prove it on real traffic after the box has joined** (BOX_IP from `tailscale ip -4` on the box):
+
+- From any device that is not the homelab (the owner's laptop or phone): `curl -m 5 -sS http://BOX_IP:8452/api/vms` must **time out** (curl exit 28), not answer and not refuse. Repeat for port 7452 and 22.
+- From the homelab: the same `curl` answers (the Verify step below).
+- From the box: `timeout 5 bash -c 'exec 3<>/dev/tcp/100.101.88.26/22'` and the same against each of the owner's other tailnet IPs must fail. (Only meaningful if the target listens on that port; the `tests` block is the authority.)
+- Do not use `tailscale ping` as the proof: a ping can answer while the policy denies TCP (unconfirmed, so not relied on).
 
 ## Order of commands
 
-1. **Desktop, before box day:** run the Claustra precheck (below). Create the tagged auth key and the ACL entry.
+1. **Desktop, before box day:** run the Claustra precheck (below). Apply the tailnet policy (above, steps 1 and 2) and create the tagged auth key.
 2. **Box** (root, in the repo checkout):
    ```sh
    TS_AUTHKEY=tskey-auth-... infra/monitor/bring-up.sh
    ```
-   Installs Tailscale from Tailscale's apt repo, joins the tailnet, runs `tailscale serve --bg --http=8452 http://127.0.0.1:7452`, installs Bun (pinned, sha256-checked against the release's `SHASUMS256.txt`), builds `web/monitor`, then runs `check.sh`. `DRY_RUN=1` prints the mutating commands only.
+   Installs Tailscale from Tailscale's apt repo (and `jq`), joins the tailnet, then **verifies the box's identity: tagged `tag:ludius-box` and nothing else, no user owner, no advertised routes or exit node, no exit node in use.** If the box is already enrolled with anything else it aborts before `serve` and tells you to `tailscale logout` and start over. Only then it runs `tailscale serve --bg --http=8452 http://127.0.0.1:7452`, installs Bun (pinned, sha256-checked against the release's `SHASUMS256.txt`), builds `web/monitor`, and runs `check.sh`. `DRY_RUN=1` prints the mutating commands only (the identity check is read-only and still runs on an enrolled machine).
 3. **Box:** start the agent with `Monitor__Root` and `Monitor__AllowedOrigins` (values printed by step 2).
 4. **Homelab** (the orchestrator applies after the owner's OK; nothing here is applied by the worker):
    ```sh
@@ -74,11 +97,13 @@ monitor.ludius.se {
 }
 ```
 
-Logged out you must land on the Claustra login; after login you must get a 502 from the dead upstream, not the login again (a loop means the SSO cookie does not carry to `ludius.se`). Remove the block again (same sed range as teardown).
+Logged out you must land on the Claustra login; after login you must get a 502 from the dead upstream, not the login again (a loop means the SSO cookie does not carry to `ludius.se`). Back the Caddyfile up before adding the block (`cp -a Caddyfile Caddyfile.bak-before-ludius-monitor-precheck`) and put it back afterwards (`cp -a Caddyfile.bak-before-ludius-monitor-precheck Caddyfile`, then validate and reload). The throwaway block carries no markers, so `remove-monitor.sh` does not remove it.
 
 ## Verify
 
-On the box: `infra/monitor/check.sh` must pass. It checks the monitor ports listen on loopback only, nothing answers on the public IP for 7452 or 8452, and `tailscale serve status` shows `:8452 -> 127.0.0.1:7452`. (`ss` never lists the tailnet port because `tailscale serve` listens inside tailscaled; the public-IP probes cover it.)
+On the box: `infra/monitor/check.sh` must exit 0. It fails closed: if `ss`, `ip`, `tailscale` or `jq` cannot answer it exits 2 (abort), never "nothing found, all good". It checks (1) from `ss -ltn`, IPv4 and IPv6, that ports 7452, 7453 and 8452 listen on loopback only (a wildcard or global-address listener on any of them fails); (2) that a TCP connect to each of those ports on every global address of the box, IPv6 included, is refused or times out (`tailscale0` excluded); (3) from `tailscale serve status --json` that serve holds exactly one mapping, `:8452 -> http://127.0.0.1:7452` at `/`, with no other port, no Services and no funnel. (`ss` never lists the tailnet port because `tailscale serve` listens inside tailscaled; the connect probes cover it.)
+
+`infra/monitor/test.sh` runs the same script and the bring-up identity gate against stubbed `ss`, `ip` and `tailscale`, and the homelab removal script against sample Caddyfiles (needs `jq` and `python3`; run it before box day).
 
 From the homelab, over the tailnet, with the agent running:
 
@@ -102,15 +127,15 @@ infra/monitor/teardown.sh     # tailscale serve --http=8452 off; tailscale logou
 
 Delete the machine in the Tailscale admin console if listed, and revoke the auth key.
 
-Homelab (back up first, same naming):
+Homelab:
 
 ```sh
-cd /srv/compose/edge
-cp -a Caddyfile Caddyfile.bak-before-ludius-monitor-teardown
-sed -i '/^# BEGIN ludius-monitor/,/^# END ludius-monitor/d' Caddyfile
-docker compose exec <caddy-service> caddy validate --config /etc/caddy/Caddyfile
-docker compose exec <caddy-service> caddy reload --config /etc/caddy/Caddyfile
+scp infra/monitor/homelab/remove-monitor.sh root@192.168.0.67:/tmp/
+ssh root@192.168.0.67
+CADDY='docker compose -f /srv/compose/edge/compose.yaml exec -T <caddy-service> caddy' /tmp/remove-monitor.sh   # service name unconfirmed
 ```
+
+The script refuses unless the Caddyfile has exactly one `# BEGIN ludius-monitor` and one `# END ludius-monitor` line, BEGIN first (otherwise it says so and leaves the file alone; `DRY_RUN=1` shows the lines it would remove). It writes `Caddyfile.bak-before-ludius-monitor-teardown`, removes the block, runs `caddy validate` and, if that fails, restores the backup and stops; only a validated file is reloaded.
 
 Remove `monitor.ludius.se` from `DOMAINS` and `docker compose up -d <ddns-service>`. Removing a domain from `DOMAINS` does not delete the Cloudflare record (to my recollection of cloudflare-ddns; unconfirmed), so delete the `monitor` record in the `ludius.se` zone in the dashboard. Remove the ddns container too if it was added only for this.
 
@@ -128,7 +153,15 @@ http://127.0.0.1:7453 {
 }
 ```
 
-Then run `AGENT_MONITOR=http://127.0.0.1:7453 infra/monitor/bring-up.sh` (serve maps `:8452` to `:7453`) and check with `AGENT_PORT=7453 infra/monitor/check.sh`. The agent's own `127.0.0.1:7452` stays loopback-only; `ss -ltn` confirms it. Origin is untouched either way.
+Then run `AGENT_MONITOR=http://127.0.0.1:7453 infra/monitor/bring-up.sh` (serve maps `:8452` to `:7453`; it passes the same value to `check.sh`, so run a later check as `AGENT_MONITOR=http://127.0.0.1:7453 infra/monitor/check.sh`). The check always covers 7452, 7453 and 8452, so the agent's own `127.0.0.1:7452` is verified loopback-only as well. Origin is untouched either way.
+
+## Box-day checklist (beyond the commands above)
+
+- [ ] Tailnet policy applied and saved with the `tests` block; broad rules removed or narrowed; the curl proofs from "Tailnet ACL" step 3 pass.
+- [ ] **Claustra cross-domain login:** the precheck passes on `monitor.ludius.se` (login page, then the dead-upstream 502, no login loop).
+- [ ] **Claustra authorizes the owner only:** `claustra_forward` proves "logged in to Claustra", not "is the owner". Confirm in Claustra which accounts can log in and which hosts they may reach (a per-host allowlist, if it has one; not visible from the Caddyfile pattern). If any other account exists, log in as it and confirm `monitor.ludius.se` is refused before frames are ever served.
+- [ ] `infra/monitor/check.sh` exits 0 on the box with the agent running.
+- [ ] Cloudflare token covers `ludius.se`; TLS for `monitor.ludius.se` issued; the Verify steps below pass.
 
 ## Unconfirmed for box day
 
@@ -139,7 +172,9 @@ Then run `AGENT_MONITOR=http://127.0.0.1:7453 infra/monitor/bring-up.sh` (serve 
 - **`tailscale serve` and `Host`:** serve's reverse proxy sets `Out.Host = In.Host` for TCP upstreams (`ipn/ipnlocal/serve.go` on tailscale's `main`; read, not run), so the `Host: 127.0.0.1:7452` Caddy sends arrives at the agent unchanged. The installed version is not confirmed: the homelab `curl` in "Verify" decides, and a 400 or 404 there means Host was rewritten. Fallback below. Serve may also print a link to enable the feature for the tailnet once.
 - **`claustra_forward` and `header_up`:** the snippet is defined only on the homelab, so whether it can pass extra proxy options is unconfirmed (`grep -n -B2 -A12 claustra_forward /srv/compose/edge/Caddyfile` shows it). The design does not depend on it: the Host rewrite sits in the second block, after Claustra has seen the real Host.
 - **`tailscale up` flags and key format:** written for a current Tailscale from the stable Debian trixie repo; the key goes on the command line.
+- **JSON shapes read by the scripts:** `tailscale serve status --json` (`TCP`, `Web`, `Handlers`, `Proxy`, `AllowFunnel`, `Services`), `tailscale status --json` (`Self.Tags`, `Self.UserID`, `User[<id>].LoginName` of `tagged-devices` for tagged nodes) and `tailscale debug prefs` (`AdvertiseRoutes`, `ExitNodeID`, `ExitNodeIP`) follow Tailscale's source as I remember it and were exercised only against stubs of that shape. If a real one differs the scripts fail closed (check.sh prints the JSON it saw, bring-up aborts), they do not pass; adjust the `jq` filter then.
+- **Policy features:** that `autogroup:member` excludes tagged devices and that `tests` accept `tag:ludius-box` before any device holds it are read from the docs, not tried; the saved-policy tests are what settles them.
 
 ## Validation done (static)
 
-`shellcheck` on the three scripts and `DRY_RUN=1` of `bring-up.sh` and `teardown.sh`. The Caddy snippet was not run through `caddy validate` (no Caddy here, and the `claustra_forward` snippet is defined only on the homelab).
+`shellcheck` on all scripts, `infra/monitor/test.sh` (stubbed `ss`/`ip`/`tailscale`, a throwaway listener on 127.0.0.1 and ::1, sample Caddyfiles), and `DRY_RUN=1` of `teardown.sh`. The Caddy snippet was not run through `caddy validate` (no Caddy here, and the `claustra_forward` snippet is defined only on the homelab).

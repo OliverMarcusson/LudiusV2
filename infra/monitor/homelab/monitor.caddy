@@ -1,4 +1,5 @@
-# BEGIN ludius-monitor (remove with the sed range in infra/monitor/README.md)
+# BEGIN ludius-monitor
+# Remove with infra/monitor/homelab/remove-monitor.sh (it needs the BEGIN and END lines exactly as they are).
 # Public site: Claustra login, then the loopback hop below. Claustra sees the real Host (monitor.ludius.se).
 monitor.ludius.se {
 	import claustra_forward http://127.0.0.1:18452

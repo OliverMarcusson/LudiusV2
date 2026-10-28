@@ -44,22 +44,44 @@ build_monitor() {
   bun run build
 }
 
+# The box must hold exactly one identity: tagged $TS_TAG and nothing else (so no user owner), advertising no routes or
+# exit node and using none. Anything else could expose the owner's tailnet to a rented box (or the reverse), so abort
+# before `serve` is published. Needs tailscale to be running; `tailscale debug prefs` is the only place the advertised
+# routes show (an exit node is advertised as 0.0.0.0/0 and ::/0 in AdvertiseRoutes).
+verify_identity() {
+  local st prefs
+  st=$(tailscale status --json) || { echo "cannot read tailscale status" >&2; return 1; }
+  prefs=$(tailscale debug prefs) || { echo "cannot read tailscale prefs" >&2; return 1; }
+  if ! jq -e --arg tag "$TS_TAG" '
+      (.Self.Tags // []) == [$tag]
+      and (((.User // {})[(.Self.UserID | tostring)].LoginName // "tagged-devices") == "tagged-devices")' <<<"$st" >/dev/null     || ! jq -e '((.AdvertiseRoutes // []) | length) == 0 and (.ExitNodeID // "") == "" and (.ExitNodeIP // "") == ""'       <<<"$prefs" >/dev/null; then
+    echo "ABORT: this box is already on a tailnet with an unexpected identity (need only $TS_TAG, no user owner, no routes or exit node):" >&2
+    jq -c '{Tags: .Self.Tags, UserID: .Self.UserID, HostName: .Self.HostName}' <<<"$st" >&2 || true
+    jq -c '{AdvertiseRoutes, ExitNodeID, ExitNodeIP}' <<<"$prefs" >&2 || true
+    echo "Run 'tailscale logout' on the box, then run this script again with TS_AUTHKEY." >&2
+    return 1
+  fi
+  echo "tailscale identity ok: only $TS_TAG, no routes, no exit node"
+}
+
 if [[ -z $DRY_RUN && $EUID -ne 0 ]]; then echo "run as root" >&2; exit 1; fi
 
-run apt-get install -y curl gnupg ca-certificates unzip
+run apt-get install -y curl gnupg ca-certificates unzip jq
 command -v tailscale >/dev/null || run install_tailscale
 
 if command -v tailscale >/dev/null && tailscale ip -4 >/dev/null 2>&1; then
   echo "tailscale already up as $(tailscale ip -4 | head -1)"
+  verify_identity
 else
   : "${TS_AUTHKEY:?set TS_AUTHKEY to a tagged, pre-authorised (ideally ephemeral) auth key}"
   # accept-dns=false: the box's resolver stays as Hetzner set it. No routes or exit node are advertised.
   # ponytail: the key is visible in `ps` for the second this takes; root-only rental box, so left as is.
   if [[ -n $DRY_RUN ]]; then
     echo "+ tailscale up --auth-key=<TS_AUTHKEY> --hostname=$TS_HOSTNAME --advertise-tags=$TS_TAG --accept-dns=false --accept-routes=false"
+    echo "+ verify_identity"
   else
-    tailscale up --auth-key="$TS_AUTHKEY" --hostname="$TS_HOSTNAME" --advertise-tags="$TS_TAG" \
-      --accept-dns=false --accept-routes=false
+    tailscale up --auth-key="$TS_AUTHKEY" --hostname="$TS_HOSTNAME" --advertise-tags="$TS_TAG"       --accept-dns=false --accept-routes=false
+    verify_identity # the key's own tags decide, not the flag: a key without the tag must not get through
   fi
 fi
 
@@ -71,4 +93,4 @@ run build_monitor
 
 echo "monitor UI built: $repo/web/monitor/dist"
 echo "agent needs: Monitor__Root=$repo/web/monitor/dist  Monitor__AllowedOrigins=https://monitor.ludius.se"
-[[ -n $DRY_RUN ]] || TS_PORT=$TS_PORT "$repo/infra/monitor/check.sh"
+[[ -n $DRY_RUN ]] || TS_PORT=$TS_PORT AGENT_MONITOR=$AGENT_MONITOR "$repo/infra/monitor/check.sh"
