@@ -23,14 +23,16 @@
     start_mode: disabled
     state: stopped
 
-# Realtime protection stays on (a range machine looks normal); only scheduled and catch-up scans and the signature
-# schedule are off, by preference and by policy, and Defender's own scheduled tasks are disabled.
+# Scheduled and catch-up scans and the signature schedule are off, by preference and by policy, and Defender's own
+# scheduled tasks are disabled; Defender itself is turned off below (kept, so a scan stays off if that ever lapses).
 - name: Defender scans never scheduled
   ansible.windows.win_powershell:
     script: |
       $ErrorActionPreference = 'Stop'
-      Set-MpPreference -ScanScheduleDay 8 -RemediationScheduleDay 8 -SignatureScheduleDay 8 `
-        -DisableCatchupFullScan $true -DisableCatchupQuickScan $true
+      if ((Get-Service WinDefend -ErrorAction SilentlyContinue).Status -eq 'Running') { # not once turned off below
+        Set-MpPreference -ScanScheduleDay 8 -RemediationScheduleDay 8 -SignatureScheduleDay 8 `
+          -DisableCatchupFullScan $true -DisableCatchupQuickScan $true
+      }
       Get-ScheduledTask -TaskPath '\Microsoft\Windows\Windows Defender\' | Disable-ScheduledTask | Out-Null
 
 - name: Defender scan schedule by policy
@@ -44,6 +46,63 @@
     - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Scan', name: DisableCatchupFullScan, data: 1 }
     - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Scan', name: DisableCatchupQuickScan, data: 1 }
     - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Signature Updates', name: ScheduleDay, data: 8 }
+
+# Owner's decision (2026-10-29): Microsoft Defender Antivirus off on every range machine. Closed training range; the
+# trainees need a baseline without on-access AV. In the image, so every clone inherits it.
+# Tamper Protection would silently undo all of this, and an unmanaged Windows 10 has no policy that turns it off (only
+# the Security app, or the offline hive): the build checks it is off, as it is after this ISO's install.
+# DisableAntiSpyware is honoured by the image's Defender platform (4.18.1909, the ISO's: platform updates are
+# definition updates, which the image doesn't take) and ignored from 4.18.2108 on; the check below catches that.
+- name: Tamper Protection off (else Defender can't be turned off)
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      $t = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Defender\Features' -ErrorAction SilentlyContinue).TamperProtection
+      if ($t -eq 5) { throw 'Tamper Protection is on: turn it off in the Security app (or the offline SOFTWARE hive) first' }
+
+- name: Defender realtime protection off (preference, while the service still runs)
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+      if ((Get-Service WinDefend -ErrorAction SilentlyContinue).Status -ne 'Running') { return } # already off
+      $Ansible.Changed = (Get-MpPreference).DisableRealtimeMonitoring -ne $true
+      Set-MpPreference -DisableRealtimeMonitoring $true
+
+- name: Defender off by policy
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: 1
+    type: dword
+  loop:
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender', name: DisableAntiSpyware }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender', name: DisableAntiVirus }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection', name: DisableRealtimeMonitoring }
+  register: defender_policy
+
+- name: Reboot for the Defender policy
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+  when: defender_policy is changed
+
+# Unreadable while Defender's service runs is a failure, not "off"; with the service stopped by the policy the status
+# cmdlet has nothing to ask, which is off.
+- name: Defender antivirus and realtime protection are off
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      $svc = Get-Service WinDefend -ErrorAction SilentlyContinue
+      try { $s = Get-MpComputerStatus -ErrorAction Stop } catch { $s = $null }
+      if ($s) {
+        if ($s.RealTimeProtectionEnabled -or $s.AntivirusEnabled) {
+          throw "Defender still on: RealTimeProtectionEnabled=$($s.RealTimeProtectionEnabled) AntivirusEnabled=$($s.AntivirusEnabled)"
+        }
+        "RealTimeProtectionEnabled=False AntivirusEnabled=False"
+      }
+      elseif ($svc -and $svc.Status -eq 'Running') { throw 'WinDefend is running but its status is unreadable' }
+      else { "WinDefend $(if ($svc) { $svc.Status } else { 'absent' }): Defender antivirus not running" }
+  register: defender_off
 
 - name: No automatic maintenance (it runs Defender, defrag and update scans in idle time)
   ansible.windows.win_regedit:
