@@ -29,8 +29,12 @@ channel framing, the observer's file read) is covered offline by `dotnet test ho
 - [ ] Template in the range pool (Packer `pool`, or `pvesh set /pools/ludius --vms <id>`).
 - [ ] `tablet: 1` (USB tablet, absolute pointer), PS/2 keyboard (default), guest keyboard layout en-US.
 - [ ] `args: -device vhost-vsock-pci,guest-cid=<vmid>` on the template; the agent rewrites the CID on every clone.
-- [ ] Fixed display: `vga: std` plus a fixed mode (try `-global VGA.xres=1920 -global VGA.yres=1080` in `args`);
-      guest scaling 100%. Confirm with `ludius contract --read-only` (console frame == observer screen).
+- [ ] Fixed display: `range-up.yml` sets `vga: std` and `-global VGA.xres=1920 -global VGA.yres=1080` in every
+      clone's `args` (the template's args can't be set by Packer's API token). Check `qm config <vmid>` and, in the
+      guest, that 1920x1080 is the active mode after a cold boot. If the guest boots at another mode (OVMF picks the
+      GOP mode, and Windows' basic display driver keeps it), set 1920x1080 in the template's OVMF setup (Device
+      Manager > OVMF Platform Configuration, stored in its EFI disk) and recheck on a fresh clone. Guest scaling 100%.
+      Confirm with `ludius contract --read-only` (console frame == observer screen).
 - [ ] Image: virtio-win guest tools **including viosock** (driver + Winsock provider). Check in the guest:
       `netsh winsock show catalog` lists the VirtIO socket provider; note its address family (expected 40).
 - [ ] Observer scheduled task started with `--transport vsock` (and `--vsock-family N` if the catalog says not 40).

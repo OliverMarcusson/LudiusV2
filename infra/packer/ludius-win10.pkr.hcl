@@ -4,8 +4,8 @@
 # Packer, so no password is in a committed file), WinRM for Packer and Ansible during the build, sysprep last as a
 # Packer provisioner. Persona accounts, domain join and the observer's logon task are per clone (range-up.yml).
 #
-# Run from the repo root (relative paths below), with ANSIBLE_VAULT_PASSWORD_FILE set and PKR_VAR_admin_password equal to
-# the vault's vault_build_admin_password:
+# Run from the repo root (relative paths below), with ANSIBLE_VAULT_PASSWORD_FILE set and PKR_VAR_admin_password set
+# (a build-only password: the build admin is disabled with a random password at the end):
 #   packer init infra/packer
 #   packer build -only=proxmox-iso.proxmox -var proxmox_token=$(cat /root/.ludius-packer-token) \
 #     -var iso_checksum=<sha256 of win10.iso> infra/packer                          # on the Proxmox node
@@ -39,7 +39,7 @@ variable "admin_user" {
 variable "admin_password" {
   type        = string
   sensitive   = true
-  description = "Build admin password: from PKR_VAR_admin_password, never a file. Same as the vault's vault_build_admin_password."
+  description = "Build admin password: from PKR_VAR_admin_password, never a file. Build only: the account is disabled at the end."
   validation {
     condition     = can(regex("^[A-Za-z0-9!#%()*+,./:;=?@\\[\\]^_{|}~-]{12,64}$", var.admin_password))
     error_message = "12 to 64 characters, no quotes, spaces, <, >, & or $ (it goes into XML and command lines)."
@@ -83,6 +83,11 @@ variable "proxmox_token" {
 variable "template_vmid" {
   type    = number
   default = 9000 # range-up.yml's template_vmid
+}
+
+variable "range_pool" {
+  type    = string
+  default = "ludius" # the host agent's Proxmox:Pool; range-up.yml refuses a template outside it
 }
 
 variable "storage" {
@@ -129,6 +134,7 @@ source "proxmox-iso" "proxmox" {
   vm_id                    = var.template_vmid
   vm_name                  = "ludius-win10-golden"
   template_description     = "Ludius golden Windows 10 (infra/packer), generalized"
+  pool                     = var.range_pool
 
   boot_iso {
     type         = "ide"
@@ -212,14 +218,20 @@ source "hyperv-iso" "hyperv" {
   boot_wait    = "1s"
   boot_command = local.any_key
 
-  communicator     = "winrm"
-  winrm_username   = var.admin_user
-  winrm_password   = var.admin_password
-  winrm_timeout    = "2h"
-  shutdown_command = "shutdown /s /t 5 /f /d p:4:1 /c Packer" # graceful, after the sysprep provisioner's /quit
+  communicator   = "winrm"
+  winrm_username = var.admin_user
+  winrm_password = var.admin_password
+  winrm_timeout  = "2h"
+  # The last provisioner disables the build admin, so Packer can't log on to shut down: the guest shuts itself down
+  # and Packer only waits for Off.
+  disable_shutdown = true
   shutdown_timeout = "30m"
 
-  output_directory = "runs/packer/${var.hyperv_vm_name}" # must not exist yet; holds the exported, generalized VHDX
+  # The VM stays registered (Off) and is not exported: Hyper-V's fixed display and checkpoint settings live in the VM,
+  # set by the post-processor below (as the earlier draft and new-vm.ps1 did).
+  keep_registered  = true
+  skip_export      = true
+  output_directory = "runs/packer/${var.hyperv_vm_name}" # must not exist yet
 }
 
 build {
@@ -238,14 +250,36 @@ build {
     ]
   }
 
-  # Last (spec: sysprep run by Packer): generalize with the clones' answer file the sysprep role staged, and /quit,
-  # so Packer's own shutdown powers it off (Proxmox then converts it to the template).
+  # Last (spec: sysprep run by Packer): generalize with the clones' answer file the sysprep role staged, and /quit;
+  # then the build admin gets a random password nobody knows and is disabled, so the image carries no usable build
+  # credential (clones get a per-range admin from range-up.yml). Proxmox's builder then shuts the VM down through its
+  # API and converts it to the template; on Hyper-V the guest shuts itself down (disable_shutdown above).
   provisioner "powershell" {
     inline = [
       "$s = 'C:\\Windows\\System32\\Sysprep'",
       "$a = '/generalize', '/oobe', '/quit', '/quiet', \"/unattend:$s\\ludius-unattend.xml\"",
       "$p = Start-Process \"$s\\sysprep.exe\" -ArgumentList $a -Wait -PassThru",
       "if ($p.ExitCode) { throw \"sysprep exit $($p.ExitCode); see $s\\Panther\\setupact.log\" }",
+      "$b = [byte[]]::new(32); [Security.Cryptography.RandomNumberGenerator]::Fill($b)",
+      "Set-LocalUser '${var.admin_user}' -Password (ConvertTo-SecureString ([Convert]::ToBase64String($b)) -AsPlainText -Force)",
+      "Disable-LocalUser '${var.admin_user}'",
+      "if ('${source.name}' -eq 'hyperv') { shutdown /s /t 20 /d p:4:1 /c Packer }",
+    ]
+  }
+
+  # Hyper-V only: fixed 1920x1080 display in VM config (spec section 4), no automatic checkpoints, Guest Service
+  # Interface, DVDs ejected; on the registered, Off VM (as the earlier draft and new-vm.ps1 did).
+  post-processor "shell-local" {
+    only               = ["hyperv-iso.hyperv"]
+    execute_command    = ["pwsh", "-NoProfile", "-NonInteractive", "-File", "{{.Script}}"]
+    tempfile_extension = ".ps1"
+    inline = [
+      "$ErrorActionPreference = 'Stop'",
+      "$vm = Get-VM -Name '${var.hyperv_vm_name}'",
+      "Set-VM $vm -AutomaticCheckpointsEnabled $false -CheckpointType Standard",
+      "Set-VMVideo $vm -ResolutionType Single -HorizontalResolution 1920 -VerticalResolution 1080",
+      "Enable-VMIntegrationService $vm -Name 'Guest Service Interface'",
+      "Get-VMDvdDrive $vm | Where-Object Path | Set-VMDvdDrive -Path $null",
     ]
   }
 }
