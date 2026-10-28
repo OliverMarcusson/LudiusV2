@@ -30,20 +30,23 @@
     state: restarted
   when: pveproxy_listen is changed and pveproxy_unit.rc == 0
 
-- name: Unit present
-  ansible.builtin.command: systemctl cat {{ item }}
+# Masked by symlink (what `systemctl mask` writes), so it holds before the packages exist: on the first pass the
+# proxmox-ve install pulls in rpcbind, whose socket would otherwise bind 111 on every address until the second pass.
+- name: SPICE proxy and rpcbind masked, installed or not
+  ansible.builtin.file:
+    src: /dev/null
+    dest: /etc/systemd/system/{{ item }}
+    state: link
+    force: true
   loop: [spiceproxy.service, rpcbind.service, rpcbind.socket]
-  register: units
+  register: masks
+
+- name: Masks loaded
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: masks is changed
+
+- name: SPICE proxy and rpcbind stopped where already running
+  ansible.builtin.command: systemctl stop spiceproxy.service rpcbind.socket rpcbind.service
   changed_when: false
   failed_when: false
-
-- name: SPICE proxy and rpcbind stopped and masked
-  ansible.builtin.systemd_service:
-    name: "{{ item.item }}"
-    state: stopped
-    enabled: false
-    masked: true
-  loop: "{{ units.results }}"
-  loop_control:
-    label: "{{ item.item }}"
-  when: item.rc == 0
