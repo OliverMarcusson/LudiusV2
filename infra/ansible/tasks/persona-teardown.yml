@@ -19,11 +19,16 @@
         port: 5985
         state: stopped
         timeout: 120
+  # Never fails: every marked clone gets its turn, and the verdict in range-up.yml fails on any recorded entry.
   rescue:
     - name: Stop the VM (bring-up access could not be closed)
       ansible.builtin.command: qm stop {{ p.vmid }}
+      register: stopped
       changed_when: true
+      failed_when: false
 
     - name: Record it
       ansible.builtin.set_fact:
-        closed_failures: "{{ closed_failures | default([]) + [p.user ~ ' (' ~ p.vmid ~ ') stopped'] }}"
+        closed_failures: >-
+          {{ closed_failures | default([]) + [p.user ~ ' (' ~ p.vmid ~ ') ' ~
+             ('not closed, stopped' if stopped.rc == 0 else 'not closed and qm stop failed: may still be open')] }}
