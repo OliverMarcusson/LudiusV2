@@ -183,20 +183,21 @@ export interface Stream {
 }
 
 // A VM's 12 fps feed over a WebSocket: each binary message is a JPEG, drawn straight onto the canvas so the
-// page doesn't re-render per frame. Stats update once a second. Closed while paused or the tab is hidden;
-// reconnects after 2 s when the connection drops.
+// page doesn't re-render per frame. Stats update once a second. Closed while paused or the tab is hidden (unless
+// the feed is in picture-in-picture, which is watched from other tabs); reconnects after 2 s when the connection drops.
 export function useStream(
   vm: string,
   width: number,
   enabled: boolean,
   canvas: RefObject<HTMLCanvasElement | null>,
   onFrame: () => void, // must be stable (useCallback)
+  keepAlive = false,
 ): Stream {
   const [stats, setStats] = useState<Stream>({ at: null, fps: 0, error: null })
   const visible = usePageVisible()
 
   useEffect(() => {
-    if (!enabled || !visible || width <= 0) return
+    if (!enabled || (!visible && !keepAlive) || width <= 0) return
     let ws: WebSocket | null = null
     let retry: number | undefined
     let stopped = false
@@ -258,7 +259,7 @@ export function useStream(
       window.clearInterval(tick)
       ws?.close()
     }
-  }, [vm, width, enabled, visible, canvas, onFrame])
+  }, [vm, width, enabled, visible, keepAlive, canvas, onFrame])
 
   return stats
 }

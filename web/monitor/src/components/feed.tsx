@@ -1,5 +1,7 @@
+import { PictureInPicture2 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { STALE_MS, age, frameWidth, useStream, type Vm } from "@/lib/feeds"
 
@@ -62,9 +64,34 @@ export function Feed({
     })
   }, [])
 
+  // Picture-in-picture: the canvas as a 12 fps video stream, so the feed can be watched over other windows.
+  const video = useRef<HTMLVideoElement>(null)
+  const [pip, setPip] = useState(false)
+  const togglePip = async () => {
+    const v = video.current
+    if (!v || !canvas.current) return
+    if (document.pictureInPictureElement === v) return void (await document.exitPictureInPicture())
+    v.srcObject = canvas.current.captureStream(12)
+    await v.play()
+    await v.requestPictureInPicture()
+  }
+  useEffect(() => {
+    const v = video.current
+    if (!v) return
+    const on = () => setPip(true)
+    const off = () => setPip(false)
+    v.addEventListener("enterpictureinpicture", on)
+    v.addEventListener("leavepictureinpicture", off)
+    return () => {
+      v.removeEventListener("enterpictureinpicture", on)
+      v.removeEventListener("leavepictureinpicture", off)
+      if (document.pictureInPictureElement === v) void document.exitPictureInPicture()
+    }
+  }, [])
+
   const running = vm.state === "running"
   const width = cssWidth ? frameWidth(cssWidth, maxWidth) : 0
-  const frame = useStream(vm.name, width, running && !paused, canvas, onFrame)
+  const frame = useStream(vm.name, width, running && !paused, canvas, onFrame, pip)
   const h = health(vm, frame.at, frame.error, now)
   const shown = running && frame.at !== null
   const ratio = vm.width && vm.height ? `${vm.width} / ${vm.height}` : "16 / 9"
@@ -82,6 +109,15 @@ export function Feed({
           aria-label={`Desktop of ${vm.name}`}
           className={cn("size-full object-contain", !shown && "invisible", h === "lost" && "opacity-40 grayscale")}
         />
+        {large && (
+          <video
+            ref={video}
+            muted
+            playsInline
+            aria-hidden
+            className="pointer-events-none absolute size-px opacity-0"
+          />
+        )}
         {(!shown || h === "lost") && (
           <div className="absolute inset-0 grid place-items-center p-4 text-center text-sm text-muted-foreground">
             {!running
@@ -112,6 +148,20 @@ export function Feed({
             <span>
               {vm.width}×{vm.height}
             </span>
+          )}
+          {large && document.pictureInPictureEnabled && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="self-center"
+              disabled={!shown}
+              onClick={() => void togglePip()}
+              aria-pressed={pip}
+              aria-label={pip ? "Close picture-in-picture" : "Open in picture-in-picture"}
+              title={pip ? "Close picture-in-picture" : "Picture-in-picture"}
+            >
+              <PictureInPicture2 />
+            </Button>
           )}
           <span className="flex items-center gap-1.5">
             <span className={cn("size-2 self-center rounded-full", DOT[h])} aria-hidden />
