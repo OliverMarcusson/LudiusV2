@@ -114,13 +114,30 @@ docker compose exec <caddy-service> caddy reload --config /etc/caddy/Caddyfile
 
 Remove `monitor.ludius.se` from `DOMAINS` and `docker compose up -d <ddns-service>`. Removing a domain from `DOMAINS` does not delete the Cloudflare record (to my recollection of cloudflare-ddns; unconfirmed), so delete the `monitor` record in the `ludius.se` zone in the dashboard. Remove the ddns container too if it was added only for this.
 
+### Fallback if `tailscale serve` rewrites Host
+
+Put a tiny Caddy on the box that sets Host, and point serve at it. Binds loopback only, so the exposure story is unchanged:
+
+```
+# /etc/caddy/Caddyfile on the box (apt install caddy; systemctl disable --now the default site if it listens on :80)
+http://127.0.0.1:7453 {
+	bind 127.0.0.1
+	reverse_proxy 127.0.0.1:7452 {
+		header_up Host 127.0.0.1:7452
+	}
+}
+```
+
+Then run `AGENT_MONITOR=http://127.0.0.1:7453 infra/monitor/bring-up.sh` (serve maps `:8452` to `:7453`) and check with `AGENT_PORT=7453 infra/monitor/check.sh`. The agent's own `127.0.0.1:7452` stays loopback-only; `ss -ltn` confirms it. Origin is untouched either way.
+
 ## Unconfirmed for box day
 
 - **Cloudflare token vs `ludius.se`:** whether the existing sealed token covers the `ludius.se` zone. No `ludius.se` domain is in the edge yet. If not, a new token (Zone › DNS edit, `ludius.se` only) and a new ddns container are needed.
 - **TLS issuance for `ludius.se`:** if the edge's Caddy gets certificates by DNS-01 with a marcusson.dev-scoped token, the new host needs the same for `ludius.se` (or HTTP-01 reachable on 80/443).
 - **Claustra on a second registrable domain:** an SSO cookie scoped to `marcusson.dev` is not sent to `monitor.ludius.se`. Whether Claustra supports a second cookie domain, and whether it needs a client or allowlist entry per host (`agh.marcusson.dev` only imports the snippet, which suggests none), is not visible from the Caddyfile pattern. The precheck above answers it. Fallback: a `*.marcusson.dev` name.
 - **Caddy runs on the host network:** the snippet reaches Claustra at `127.0.0.1:13002`, which implies it, so the loopback hop at `127.0.0.1:18452` and the dial to the box's `100.x` address should work. A containerised Caddy without host networking would not reach the tailnet; `docker inspect` the edge container.
-- **`tailscale serve` and `Host`:** Caddy sets `Host: 127.0.0.1:7452` and I assume `tailscale serve` forwards it unchanged. The homelab `curl` in "Verify" confirms it. Serve may also print a link to enable the feature for the tailnet once.
+- **`tailscale serve` and `Host`:** serve's reverse proxy sets `Out.Host = In.Host` for TCP upstreams (`ipn/ipnlocal/serve.go` on tailscale's `main`; read, not run), so the `Host: 127.0.0.1:7452` Caddy sends arrives at the agent unchanged. The installed version is not confirmed: the homelab `curl` in "Verify" decides, and a 400 or 404 there means Host was rewritten. Fallback below. Serve may also print a link to enable the feature for the tailnet once.
+- **`claustra_forward` and `header_up`:** the snippet is defined only on the homelab, so whether it can pass extra proxy options is unconfirmed (`grep -n -B2 -A12 claustra_forward /srv/compose/edge/Caddyfile` shows it). The design does not depend on it: the Host rewrite sits in the second block, after Claustra has seen the real Host.
 - **`tailscale up` flags and key format:** written for a current Tailscale from the stable Debian trixie repo; the key goes on the command line.
 
 ## Validation done (static)
