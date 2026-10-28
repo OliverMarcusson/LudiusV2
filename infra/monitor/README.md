@@ -38,10 +38,10 @@ Optional overrides: `TS_HOSTNAME` (default `ludius-box`), `TS_PORT` (`8452`), `P
 
 Tailscale policy is deny-by-default and has no deny rule: access exists only if some rule grants it, in whichever direction. A rented box must not reach the owner's devices, and the owner's other devices must not reach the box's ports directly (that would bypass Claustra). So the **only** rule touching `tag:ludius-box` is the last grant below. Syntax: [grants](https://tailscale.com/kb/1324/grants), [policy syntax](https://tailscale.com/kb/1337/policy-syntax) for `hosts`, `autogroup:member` and `tests`.
 
-As applied (the live policy file is authoritative; the `ip` values of the first two grants and the `tagOwners` owner are not restated in the brief and are written here as I assume them):
+As applied on 2026-10-28 (the live policy file is authoritative; the owner's `ssh` check rule and member `funnel` nodeAttr are kept and not shown):
 
 ```json
-"tagOwners": { "tag:ludius-box": ["autogroup:admin"] },
+"tagOwners": { "tag:artifex-worker": ["<owner login email>"], "tag:ludius-box": ["<owner login email>"] },
 "hosts":     { "m0-homelab-cl": "100.101.88.26" },
 "grants": [
   { "src": ["autogroup:member"],   "dst": ["autogroup:member", "tag:artifex-worker"], "ip": ["*"] },
