@@ -25,7 +25,8 @@ export function useVms(intervalMs = 5000): { vms: Vm[]; error: string | null; lo
         const res = await fetch("/api/vms", { cache: "no-store" })
         if (!res.ok) throw new Error(`host agent answered ${res.status}`)
         if (!stop) {
-          setVms((await res.json()) as Vm[])
+          // Range servers (ludius-srv01) host no persona: nothing to watch there.
+          setVms(((await res.json()) as Vm[]).filter((v) => !/-srv\d*$/.test(v.name)))
           setError(null)
         }
       } catch (e) {
