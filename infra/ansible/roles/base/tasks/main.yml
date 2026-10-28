@@ -1,10 +1,16 @@
 ---
 # base: updates baked in, then Windows Update, Defender's scheduled scans and automatic maintenance kept quiet during
 # runs; never sleeps; no first-run or consumer popups over tasks. Mirrors provision.ps1's $roles.
+# Windows 10 22H2 is past end of support: the default categories (critical, security, rollups) bring the last
+# cumulative updates (2025-10 LCU and .NET CU) and two small servicing fixes. The Malicious Software Removal Tool is a
+# one-off scan, not a fix, so it stays out. The timeout bounds the whole task (every round and reboot): a hung module
+# call fails the build instead of stalling it.
 - name: Bake in updates
   ansible.windows.win_updates:
     reboot: true
     reboot_timeout: 3600
+    reject_list: [KB890830]
+  timeout: 7200
   when: windows_updates | bool
 
 - name: Never sleep, monitor never off
