@@ -84,6 +84,9 @@ static class Monitor
     {
         var host = new Uri(app.Configuration["Kestrel:Endpoints:Monitor:Url"]!);
         var onMonitor = $"*:{host.Port}";
+        // Public origins a proxy serves the monitor under (Cloudflare Tunnel), exact, ';'-separated. Empty by default;
+        // set it outside appsettings.json, e.g. Monitor__AllowedOrigins=https://monitor.ludius.se.
+        var allowedOrigins = ParseOrigins(app.Configuration["Monitor:AllowedOrigins"]);
         app.Use(async (ctx, next) =>
         {
             if (ctx.Connection.LocalPort == host.Port)
@@ -139,8 +142,7 @@ static class Monitor
             if (!include.IsMatch(name) || !VmName.Valid(name)) return Results.NotFound();
             if (!ctx.WebSockets.IsWebSocketRequest) return Results.BadRequest("WebSocket only");
             // WebSockets ignore CORS: without this any page in an operator's browser could watch the desktops.
-            var origin = ctx.Request.Headers.Origin.ToString();
-            if (origin.Length > 0 && !Uri.TryCreate(origin, UriKind.Absolute, out var o) | (o?.Authority != ctx.Request.Host.Value))
+            if (!OriginAllowed(ctx.Request.Headers.Origin.ToString(), ctx.Request.Host.Value, allowedOrigins))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             var ct = ctx.RequestAborted;
@@ -161,6 +163,26 @@ static class Monitor
             catch (Exception e) when (e is OperationCanceledException or WebSocketException) { }
             return Results.Empty;
         });
+    }
+
+    // A WebSocket's Origin: none (not a browser), the agent's own host, or one of the configured public origins exactly.
+    public static bool OriginAllowed(string origin, string? host, IReadOnlySet<string> allowed) =>
+        origin.Length == 0
+        || (Uri.TryCreate(origin, UriKind.Absolute, out var o) && o.Authority == host)
+        || allowed.Contains(origin);
+
+    // Each entry must be a bare http(s) origin (no path, query or user info); anything else stops the agent at start.
+    public static IReadOnlySet<string> ParseOrigins(string? value)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in (value ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!Uri.TryCreate(entry, UriKind.Absolute, out var u) || u.Scheme is not ("https" or "http") || u.UserInfo != ""
+                || u.Query != "" || u.Fragment != "" || u.AbsolutePath != "/" || entry.EndsWith('/'))
+                throw new InvalidOperationException($"Monitor:AllowedOrigins: {entry} is not an origin like https://monitor.example");
+            set.Add(u.GetLeftPart(UriPartial.Authority)); // the form browsers send: lower-case host, no default port
+        }
+        return set;
     }
 
     static readonly Regex AdmissionLog = new(@"^\d{8}-\d{6}-([a-z0-9_]{1,64})\.jsonl$");

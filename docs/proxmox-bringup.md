@@ -19,6 +19,11 @@ channel framing, the observer's file read) is covered offline by `dotnet test ho
       clone sources); clones are created into it. Check: `ludius vm state` on a VM outside the pool is refused
       (PERMISSION_DENIED) and nothing in `/var/log/pve/tasks` names it.
 - [ ] `ss -ltnp` shows only the gRPC and monitor ports; `/run/ludius-agent` is created 0700 (screendump scratch).
+- [ ] Monitor through Cloudflare Tunnel + Access at `monitor.ludius.se`: the monitor stays on 127.0.0.1:7452. In the
+      cloudflared ingress, `service: http://127.0.0.1:7452` with `originRequest.httpHostHeader: 127.0.0.1:7452` (the
+      agent's host filter and its `*:7452` routes refuse `Host: monitor.ludius.se`). Agent environment:
+      `Monitor__AllowedOrigins=https://monitor.ludius.se` (empty by default; not in appsettings.json). Check: the
+      page streams through the tunnel, and a WebSocket with `Origin: https://evil.example` gets 403.
 
 ## 2. VM config (template)
 
