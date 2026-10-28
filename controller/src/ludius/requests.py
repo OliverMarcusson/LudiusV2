@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import yaml
+from pydantic import ConfigDict
 
 from ludius import guestfile, mail
 from ludius.llm import LlmClient, LlmError
@@ -76,6 +77,8 @@ MAP_SYSTEM = (
 
 
 class Ask(Strict):
+    model_config = ConfigDict(extra="ignore")  # a key the model adds (a template parameter) is dropped, not fatal
+
     to: str  # the report's account
     task: str  # a request-capable template
     subject: str

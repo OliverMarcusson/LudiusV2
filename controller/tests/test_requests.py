@@ -85,6 +85,7 @@ def test_requests_are_validated_sent_once_and_capped(tmp_path: Path, monkeypatch
     reserved = requests.problem(requests.Ask(**ASK), {"aberg": 1}, {"aberg": cli.load_templates()}, {}, BOSS,
                                 Policy(reserved_paths=["aberg@"]), {"aberg": set()}, {"aberg": []})  # fmt: skip
     assert reserved == "aberg@corp.ludius.test is scenario-reserved"
+    assert requests.Ask.model_validate({**ASK, "heading": "x"}).subject == ASK["subject"]  # extra keys dropped
 
 
 def test_persona_maps_a_request_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
