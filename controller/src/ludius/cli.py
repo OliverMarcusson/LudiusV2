@@ -619,13 +619,13 @@ def make_assist() -> Assist | None:
 
 
 def make_composer() -> Composer | None:
-    """Task-time reply content: one planner-LLM call per reply task, Jev's yes/no check unless LUDIUS_REPLY_JEV=0.
+    """Task-time reply content: one planner-LLM call per reply task, always checked by Jev's yes/no.
     Independent of LUDIUS_ASSIST (that switches the in-loop help off, not content)."""
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if not key:
         return None
     llm = LlmClient(key, model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))
-    return Composer(llm, RUNS / "world" / "narrative.yaml", confirm=os.environ.get("LUDIUS_REPLY_JEV") != "0")
+    return Composer(llm, RUNS / "world" / "narrative.yaml")
 
 
 def make_session(agent: HostAgent, log: GroundTruth) -> Session:

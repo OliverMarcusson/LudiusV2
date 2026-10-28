@@ -95,6 +95,7 @@ def test_pick_refuses_strangers_reserved_and_unknown(monkeypatch: pytest.MonkeyP
         ("x" * 301, "length"),
         ("Hi Marcus, see C:\\Users\\aberg\\Documents\\payroll q4.xlsx", "scenario-reserved"),
         ("Hi Marcus, Lars Nord has the numbers. Anna", "scenario-reserved"),  # lnord's mailbox is reserved
+        ("Hi Marcus, Lars\nNord has the numbers. Anna", "scenario-reserved"),  # split over a line break
     ],
 )
 def test_reply_text_rules(text: str, why: str | None) -> None:

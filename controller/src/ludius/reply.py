@@ -124,9 +124,10 @@ def problem(text: str, people: dict[str, str], policy: Policy) -> str | None:
         return f"length {len(text)} outside {TEXT_MIN}-{TEXT_MAX}"
     if r := policy.text_allowed(text, None):
         return r
+    flat = " ".join(text.split())  # a name split over a line break is still that name
     for user, name in people.items():
         if policy.reserved(f"{user}@{mail.DOMAIN}") and any(
-            re.search(rf"\b{re.escape(x)}\b", text, re.I) for x in (name, user)
+            re.search(rf"\b{re.escape(' '.join(x.split()))}\b", flat, re.I) for x in (name, user)
         ):
             return f"names {name!r}, whose mailbox is scenario-reserved"
     return None

@@ -556,3 +556,7 @@ def test_failing_database_is_unreadable_not_empty(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(mail, "_host", lambda: "10.0.0.1")
     monkeypatch.setattr(mail.subprocess, "run", run)
     assert mail._query("aberg", "sent", "x") is None  # pyright: ignore[reportPrivateUsage]
+    # Sol on afbadf1: a body that can't be read made the query fail too, never an empty body.
+    fake.write_text('#!/bin/sh\nif [ "$1" = sqlite3 ]; then echo "1 0 0 - - 0 0 0 - - 2D 2D 2D 2D c1"; exit 0; fi\n'
+                    'exit 1\n', encoding="utf-8", newline="\n")  # fmt: skip
+    assert mail._query("aberg", "inbox", "x") is None  # pyright: ignore[reportPrivateUsage]

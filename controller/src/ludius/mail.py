@@ -123,7 +123,7 @@ def _query(user: str, folder: str, subject: str | None) -> list[Message] | None:
     remote = (f"set -o pipefail; sudo sqlite3 -readonly -separator ' ' {db}/exmdb/exchange.sqlite3 \"{sql}\" | "
               f"while read {fields} c; do printf '{' '.join(['%s'] * 14)}\\n' "
               + " ".join(f'\"${v}\"' for v in fields.split()) + "; "
-              f"if [ \"$c\" != - ]; then sudo zstdcat -qf {db}/cid/$c; fi; "
+              f"if [ \"$c\" != - ]; then sudo zstdcat -qf {db}/cid/$c || exit 1; fi; "
               f"printf '\\036'; done")  # fmt: skip
     try:
         host = _host()
