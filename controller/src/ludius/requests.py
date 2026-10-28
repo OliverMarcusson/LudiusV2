@@ -475,9 +475,14 @@ def duplicates(items: list[PlanItem], it: PlanItem, root: Path = ROOT) -> list[P
 
 
 def _text(rel: str, data: bytes) -> str:
-    """A written file's words: workbook cells, plain text (UTF-8 or UTF-16), or RTF without its control words."""
+    """A written file's words: workbook cells, document paragraphs, slide text, plain text (UTF-8 or UTF-16), or RTF
+    without its control words."""
     if rel.lower().endswith(".xlsx"):
         return " ".join((guestfile.xlsx_cells(data) or {}).values())
+    if rel.lower().endswith(".docx"):
+        return " ".join(guestfile.docx_paragraphs(data) or [])
+    if rel.lower().endswith(".pptx"):
+        return " ".join(x for s in guestfile.pptx_slides(data) or [] for x in s)
     if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
         return data.decode("utf-16", "replace")
     text = data.decode("utf-8-sig", "replace")

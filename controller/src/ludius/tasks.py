@@ -36,6 +36,8 @@ class ElementCheck(Strict):
     role: str | None = None
     name: str | None = None  # regex
     value: str | None = None  # regex
+    focused: bool | None = None  # has the keyboard focus (PowerPoint's text box after Ctrl+Enter)
+    selected: bool | None = None  # is selected (PowerPoint's thumbnail of the slide being edited)
 
 
 class PixelsCheck(Strict):
@@ -99,17 +101,26 @@ class InviteCheck(Strict):
 class FileCheck(Strict):
     """A file the task creates, read on the guest and never in the UI (ludius.guestfile). It declares the template's
     write: `path` is profile-relative in a noise folder. The runner refuses to start the task if the file exists
-    (a task never overwrites); done needs it written after the task started, with `cells` (planned rows, cells split
-    by tabs) equal to the workbook's only sheet, case-insensitively (Excel's AutoCorrect and AutoComplete case).
+    (a task never overwrites); done needs it written after the task started, holding exactly the planned content,
+    case-insensitively (AutoCorrect capitalises, Excel's AutoComplete keeps an earlier cell's case). One content
+    check, by the file's type: `cells` for .xlsx (planned rows, cells split by tabs: the workbook's only sheet),
+    `paragraphs` for .docx (planned lines: the document's non-empty paragraphs in order), `slides` for .pptx (one
+    entry per slide, its lines the title then each bullet: the deck's slides in order).
     """
 
     path: str
-    cells: str = "{rows}"
+    cells: str | None = None
+    paragraphs: str | None = None
+    slides: list[str] | None = None
 
     @model_validator(mode="after")
     def _noise_folder(self) -> FileCheck:
-        if guestfile.profile_path("u", self.path) is None or not self.path.lower().endswith(".xlsx"):
-            raise ValueError(f"file check {self.path!r}: an .xlsx in a noise folder {guestfile.NOISE_FOLDERS}")
+        need = {".xlsx": "cells", ".docx": "paragraphs", ".pptx": "slides"}
+        ext = self.path.lower()[-5:]
+        if guestfile.profile_path("u", self.path) is None or ext not in need:
+            raise ValueError(f"file check {self.path!r}: an {'/'.join(need)} in a noise folder")
+        if [k for k in need.values() if getattr(self, k) is not None] != [need[ext]]:
+            raise ValueError(f"file check {self.path!r}: needs {need[ext]} and no other content check")
         return self
 
 
@@ -149,6 +160,7 @@ class Subgoal(Strict):
     # The text target exposes no readable value (Outlook's Word body): typing there counts as landed and the
     # subgoal's own check decides. Off everywhere else, where an unchanged value means the text did not land.
     unreadable_ok: bool = False
+    needs: str | None = None  # an optional parameter (one with a default): the subgoal is skipped when it is empty
     # Where a click in a document leaves the caret: at the end (writers append), or at the start (a reply goes
     # above the quoted mail).
     caret: Literal["end", "start"] = "end"
@@ -303,7 +315,8 @@ NAME_PARAMS = {"file_name", "folder_name", "new_name"}  # parameters that name a
 
 
 # What each saving app appends to the typed file name (its Save As default type).
-SAVE_EXTENSIONS = {"notepad": ".txt", "wordpad": ".rtf", "paint": ".png", "excel": ".xlsx"}
+SAVE_EXTENSIONS = {"notepad": ".txt", "wordpad": ".rtf", "paint": ".png", "excel": ".xlsx", "word": ".docx",
+                   "powerpoint": ".pptx"}  # fmt: skip
 
 
 class Template(Strict):
@@ -323,6 +336,7 @@ class Template(Strict):
     about: str = ""  # one line for the planner's capability catalog
     example: dict[str, str] = Field(default_factory=dict[str, str])  # parameters for admission test runs
     resembles: str = ""  # signal type this legitimate work looks like (powershell, rdp, macro); spec section 6
+    plan_weight: float = Field(default=1.0, gt=0, le=1)  # below 1: the planner's catalog asks for it less often
     pixels: Pixels | None = None  # pixels-only mode opt-in; without it the task gets no rows in that mode
     # What the task creates, profile-relative in a noise folder, as the app writes it (with the extension it adds;
     # ".*" for one it keeps, an Explorer rename). The shared reservation check (file_reserved) resolves these.
@@ -485,7 +499,9 @@ class Task:
         )
         self.variant = idx
         skip = {
-            n for n, sg in template.subgoals.items() if sg.text and sg.text in template.defaults and not have[sg.text]
+            n
+            for n, sg in template.subgoals.items()
+            if (k := sg.text or sg.needs) and k in template.defaults and not have[k]
         }
         self.subgoal_names = [n for n in template.variants[idx] if n not in skip]
         # Mistake variants (spec section 6): `{p}_typo` is the value with one stray neighbouring key at the end,
@@ -658,6 +674,8 @@ def element_matches(e: obs.Element, c: ElementCheck, task: Task, flags: int = re
         (not c.role or e.role == c.role)
         and (not c.name or re.search(task.fmt_re(c.name), e.name, flags) is not None)
         and (not c.value or re.search(task.fmt_re(c.value), value, flags) is not None)
+        and (c.focused is None or e.focused == c.focused)
+        and (c.selected is None or e.selected == c.selected)
     )
 
 
@@ -798,9 +816,20 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
     f = guestfile.read(task.owner, rel)
     if f is None or not f.exists or f.written_ms < task.started_ms:
         return False
-    cells = guestfile.xlsx_cells(f.data)
-    want = guestfile.grid_cells(task.fmt(c.cells))
-    return cells is not None and bool(want) and _fold(cells) == _fold(want)
+    if c.cells is not None:
+        cells = guestfile.xlsx_cells(f.data)
+        want = guestfile.grid_cells(task.fmt(c.cells))
+        return cells is not None and bool(want) and _fold(cells) == _fold(want)
+    if c.paragraphs is not None:
+        got, lines = guestfile.docx_paragraphs(f.data), _lines(task.fmt(c.paragraphs))
+        return got is not None and bool(lines) and [x.casefold() for x in got] == lines
+    slides = guestfile.pptx_slides(f.data)
+    want = [w for s in c.slides or [] if (w := _lines(task.fmt(s)))]  # a slide whose optional values are empty: none
+    return slides is not None and bool(want) and [[x.casefold() for x in s] for s in slides] == want
+
+
+def _lines(text: str) -> list[str]:
+    return [x.casefold() for x in text.split("\n") if x.strip()]
 
 
 def _fold(cells: dict[str, str]) -> dict[str, str]:

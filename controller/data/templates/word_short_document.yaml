@@ -1,0 +1,78 @@
+# Write a short document in Word (classic desktop, Office 2024) and save it in Documents as .docx.
+# Writes one new file, Documents\{file_name}.docx (a noise folder), declared by confirm_save's file check: the runner
+# refuses to start if it exists, so the task never overwrites. Nothing it does is irreversible; on abandon Word is
+# closed with Don't Save. Done is read on the guest's disk, not in the UI (Word's document exposes no text): the
+# saved document's non-empty paragraphs are exactly {title}, then each line of {body} (ludius.guestfile).
+# Variants cover how the blank document is opened (Enter on the focused tile vs a click on it) and how Save As is
+# reached: F12, or Ctrl+S to the Backstage and its Browse button. Never the Backstage's OneDrive or Sign in: the
+# range has no Microsoft account and no internet.
+task: word_short_document
+app: word
+capability: file.write  # creates one new file (writes); manager requests may ask for it
+processes: [winword.exe]
+writes: ['Documents\{file_name}.docx']
+params: [file_name, title, body]
+about: "Write a short document in Word and save it as .docx in Documents. file_name: without extension; title: one line; body: 1-10 lines, each its own paragraph. Text: plain sentences of letters, digits, spaces and , . ; : ! ? & % # + / -, each line starting with a letter or digit; no quotes, no ' - ' or '--', no list markers."
+defaults: {launch_query: word}
+example: {file_name: admission test memo, title: Admission test memo, body: "first point of the memo\nsecond point of the memo"}
+variants:
+  - [open_from_start, new_blank_enter, write_title, write_body, save_as, name_file, confirm_save, close_app]
+  - [open_from_start, new_blank_click, write_title, write_body, save_backstage, browse, name_file, confirm_save, close_app]
+weights: [1, 1]
+budget_steps: 40
+budget_minutes: 8
+on_abandon: close_without_saving
+subgoals:
+  open_from_start:
+    goal: "Open Word by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    done: {foreground: {process: winword.exe}}
+  new_blank_enter:
+    goal: "Open a new blank document: the Blank document tile on Word's start screen has the focus, press Enter"
+    done: {foreground: {process: winword.exe, title: '^Document\d+ - Word$'}}
+  new_blank_click:
+    goal: "Open a new blank document with a click on Blank document on Word's start screen"
+    done: {foreground: {process: winword.exe, title: '^Document\d+ - Word$'}}
+  write_title:
+    goal: "The new document is open with the caret on its first line: type the title at the keyboard focus"
+    text: title_enter
+    unreadable_ok: true  # Word's document has no UIA value; the file check decides
+    # Into the page only: never a ribbon field (Font, Font Size, Microsoft search).
+    avoid: [{role: edit}, {role: combo box}]
+    done: {typed: true}
+  write_body:
+    goal: "Type the body text below the title, at the keyboard focus (each line is its own paragraph)"
+    text: body
+    unreadable_ok: true
+    avoid: [{role: edit}, {role: combo box}]
+    done: {typed: true}
+  save_as:
+    goal: "Open the Save As dialog with F12"
+    keys: [F12]
+    # The File tab and the toolbar Save open the Backstage (save_backstage's route); this variant uses F12.
+    avoid: [{name: '^(File Tab|Save)$'}]
+    done: {window: {process: winword.exe, title: "^Save As$"}}
+  save_backstage:
+    goal: "Press Ctrl+S to open Word's Save As page (the Backstage)"
+    keys: [Ctrl+S]
+    avoid: [{name: '^File Tab$'}]
+    done: {element: {role: button, name: '^Browse$'}}
+  browse:
+    goal: "On Word's Save As page, click Browse to open the Save As dialog"
+    # OneDrive and Sign in need a Microsoft account the range does not have; Share and Add a Place leave the task.
+    avoid: [{name: '^(OneDrive|Sign in|Share|Add a Place)$'}, {role: hyperlink}]
+    done: {window: {process: winword.exe, title: "^Save As$"}}
+  name_file:
+    goal: "Enter {file_name} as the file name in the Save As dialog"
+    text: file_name
+    done: {typed: true, element: {name: "^File name", value: '^{file_name}(\.docx)?$'}}
+  confirm_save:
+    goal: "Save the document as {file_name}"
+    done:
+      window: {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}
+      file: {path: 'Documents\{file_name}.docx', paragraphs: "{title}\n{body}"}
+  close_app:
+    goal: "Close Word"
+    done: {window: {process: winword.exe, absent: true}}

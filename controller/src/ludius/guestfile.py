@@ -115,6 +115,66 @@ def xlsx_cells(data: bytes) -> dict[str, str] | None:
         return None
 
 
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+_REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+_PKG_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+
+
+def _parts(z: zipfile.ZipFile) -> set[str] | None:
+    infos = z.infolist()
+    return None if any(i.file_size > MAX_PART for i in infos) else {i.filename for i in infos}
+
+
+def _runs(p: ET.Element, t: str, tab: str) -> str:
+    return "".join(e.text or "" if e.tag == t else "\t" for e in p.iter() if e.tag in (t, tab))
+
+
+def docx_paragraphs(data: bytes) -> list[str] | None:
+    """The non-empty paragraphs of a document's body in order (tables included), runs joined. None when it is not
+    a readable .docx."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            parts = _parts(z)
+            if parts is None or "word/document.xml" not in parts:
+                return None
+            body = ET.fromstring(z.read("word/document.xml")).find(f"{_W}body")
+            if body is None:
+                return None
+            texts = (_runs(p, f"{_W}t", f"{_W}tab") for p in body.iter(f"{_W}p"))
+            return [t for t in texts if t.strip()]
+    except (zipfile.BadZipFile, ET.ParseError, ValueError, KeyError, OSError):
+        return None
+
+
+def pptx_slides(data: bytes) -> list[list[str]] | None:
+    """Each slide in presentation order as its non-empty paragraphs: the title placeholder's first, then the other
+    shapes' in tree order. None when it is not a readable .pptx."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            parts = _parts(z)
+            if parts is None or not {"ppt/presentation.xml", "ppt/_rels/presentation.xml.rels"} <= parts:
+                return None
+            rels = {r.get("Id"): r.get("Target", "") for r in ET.fromstring(z.read("ppt/_rels/presentation.xml.rels"))
+                    .iter(f"{_PKG_REL}Relationship")}  # fmt: skip
+            order = ET.fromstring(z.read("ppt/presentation.xml")).iter(f"{_P}sldId")
+            slides: list[list[str]] = []
+            for sid in order:
+                target = rels[sid.get(f"{_REL}id")].lstrip("/")
+                name = target if target.startswith("ppt/") else "ppt/" + target
+                title: list[str] = []
+                rest: list[str] = []
+                for sp in ET.fromstring(z.read(name)).iter(f"{_P}sp"):
+                    ph = sp.find(f"{_P}nvSpPr/{_P}nvPr/{_P}ph")
+                    texts = [t for p in sp.iter(f"{_A}p") if (t := _runs(p, f"{_A}t", f"{_A}tab")).strip()]
+                    (title if ph is not None and ph.get("type") in ("title", "ctrTitle") else rest).extend(texts)
+                slides.append(title + rest)
+            return slides
+    except (zipfile.BadZipFile, ET.ParseError, ValueError, KeyError, OSError):
+        return None
+
+
 def grid_cells(rows: str) -> dict[str, str]:
     """Planned rows (cells split by tabs, rows by newlines, typed from A1) as {"A1": text}, empty cells left out."""
     out: dict[str, str] = {}

@@ -145,6 +145,7 @@ _NOT_A_NAME = re.compile(r"[;,<>@]")  # a display name holding a second recipien
 
 def catalog(templates: dict[str, Template]) -> str:
     lines = [f"- {t.task}: {t.about} Parameters: {', '.join(p for p in t.params if p not in DERIVED) or 'none'}."
+             + (f" Plan it rarely, about {t.plan_weight:g} times as often as other tasks." if t.plan_weight < 1 else "")
              for t in templates.values()]  # fmt: skip
     lines.append(f"- {BREAK}: away from the desk (lunch, coffee, meeting), screen locked. Set minutes.")
     return "\n".join(lines)
@@ -484,13 +485,20 @@ def item_problem(it: PlanItem, templates: dict[str, Template], policy: Policy, u
         check = sg.done.element.value if sg.done and sg.done.element else None
         if check and len(task.fmt(check)) > VALUE_MAX:
             return f"{name}: text too long, keep it under {VALUE_MAX - 20} characters in total"
+    office = _office_keys(t)
+    for c in (sg.done.file for sg in t.subgoals.values() if sg.done and sg.done.file and sg.done.file.slides):
+        for slide in c.slides or []:
+            if len({bool(task.values.get(k)) for k in re.findall(r"\{(\w+)\}", slide)}) > 1:
+                return f"a slide is planned whole or not at all: {slide!r}"
     for key, value in {**it.params, **it.content}.items():
         if not _PRINTABLE.match(value.replace("\t", " ") if key == "rows" else value):
             return f"{key}: non-ASCII text cannot be typed"
-        if "\n" in value and key not in ("body", "rows"):
+        if "\n" in value and key not in MULTILINE:
             return f"{key}: must be one line"
         if key == "rows" and (why := _grid(value)):
             return f"rows: {why}"
+        if key in office and value and (why := _office_text(value, OFFICE_LINES.get(key, 1))):
+            return f"{key}: {why}"
         if key.endswith("_name") and re.search(r'[<>:"/\\|?*]', value):
             return f"{key}: not a valid file name"
         if key.endswith("_name") and (value != value.strip() or value.endswith(".") or _DEVICE.fullmatch(value)):
@@ -526,6 +534,44 @@ def _grid(rows: str) -> str | None:
             above = [g[c].casefold() for g in grid[:r] if c < len(g)]
             if cell[0].isalpha() and any(a != cell.casefold() and a.startswith(cell.casefold()) for a in above):
                 return f"cell {cell!r}: Excel would complete it to a longer cell above it"
+    return None
+
+
+MULTILINE = ("body", "rows", "bullets", "bullets2")  # the only parameters that may hold several lines
+OFFICE_LINES = {"body": 10, "bullets": 6, "bullets2": 6}  # line caps of Word and PowerPoint text; other keys: one
+OFFICE_LINE_MAX = 120
+# What Word and PowerPoint store as typed (the done check reads the saved file). AutoFormat As You Type turns quotes
+# into smart quotes, "--" and " - " into dashes, *x* and _x_ into bold and italic, 1/2 into a fraction and (c) into a
+# symbol, and makes a line starting with -, *, > or "1." / "a)" a list item (the prefix removed). AutoCorrect's
+# capitalisation is folded by the check. ponytail: AutoCorrect's word list ("dont" -> "don't") is not modelled;
+# such a line fails the done check (fails closed), add the words when plans hit them.
+_OFFICE_LINE = re.compile(rf"[A-Za-z0-9][A-Za-z0-9 ,.;:!?&%#+/-]{{0,{OFFICE_LINE_MAX - 1}}}")
+_AUTOFORMAT = re.compile(r"--| -|- |\b[13]/[24]\b|^\w{1,3}[.)] ")
+# Word's AutoComplete offers a month or weekday from its first four letters; the Enter ending the line takes it.
+_COMPLETES = ("january", "february", "march", "april", "june", "july", "august", "september", "october", "november",
+              "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")  # fmt: skip
+
+
+def _office_keys(t: Template) -> set[str]:
+    """Parameters a Word or PowerPoint file check reads back."""
+    checks = [sg.done.file for sg in t.subgoals.values() if sg.done and sg.done.file]
+    text = " ".join([c.paragraphs or "" for c in checks] + [s for c in checks for s in c.slides or []])
+    return set(re.findall(r"\{(\w+)\}", text))
+
+
+def _office_text(value: str, max_lines: int) -> str | None:
+    lines = value.strip("\n").split("\n")
+    if not 1 <= len(lines) <= max_lines:
+        return f"1-{max_lines} lines"
+    for line in lines:
+        if not _OFFICE_LINE.fullmatch(line) or line != line.strip() or _AUTOFORMAT.search(line):
+            return (
+                f"line {line!r}: up to {OFFICE_LINE_MAX} chars from a letter or digit: letters, "
+                "digits, spaces and , . ; : ! ? & % # + / -; no ' - ', '--' or 1/2; not like a list ('a) ', '1. ')"
+            )
+        last = line.split()[-1].casefold()
+        if len(last) >= 4 and any(w != last and w.startswith(last) for w in _COMPLETES):
+            return f"line {line!r}: Word would complete {last!r} to a month or day name"
     return None
 
 

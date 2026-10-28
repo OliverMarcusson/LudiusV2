@@ -34,6 +34,14 @@ apps:
     process: excel.exe
     start_query: excel
     features: [make a small new workbook with a few rows, save as .xlsx, enter numbers and short labels]
+  - name: word
+    process: winword.exe
+    start_query: word
+    features: [write a short document with a title and paragraphs, save as .docx]
+  - name: powerpoint
+    process: powerpnt.exe
+    start_query: powerpoint
+    features: [make a short deck (title slide, one or two bullet slides), save as .pptx]
 # Subgoal vocabulary: what a subgoal may contain (the Subgoal schema), and the code-checkable completions.
 checks:
   window: "{process, title (regex), class_name, absent} - such a window exists (or not), foreground or background"
