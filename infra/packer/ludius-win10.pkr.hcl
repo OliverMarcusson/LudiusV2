@@ -255,14 +255,26 @@ build {
   # credential (clones get a per-range admin from range-up.yml). Proxmox's builder then shuts the VM down through its
   # API and converts it to the template; on Hyper-V the guest shuts itself down (disable_shutdown above).
   provisioner "powershell" {
+    # Windows PowerShell 5.1: RNGCryptoServiceProvider.GetBytes (RandomNumberGenerator.Fill is .NET Core only). Any
+    # error, an all-zero buffer, or a read-back that isn't "disabled, password changed" exits non-zero: the build fails.
     inline = [
-      "$s = 'C:\\Windows\\System32\\Sysprep'",
-      "$a = '/generalize', '/oobe', '/quit', '/quiet', \"/unattend:$s\\ludius-unattend.xml\"",
-      "$p = Start-Process \"$s\\sysprep.exe\" -ArgumentList $a -Wait -PassThru",
-      "if ($p.ExitCode) { throw \"sysprep exit $($p.ExitCode); see $s\\Panther\\setupact.log\" }",
-      "$b = [byte[]]::new(32); [Security.Cryptography.RandomNumberGenerator]::Fill($b)",
-      "Set-LocalUser '${var.admin_user}' -Password (ConvertTo-SecureString ([Convert]::ToBase64String($b)) -AsPlainText -Force)",
-      "Disable-LocalUser '${var.admin_user}'",
+      "$ErrorActionPreference = 'Stop'",
+      "try {",
+      "  $s = 'C:\\Windows\\System32\\Sysprep'",
+      "  $a = '/generalize', '/oobe', '/quit', '/quiet', \"/unattend:$s\\ludius-unattend.xml\"",
+      "  $p = Start-Process \"$s\\sysprep.exe\" -ArgumentList $a -Wait -PassThru",
+      "  if ($p.ExitCode) { throw \"sysprep exit $($p.ExitCode); see $s\\Panther\\setupact.log\" }",
+      "  $before = (Get-LocalUser '${var.admin_user}').PasswordLastSet",
+      "  $b = New-Object byte[] 32",
+      "  $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider",
+      "  $rng.GetBytes($b); $rng.Dispose()",
+      "  if (-not ($b | Where-Object { $_ -ne 0 })) { throw 'random password buffer is all zero' }",
+      "  Set-LocalUser '${var.admin_user}' -Password (ConvertTo-SecureString ([Convert]::ToBase64String($b)) -AsPlainText -Force)",
+      "  Disable-LocalUser '${var.admin_user}'",
+      "  $u = Get-LocalUser '${var.admin_user}'",
+      "  if ($u.Enabled) { throw 'build admin is still enabled' }",
+      "  if (-not ($u.PasswordLastSet -gt $before)) { throw \"build admin password not changed (last set $($u.PasswordLastSet))\" }",
+      "} catch { Write-Error $_ -ErrorAction Continue; exit 1 }",
       "if ('${source.name}' -eq 'hyperv') { shutdown /s /t 20 /d p:4:1 /c Packer }",
     ]
   }

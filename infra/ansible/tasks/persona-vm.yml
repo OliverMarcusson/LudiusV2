@@ -1,56 +1,39 @@
 ---
 # One persona VM (p: user, vmid, ip from range-vms.yml). Ownership was checked before anything ran. Isolation is set on
-# every run, before any start, and the effective config is asserted: one NIC, on the range bridge, vsock CID = VM id.
+# every run, before any start (range-nic-only.yml), and the effective config is asserted: one NIC, on the range bridge,
+# vsock CID = VM id.
 - name: Linked clone into the range pool, ludius-{{ p.user }}
   ansible.builtin.command: qm clone {{ template_vmid }} {{ p.vmid }} --name ludius-{{ p.user }} --pool {{ range_pool }}
   when: (p.vmid | int) not in pve_vms
   changed_when: true
 
-- name: Config before
-  ansible.builtin.command: pvesh get /nodes/{{ pve_node }}/qemu/{{ p.vmid }}/config --output-format json
-  register: before
-  changed_when: false
-
-# Keep net0's MAC (a new one is a new NIC to Windows, which loses its static address); drop any other NIC.
-- name: Range NIC only, vsock device, fixed display, size
-  ansible.builtin.command:
-    argv: >-
-      {{ ['qm', 'set', p.vmid | string,
-          '--net0', 'virtio=' ~ mac ~ ',bridge=' ~ range_bridge,
-          '--args', '-device vhost-vsock-pci,guest-cid=' ~ p.vmid ~ ' ' ~ display_args,
-          '--vga', 'std', '--tablet', '1',
-          '--cores', persona_cores | string, '--memory', persona_memory_mb | string, '--onboot', '1']
-         + (['--delete', extra | join(',')] if extra else []) }}
+- name: Range NIC only, vsock device, fixed display, size, asserted before every start
+  ansible.builtin.include_tasks: range-nic-only.yml
   vars:
-    cfg: "{{ before.stdout | from_json }}"
-    mac: "{{ cfg.net0 | default('') | regex_search('[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}') | default('', true) }}"
-    extra: "{{ cfg.keys() | select('match', '^net[1-9][0-9]*$') | list }}"
-  changed_when: false
+    nic_vmid: "{{ p.vmid }}"
+    nic_extra: [--args, "-device vhost-vsock-pci,guest-cid={{ p.vmid }} {{ display_args }}", --vga, std, --tablet, "1",
+                --cores, "{{ persona_cores }}", --memory, "{{ persona_memory_mb }}", --onboot, "1"]
 
-- name: Effective config
-  ansible.builtin.command: pvesh get /nodes/{{ pve_node }}/qemu/{{ p.vmid }}/config --current 1 --output-format json
-  register: current
-  changed_when: false
-
-- name: Isolated and wired for the guest channel
+- name: Wired for the guest channel, fixed display, expected name
   ansible.builtin.assert:
     that:
-      - cfg.keys() | select('match', '^net[0-9]+$') | list == ['net0']
-      - cfg.net0 is search('bridge=' ~ range_bridge ~ '(,|$)')
-      - cfg.args | default('') is search('vhost-vsock-pci,guest-cid=' ~ p.vmid ~ '( |$)')
-      - cfg.args | default('') is search('VGA.xres=1920') and cfg.args | default('') is search('VGA.yres=1080')
-      - cfg.name == 'ludius-' ~ p.user
+      - nic_cfg.args | default('') is search('vhost-vsock-pci,guest-cid=' ~ p.vmid ~ '( |$)')
+      - nic_cfg.args | default('') is search('VGA.xres=1920') and nic_cfg.args | default('') is search('VGA.yres=1080')
+      - nic_cfg.name == 'ludius-' ~ p.user
     fail_msg: >-
-      ludius-{{ p.user }} ({{ p.vmid }}) is not isolated on {{ range_bridge }} with vsock CID {{ p.vmid }} in its running
-      config (pending changes on a running VM?); shut it down (qm shutdown {{ p.vmid }}) and rerun
-  vars:
-    cfg: "{{ current.stdout | from_json }}"
+      ludius-{{ p.user }} ({{ p.vmid }}) lacks vsock CID {{ p.vmid }} or the fixed display in its running config
+      (pending changes on a running VM?); shut it down (qm shutdown {{ p.vmid }}) and rerun
 
 - name: Start the clone, ludius-{{ p.user }}
   ansible.builtin.command: qm start {{ p.vmid }}
   register: start
   changed_when: start.rc == 0
   failed_when: start.rc != 0 and 'already running' not in start.stderr
+
+# From here the clone may hold the bring-up admin: the teardown in range-up.yml covers it whatever happens next.
+- name: Mark the clone for teardown, ludius-{{ p.user }}
+  ansible.builtin.set_fact:
+    bootstrapped: "{{ (bootstrapped | default([])) + [p.vmid] }}"
 
 # After first-boot setup the guest agent runs this as SYSTEM: static range address, srv01 as DNS, the per-range
 # bring-up admin (password on stdin, never on a command line), WinRM on with default settings.

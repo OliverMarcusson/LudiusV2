@@ -7,7 +7,8 @@
 # uplink only while it is provisioned. Each persona gets the linked clone named in range-vms.yml (VM id = vsock CID),
 # isolated on the range bridge before every start; the guest agent gives it its range address, WinRM and a per-range
 # bring-up admin; then domain join, persona autologon, hive settings and the observer task, checked through the host
-# agent's observe call; then the bring-up account and WinRM are switched off again. Re-runnable.
+# agent's observe call; then, whatever happened, the bring-up account and WinRM are switched off again on every
+# bootstrapped clone (or the clone is stopped). Re-runnable.
 - name: Validate inputs and ownership, srv01 VM
   hosts: localhost
   connection: local
@@ -148,20 +149,11 @@
           ansible.builtin.command: qm disk resize {{ srv01_vmid }} scsi0 24G
           changed_when: true
 
-    - name: Srv01 cloud-init (every run)
-      ansible.builtin.command: >-
-        qm set {{ srv01_vmid }} --cicustom user=local:snippets/{{ srv01_user_data }} --ciupgrade 0
-        --ipconfig0 ip={{ srv01_ip }}/24
-      changed_when: false
-
-    - name: Srv01 effective config
-      ansible.builtin.command: pvesh get /nodes/{{ pve_node }}/qemu/{{ srv01_vmid }}/config --current 1 --output-format json
-      register: srv01_cfg
-      changed_when: false
-
-    - name: Srv01's first NIC is on the range bridge
-      ansible.builtin.assert:
-        that: (srv01_cfg.stdout | from_json).net0 is search('bridge=' ~ range_bridge ~ '(,|$)')
+    - name: Srv01 range NIC only and cloud-init, asserted before every start
+      ansible.builtin.include_tasks: tasks/range-nic-only.yml
+      vars:
+        nic_vmid: "{{ srv01_vmid }}"
+        nic_extra: [--cicustom, "user=local:snippets/{{ srv01_user_data }}", --ciupgrade, "0", --ipconfig0, "ip={{ srv01_ip }}/24"]
 
     - name: Srv01 running
       ansible.builtin.command: qm start {{ srv01_vmid }}
@@ -182,112 +174,168 @@
         ansible_user: ludius
         ansible_ssh_private_key_file: "{{ srv01_key }}"
         ansible_ssh_common_args: -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/ludius_known_hosts
-        pve_node: "{{ pve_node }}"
 
+# Driven from the Proxmox host, so the uplink's detach is host-side and runs whatever happens to srv01 (a failed task,
+# an unreachable guest): guest work is delegated to srv01 inside the block, the detach is the first thing in always.
 - name: Srv01 (Samba AD, NTP, grommunio), uplink only while provisioning
-  hosts: srv01
-  become: true
+  hosts: localhost
   gather_facts: false
   tasks:
     - name: Provision through a temporary uplink
       block:
-        - name: Uplink up
-          ansible.builtin.include_tasks: tasks/srv01-uplink.yml
+        - name: Attach the uplink NIC
+          ansible.builtin.command: qm set {{ srv01_vmid }} --net1 virtio={{ srv01_build_mac }},bridge={{ build_bridge }}
+          changed_when: true
+
+        - name: Uplink up in the guest
+          ansible.builtin.include_tasks:
+            file: tasks/srv01-uplink-guest.yml
+            apply:
+              delegate_to: srv01
+              become: true
           vars:
             uplink: present
 
         - name: Srv01 role
           ansible.builtin.include_role:
             name: srv01
+            apply:
+              delegate_to: srv01
+              become: true
       always:
-        - name: Uplink down, off-range routes gone
-          ansible.builtin.include_tasks: tasks/srv01-uplink.yml
+        - name: Detach the uplink NIC (host side, no guest involved), else stop srv01
+          block:
+            - name: Range NIC only
+              ansible.builtin.include_tasks: tasks/range-nic-only.yml
+              vars:
+                nic_vmid: "{{ srv01_vmid }}"
+          rescue:
+            - name: Stop srv01 (its uplink could not be confirmed gone)
+              ansible.builtin.command: qm stop {{ srv01_vmid }}
+              changed_when: true
+
+            - name: Fail after stopping srv01
+              ansible.builtin.fail:
+                msg: srv01's uplink NIC could not be detached; srv01 was stopped. Check qm config {{ srv01_vmid }}.
+
+        - name: No off-range route left in the guest (after the detach)
+          ansible.builtin.include_tasks:
+            file: tasks/srv01-uplink-guest.yml
+            apply:
+              delegate_to: srv01
+              become: true
+              ignore_unreachable: true
           vars:
             uplink: absent
 
 - name: Persona clones
   hosts: localhost
-  connection: local
   gather_facts: false
   tasks:
-    - name: Persona VM
-      ansible.builtin.include_tasks: tasks/persona-vm.yml
-      loop: "{{ range_personas }}"
-      loop_control:
-        loop_var: p
-        label: "{{ p.user }} {{ p.vmid }}"
+    - name: Bring-up state
+      ansible.builtin.set_fact:
+        bootstrapped: []
+        bringup_failures: []
 
+    - name: Clone, isolate, start and bootstrap each persona VM
+      block:
+        - name: Persona VM
+          ansible.builtin.include_tasks: tasks/persona-vm.yml
+          loop: "{{ range_personas }}"
+          loop_control:
+            loop_var: p
+            label: "{{ p.user }} {{ p.vmid }}"
+      rescue:
+        - name: Record the failure (teardown still runs for every bootstrapped clone)
+          ansible.builtin.set_fact:
+            bringup_failures: "{{ bringup_failures + ['clones: ' ~ ansible_failed_result.msg | default('failed')] }}"
+
+# localhost is in this play so that a failure on every persona doesn't end the run before the teardown play below.
 - name: Persona machines
-  hosts: personas
+  hosts: personas:localhost
   gather_facts: false
-  roles:
-    - domain
-    - ux_noise
   tasks:
-    - name: Observer logon task
-      ansible.builtin.include_role:
-        name: observer
-        tasks_from: persona
+    - name: Domain, persona session, observer
+      when: inventory_hostname != 'localhost'
+      block:
+        - name: Domain role
+          ansible.builtin.include_role:
+            name: domain
 
-    - name: Office activation
-      ansible.builtin.include_role:
-        name: apps
-        tasks_from: activate
+        - name: Ux_noise role
+          ansible.builtin.include_role:
+            name: ux_noise
 
-    - name: Log on again (hive settings and the observer apply at logon)
-      ansible.windows.win_reboot:
-        reboot_timeout: 900
+        - name: Observer logon task
+          ansible.builtin.include_role:
+            name: observer
+            tasks_from: persona
 
-    - name: Observer process in the persona's session
-      ansible.windows.win_powershell:
-        script: |
-          param($p)
-          $Ansible.Changed = $false
-          $o = Get-Process uiprobe -IncludeUserName -ErrorAction SilentlyContinue | Where-Object UserName -eq $p
-          if (-not $o) { throw "no observer for $p yet" }
-        parameters:
-          p: "{{ domain_netbios }}\\{{ persona }}"
-      register: obs
-      retries: 20
-      delay: 15
-      until: obs is succeeded
+        - name: Office activation
+          ansible.builtin.include_role:
+            name: apps
+            tasks_from: activate
 
-- name: Observer channel, then bring-up access off
+        - name: Log on again (hive settings and the observer apply at logon)
+          ansible.windows.win_reboot:
+            reboot_timeout: 900
+
+        - name: Observer process in the persona's session
+          ansible.windows.win_powershell:
+            script: |
+              param($p)
+              $Ansible.Changed = $false
+              $o = Get-Process uiprobe -IncludeUserName -ErrorAction SilentlyContinue | Where-Object UserName -eq $p
+              if (-not $o) { throw "no observer for $p yet" }
+            parameters:
+              p: "{{ domain_netbios }}\\{{ persona }}"
+          register: obs
+          retries: 20
+          delay: 15
+          until: obs is succeeded
+
+        - name: Persona done
+          ansible.builtin.set_fact:
+            persona_done: true
+
+# Always reached (localhost never fails before here). The teardown covers every clone that got the bring-up admin,
+# whether its setup succeeded or not, through the guest agent (no WinRM); a clone it can't close is stopped.
+- name: Observer channel, bring-up access off, verdict
   hosts: localhost
-  connection: local
   gather_facts: false
   tasks:
-    # The proof is the channel, not the process: a snapshot through the host agent (vsock, pool-confined).
     - name: Observe through the host agent
       ansible.builtin.command: "{{ observer_check_cmd }} --vm ludius-{{ item.user }} observe"
-      loop: "{{ range_personas }}"
+      loop: "{{ range_personas | selectattr('user', 'in', done_personas) | list }}"
       loop_control:
         label: "{{ item.user }}"
+      vars:
+        done_personas: "{{ groups['personas'] | default([]) | map('extract', hostvars) | selectattr('persona_done', 'defined') | map(attribute='persona') | list }}"
       register: observed
       retries: 20
       delay: 15
       until: observed.rc == 0
       changed_when: false
+      ignore_errors: true
 
-    - name: Bring-up account disabled, WinRM stopped and disabled (guest agent)
-      when: bringup_teardown | bool
-      ansible.builtin.command:
-        argv: [qm, guest, exec, "{{ item.vmid }}", --timeout, "120", --, powershell.exe, -NoProfile, -NonInteractive,
-               -EncodedCommand, "{{ lookup('ansible.builtin.template', 'teardown.ps1.j2') | b64encode(encoding='utf-16-le') }}"]
-      loop: "{{ range_personas }}"
+    - name: Bring-up admin and WinRM off on every bootstrapped clone (else the VM is stopped)
+      ansible.builtin.include_tasks: tasks/persona-teardown.yml
+      loop: "{{ range_personas | selectattr('vmid', 'in', bootstrapped | default([])) | list }}"
       loop_control:
-        label: "{{ item.user }}"
-      register: down
-      failed_when: down.rc != 0 or (down.stdout | from_json).exitcode | default(1) != 0
-      changed_when: true
+        loop_var: p
+        label: "{{ p.user }} {{ p.vmid }}"
+      when: bringup_teardown | bool
 
-    - name: WinRM closed from the host
-      when: bringup_teardown | bool
-      ansible.builtin.wait_for:
-        host: "{{ item.ip }}"
-        port: 5985
-        state: stopped
-        timeout: 120
-      loop: "{{ range_personas }}"
-      loop_control:
-        label: "{{ item.user }}"
+    - name: Every persona came up, its observer answers, and bring-up access is closed
+      ansible.builtin.assert:
+        that:
+          - bringup_failures | length == 0
+          - groups['personas'] | default([]) | length == range_personas | length
+          - groups['personas'] | map('extract', hostvars) | selectattr('persona_done', 'defined') | list | length == range_personas | length
+          - observed is not failed
+          - closed_failures | default([]) | length == 0
+        fail_msg: >-
+          bring-up incomplete: {{ bringup_failures }}; personas done
+          {{ groups['personas'] | default([]) | map('extract', hostvars) | selectattr('persona_done', 'defined') | map(attribute='persona') | list }};
+          observer check {{ 'failed' if observed is failed else 'ok' }}; clones stopped because they could not be closed:
+          {{ closed_failures | default([]) }}

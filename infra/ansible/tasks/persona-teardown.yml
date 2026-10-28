@@ -1,0 +1,29 @@
+---
+# One bootstrapped clone (p): bring-up admin disabled and WinRM off through the guest agent (no WinRM involved), then
+# port 5985 checked closed from the host. If either fails, the VM is stopped: a clone is never left open.
+- name: Close bring-up access, else stop the VM, ludius-{{ p.user }}
+  block:
+    - name: Bring-up admin disabled, WinRM stopped and disabled (guest agent)
+      ansible.builtin.command:
+        argv: [qm, guest, exec, "{{ p.vmid }}", --timeout, "120", --, powershell.exe, -NoProfile, -NonInteractive,
+               -EncodedCommand, "{{ lookup('ansible.builtin.template', 'teardown.ps1.j2') | b64encode(encoding='utf-16-le') }}"]
+      register: down
+      retries: 3
+      delay: 20
+      until: down.rc == 0 and (down.stdout | from_json).exitcode | default(1) == 0
+      changed_when: true
+
+    - name: WinRM closed from the host
+      ansible.builtin.wait_for:
+        host: "{{ p.ip }}"
+        port: 5985
+        state: stopped
+        timeout: 120
+  rescue:
+    - name: Stop the VM (bring-up access could not be closed)
+      ansible.builtin.command: qm stop {{ p.vmid }}
+      changed_when: true
+
+    - name: Record it
+      ansible.builtin.set_fact:
+        closed_failures: "{{ closed_failures | default([]) + [p.user ~ ' (' ~ p.vmid ~ ') stopped'] }}"

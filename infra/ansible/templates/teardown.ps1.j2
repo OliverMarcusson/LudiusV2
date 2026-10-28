@@ -1,8 +1,12 @@
 $ErrorActionPreference = 'Stop'
-# After bring-up (run as SYSTEM by the guest agent): the bring-up admin can't log on and WinRM no longer listens.
-# The disabled account and the stopped service stay visible to a trainee (forensic footprint; known infrastructure).
-Disable-LocalUser '{{ range_admin_user }}'
+# Run as SYSTEM by the guest agent after bring-up, also after a failed one: the bring-up admin can't log on and WinRM no
+# longer listens. Safe when bootstrap only got part way (no account yet). The disabled account and the stopped service
+# stay visible to a trainee (forensic footprint; known infrastructure).
+$u = Get-LocalUser '{{ range_admin_user }}' -ErrorAction SilentlyContinue
+if ($u) { Disable-LocalUser $u.Name }
 Stop-Service WinRM -Force
 Set-Service WinRM -StartupType Disabled
 Get-NetFirewallRule -DisplayGroup 'Windows Remote Management' -ErrorAction SilentlyContinue | Disable-NetFirewallRule
+if ((Get-Service WinRM).Status -ne 'Stopped') { exit 6 }
+if ($u -and (Get-LocalUser $u.Name).Enabled) { exit 7 }
 exit 0

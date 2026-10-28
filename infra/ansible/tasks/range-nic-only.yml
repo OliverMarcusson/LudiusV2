@@ -1,0 +1,40 @@
+---
+# Before any start (srv01 and every clone): net0 on the range bridge with its MAC kept (a new MAC is a new NIC to the
+# guest, which loses its static address), every other NIC removed (a leftover uplink included), plus the caller's
+# extra settings (nic_extra: list of qm set arguments). Then the effective (running) config is read back and asserted:
+# only net0, on the range bridge. A running VM whose pending changes aren't live is refused, never started around.
+# In: nic_vmid. Out: nic_cfg (effective config) for the caller's own checks.
+- name: Config before, VM {{ nic_vmid }}
+  ansible.builtin.command: pvesh get /nodes/{{ pve_node }}/qemu/{{ nic_vmid }}/config --output-format json
+  register: nic_before
+  changed_when: false
+
+- name: Range NIC only, VM {{ nic_vmid }}
+  ansible.builtin.command:
+    argv: >-
+      {{ ['qm', 'set', nic_vmid | string, '--net0', 'virtio=' ~ mac ~ ',bridge=' ~ range_bridge]
+         + (nic_extra | default([]))
+         + (['--delete', extra | join(',')] if extra else []) }}
+  vars:
+    cfg: "{{ nic_before.stdout | from_json }}"
+    mac: "{{ cfg.net0 | default('') | regex_search('[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}') | default('', true) }}"
+    extra: "{{ cfg.keys() | select('match', '^net[1-9][0-9]*$') | list }}"
+  changed_when: false
+
+- name: Effective config, VM {{ nic_vmid }}
+  ansible.builtin.command: pvesh get /nodes/{{ pve_node }}/qemu/{{ nic_vmid }}/config --current 1 --output-format json
+  register: nic_current
+  changed_when: false
+
+- name: Effective config parsed, VM {{ nic_vmid }}
+  ansible.builtin.set_fact:
+    nic_cfg: "{{ nic_current.stdout | from_json }}"
+
+- name: Only net0, on the range bridge, VM {{ nic_vmid }}
+  ansible.builtin.assert:
+    that:
+      - nic_cfg.keys() | select('match', '^net[0-9]+$') | list == ['net0']
+      - nic_cfg.net0 is search('bridge=' ~ range_bridge ~ '(,|$)')
+    fail_msg: >-
+      VM {{ nic_vmid }} has a NIC off {{ range_bridge }} in its running config (pending changes on a running VM?);
+      shut it down (qm shutdown {{ nic_vmid }}) and rerun
