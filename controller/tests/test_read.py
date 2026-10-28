@@ -283,6 +283,11 @@ def test_launch_query_goes_into_the_start_search_only(tmp_path: Path) -> None:
     start = outlook(el(1, "edit", "Search box", focused=True), process="SearchApp.exe", title="Search")
     assert launch_target(start.elements[0], start)
     assert [o.kind for o in build_options(view(start, task, sg, Policy()), task, sg, Policy())].count("type") == 2
+    run = outlook(el(1, "edit", "Open:", focused=True), process="explorer.exe", title="Run")  # Sol on 1dec7e8
+    run.windows[0].class_name = "#32770"
+    assert launch_target(run.elements[0], run)  # Win+R launches Notepad, WordPad, Excel and PowerShell
+    run.windows[0].title = "Untitled - Notepad"
+    assert not launch_target(run.elements[0], run)
     raw = template().model_dump(exclude={"processes"})
     with pytest.raises(ValueError, match="mail.read"):
         bad = {**raw, "subgoals": {**raw["subgoals"], "close_outlook": {"goal": "x", "copy_text": True}}}

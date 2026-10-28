@@ -151,12 +151,14 @@ def search_target(e: obs.Element | None, snap: obs.Snapshot, task: Task) -> bool
 
 def launch_target(e: obs.Element | None, snap: obs.Snapshot) -> bool:
     """Where the launch query (LAUNCH_TEXT) may go: the shell's Start search box, an enabled writable edit of the
-    Start/search process; never an app's field (a draft's Subject in front)."""
+    Start/search process, or the Run dialog's Open box; never an app's field (a draft's Subject in front)."""
     if e is None or e.role != "edit" or e.read_only or not e.enabled or e.password:
         return False
     if not 0 <= e.window < len(snap.windows) or pixels_window(w := snap.windows[e.window]):
         return False
-    return w.process_name.lower() in LAUNCH_PROCESSES
+    # or the Run dialog's "Open:" box (Win+R; Notepad, WordPad, Excel and PowerShell launch from it).
+    run = w.process_name.lower() == "explorer.exe" and w.class_name == "#32770" and w.title == "Run"
+    return w.process_name.lower() in LAUNCH_PROCESSES or (run and e.name == "Open:")
 
 
 def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[Option]:
