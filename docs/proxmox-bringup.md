@@ -14,10 +14,15 @@ channel framing, the observer's file read) is covered offline by `dotnet test ho
       Config: `Agent:Backend` defaults to `proxmox` on Linux; `Proxmox:Node` (default: hostname),
       `Proxmox:Resolution` (default `1920x1080`, must match the VM display), `Proxmox:VsockPort` (default 4555, from
       `Agent:ObserverService`). Kestrel endpoints: bind where the controller can reach them, not wider.
+- [ ] Range pool: `pvesh create /pools --poolid ludius`, and `Proxmox:Pool=ludius` in the agent config. Without it
+      the agent refuses every VM. Only VMs in that pool on this node are touched (input, observation, lifecycle,
+      clone sources); clones are created into it. Check: `ludius vm state` on a VM outside the pool is refused
+      (PERMISSION_DENIED) and nothing in `/var/log/pve/tasks` names it.
 - [ ] `ss -ltnp` shows only the gRPC and monitor ports; `/run/ludius-agent` is created 0700 (screendump scratch).
 
 ## 2. VM config (template)
 
+- [ ] Template in the range pool (Packer `pool`, or `pvesh set /pools/ludius --vms <id>`).
 - [ ] `tablet: 1` (USB tablet, absolute pointer), PS/2 keyboard (default), guest keyboard layout en-US.
 - [ ] `args: -device vhost-vsock-pci,guest-cid=<vmid>` on the template; the agent rewrites the CID on every clone.
 - [ ] Fixed display: `vga: std` plus a fixed mode (try `-global VGA.xres=1920 -global VGA.yres=1080` in `args`);
@@ -38,6 +43,8 @@ channel framing, the observer's file read) is covered offline by `dotnet test ho
 - [ ] Agent log: no `vsock connect ... errno` after the guest has logged on.
 - [ ] Observer restart (daily restart path) and a snapshot restore: the next `ludius observe` reconnects.
 - [ ] `ludius contract --read-only`: guest file read reports a missing file as absent (needs the new observer).
+- [ ] Guest file read through a junction or symlink under `Documents` is unknown, not content or absent; Desktop is
+      refused (noise folders only).
 
 ## 5. Clone and snapshot
 
@@ -55,5 +62,8 @@ channel framing, the observer's file read) is covered offline by `dotnet test ho
 
 ## Not on Proxmox yet
 
-- Time-jump clock mode (`set-clock.ps1`, clock sweep) is Hyper-V only; the agent's clock sweep is off on Proxmox.
-  Use compressed or realtime clocks for the 7-day test.
+- Time-jump clock mode (`set-clock.ps1`, clock sweep) is Hyper-V only; the agent's clock sweep is off on Proxmox,
+  and the controller refuses `--clock time-jump` unless the agent reports Hyper-V on the controller's own machine.
+  Use compressed or realtime clocks for the 7-day test. Check: `ludius day --clock time-jump` fails at once with
+  "time-jump refused".
+- Guest files never fall back to PowerShell Direct there: an old observer (UNIMPLEMENTED) reads as unknown.
