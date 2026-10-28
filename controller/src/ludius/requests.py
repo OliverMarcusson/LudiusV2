@@ -313,7 +313,8 @@ def pending(
     world: World, user: str, boss: Person, inbox: list[mail.Message] | None, policy: Policy, date: dt.date
 ) -> list[mail.Message]:
     """New mails from the manager in the persona's Inbox (as read on the server): recent, not reserved, neither
-    planned before (an item's `request`) nor decided before (seen); oldest first, at most MAPPED_MAX."""
+    planned before (an item's `request`) nor decided before (seen); newest first (older ones were the earlier nights'
+    to take), at most MAPPED_MAX."""
     done = set(seen(world.root, user))
     for p in sorted(world.root.glob(f"plans/*-{user}.yaml")):
         try:
@@ -324,7 +325,7 @@ def pending(
     out = [m for m in inbox or [] if m.sender == f"{boss.user}@{mail.DOMAIN}" and m.cls == "IPM.Note"
            and MESSAGE_ID.fullmatch(m.msgid) and m.subject and m.msgid not in done and m.delivery_ms >= since
            and not policy.mail_reserved(m.sender, m.subject, m.body)]  # fmt: skip
-    return sorted(out, key=lambda m: m.delivery_ms)[:MAPPED_MAX]
+    return sorted(out, key=lambda m: -m.delivery_ms)[:MAPPED_MAX]
 
 
 def candidates(
