@@ -70,5 +70,5 @@ command -v bun >/dev/null || run install_bun
 run build_monitor
 
 echo "monitor UI built: $repo/web/monitor/dist"
-echo "agent needs: Monitor__Root=$repo/web/monitor/dist  and the allowed-origin setting = https://monitor.ludius.se"
+echo "agent needs: Monitor__Root=$repo/web/monitor/dist  Monitor__AllowedOrigins=https://monitor.ludius.se"
 [[ -n $DRY_RUN ]] || TS_PORT=$TS_PORT "$repo/infra/monitor/check.sh"

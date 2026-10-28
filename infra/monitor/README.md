@@ -12,7 +12,7 @@ browser --https--> Cloudflare DNS -> homelab Caddy  monitor.ludius.se
 
 - The agent stays on `127.0.0.1:7452`. `tailscale serve` listens on tailnet addresses only. The box opens no inbound port for the monitor.
 - Persona VMs stay on `vmbr1` (no uplink, no forwarding). Tailscale runs on the host only and advertises no routes or exit node.
-- Why the extra Caddy hop: the agent answers only `Host: 127.0.0.1:7452` (`RequireHost("*:7452")` and `AllowedHosts`), and `claustra_forward` takes only an upstream argument, so `header_up` cannot go inside it. The first block keeps the real `Host` for Claustra; the second rewrites it for the agent. `Origin` is untouched, so the agent's WebSocket origin check needs its allowed-origin setting `https://monitor.ludius.se` (added by the Proxmox worker; `host/agent` is not edited here).
+- Why the extra Caddy hop: the agent answers only `Host: 127.0.0.1:7452` (`RequireHost("*:7452")` and `AllowedHosts`), and `claustra_forward` takes only an upstream argument, so `header_up` cannot go inside it. The first block keeps the real `Host` for Claustra; the second rewrites it for the agent. `Origin` is untouched, so the agent's WebSocket origin check needs `Monitor__AllowedOrigins=https://monitor.ludius.se` (`d56d297`; exact origins, `;`-separated, set outside `appsettings.json`; `host/agent` is not edited here).
 
 ## Inputs (box day)
 
@@ -21,7 +21,7 @@ browser --https--> Cloudflare DNS -> homelab Caddy  monitor.ludius.se
 | Tailscale auth key: tagged `tag:ludius-box`, pre-authorised, ephemeral, short expiry | `TS_AUTHKEY` env on the box, never committed |
 | Tailnet ACL entry for `tag:ludius-box` (below) | Tailscale admin console |
 | The box's tailnet IP after bring-up (`tailscale ip -4` on the box) | `BOX_IP` for the homelab steps |
-| Agent environment: `Monitor__Root=<checkout>/web/monitor/dist` and the allowed-origin setting set to `https://monitor.ludius.se` | the agent's service unit (printed by `bring-up.sh`) |
+| Agent environment: `Monitor__Root=<checkout>/web/monitor/dist` and `Monitor__AllowedOrigins=https://monitor.ludius.se` | the agent's service unit (printed by `bring-up.sh`) |
 | Homelab: Caddy container name, the Cloudflare token that covers `ludius.se` | owner / orchestrator |
 
 Optional overrides: `TS_HOSTNAME` (default `ludius-box`), `TS_PORT` (`8452`), `BUN_VERSION` (`1.3.14`).
@@ -45,7 +45,7 @@ If the policy is the default allow-all, add a rule that denies `tag:ludius-box` 
    TS_AUTHKEY=tskey-auth-... infra/monitor/bring-up.sh
    ```
    Installs Tailscale from Tailscale's apt repo, joins the tailnet, runs `tailscale serve --bg --http=8452 http://127.0.0.1:7452`, installs Bun (pinned, sha256-checked against the release's `SHASUMS256.txt`), builds `web/monitor`, then runs `check.sh`. `DRY_RUN=1` prints the mutating commands only.
-3. **Box:** start the agent with `Monitor__Root` and the allowed-origin setting (values printed by step 2).
+3. **Box:** start the agent with `Monitor__Root` and `Monitor__AllowedOrigins` (values printed by step 2).
 4. **Homelab** (the orchestrator applies after the owner's OK; nothing here is applied by the worker):
    ```sh
    scp infra/monitor/homelab/monitor.caddy root@192.168.0.67:/tmp/monitor.caddy
@@ -122,7 +122,6 @@ Remove `monitor.ludius.se` from `DOMAINS` and `docker compose up -d <ddns-servic
 - **Caddy runs on the host network:** the snippet reaches Claustra at `127.0.0.1:13002`, which implies it, so the loopback hop at `127.0.0.1:18452` and the dial to the box's `100.x` address should work. A containerised Caddy without host networking would not reach the tailnet; `docker inspect` the edge container.
 - **`tailscale serve` and `Host`:** Caddy sets `Host: 127.0.0.1:7452` and I assume `tailscale serve` forwards it unchanged. The homelab `curl` in "Verify" confirms it. Serve may also print a link to enable the feature for the tailnet once.
 - **`tailscale up` flags and key format:** written for a current Tailscale from the stable Debian trixie repo; the key goes on the command line.
-- **Agent setting name:** the allowed-origin setting is the Proxmox worker's; its exact key is not known here.
 
 ## Validation done (static)
 
