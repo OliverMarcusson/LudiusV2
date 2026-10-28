@@ -71,7 +71,8 @@ channel framing, the observer's file read) is covered offline by `dotnet test ho
 
 ## 7. Multi-persona run (8 personas, `ludius range`)
 
-- [ ] VM cap: `Agent:MaxRunningVms=8` and `Proxmox:CapExemptIds=110` (srv01; with Exchange: the dc01 and ex01 ids)
+- [ ] VM cap: `Agent:MaxRunningVms=8` and `Proxmox:CapExempt=110:ludius-srv01,110:ludius-dc01,111:ludius-ex01`
+      (set in `infra/box/ludius-agent.service`)
       in the box's agent config. The default is 1 on both backends (the owner's desktop limit). Check: a 9th persona
       start is refused with "VM cap 8"; srv01 starts beside 8 personas.
 - [ ] Temporal server up (`infra/compose/compose.yaml`); the box's timezone is the personas' (`timedatectl set-timezone

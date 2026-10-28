@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from ludius.calls import CapReached
 from ludius.cli import load_templates
 from ludius.decisions import Decision
 from ludius.loop import GroundTruth, Runner, image_reason
@@ -141,3 +142,72 @@ def test_screenshot_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     # A screenshot taken after the screen moved never goes along with the older state.
     assert reasons("moved", MovesOnShot()) == [None] * 12
     assert reasons("failed", FailsOnShot()) == [None] * 12  # a failed capture: text only, no crash
+
+
+class Broke(PrefersStart):
+    """Decisions whose budget is spent: every request is refused before it is sent."""
+
+    def decide(
+        self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
+    ) -> Decision:
+        raise CapReached("aberg: decision cap reached")
+
+
+class ThinksDone(PrefersStart):
+    def __init__(self, done: float) -> None:
+        self.done = done
+
+    def decide(
+        self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
+    ) -> Decision:
+        d = super().decide(state, options, ask_progress=ask_progress)
+        d.subgoal_done = self.done
+        return d
+
+
+class BrokeAssist:
+    narrative = Path("unused")
+
+    def verify(self, state: dict[str, Any]) -> Any:
+        raise CapReached("llm cap reached")
+
+    def next_subgoal(self, state: dict[str, Any]) -> Any:
+        raise CapReached("llm cap reached")
+
+    def prepare(self, *_: object) -> Any:
+        raise CapReached("llm cap reached")
+
+
+def open_ended(template: str = "notepad_write_note") -> Task:
+    """The template's first subgoal without a code check: only Decisions (and the LLM) can call it done."""
+    tpl = load_templates()[template].model_copy(deep=True)
+    task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
+    tpl.subgoals[task.subgoal_names[0]].done = None
+    return task
+
+
+@pytest.mark.parametrize("site", ["decision", "reply content", "assist subgoal", "assist verify"])
+def test_a_spent_budget_abandons_the_task_the_same_way_at_every_site(tmp_path: Path, site: str) -> None:
+    log = tmp_path / "gt.jsonl"
+    broke: Any = BrokeAssist()
+    decider: Any = {"decision": Broke(), "assist subgoal": ThinksDone(0.0), "assist verify": ThinksDone(0.95)}.get(
+        site, PrefersStart()
+    )
+    runner = Runner(ToggleAgent(), decider, Persona(name="t", user="t"), GroundTruth(log), seed=1,  # type: ignore[arg-type]
+                    assist=broke if site.startswith("assist") else None,
+                    composer=broke if site == "reply content" else None)  # fmt: skip
+    if site == "reply content":
+        tpl = load_templates()["outlook_reply_mail"]
+        task = Task(
+            tpl, TaskInstance(template=tpl.task, params={"to": "x@corp.ludius.test", "to_name": "X"}), random.Random(0)
+        )
+    else:
+        task = open_ended()
+    out = runner.run(task)
+    events = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert (out.status, out.reason) == ("abandoned", "budget spent")
+    spent = next(i for i, e in enumerate(events) if e["event"] == "budget_spent")
+    assert any(e["event"] == "ladder" and e["reason"] == "budget spent" for e in events[spent:])  # closed like a person
+    assert [e["event"] for e in events].count("task_end") == 1
+    assert events[-1]["status"] == "abandoned" and events[-1]["reason"] == "budget spent"
+    assert events[-1]["steps"] == out.steps

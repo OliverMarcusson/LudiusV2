@@ -18,8 +18,9 @@ Environment=Agent__Backend=proxmox
 Environment=Proxmox__Pool=ludius
 Environment=Proxmox__Node=ludius-pve
 Environment=Agent__MaxRunningVms=8
-# Range servers (DC, Exchange, srv01) live in 110-119 and neither count toward nor are held by the cap
-Environment=Proxmox__CapExemptIds=110,111,112,113,114,115,116,117,118,119
+# Range servers neither count toward nor are held by the cap: VMID and name must both match (main.yml srv01_vmid,
+# ex01_vmid). Clones never take these VMIDs.
+Environment=Proxmox__CapExempt=110:ludius-srv01,110:ludius-dc01,111:ludius-ex01
 # Explicit, so a published appsettings.json (it carries the desktop's host names) cannot widen what answers.
 Environment=AllowedHosts=127.0.0.1
 Environment=Kestrel__Endpoints__Grpc__Url=http://127.0.0.1:7451

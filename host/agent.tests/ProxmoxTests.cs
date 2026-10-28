@@ -79,6 +79,9 @@ sealed class FakePve : IPveApi
     public Dictionary<int, string> Args = new() { [101] = "-device vhost-vsock-pci,guest-cid=101", [9000] = "-device vhost-vsock-pci,guest-cid=9000" };
     public JsonArray Snapshots = JsonNode.Parse("""[{"name": "clean"}, {"name": "current"}]""")!.AsArray();
     public string TaskExit = "OK";
+    public string TaskStatus = "stopped"; // "running": a worker task that never finishes
+    public string NextId = "104";
+    public Dictionary<int, string> Status = []; // a VM's own (QMP) status; unset: its resource-list status
     public Dictionary<int, long> Ctime = []; // a VM created anew under a VMID gets a new ctime
 
     // Race tests hold a call open here (method, path) until they let it go.
@@ -94,7 +97,7 @@ sealed class FakePve : IPveApi
         JsonNode? res = (method, path) switch
         {
             ("get", "/cluster/resources") when args?["type"] == "vm" => Vms.DeepClone(),
-            ("get", "/cluster/nextid") => JsonValue.Create("104"),
+            ("get", "/cluster/nextid") => JsonValue.Create(args?.GetValueOrDefault("vmid") ?? NextId),
             ("get", _) when path.EndsWith("/config") => new JsonObject
             {
                 ["args"] = Args.GetValueOrDefault(int.Parse(parts[3])),
@@ -102,8 +105,9 @@ sealed class FakePve : IPveApi
                 ["smbios1"] = $"uuid=0000{int.Parse(parts[3]):x4}-1111-2222-3333-444455556666",
             },
             ("get", _) when path.EndsWith("/snapshot") => Snapshots.DeepClone(),
-            ("get", _) when path.EndsWith("/status/current") => new JsonObject { ["status"] = "running", ["qmpstatus"] = "running" },
-            ("get", _) when path.Contains("/tasks/") => new JsonObject { ["status"] = "stopped", ["exitstatus"] = TaskExit },
+            ("get", _) when path.EndsWith("/status/current") => new JsonObject { ["status"] = Status.GetValueOrDefault(int.Parse(parts[3]),
+                Vms.FirstOrDefault(v => v?["vmid"]?.GetValue<int>() == int.Parse(parts[3]))?["status"]?.GetValue<string>() ?? "running") },
+            ("get", _) when path.Contains("/tasks/") => new JsonObject { ["status"] = TaskStatus, ["exitstatus"] = TaskExit },
             ("create" or "delete", _) => JsonValue.Create("UPID:pve1:0000ABCD:00000001:00000001:qmstart:101:root@pam:"),
             _ => null,
         };
@@ -293,22 +297,85 @@ public class ProxmoxTests
         Assert.Contains("does not exist", e.Message);
     }
 
+    static (FakePve, Func<int, Proxmox>) Capped(FakeQmp qmp)
+    {
+        var pve = new FakePve();
+        foreach (var (id, name) in new[] { (105, "ludius-b"), (106, "ludius-c"), (110, "ludius-srv01"), (111, "ludius-impostor") })
+            pve.Vms.Add(JsonNode.Parse($$"""{"vmid": {{id}}, "name": "{{name}}", "status": "stopped", "node": "pve1", "type": "qemu", "pool": "ludius"}"""));
+        pve.Status[110] = "running";
+        // 101 runs; srv01 (110) runs too and is exempt by VMID and name; 111 has an exempt VMID but another name.
+        return (pve, max => new Proxmox(pve, "pve1", new ProxmoxOptions { RunDir = qmp.Dir, ScratchDir = qmp.Dir, PollMs = 1,
+            Pool = "ludius", MaxRunning = max, CapExempt = [(110, "ludius-srv01"), (111, "ludius-ex01")] }));
+    }
+
     [Fact]
     public async Task The_host_cap_counts_running_range_vms_except_infrastructure()
     {
         using var qmp = new FakeQmp(101);
-        var pve = new FakePve();
-        pve.Vms.Add(JsonNode.Parse("""{"vmid": 105, "name": "ludius-b", "status": "stopped", "node": "pve1", "type": "qemu", "pool": "ludius"}"""));
-        pve.Vms.Add(JsonNode.Parse("""{"vmid": 110, "name": "ludius-srv01", "status": "running", "node": "pve1", "type": "qemu", "pool": "ludius"}"""));
-        Proxmox Px(int max) => new(pve, "pve1", new ProxmoxOptions { RunDir = qmp.Dir, ScratchDir = qmp.Dir, PollMs = 1, Pool = "ludius", MaxRunning = max, CapExemptIds = [110] });
-        // Default 1: ludius-win10-01 runs (srv01 is exempt, other pools and nodes don't count), so neither start nor restore.
-        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => Px(1).Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None));
+        var (pve, px) = Capped(qmp);
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => px(1).Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None));
         Assert.Contains("ludius-win10-01", e.Message);
-        Assert.DoesNotContain("ludius-srv01", e.Message);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => Px(1).Lifecycle("ludius-b", Op.Restore, "clean", "", CancellationToken.None));
+        Assert.DoesNotContain("ludius-srv01", e.Message); // other pools, nodes and the exempt server don't count
+        await Assert.ThrowsAsync<InvalidOperationException>(() => px(1).Lifecycle("ludius-b", Op.Restore, "clean", "", CancellationToken.None));
         Assert.DoesNotContain(pve.Calls, c => c.Method == "create");
-        await Px(2).Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None);
+        await px(2).Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None);
         Assert.Contains(pve.Calls, c => c.Path == "/nodes/pve1/qemu/105/status/start");
+        await px(9).Lifecycle("ludius-srv01", Op.Start, "", "", CancellationToken.None); // exempt: never capped
+    }
+
+    [Fact]
+    public async Task The_cap_reads_each_vms_own_state_not_the_stale_resource_list()
+    {
+        using var qmp = new FakeQmp(101);
+        var (pve, px) = Capped(qmp);
+        var agent = px(2);
+        await agent.Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None);
+        pve.Status[105] = "running"; // up now; /cluster/resources still says stopped until its next refresh
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None));
+        Assert.Contains("ludius-b", e.Message);
+    }
+
+    [Fact]
+    public async Task An_exempt_vmid_under_another_name_is_capped_and_counted()
+    {
+        using var qmp = new FakeQmp(101);
+        var (pve, px) = Capped(qmp);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => px(1).Lifecycle("ludius-impostor", Op.Start, "", "", CancellationToken.None));
+        pve.Status[111] = "running";
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => px(2).Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None));
+        Assert.Contains("ludius-impostor", e.Message);
+    }
+
+    [Fact]
+    public async Task A_cancelled_activation_still_counts_until_its_reservation_expires()
+    {
+        using var qmp = new FakeQmp(101);
+        var (pve, px) = Capped(qmp);
+        var agent = px(2);
+        var now = DateTime.UtcNow;
+        agent.Now = () => now;
+        pve.TaskStatus = "running"; // the start task never confirms
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => agent.Lifecycle("ludius-b", Op.Start, "", "", cts.Token));
+        pve.TaskStatus = "stopped";
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None));
+        Assert.Contains("ludius-b", e.Message); // still stopped by its state, but its start may be under way
+        pve.TaskExit = "start failed";
+        now += TimeSpan.FromMinutes(6);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None));
+        pve.TaskExit = "OK";
+        await agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None); // a failed start held no room
+    }
+
+    [Fact]
+    public async Task A_clone_never_takes_an_exempt_vmid()
+    {
+        using var qmp = new FakeQmp(101);
+        var (pve, px) = Capped(qmp);
+        pve.NextId = "110";
+        await px(1).Lifecycle("ludius-golden", Op.Clone, "", "ludius-new", CancellationToken.None);
+        Assert.Contains(pve.Calls, c => c.Path == "/cluster/nextid" && c.Args?["vmid"] == "112");
+        Assert.Contains(pve.Calls, c => c.Path == "/nodes/pve1/qemu/9000/clone" && c.Args!["newid"] == "112");
     }
 
     [Fact]

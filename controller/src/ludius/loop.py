@@ -138,6 +138,7 @@ class Runner:
         self.snap: obs.Snapshot = obs.Snapshot()
         self.display: tuple[int, int, int] | None = None  # (width, height, dpi) the pointer mapping was checked at
         self.mapping_ok = True
+        self._steps = 0  # the running task's steps so far (for an abandon the task boundary does)
         # The screenshot goes with a step decision only where text is likely not enough (image_reason);
         # LUDIUS_DECISION_IMAGE=1 sends it with every step (bake-offs).
         self.image = os.environ.get("LUDIUS_DECISION_IMAGE") == "1"
@@ -287,10 +288,24 @@ class Runner:
     # The loop ---------------------------------------------------------------------
 
     def run(self, task: Task, between: Callable[[], None] | None = None) -> Outcome:
-        """`between` runs at each subgoal boundary: the task stack's hook for interruptions."""
+        """`between` runs at each subgoal boundary: the task stack's hook for interruptions.
+
+        A spent request budget (calls.CapReached), wherever it is hit (a step decision, reply content, LLM help or
+        verification), abandons the task here, the one way: closed like a person would, task_end logged. Later tasks
+        hit it at their first request and abandon the same way, until the budget's day is over."""
+        self._steps, done = 0, list[str]()
+        try:
+            return self._run(task, between, done)
+        except CapReached as e:
+            self.log.write(event="budget_spent", host_ms=_now(), task=task.template.task, error=str(e)[:300])
+            self.abandon(task, "budget spent")
+            self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status="abandoned",
+                           reason="budget spent", steps=self._steps)  # fmt: skip
+            return Outcome("abandoned", self._steps, "budget spent", done)
+
+    def _run(self, task: Task, between: Callable[[], None] | None, done: list[str]) -> Outcome:
         t0 = time.monotonic()
         steps = 0
-        done: list[str] = []
         task.owner, task.tz = self.persona.user, self.persona.tz
         task.started_ms = self.observe().guest_time_ms or int(time.time() * 1000)  # the guest's clock, like the range's
         self.log.write(
@@ -321,14 +336,14 @@ class Runner:
         for name in task.subgoal_names:
             sg = task.subgoal(name)
             result = self._subgoal(task, name, sg, budget=min(sg.steps, task.template.budget_steps - steps), t0=t0)
-            steps += result[1]
+            steps = self._steps = steps + result[1]
             if result[0] != "done" and result[2] == "step budget" and sg.done is None and self.assist and not assisted:
                 # Decisions is stuck in an open-ended subgoal: one LLM call proposes an intermediate subgoal.
                 assisted = True
-                steps += self._assisted(task, name, sg, t0, steps)
+                steps = self._steps = steps + self._assisted(task, name, sg, t0, steps)
                 left = task.template.budget_steps - steps
                 result = self._subgoal(task, name, sg, budget=min(sg.steps // 2 + 2, left), t0=t0)
-                steps += result[1]
+                steps = self._steps = steps + result[1]
             if result[0] != "done":
                 reason = result[2]
                 self.abandon(task, reason)
@@ -455,10 +470,10 @@ class Runner:
                 shot = self._shot(here) if image else None
                 image = image if shot is not None else None
                 decision = self.decider.decide(state, choices, ask_progress=not recovering, image=shot)
-            except (DecisionError, CapReached) as e:  # no usable answer or no budget: abandon the task, don't crash
+            except DecisionError as e:  # no usable answer even after retries: abandon the task, don't crash the process
                 self.log.write(event="decision_error", host_ms=_now(), task=task.template.task, subgoal=name,
                                step=step, error=str(e)[:300])  # fmt: skip
-                return "failed", step - 1, "budget spent" if isinstance(e, CapReached) else "decision error"
+                return "failed", step - 1, "decision error"
             chosen = self._choose(decision, options)
 
             decider_done = code_done is None and decision.subgoal_done >= DONE_THRESHOLD and not recovering

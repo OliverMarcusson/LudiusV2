@@ -15,7 +15,7 @@ builder.Services.AddGrpc();
 var backend = builder.Configuration["Agent:Backend"] ?? (OperatingSystem.IsWindows() ? "hyperv" : "proxmox");
 // The host's cap on running range VMs, either backend: 1 unless this host's config says more (the owner's desktop keeps
 // 1; the rented Proxmox box sets 8, one per persona). Infrastructure VMs are exempt (Hyper-V: build\srvm-id;
-// Proxmox: Proxmox:CapExemptIds).
+// Proxmox: Proxmox:CapExempt, "110:ludius-srv01,111:ludius-ex01", VMID and name).
 var maxRunning = int.Parse(builder.Configuration["Agent:MaxRunningVms"] ?? "1");
 if (maxRunning < 1) throw new InvalidOperationException("Agent:MaxRunningVms must be at least 1");
 IHypervisor hypervisor = backend switch
@@ -44,7 +44,9 @@ static ProxmoxOptions ProxmoxConfig(IConfiguration c)
     if (c["Proxmox:RunDir"] is { } run) o = o with { RunDir = run };
     if (c["Proxmox:Pool"] is { } pool) o = o with { Pool = pool };
     if (c["Proxmox:ScratchDir"] is { } scratch) o = o with { ScratchDir = scratch };
-    if (c["Proxmox:CapExemptIds"] is { } ex) o = o with { CapExemptIds = ex.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(int.Parse).ToHashSet() };
+    if (c["Proxmox:CapExempt"] is { } ex) o = o with { CapExempt = ex.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(e => e.Split(':', 2) is [var id, var name] && name.StartsWith("ludius-") ? (int.Parse(id), name)
+            : throw new InvalidOperationException($"Proxmox:CapExempt entry {e} is not <vmid>:ludius-<name>")).ToHashSet() };
     if (c["Proxmox:Resolution"] is { } res && res.Split('x') is [var w, var h]) o = o with { Screen = (int.Parse(w), int.Parse(h)) };
     return o;
 }

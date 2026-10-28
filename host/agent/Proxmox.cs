@@ -25,6 +25,10 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
 
     readonly Dictionary<string, Vm> vms = [];
     readonly SemaphoreSlim activation = new(1, 1); // the cap's count and the start it allows, one at a time
+    // Under the activation lock: VMIDs whose start or rollback this agent asked for but never saw confirmed (a cancelled
+    // call; the Proxmox task may still be bringing the VM up). They count as running until a later count reads them
+    // running (then they count by their state) or until ReservationTtl passes.
+    readonly Dictionary<int, DateTime> reserved = [];
 
     // Under the vms lock: per VMID, the clock value of its last invalidation (delete, clone), and the VMIDs a clone is
     // still configuring (a count per VMID: each clone removes only its own mark). A lookup records the clock before it resolves and caches its handle only if its VMID was not
@@ -351,23 +355,54 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     }
 
     // The host's VM cap (Agent:MaxRunningVms): a start or restore is refused while that many other range VMs run.
-    // Infrastructure (Proxmox:CapExemptIds, srv01 and the like) neither counts nor is capped. One activation at a time
-    // in this agent (one agent per node), so two racing starts can't both see room for one.
+    // Infrastructure (Proxmox:CapExempt, known range servers by VMID and name) neither counts nor is capped. One
+    // activation at a time in this agent (one agent per node). Each VM's state is read from its own status (QMP),
+    // not the periodically refreshed cluster resource list, so a VM started a moment ago counts at once.
+    bool Exempt(PveVm v) => options.CapExempt.Contains((v.Id, v.Name));
+
     async Task Capped(PveVm vm, Func<Task> activate, CancellationToken ct)
     {
         await activation.WaitAsync(ct);
         try
         {
-            if (!options.CapExemptIds.Contains(vm.Id))
+            if (!Exempt(vm))
             {
-                var up = (await List(ct)).Where(v => InRange(v) && !v.Template && v.Id != vm.Id && v.Status != "stopped"
-                    && !options.CapExemptIds.Contains(v.Id)).Select(v => v.Name).ToList();
+                var up = new List<string>();
+                foreach (var v in (await List(ct)).Where(v => InRange(v) && !v.Template && v.Id != vm.Id && !Exempt(v)))
+                {
+                    var off = await State(v.Id, ct) == "Off"; // an unreadable state throws: refused, nothing started
+                    if (!off) reserved.Remove(v.Id); // confirmed up: it counts by its state from now on
+                    if (!off || (reserved.TryGetValue(v.Id, out var at) && Now() - at < options.ReservationTtl)) up.Add(v.Name);
+                }
                 if (up.Count >= options.MaxRunning)
                     throw new InvalidOperationException($"VM cap {options.MaxRunning} (Agent:MaxRunningVms): {string.Join(", ", up)} up; {vm.Name} not activated");
             }
-            await activate();
+            reserved[vm.Id] = Now();
+            var confirmed = false;
+            try
+            {
+                await activate();
+                confirmed = true;
+            }
+            catch (OperationCanceledException) { throw; } // the Proxmox task may still run: the reservation stays
+            catch { confirmed = true; throw; } // the task failed: nothing is coming up
+            finally { if (confirmed) reserved.Remove(vm.Id); }
         }
         finally { activation.Release(); }
+    }
+
+    // A clone's VMID: Proxmox's next free one, but never a VMID the cap exempts (a persona there would escape it).
+    async Task<string> FreeId(CancellationToken ct)
+    {
+        var id = int.Parse((await api.Call("get", "/cluster/nextid", null, ct))!.ToString());
+        var exempt = options.CapExempt.Select(e => e.Id).ToHashSet();
+        while (exempt.Contains(id))
+        {
+            id = exempt.Where(e => e >= id).Max() + 1;
+            // Proxmox refuses a taken VMID here (and answers it back when free).
+            id = int.Parse((await api.Call("get", "/cluster/nextid", new Dictionary<string, string> { ["vmid"] = $"{id}" }, ct))!.ToString());
+        }
+        return $"{id}";
     }
 
     // A template clones linked (spec: linked clones), from its base; any other VM as a full copy of `checkpoint`.
@@ -376,7 +411,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     {
         if (!src.Template && checkpoint == "") throw new ArgumentException("clone of a VM (not a template) needs a checkpoint");
         if ((await List(ct)).Any(v => v.Name == target)) throw new InvalidOperationException($"a VM named {target} exists");
-        var newId = (await api.Call("get", "/cluster/nextid", null, ct))!.ToString();
+        var newId = await FreeId(ct);
         var args = new Dictionary<string, string>
             { ["newid"] = newId, ["name"] = target, ["full"] = src.Template ? "0" : "1", ["pool"] = options.Pool };
         if (checkpoint != "") args["snapname"] = checkpoint;
@@ -449,5 +484,7 @@ public sealed record ProxmoxOptions
     public TimeSpan Recheck { get; init; } = TimeSpan.FromSeconds(5); // a cached VM handle's range check, at most this old
     public string Pool { get; init; } = ""; // the range's Proxmox pool; unset: every VM is refused
     public int MaxRunning { get; init; } = 1; // Agent:MaxRunningVms, the host's cap on running range VMs (owner's default)
-    public HashSet<int> CapExemptIds { get; init; } = []; // infrastructure VMs (srv01, dc01, ex01): not counted, not capped
+    // Known range servers (VMID and name, e.g. 110 ludius-srv01): not counted, not capped. Both must match.
+    public HashSet<(int Id, string Name)> CapExempt { get; init; } = [];
+    public TimeSpan ReservationTtl { get; init; } = TimeSpan.FromMinutes(5); // a cancelled activation counts this long
 }
