@@ -1,0 +1,173 @@
+---
+# grommunio core, as provision-srv.ps1: Exchange protocols over nginx with a small range CA, gromox's LDA on [::1]:25,
+# no Postfix, no relay. Community licence: personas get log-in mailboxes (status 0), everyone else shared mailboxes
+# (status 4: in the address book and receiving mail, no log-in), which the licence does not count.
+- name: Grommunio signing key
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -fsSL https://download.grommunio.com/RPM-GPG-KEY-grommunio | gpg --dearmor --yes -o /usr/share/keyrings/download.grommunio.com.gpg
+  args:
+    executable: /bin/bash
+    creates: /usr/share/keyrings/download.grommunio.com.gpg
+
+- name: Grommunio repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/grommunio.sources
+    content: |
+      Types: deb
+      URIs: https://download.grommunio.com/community/Debian_13
+      Suites: Debian_13
+      Components: main
+      Signed-By: /usr/share/keyrings/download.grommunio.com.gpg
+    mode: "0644"
+
+# nginx fails its first start (the VTS module and the certificate are not in place yet): configured afterwards.
+- name: Grommunio packages
+  ansible.builtin.apt:
+    name: [mariadb-server, nginx, gromox, grommunio-common, grommunio-admin-api, grommunio-admin-web]
+    update_cache: true
+  failed_when: false
+
+- name: Nginx modules enabled, default site off
+  ansible.builtin.shell: |
+    for m in /usr/share/nginx/modules-available/*.conf; do ln -sf "$m" "/etc/nginx/modules-enabled/50-$(basename "$m")"; done
+    rm -f /etc/nginx/sites-enabled/default
+  changed_when: false
+
+- name: Range CA and server certificate
+  ansible.builtin.shell: |
+    set -e
+    SSL=/etc/grommunio-common/ssl
+    install -d -m 0755 $SSL
+    openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj '/O=Ludius Range/CN=Ludius Range CA' -keyout $SSL/ca.key -out $SSL/ca.crt 2>/dev/null
+    openssl req -newkey rsa:2048 -nodes -subj '/O=Ludius Range/CN=mail.{{ domain }}' -keyout $SSL/server.key -out /tmp/server.csr 2>/dev/null
+    printf 'subjectAltName=DNS:mail.{{ domain }},DNS:autodiscover.{{ domain }},DNS:srv01.{{ domain }},DNS:{{ domain }},IP:{{ srv01_ip }}\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature,keyEncipherment\n' >/tmp/ext.cnf
+    openssl x509 -req -in /tmp/server.csr -CA $SSL/ca.crt -CAkey $SSL/ca.key -CAcreateserial -days 825 -sha256 -extfile /tmp/ext.cnf -out $SSL/server.crt 2>/dev/null
+    cat $SSL/server.crt $SSL/ca.crt >$SSL/chain.pem
+    rm -f /tmp/server.csr /tmp/ext.cnf
+  args:
+    creates: /etc/grommunio-common/ssl/chain.pem
+
+- name: Key permissions
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/grommunio-common/ssl/ca.key, group: root, mode: "0600" }
+    - { path: /etc/grommunio-common/ssl/server.key, group: gromox, mode: "0640" }
+
+- name: Nginx certificate config
+  ansible.builtin.copy:
+    dest: /etc/grommunio-common/nginx/ssl_certificate.conf
+    content: |
+      ssl_certificate /etc/grommunio-common/ssl/chain.pem;
+      ssl_certificate_key /etc/grommunio-common/ssl/server.key;
+    mode: "0644"
+
+- name: Admin web uses the same certificate
+  ansible.builtin.file:
+    src: /etc/grommunio-common/nginx/ssl_certificate.conf
+    dest: /etc/grommunio-admin-common/nginx-ssl.conf
+    state: link
+    force: true
+
+- name: Finish package configuration
+  ansible.builtin.command: dpkg --configure -a
+  changed_when: false
+
+- name: MariaDB and nginx
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [mariadb, nginx]
+
+# The adaptor config doubles as the done marker: removed if the schema init fails, so a rerun tries again.
+- name: Grommunio database
+  ansible.builtin.shell: |
+    set -e
+    DBPW=$(openssl rand -hex 16)
+    mariadb -e "CREATE DATABASE IF NOT EXISTS grommunio; CREATE USER IF NOT EXISTS 'grommunio'@'localhost' IDENTIFIED BY '$DBPW'; ALTER USER 'grommunio'@'localhost' IDENTIFIED BY '$DBPW'; GRANT ALL ON grommunio.* TO 'grommunio'@'localhost';"
+    printf 'mysql_username=grommunio\nmysql_password=%s\nmysql_dbname=grommunio\nschema_upgrade=host:srv01\n' "$DBPW" >/etc/gromox/mysql_adaptor.cfg
+    printf "DB:\n  host: 'localhost'\n  user: 'grommunio'\n  pass: '%s'\n  database: 'grommunio'\n" "$DBPW" >/etc/grommunio-admin-api/conf.d/database.yaml
+    if ! gromox-dbop -C >/dev/null; then rm -f /etc/gromox/mysql_adaptor.cfg; echo 'gromox-dbop -C failed' >&2; exit 1; fi
+  args:
+    creates: /etc/gromox/mysql_adaptor.cfg
+  no_log: true
+
+- name: Gromox listeners (LDA on IPv6 loopback only) and HTTP
+  ansible.builtin.copy:
+    dest: "/etc/gromox/{{ item.file }}"
+    content: "{{ item.content }}"
+    owner: grommunio
+    group: gromoxcf
+    mode: "0640"
+  loop:
+    - file: gromox.cfg
+      content: |
+        http_listen = [::]:10080
+        http_listen_tls = [::]:10443
+        lda_listen = [::1]:25
+        outgoing_smtp_url = smtp://[::1]:25
+    - file: http.cfg
+      content: |
+        host_id=mail.{{ domain }}
+        default_domain={{ domain }}
+        http_support_tls=true
+        http_certificate_path=/etc/grommunio-common/ssl/chain.pem
+        http_private_key_path=/etc/grommunio-common/ssl/server.key
+  loop_control:
+    label: "{{ item.file }}"
+
+- name: Config ownership
+  ansible.builtin.shell: |
+    chown -R grommunio:gromoxcf /etc/gromox; chmod 0750 /etc/gromox; chmod 0640 /etc/gromox/*.cfg
+    chown grommunio:grommunio /etc/grommunio-admin-api/conf.d/database.yaml
+    chmod 0640 /etc/grommunio-admin-api/conf.d/database.yaml
+  changed_when: false
+
+- name: Gromox and admin API services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: restarted
+  loop: [gromox-event, gromox-timer, gromox-http, gromox-midb, gromox-zcore, gromox-delivery, gromox-delivery-queue,
+         php8.4-fpm, grommunio-admin-api, nginx]
+
+- name: Grommunio admin password and range domain
+  ansible.builtin.shell: |
+    set -e
+    grommunio-admin passwd --password "$ADMINPASS" >/dev/null
+    domains=$(grommunio-admin domain list 2>/dev/null || true)
+    grep -q '{{ domain }}' <<<"$domains" || grommunio-admin domain create -u 100 {{ domain }} >/dev/null
+  args:
+    executable: /bin/bash
+  environment:
+    ADMINPASS: "{{ grommunio_admin_password }}"
+  changed_when: false
+  no_log: true
+
+- name: Mailbox per narrative person (personas log in, colleagues shared)
+  ansible.builtin.shell: |
+    set -e
+    addr="$U@{{ domain }}"
+    users=$(grommunio-admin user query username 2>/dev/null || true)
+    if grep -q "^$addr[[:space:]]*$" <<<"$users"; then
+      grommunio-admin user modify "$addr" --status "$STATUS" >/dev/null
+    else
+      grommunio-admin user create "$addr" --domain {{ domain }} --status "$STATUS" --property "displayname=$FULL" >/dev/null
+    fi
+    if [ "$STATUS" = 0 ]; then grommunio-admin passwd "$addr" --password "$P" >/dev/null; fi
+  args:
+    executable: /bin/bash
+  environment:
+    U: "{{ item.user }}"
+    FULL: "{{ item.name }}"
+    P: "{{ item.user }}{{ user_password_suffix }}"
+    STATUS: "{{ '0' if item.user in personas else '4' }}"
+  loop: "{{ people }}"
+  loop_control:
+    label: "{{ item.user }}"
+  changed_when: false
+  no_log: true

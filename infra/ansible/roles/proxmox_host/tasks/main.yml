@@ -1,0 +1,155 @@
+---
+# Bare Debian 13 (trixie) -> Proxmox VE 9, per Proxmox's "Install Proxmox VE on Debian 13" guide, then what the
+# range needs: an isolated range bridge (no uplink, no forwarding), a NAT build bridge with DHCP for the image build
+# and srv01's apt, an lvmthin storage for linked clones, vhost-vsock for the guest channel, the ISOs, and an API
+# token for Packer. Two reboots (Proxmox kernel, then without the Debian kernel).
+- name: Debian 13
+  ansible.builtin.assert:
+    that: ansible_distribution == 'Debian' and ansible_distribution_major_version == '13'
+
+- name: Hostname resolves to the public address (pve-cluster needs it)
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\S+\s+{{ ansible_fqdn }}\b'
+    line: "{{ ansible_default_ipv4.address }} {{ ansible_fqdn }} {{ ansible_hostname }}"
+
+- name: Proxmox archive key
+  ansible.builtin.get_url:
+    url: https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg
+    dest: /usr/share/keyrings/proxmox-archive-keyring.gpg
+    mode: "0644"
+
+- name: Proxmox VE repository (no-subscription)
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/pve-install-repo.sources
+    content: |
+      Types: deb
+      URIs: http://download.proxmox.com/debian/pve
+      Suites: trixie
+      Components: pve-no-subscription
+      Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+    mode: "0644"
+
+- name: Full upgrade
+  ansible.builtin.apt:
+    upgrade: full
+    update_cache: true
+
+- name: Proxmox kernel
+  ansible.builtin.apt:
+    name: proxmox-default-kernel
+  register: kernel
+
+- name: Boot the Proxmox kernel
+  ansible.builtin.reboot:
+    reboot_timeout: 900
+  when: kernel is changed
+
+- name: Postfix local-only (no mail leaves the box)
+  ansible.builtin.debconf:
+    name: postfix
+    question: postfix/main_mailer_type
+    value: Local only
+    vtype: select
+
+- name: Proxmox VE
+  ansible.builtin.apt:
+    name: [proxmox-ve, postfix, open-iscsi, chrony, dnsmasq, iptables, xorriso]
+
+- name: No Debian kernel or os-prober
+  ansible.builtin.apt:
+    name: [linux-image-amd64, "linux-image-6.12*", os-prober]
+    state: absent
+  register: debkernel
+
+- name: Update grub
+  ansible.builtin.command: update-grub
+  when: debkernel is changed
+  changed_when: true
+
+- name: Boot without the Debian kernel
+  ansible.builtin.reboot:
+    reboot_timeout: 900
+  when: debkernel is changed
+
+- name: Network config includes interfaces.d
+  ansible.builtin.lineinfile:
+    path: /etc/network/interfaces
+    line: source /etc/network/interfaces.d/*
+
+- name: Range and build bridges
+  ansible.builtin.template:
+    src: ludius-bridges.j2
+    dest: /etc/network/interfaces.d/ludius
+    mode: "0644"
+  register: bridges
+
+- name: Apply bridges
+  ansible.builtin.command: ifreload -a
+  when: bridges is changed
+  changed_when: true
+
+- name: DHCP on the build bridge only (no DNS service)
+  ansible.builtin.copy:
+    dest: /etc/dnsmasq.d/ludius-build.conf
+    content: |
+      port=0
+      interface={{ build_bridge }}
+      bind-interfaces
+      dhcp-range=10.78.0.100,10.78.0.199,12h
+      dhcp-option=option:router,10.78.0.1
+      dhcp-option=option:dns-server,{{ build_dns }}
+    mode: "0644"
+  register: dnsmasq
+
+- name: Restart dnsmasq
+  ansible.builtin.systemd_service:
+    name: dnsmasq
+    enabled: true
+    state: restarted
+  when: dnsmasq is changed
+
+- name: Vhost-vsock loaded now and at boot (guest channel)
+  community.general.modprobe:
+    name: vhost_vsock
+    persistent: present
+
+- name: Thin pool for linked clones
+  ansible.builtin.command: lvcreate --type thin-pool -l {{ thin_pool_extents }} -n data {{ thin_vg }}
+  args:
+    creates: /dev/{{ thin_vg }}/data
+
+- name: Storage list
+  ansible.builtin.command: pvesm status
+  register: pvesm
+  changed_when: false
+
+- name: Lvmthin storage {{ storage }}
+  ansible.builtin.command: pvesm add lvmthin {{ storage }} --vgname {{ thin_vg }} --thinpool data --content images,rootdir
+  when: storage not in pvesm.stdout
+  changed_when: true
+
+- name: Virtio-win ISO
+  ansible.builtin.get_url:
+    url: "{{ virtio_win_iso_url }}"
+    dest: /var/lib/vz/template/iso/virtio-win.iso
+    mode: "0644"
+
+- name: Windows ISO present
+  ansible.builtin.stat:
+    path: /var/lib/vz/template/iso/win10.iso
+  register: winiso
+
+- name: Windows ISO uploaded by the owner
+  ansible.builtin.assert:
+    that: winiso.stat.exists
+    fail_msg: copy the Windows 10 ISO to /var/lib/vz/template/iso/win10.iso (scp), then rerun
+
+- name: Packer API token
+  ansible.builtin.shell: |
+    set -eo pipefail
+    umask 077
+    pveum user token add root@pam packer --privsep 0 --output-format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])' >/root/.ludius-packer-token
+  args:
+    executable: /bin/bash
+    creates: /root/.ludius-packer-token

@@ -1,0 +1,12 @@
+---
+# Bare Debian 13 -> Proxmox VE node for the range. Run from any Linux/WSL control node:
+#   ansible-playbook -i <box ip>, -u root proxmox-host.yml
+- name: Proxmox node
+  hosts: all
+  vars:
+    build_dns: 1.1.1.1 # resolver handed to the build bridge
+    thin_vg: vg0 # the installimage LVM volume group with free space
+    thin_pool_extents: 90%FREE
+    virtio_win_iso_url: https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.271-1/virtio-win-0.1.271.iso
+  roles:
+    - proxmox_host

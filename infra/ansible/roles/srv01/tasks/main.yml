@@ -1,0 +1,172 @@
+---
+# srv01 on stock Debian 13 (provision-srv.ps1, same steps): Samba AD DC for corp.ludius.test with internal DNS bound
+# to the range address only; chrony as the range's own NTP source (no upstream, MS-SNTP signing) so time-jump sets
+# range time here first; one AD user per narrative person; grommunio (MAPI/HTTP + Autodiscover) with gromox's LDA on
+# IPv6 loopback only and no Postfix, plus an outbound SMTP drop: mail never leaves corp.ludius.test.
+# Expects srv01_ip on the range NIC, people (narrative: user, name) and personas (log-in mailboxes), validated by
+# range-up.yml before any VM is touched.
+- name: Kerberos default realm preseeded
+  ansible.builtin.debconf:
+    name: krb5-config
+    question: krb5-config/default_realm
+    value: "{{ domain | upper }}"
+    vtype: string
+
+- name: Samba AD DC, chrony and tools
+  ansible.builtin.apt:
+    name: [samba-ad-dc, samba-ad-provision, krb5-user, winbind, libnss-winbind, libpam-winbind, chrony, dnsutils,
+           ldb-tools, nftables, curl, gpg]
+    update_cache: true
+
+- name: Upstream resolver for Samba's forwarder (the uplink's DNS)
+  ansible.builtin.shell: |
+    set -o pipefail
+    resolvectl dns {{ ansible_default_ipv4.interface }} | awk '{print $NF; exit}'
+  args:
+    executable: /bin/bash
+  register: upstream
+  changed_when: false
+
+- name: Provision the domain
+  ansible.builtin.shell: |
+    set -e
+    systemctl disable --now smbd nmbd winbind 2>/dev/null || true
+    rm -f /etc/samba/smb.conf
+    samba-tool domain provision --realm={{ domain | upper }} --domain={{ domain_netbios }} --server-role=dc \
+      --dns-backend=SAMBA_INTERNAL --use-rfc2307 --adminpass="$ADMINPASS" --host-ip={{ srv01_ip }} \
+      --option="interfaces=lo {{ srv01_ip }}" --option="bind interfaces only=yes" \
+      --option="dns forwarder={{ upstream.stdout }}" \
+      --option="ntp signd socket directory=/var/lib/samba/ntp_signd"
+    cp /var/lib/samba/private/krb5.conf /etc/krb5.conf
+    systemctl unmask samba-ad-dc
+    systemctl enable --now samba-ad-dc
+  args:
+    creates: /var/lib/samba/private/sam.ldb
+  environment:
+    ADMINPASS: "{{ dc_admin_password }}"
+  no_log: true
+
+- name: The server's own range-domain lookups go to Samba
+  ansible.builtin.copy:
+    dest: /etc/systemd/resolved.conf.d/samba.conf
+    content: |
+      [Resolve]
+      DNS=127.0.0.1
+      Domains=~{{ domain }}
+    mode: "0644"
+  register: resolved
+
+- name: Restart resolved
+  ansible.builtin.systemd_service:
+    name: systemd-resolved
+    state: restarted
+  when: resolved is changed
+
+- name: Simple passwords on the isolated range (owner's choice)
+  ansible.builtin.command: samba-tool domain passwordsettings set --complexity=off --min-pwd-length=6 --max-pwd-age=0 --history-length=0
+  changed_when: false
+
+- name: Signing socket for chrony
+  ansible.builtin.file:
+    path: /var/lib/samba/ntp_signd
+    state: directory
+    owner: root
+    group: _chrony
+    mode: "0750"
+
+- name: Range NTP on srv01's own clock, signed for members
+  ansible.builtin.copy:
+    dest: /etc/chrony/chrony.conf
+    content: |
+      driftfile /var/lib/chrony/chrony.drift
+      local stratum 10
+      allow {{ range_net }}.0/24
+      bindaddress {{ srv01_ip }}
+      ntpsigndsocket /var/lib/samba/ntp_signd
+    mode: "0644"
+  register: chrony
+
+- name: Restart chrony
+  ansible.builtin.systemd_service:
+    name: chrony
+    state: restarted
+  when: chrony is changed
+
+- name: AD user per narrative person
+  ansible.builtin.shell: |
+    if samba-tool user show "$U" >/dev/null 2>&1; then
+      samba-tool user setpassword "$U" --newpassword="$P" >/dev/null
+    else
+      samba-tool user create "$U" "$P" --given-name="$GIVEN" --surname="$SUR" --mail-address="$U@{{ domain }}" >/dev/null
+    fi
+    samba-tool user setexpiry "$U" --noexpiry >/dev/null
+  environment:
+    U: "{{ item.user }}"
+    P: "{{ item.user }}{{ user_password_suffix }}"
+    GIVEN: "{{ item.name.split(' ', 1)[0] }}"
+    SUR: "{{ item.name.split(' ', 1)[1] | default('') }}"
+  loop: "{{ people }}"
+  loop_control:
+    label: "{{ item.user }}"
+  changed_when: false
+  no_log: true
+
+- name: Mail and Autodiscover names in the range DNS
+  ansible.builtin.shell: |
+    for n in mail autodiscover; do
+      samba-tool dns add 127.0.0.1 {{ domain }} $n A {{ srv01_ip }} -U Administrator --password "$ADMINPASS" >/dev/null 2>&1 || true
+    done
+    samba-tool dns add 127.0.0.1 {{ domain }} _autodiscover._tcp SRV 'mail.{{ domain }} 443 0 0' \
+      -U Administrator --password "$ADMINPASS" >/dev/null 2>&1 || true
+  environment:
+    ADMINPASS: "{{ dc_admin_password }}"
+  changed_when: false
+  no_log: true
+
+- name: Grommunio
+  ansible.builtin.import_tasks: grommunio.yml
+
+# Range boundary: nothing on srv01 has a reason to speak SMTP off the box. Clients use MAPI/HTTP, delivery is
+# gromox's LDA on [::1]:25.
+- name: Outbound SMTP dropped
+  ansible.builtin.copy:
+    dest: /etc/nftables.conf
+    content: |
+      #!/usr/sbin/nft -f
+      flush ruleset
+      table inet ludius {
+        chain output {
+          type filter hook output priority 0; policy accept;
+          oifname != "lo" tcp dport { 25, 465, 587, 2525 } drop
+        }
+      }
+    mode: "0755"
+  register: nft
+
+- name: Load nftables
+  ansible.builtin.systemd_service:
+    name: nftables
+    enabled: true
+    state: "{{ 'restarted' if nft is changed else 'started' }}"
+
+- name: Checks (DNS SRV, Kerberos, no SMTP listener off loopback)
+  ansible.builtin.shell: |
+    set -eo pipefail
+    host -t SRV _ldap._tcp.{{ domain }} {{ srv01_ip }} | grep -q 'has SRV record'
+    host -t A srv01.{{ domain }} {{ srv01_ip }} | grep -q '{{ srv01_ip }}'
+    printf '%s' "$ADMINPASS" | kinit Administrator@{{ domain | upper }} >/dev/null && klist | grep -q krbtgt && kdestroy
+    if ss -lnt | awk 'NR>1 {print $4}' | grep -E ':(25|465|587)$' | grep -vE '^(127\.|\[::1\])'; then exit 1; fi
+    test "$(curl -s --cacert /etc/grommunio-common/ssl/ca.crt -o /dev/null -w '%{http_code}' \
+      --resolve mail.{{ domain }}:443:{{ srv01_ip }} https://mail.{{ domain }}/Autodiscover/Autodiscover.xml)" = 401
+  args:
+    executable: /bin/bash
+  environment:
+    ADMINPASS: "{{ dc_admin_password }}"
+  changed_when: false
+  no_log: true
+
+- name: Range TLS CA to the control node (clients trust it)
+  ansible.builtin.fetch:
+    src: /etc/grommunio-common/ssl/ca.crt
+    dest: "{{ range_tls_ca }}"
+    flat: true

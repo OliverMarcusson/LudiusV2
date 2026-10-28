@@ -1,0 +1,218 @@
+---
+# Range bring-up on the Proxmox node (run there as root, after proxmox-host.yml and the Packer build):
+#   ansible-playbook range-up.yml
+# srv01 from the stock Debian 13 cloud image + the srv01 role; then one linked clone of the golden template per persona
+# on the range bridge (no uplink), with a vsock device (CID = VM id) for the guest channel; each clone gets its range
+# address and WinRM through the QEMU guest agent, then joins the domain, logs the persona on and gets its hive
+# settings and observer task. Re-runnable: existing VMs are kept, roles converge.
+- name: Validate inputs, srv01 VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    srv01_key: /root/.ssh/ludius_srv01
+    srv01_image: /var/lib/vz/template/ludius/debian-13-genericcloud-amd64.qcow2
+  tasks:
+    - name: Narrative people and personas are safe to use
+      ansible.builtin.assert:
+        that:
+          - people | length >= 2
+          - people | map(attribute='user') | select('match', '^[a-z][a-z0-9._-]{0,9}$') | list | length == people | length
+          - people | map(attribute='name') | select('match', "^[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ .'-]*$") | list | length == people | length
+          - people | map(attribute='user') | unique | length == people | length
+          - personas | length >= 1
+          - personas | difference(people | map(attribute='user')) | length == 0
+          - personas | length <= grommunio_login_mailboxes | int
+          - user_password_suffix | length >= 2
+        fail_msg: >-
+          unsafe or duplicate narrative people (user: lower case, at most 10 characters, so WS-<USER>01 fits a
+          computer name), a persona outside the narrative, no persona, or more personas than grommunio log-in
+          mailboxes ({{ grommunio_login_mailboxes }})
+
+    - name: Golden template exists
+      ansible.builtin.command: qm config {{ template_vmid }}
+      register: tmpl
+      changed_when: false
+      failed_when: "tmpl.rc != 0 or 'template: 1' not in tmpl.stdout"
+
+    - name: Srv01 SSH key
+      ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -C ludius@srv01 -f {{ srv01_key }}
+      args:
+        creates: "{{ srv01_key }}"
+
+    - name: Srv01 state
+      ansible.builtin.command: qm status {{ srv01_vmid }}
+      register: srv01_status
+      changed_when: false
+      failed_when: false
+
+    - name: Create srv01
+      when: srv01_status.rc != 0
+      block:
+        - name: Image folder
+          ansible.builtin.file:
+            path: "{{ srv01_image | dirname }}"
+            state: directory
+            mode: "0755"
+
+        - name: Debian 13 cloud image, checked against Debian's SHA512SUMS
+          ansible.builtin.get_url:
+            url: "{{ debian_image_url }}"
+            dest: "{{ srv01_image }}"
+            checksum: "sha512:{{ debian_image_sums }}"
+            mode: "0644"
+
+        - name: Srv01 VM (uplink NIC on the build bridge for apt, range NIC static)
+          ansible.builtin.command: >-
+            qm create {{ srv01_vmid }} --name ludius-srv01 --ostype l26 --cores 2 --memory 3072 --cpu host
+            --scsihw virtio-scsi-single --scsi0 {{ storage }}:0,import-from={{ srv01_image }},discard=on
+            --ide2 {{ storage }}:cloudinit --boot order=scsi0 --serial0 socket --vga serial0
+            --net0 virtio,bridge={{ build_bridge }} --net1 virtio,bridge={{ range_bridge }}
+            --ciuser ludius --sshkeys {{ srv01_key }}.pub --ipconfig0 ip=dhcp --ipconfig1 ip={{ srv01_ip }}/24
+            --onboot 1
+          changed_when: true
+
+        - name: Srv01 disk 24G (cloud-init grows the root partition)
+          ansible.builtin.command: qm disk resize {{ srv01_vmid }} scsi0 24G
+          changed_when: true
+
+    - name: Srv01 running
+      ansible.builtin.command: qm start {{ srv01_vmid }}
+      register: start
+      changed_when: start.rc == 0
+      failed_when: start.rc != 0 and 'already running' not in start.stderr
+
+    - name: Srv01 SSH up on the range address
+      ansible.builtin.wait_for:
+        host: "{{ srv01_ip }}"
+        port: 22
+        timeout: 600
+
+    - name: Srv01 in the inventory
+      ansible.builtin.add_host:
+        name: srv01
+        ansible_host: "{{ srv01_ip }}"
+        ansible_user: ludius
+        ansible_ssh_private_key_file: "{{ srv01_key }}"
+        ansible_ssh_common_args: -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/ludius_known_hosts
+
+- name: Srv01 (Samba AD, NTP, grommunio)
+  hosts: srv01
+  become: true
+  roles:
+    - srv01
+
+- name: Persona clones
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Clone state
+      ansible.builtin.command: qm status {{ persona_vmid_base + 1 + idx }}
+      loop: "{{ personas }}"
+      loop_control:
+        index_var: idx
+      register: clone_status
+      changed_when: false
+      failed_when: false
+
+    - name: Linked clone per persona
+      ansible.builtin.command: qm clone {{ template_vmid }} {{ persona_vmid_base + 1 + idx }} --name ludius-{{ item.item }}
+      loop: "{{ clone_status.results }}"
+      loop_control:
+        index_var: idx
+        label: "{{ item.item }}"
+      when: item.rc != 0
+      changed_when: true
+
+    # Proxmox has no vsock option: the device goes in as a raw QEMU argument (root@pam only, hence qm on the node).
+    - name: Range NIC, vsock device, size
+      ansible.builtin.command: >-
+        qm set {{ persona_vmid_base + 1 + idx }} --net0 virtio,bridge={{ range_bridge }}
+        --args '-device vhost-vsock-pci,guest-cid={{ persona_vmid_base + 1 + idx }}'
+        --cores {{ persona_cores }} --memory {{ persona_memory_mb }} --onboot 1
+      loop: "{{ clone_status.results }}"
+      loop_control:
+        index_var: idx
+        label: "{{ item.item }}"
+      when: item.rc != 0
+      changed_when: true
+
+    - name: Clones running
+      ansible.builtin.command: qm start {{ persona_vmid_base + 1 + idx }}
+      loop: "{{ personas }}"
+      loop_control:
+        index_var: idx
+      register: start
+      changed_when: start.rc == 0
+      failed_when: start.rc != 0 and 'already running' not in start.stderr
+
+    # After first-boot setup (specialize, OOBE) the guest agent runs this as SYSTEM: static range address, srv01 as
+    # DNS, WinRM on with default settings (Negotiate, encrypted; the image's build settings are reverted).
+    - name: Range address and WinRM through the guest agent
+      ansible.builtin.command:
+        argv: [qm, guest, exec, "{{ persona_vmid_base + 1 + idx }}", --timeout, "120", --, powershell.exe, -NoProfile,
+               -NonInteractive, -EncodedCommand, "{{ lookup('ansible.builtin.template', 'bootstrap.ps1.j2') | b64encode(encoding='utf-16-le') }}"]
+      vars:
+        ip: "{{ range_net }}.{{ 21 + idx }}"
+      loop: "{{ personas }}"
+      loop_control:
+        index_var: idx
+      register: boot
+      until: boot.rc == 0 and (boot.stdout | from_json).exitcode | default(1) == 0
+      retries: 60
+      delay: 20
+      changed_when: true
+
+    - name: Personas in the inventory
+      ansible.builtin.add_host:
+        name: ludius-{{ item }}
+        groups: personas
+        ansible_host: "{{ range_net }}.{{ 21 + idx }}"
+        persona: "{{ item }}"
+        computer_name: WS-{{ item | upper }}01
+        ansible_user: "{{ build_admin_user }}"
+        ansible_password: "{{ build_admin_password }}"
+        ansible_connection: winrm
+        ansible_winrm_transport: ntlm
+        ansible_port: 5985
+      loop: "{{ personas }}"
+      loop_control:
+        index_var: idx
+      no_log: true
+
+- name: Persona machines
+  hosts: personas
+  gather_facts: false
+  roles:
+    - domain
+    - ux_noise
+  tasks:
+    - name: Observer logon task
+      ansible.builtin.include_role:
+        name: observer
+        tasks_from: persona
+
+    - name: Office activation
+      ansible.builtin.include_role:
+        name: apps
+        tasks_from: activate
+
+    - name: Log on again (hive settings and the observer apply at logon)
+      ansible.windows.win_reboot:
+        reboot_timeout: 900
+
+    - name: Observer running in the persona's session
+      ansible.windows.win_powershell:
+        script: |
+          param($p)
+          $Ansible.Changed = $false
+          $o = Get-Process uiprobe -IncludeUserName -ErrorAction SilentlyContinue | Where-Object UserName -eq $p
+          if (-not $o) { throw "no observer for $p yet" }
+          "observer pid $($o.Id) session $($o.SessionId)"
+        parameters:
+          p: "{{ domain_netbios }}\\{{ persona }}"
+      register: obs
+      retries: 20
+      delay: 15
+      until: obs is succeeded

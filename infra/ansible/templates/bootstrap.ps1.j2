@@ -1,0 +1,14 @@
+$ErrorActionPreference = 'Stop'
+$s = Get-ItemProperty HKLM:\SYSTEM\Setup
+if ($s.SystemSetupInProgress -or $s.OOBEInProgress) { exit 3 }  # first-boot setup still running: retried
+$n = Get-NetAdapter -Physical | Where-Object Status -eq Up | Select-Object -First 1
+if (-not $n) { exit 4 }
+if (-not (Get-NetIPAddress -InterfaceIndex $n.ifIndex -IPAddress {{ ip }} -ErrorAction SilentlyContinue)) {
+    Set-NetIPInterface -InterfaceIndex $n.ifIndex -Dhcp Disabled
+    Get-NetIPAddress -InterfaceIndex $n.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false
+    New-NetIPAddress -InterfaceIndex $n.ifIndex -IPAddress {{ ip }} -PrefixLength 24 | Out-Null  # no gateway: range only
+}
+Set-DnsClientServerAddress -InterfaceIndex $n.ifIndex -ServerAddresses {{ srv01_ip }}
+Set-Service WinRM -StartupType Automatic
+Enable-PSRemoting -SkipNetworkProfileCheck -Force | Out-Null
+exit 0

@@ -1,0 +1,63 @@
+---
+# domain (per clone): trust srv01's TLS CA (Outlook's Autodiscover/MAPI over HTTPS), rename and join
+# corp.ludius.test, then autologon as the persona's domain account and wait for its desktop (first logon makes the
+# profile ux_noise writes into). The AD account itself is made by the srv01 role from the narrative.
+- name: Range TLS CA (srv01's grommunio CA)
+  ansible.windows.win_copy:
+    src: "{{ range_tls_ca }}"
+    dest: C:\Windows\Temp\range-ca.crt
+
+- name: Trust the range TLS CA
+  ansible.windows.win_certificate_store:
+    path: C:\Windows\Temp\range-ca.crt
+    store_location: LocalMachine
+    store_name: Root
+
+- name: Join corp.ludius.test as {{ computer_name }}
+  microsoft.ad.membership:
+    dns_domain_name: "{{ domain }}"
+    hostname: "{{ computer_name }}"
+    domain_admin_user: Administrator@{{ domain }}
+    domain_admin_password: "{{ dc_admin_password }}"
+    state: domain
+    reboot: true
+
+- name: Autologon as the persona's domain account
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: string
+  loop:
+    - { name: AutoAdminLogon, data: "1" }
+    - { name: DefaultDomainName, data: "{{ domain_netbios }}" }
+    - { name: DefaultUserName, data: "{{ persona }}" }
+    - { name: DefaultPassword, data: "{{ persona }}{{ user_password_suffix }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: No autologon count (it would switch autologon off)
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon
+    name: AutoLogonCount
+    state: absent
+
+- name: Restart into the persona's session
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+
+- name: Persona's desktop is up
+  ansible.windows.win_powershell:
+    script: |
+      param($p)
+      $Ansible.Changed = $false
+      if (-not (Get-Process explorer -IncludeUserName -ErrorAction SilentlyContinue | Where-Object UserName -eq $p)) {
+        throw "$p is not logged on yet"
+      }
+    parameters:
+      p: "{{ domain_netbios }}\\{{ persona }}"
+  register: desktop
+  retries: 30
+  delay: 20
+  until: desktop is succeeded

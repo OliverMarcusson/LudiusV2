@@ -1,0 +1,27 @@
+---
+# ux_noise and the per-user accessibility part, in the persona's own hive after its first logon (spec section 7).
+# Same values as provision.ps1's $roles: no minimize/taskbar animations, 100% scaling, no toasts over tasks, access
+# keys always underlined; and the Java Access Bridge enabled for the persona (what `jabswitch -enable` writes).
+# Read at logon: they apply from the persona's next logon (range-up.yml restarts afterwards).
+- name: Persona hive settings
+  ansible.windows.win_powershell:
+    script: |
+      param($account)
+      $ErrorActionPreference = 'Stop'
+      $sid = ([Security.Principal.NTAccount]$account).Translate([Security.Principal.SecurityIdentifier]).Value
+      $hive = "Registry::HKEY_USERS\$sid"
+      if (-not (Test-Path $hive)) { throw "$account's hive is not loaded (not logged on)" }
+      $adv = "$hive\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+      $push = "$hive\Software\Microsoft\Windows\CurrentVersion\PushNotifications"
+      $cues = "$hive\Control Panel\Accessibility\Keyboard Preference"
+      foreach ($k in "$hive\Control Panel\Desktop\WindowMetrics", $adv, $push, $cues) { if (-not (Test-Path $k)) { New-Item $k | Out-Null } }
+      Set-ItemProperty "$hive\Control Panel\Desktop\WindowMetrics" MinAnimate '0'
+      Set-ItemProperty $adv TaskbarAnimations 0 -Type DWord
+      Set-ItemProperty "$hive\Control Panel\Desktop" LogPixels 96 -Type DWord
+      Set-ItemProperty "$hive\Control Panel\Desktop" Win8DpiScaling 1 -Type DWord
+      Set-ItemProperty $push ToastEnabled 0 -Type DWord
+      Set-ItemProperty $cues On '1'
+      $home_ = (Get-CimInstance Win32_UserProfile | Where-Object SID -eq $sid).LocalPath
+      Set-Content "$home_\.accessibility.properties" "assistive_technologies=com.sun.java.accessibility.AccessBridge`r`nscreen_magnifier_present=true" -Encoding ASCII
+    parameters:
+      account: "{{ domain_netbios }}\\{{ persona }}"
