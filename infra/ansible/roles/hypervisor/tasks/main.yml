@@ -16,7 +16,7 @@
 
     - name: Virtio-win ISO present
       ansible.builtin.assert:
-        that: virtio.output | length == 1 and virtio.output[0]
+        that: virtio.output | length == 1 and (virtio.output[0] | default('', true) | length > 0)
         fail_msg: no virtio-win ISO with viosock\w10\amd64 attached to the build VM
 
     - name: QEMU guest agent running
@@ -37,11 +37,12 @@
         script: |
           param($src)
           $ErrorActionPreference = 'Stop'
-          $lib = "$src\viosocklib.dll"
-          if (-not (Test-Path $lib)) { throw "no viosocklib.dll in $src" }
-          Copy-Item $lib "$env:WINDIR\System32\viosocklib.dll" -Force
+          # viosocklib.dll in older virtio-win, viosocklib_x64.dll from 0.1.30x
+          $name = @('viosocklib_x64.dll', 'viosocklib.dll') | Where-Object { Test-Path "$src\$_" } | Select-Object -First 1
+          if (-not $name) { throw "no viosocklib in $src" }
+          Copy-Item "$src\$name" "$env:WINDIR\System32\$name" -Force
           if (-not (netsh winsock show catalog | Select-String -Quiet -Pattern 'vsock|virtio' )) {
-            & rundll32.exe "$env:WINDIR\System32\viosocklib.dll,InstallProtocol"
+            & rundll32.exe "$env:WINDIR\System32\$name,InstallProtocol"
             $Ansible.Changed = $true
           } else { $Ansible.Changed = $false }
         parameters:

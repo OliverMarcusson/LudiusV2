@@ -1,17 +1,27 @@
-# Golden Windows 10 image (spec section 7): one Ansible playbook (infra/ansible/golden.yml) applied by Packer with the
-# proxmox-iso builder (the range: a Proxmox template for linked clones) and the hyperv-iso builder (parity with the
-# Hyper-V test host: a generalized VHDX). Same answer file for both (autounattend.xml.pkrtpl, built into a CD by
-# Packer, so no password is in a committed file), WinRM for Packer and Ansible during the build, sysprep last as a
-# Packer provisioner. Persona accounts, domain join and the observer's logon task are per clone (range-up.yml).
+# Golden Windows 10 image (spec section 7), on Proxmox in two stages so the slow part is not redone:
+#   stage 1, build "base": proxmox-iso, Windows install (~8 min) + infra/ansible/base.yml (updates, ~30 min) -> template
+#     ludius-win10-base (8999), not sysprepped. Rebuilt only when the ISO or the update policy changes; Windows 10
+#     22H2 is past end of support, so its last cumulative update is fixed and the base rarely needs a rebuild.
+#   stage 2, build "golden": proxmox-clone of the base + infra/ansible/golden.yml (settings, apps, observer, viosock)
+#     + sysprep -> template ludius-win10-golden (9000), the range's linked-clone source. Minutes, not an hour.
+# Hyper-V (parity with the test host: a generalized VHDX) stays one stage, hyperv-iso + base.yml + golden.yml: there is
+# no template to clone there, and splitting it would mean exporting and re-importing a VHDX for a rare build.
+# Same answer file for both installs (autounattend.xml.pkrtpl, built into a CD by Packer, so no password is in a
+# committed file), WinRM for Packer and Ansible during the build, sysprep last as a Packer provisioner. Persona
+# accounts, domain join and the observer's logon task are per clone (range-up.yml).
 #
 # Run from the repo root (relative paths below), with ANSIBLE_VAULT_PASSWORD_FILE set and PKR_VAR_admin_password set
-# (a build-only password: the build admin is disabled with a random password at the end):
+# (a build-only password, the same for both stages: stage 2 disables the build admin with a random password at the
+# end; the base template keeps it, and is never cloned into the range):
 #   packer init infra/packer
-#   packer build -only=proxmox-iso.proxmox -var proxmox_token=$(cat /root/.ludius-packer-token) \
-#     -var iso_checksum=<sha256 of win10.iso> infra/packer                          # on the Proxmox node
+#   packer build -on-error=abort -only=base.proxmox-iso.base -var proxmox_token=$(cat /root/.ludius-packer-token) \
+#     -var iso_checksum=<sha256 of win10.iso> infra/packer                          # on the Proxmox node, ~40 min
+#   packer build -on-error=abort -only=golden.proxmox-clone.golden -var proxmox_token=... -var iso_checksum=<same> \
+#     infra/packer
+# -on-error=abort leaves a failed build's VM running for direct ansible-playbook runs (destroy it before rebuilding).
 # Hyper-V (desktop): needs oscdimg (Windows ADK) for the answer CD and an Ansible control node, which Windows itself
 # can't be; the build creates and starts a VM, so only with the owner's OK and every other ludius-* VM Off or Saved:
-#   . infra/hyperv/one-vm.ps1; Invoke-OneVm ludius-win10-pk { packer build -only=hyperv-iso.hyperv ... infra/packer }
+#   . infra/hyperv/one-vm.ps1; Invoke-OneVm ludius-win10-pk { packer build -only=golden.hyperv-iso.hyperv ... infra/packer }
 
 packer {
   required_version = ">= 1.11.0"
@@ -85,6 +95,11 @@ variable "template_vmid" {
   default = 9000 # range-up.yml's template_vmid
 }
 
+variable "base_vmid" {
+  type    = number
+  default = 8999 # stage 1 template, the clone source of stage 2
+}
+
 variable "range_pool" {
   type    = string
   default = "ludius" # the host agent's Proxmox:Pool; range-up.yml refuses a template outside it
@@ -125,15 +140,16 @@ locals {
   any_key = ["<enter><wait500ms><enter><wait500ms><enter><wait500ms><enter><wait500ms><enter><wait500ms><enter>"]
 }
 
-source "proxmox-iso" "proxmox" {
+# Stage 1: install and updates, kept as the template the golden image is cloned from.
+source "proxmox-iso" "base" {
   proxmox_url              = var.proxmox_url
   insecure_skip_tls_verify = true # the node's own self-signed API certificate, on loopback
   username                 = var.proxmox_token_id
   token                    = var.proxmox_token
   node                     = var.proxmox_node
-  vm_id                    = var.template_vmid
-  vm_name                  = "ludius-win10-golden"
-  template_description     = "Ludius golden Windows 10 (infra/packer), generalized"
+  vm_id                    = var.base_vmid
+  vm_name                  = "ludius-win10-base"
+  template_description     = "Ludius Windows 10 base (infra/packer stage 1): installed and updated, not generalized; build only, never a range clone source"
   pool                     = var.range_pool
 
   boot_iso {
@@ -146,7 +162,7 @@ source "proxmox-iso" "proxmox" {
   additional_iso_files {
     type     = "ide"
     index    = 1
-    iso_file = "local:iso/virtio-win.iso"
+    iso_file = "local:iso/virtio-win-0.1.302.iso" # proxmox-host.yml's golden_virtio_iso_url: has viosock
     unmount  = true
   }
   additional_iso_files {
@@ -198,6 +214,53 @@ source "proxmox-iso" "proxmox" {
   task_timeout   = "20m"
 }
 
+# Stage 2: a full clone of the base (the golden template must not depend on the base's disk), finished and
+# generalized. Hardware is restated: the clone builder would otherwise apply its own defaults over the base's.
+source "proxmox-clone" "golden" {
+  proxmox_url              = var.proxmox_url
+  insecure_skip_tls_verify = true
+  username                 = var.proxmox_token_id
+  token                    = var.proxmox_token
+  node                     = var.proxmox_node
+  clone_vm_id              = var.base_vmid
+  full_clone               = true
+  vm_id                    = var.template_vmid
+  vm_name                  = "ludius-win10-golden"
+  template_description     = "Ludius golden Windows 10 (infra/packer stage 2), generalized"
+  pool                     = var.range_pool
+
+  # The hypervisor role stages viosock from it.
+  additional_iso_files {
+    type     = "ide"
+    index    = 1
+    iso_file = "local:iso/virtio-win-0.1.302.iso"
+    unmount  = true
+  }
+
+  os              = "win10"
+  machine         = "q35"
+  bios            = "ovmf"
+  cpu_type        = "x86-64-v3"
+  cores           = 4
+  memory          = 6144
+  scsi_controller = "virtio-scsi-single"
+  network_adapters {
+    model  = "virtio"
+    bridge = var.build_bridge
+  }
+  vga {
+    type   = "std"
+    memory = 32
+  }
+  qemu_agent = true
+
+  communicator   = "winrm"
+  winrm_username = var.admin_user
+  winrm_password = var.admin_password
+  winrm_timeout  = "30m"
+  task_timeout   = "20m"
+}
+
 source "hyperv-iso" "hyperv" {
   vm_name      = var.hyperv_vm_name
   iso_url      = var.hyperv_iso_path
@@ -234,22 +297,55 @@ source "hyperv-iso" "hyperv" {
   output_directory = "runs/packer/${var.hyperv_vm_name}" # must not exist yet
 }
 
+# Packer's generated inventory sets ansible_shell_type=powershell for WinRM; ansible-core 2.21's winrm plugin needs cmd
+# (it sends the module as stdin to a cmd-launched bootstrap). With powershell the first module call's stdin never
+# arrived: the guest's bootstrap waited for good, and with a 3600 s WinRM operation timeout the build stalled in "Bake
+# in updates" for an hour. Extra vars override the inventory; the WinRM timeouts stay at pywinrm's defaults. The same
+# arguments in every ansible provisioner below (build.Password only exists inside a build).
 build {
-  sources = ["source.proxmox-iso.proxmox", "source.hyperv-iso.hyperv"]
+  name    = "base"
+  sources = ["source.proxmox-iso.base"]
+
+  provisioner "ansible" {
+    playbook_file    = "infra/ansible/base.yml"
+    user             = var.admin_user
+    use_proxy        = false
+    ansible_env_vars = ["ANSIBLE_CONFIG=infra/ansible/ansible.cfg"]
+    extra_arguments = [
+      "-e", "hypervisor=proxmox",
+      "-e", "ansible_connection=winrm ansible_shell_type=cmd ansible_winrm_transport=basic ansible_winrm_scheme=http ansible_port=5985",
+      "-e", "{\"ansible_password\": \"${build.Password}\"}", # JSON: the password's characters are validated above
+    ]
+  }
+}
+
+build {
+  name    = "golden"
+  sources = ["source.proxmox-clone.golden", "source.hyperv-iso.hyperv"]
+
+  # Hyper-V is one stage: its updates come here.
+  provisioner "ansible" {
+    only             = ["hyperv-iso.hyperv"]
+    playbook_file    = "infra/ansible/base.yml"
+    user             = var.admin_user
+    use_proxy        = false
+    ansible_env_vars = ["ANSIBLE_CONFIG=infra/ansible/ansible.cfg"]
+    extra_arguments = [
+      "-e", "hypervisor=hyperv",
+      "-e", "ansible_connection=winrm ansible_shell_type=cmd ansible_winrm_transport=basic ansible_winrm_scheme=http ansible_port=5985",
+      "-e", "{\"ansible_password\": \"${build.Password}\"}",
+    ]
+  }
 
   provisioner "ansible" {
     playbook_file    = "infra/ansible/golden.yml"
     user             = var.admin_user
     use_proxy        = false
     ansible_env_vars = ["ANSIBLE_CONFIG=infra/ansible/ansible.cfg"]
-    # Packer's generated inventory sets ansible_shell_type=powershell for WinRM; ansible-core 2.21's winrm plugin needs
-    # cmd (it sends the module as stdin to a cmd-launched bootstrap). With powershell the first module call's stdin
-    # never arrived: the guest's bootstrap waited for good, and with a 3600 s WinRM operation timeout the build stalled
-    # in "Bake in updates" for an hour. Extra vars override the inventory; the WinRM timeouts stay at pywinrm's defaults.
     extra_arguments = [
-      "-e", "hypervisor=${source.name}",
+      "-e", "hypervisor=${source.type == "hyperv-iso" ? "hyperv" : "proxmox"}",
       "-e", "ansible_connection=winrm ansible_shell_type=cmd ansible_winrm_transport=basic ansible_winrm_scheme=http ansible_port=5985",
-      "-e", "{\"ansible_password\": \"${build.Password}\"}", # JSON: the password's characters are validated above
+      "-e", "{\"ansible_password\": \"${build.Password}\"}",
     ]
   }
 
@@ -278,7 +374,7 @@ build {
       "  if ($u.Enabled) { throw 'build admin is still enabled' }",
       "  if (-not ($u.PasswordLastSet -gt $before)) { throw \"build admin password not changed (last set $($u.PasswordLastSet))\" }",
       "} catch { Write-Error $_ -ErrorAction Continue; exit 1 }",
-      "if ('${source.name}' -eq 'hyperv') { shutdown /s /t 20 /d p:4:1 /c Packer }",
+      "if ('${source.type}' -eq 'hyperv-iso') { shutdown /s /t 20 /d p:4:1 /c Packer }",
     ]
   }
 

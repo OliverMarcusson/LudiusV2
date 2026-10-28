@@ -140,6 +140,13 @@
     dest: /var/lib/vz/template/iso/virtio-win.iso
     mode: "0644"
 
+- name: Virtio-win ISO with viosock (golden image, infra/packer)
+  ansible.builtin.get_url:
+    url: "{{ golden_virtio_iso_url }}"
+    dest: /var/lib/vz/template/iso/{{ golden_virtio_iso_url | basename }}
+    checksum: sha256:{{ golden_virtio_iso_sha256 }}
+    mode: "0644"
+
 - name: Windows ISO present
   ansible.builtin.stat:
     path: /var/lib/vz/template/iso/win10.iso

@@ -1,0 +1,15 @@
+---
+# Stage 1 of the golden image (infra/packer, build "base"): Windows updates on the freshly installed VM, which Packer
+# then converts to the template ludius-win10-base. Not sysprepped: stage 2 clones it and finishes with golden.yml.
+- name: Golden image base (updates)
+  hosts: all
+  gather_facts: false
+  # Packer connects as soon as the first-logon commands have WinRM listening, while the fresh guest is still busy. The
+  # first module call is bounded so a broken WinRM exchange fails the build in minutes, not hours (the one seen: the
+  # wrong shell type, see the ansible provisioners in infra/packer).
+  pre_tasks:
+    - name: WinRM answers a module call
+      ansible.windows.win_ping:
+      timeout: 300
+  roles:
+    - updates

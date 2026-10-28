@@ -1,5 +1,6 @@
 ---
-# Golden Windows 10 image (spec section 7), applied by Packer over WinRM to the freshly installed build VM.
+# Golden Windows 10 image (spec section 7), stage 2: applied by Packer over WinRM to a clone of ludius-win10-base
+# (stage 1, base.yml: install and updates); on Hyper-V after base.yml on the same VM.
 # Persona-specific roles (domain, ux_noise, the observer's logon task) run per clone in range-up.yml.
 # sysprep only stages the answer file; Packer's last provisioner generalizes.
 - name: Golden image
