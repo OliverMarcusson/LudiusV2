@@ -146,14 +146,34 @@ class Snapshot(_message.Message):
     def __init__(self, seq: _Optional[int] = ..., guest_time_ms: _Optional[int] = ..., screen_width: _Optional[int] = ..., screen_height: _Optional[int] = ..., dpi: _Optional[int] = ..., windows: _Optional[_Iterable[_Union[Window, _Mapping]]] = ..., elements: _Optional[_Iterable[_Union[Element, _Mapping]]] = ..., context: _Optional[_Iterable[str]] = ..., settled: _Optional[bool] = ..., settle_ms: _Optional[int] = ..., busy_cursor: _Optional[bool] = ..., indeterminate_progress: _Optional[bool] = ..., locked: _Optional[bool] = ..., cursor_x: _Optional[int] = ..., cursor_y: _Optional[int] = ..., dropped_elements: _Optional[int] = ..., user: _Optional[str] = ..., apps: _Optional[_Iterable[_Union[Window, _Mapping]]] = ..., secure_desktop: _Optional[bool] = ...) -> None: ...
 
 class ObserverRequest(_message.Message):
-    __slots__ = ("id", "snapshot", "ping")
+    __slots__ = ("id", "snapshot", "ping", "read_file")
     ID_FIELD_NUMBER: _ClassVar[int]
     SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
     PING_FIELD_NUMBER: _ClassVar[int]
+    READ_FILE_FIELD_NUMBER: _ClassVar[int]
     id: int
     snapshot: SnapshotRequest
     ping: Ping
-    def __init__(self, id: _Optional[int] = ..., snapshot: _Optional[_Union[SnapshotRequest, _Mapping]] = ..., ping: _Optional[_Union[Ping, _Mapping]] = ...) -> None: ...
+    read_file: ReadFile
+    def __init__(self, id: _Optional[int] = ..., snapshot: _Optional[_Union[SnapshotRequest, _Mapping]] = ..., ping: _Optional[_Union[Ping, _Mapping]] = ..., read_file: _Optional[_Union[ReadFile, _Mapping]] = ...) -> None: ...
+
+class ReadFile(_message.Message):
+    __slots__ = ("path", "max_bytes")
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    MAX_BYTES_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    max_bytes: int
+    def __init__(self, path: _Optional[str] = ..., max_bytes: _Optional[int] = ...) -> None: ...
+
+class FileContent(_message.Message):
+    __slots__ = ("exists", "written_ms", "data")
+    EXISTS_FIELD_NUMBER: _ClassVar[int]
+    WRITTEN_MS_FIELD_NUMBER: _ClassVar[int]
+    DATA_FIELD_NUMBER: _ClassVar[int]
+    exists: bool
+    written_ms: int
+    data: bytes
+    def __init__(self, exists: _Optional[bool] = ..., written_ms: _Optional[int] = ..., data: _Optional[bytes] = ...) -> None: ...
 
 class SnapshotRequest(_message.Message):
     __slots__ = ("quiet_ms", "timeout_ms", "wait_settle")
@@ -186,13 +206,15 @@ class Hello(_message.Message):
     def __init__(self, version: _Optional[str] = ..., user: _Optional[str] = ..., session_id: _Optional[int] = ..., ui_access: _Optional[bool] = ..., pixel_settle: _Optional[bool] = ..., computer: _Optional[str] = ...) -> None: ...
 
 class ObserverResponse(_message.Message):
-    __slots__ = ("id", "hello", "snapshot", "error")
+    __slots__ = ("id", "hello", "snapshot", "error", "file")
     ID_FIELD_NUMBER: _ClassVar[int]
     HELLO_FIELD_NUMBER: _ClassVar[int]
     SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    FILE_FIELD_NUMBER: _ClassVar[int]
     id: int
     hello: Hello
     snapshot: Snapshot
     error: str
-    def __init__(self, id: _Optional[int] = ..., hello: _Optional[_Union[Hello, _Mapping]] = ..., snapshot: _Optional[_Union[Snapshot, _Mapping]] = ..., error: _Optional[str] = ...) -> None: ...
+    file: FileContent
+    def __init__(self, id: _Optional[int] = ..., hello: _Optional[_Union[Hello, _Mapping]] = ..., snapshot: _Optional[_Union[Snapshot, _Mapping]] = ..., error: _Optional[str] = ..., file: _Optional[_Union[FileContent, _Mapping]] = ...) -> None: ...

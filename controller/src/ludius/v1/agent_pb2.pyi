@@ -8,6 +8,14 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class GuestFileRequest(_message.Message):
+    __slots__ = ("vm", "file")
+    VM_FIELD_NUMBER: _ClassVar[int]
+    FILE_FIELD_NUMBER: _ClassVar[int]
+    vm: str
+    file: _observation_pb2.ReadFile
+    def __init__(self, vm: _Optional[str] = ..., file: _Optional[_Union[_observation_pb2.ReadFile, _Mapping]] = ...) -> None: ...
+
 class Move(_message.Message):
     __slots__ = ("x", "y", "duration_ms")
     X_FIELD_NUMBER: _ClassVar[int]

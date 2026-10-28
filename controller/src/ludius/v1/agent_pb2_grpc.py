@@ -4,6 +4,7 @@ import grpc
 import warnings
 
 from ludius.v1 import agent_pb2 as ludius_dot_v1_dot_agent__pb2
+from ludius.v1 import observation_pb2 as ludius_dot_v1_dot_observation__pb2
 
 GRPC_GENERATED_VERSION = '1.85.0'
 GRPC_VERSION = grpc.__version__
@@ -56,6 +57,11 @@ class HostAgentStub:
                 request_serializer=ludius_dot_v1_dot_agent__pb2.ScreenshotRequest.SerializeToString,
                 response_deserializer=ludius_dot_v1_dot_agent__pb2.ScreenshotResult.FromString,
                 _registered_method=True)
+        self.ReadGuestFile = channel.unary_unary(
+                '/ludius.v1.HostAgent/ReadGuestFile',
+                request_serializer=ludius_dot_v1_dot_agent__pb2.GuestFileRequest.SerializeToString,
+                response_deserializer=ludius_dot_v1_dot_observation__pb2.FileContent.FromString,
+                _registered_method=True)
 
 
 class HostAgentServicer:
@@ -87,6 +93,13 @@ class HostAgentServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ReadGuestFile(self, request, context):
+        """A guest file through the observer (done-checks). UNIMPLEMENTED when the VM's observer predates read_file.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_HostAgentServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -109,6 +122,11 @@ def add_HostAgentServicer_to_server(servicer, server):
                     servicer.Screenshot,
                     request_deserializer=ludius_dot_v1_dot_agent__pb2.ScreenshotRequest.FromString,
                     response_serializer=ludius_dot_v1_dot_agent__pb2.ScreenshotResult.SerializeToString,
+            ),
+            'ReadGuestFile': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReadGuestFile,
+                    request_deserializer=ludius_dot_v1_dot_agent__pb2.GuestFileRequest.FromString,
+                    response_serializer=ludius_dot_v1_dot_observation__pb2.FileContent.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -221,6 +239,33 @@ class HostAgent:
             '/ludius.v1.HostAgent/Screenshot',
             ludius_dot_v1_dot_agent__pb2.ScreenshotRequest.SerializeToString,
             ludius_dot_v1_dot_agent__pb2.ScreenshotResult.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReadGuestFile(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/ludius.v1.HostAgent/ReadGuestFile',
+            ludius_dot_v1_dot_agent__pb2.GuestFileRequest.SerializeToString,
+            ludius_dot_v1_dot_observation__pb2.FileContent.FromString,
             options,
             channel_credentials,
             insecure,

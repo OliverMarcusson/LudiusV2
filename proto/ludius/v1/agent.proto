@@ -13,6 +13,13 @@ service HostAgent {
   rpc Observe(ObserveRequest) returns (ObserveResult);
   rpc Lifecycle(LifecycleRequest) returns (LifecycleResult);
   rpc Screenshot(ScreenshotRequest) returns (ScreenshotResult);
+  // A guest file through the observer (done-checks). UNIMPLEMENTED when the VM's observer predates read_file.
+  rpc ReadGuestFile(GuestFileRequest) returns (FileContent);
+}
+
+message GuestFileRequest {
+  string vm = 1;
+  ReadFile file = 2;
 }
 
 message Move {
