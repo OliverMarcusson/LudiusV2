@@ -9,7 +9,7 @@ pve.ludius.se {
 	import claustra_forward http://127.0.0.1:18453
 }
 
-http://127.0.0.1:18453 {
+http://:18453 {
 	bind 127.0.0.1
 	reverse_proxy __BOX_TAILNET_IP__:__PVE_TS_PORT__ {
 		header_up Host __BOX_DNS_NAME__:__PVE_TS_PORT__

@@ -10,7 +10,7 @@ monitor.ludius.se {
 # README (serve :8452 -> 127.0.0.1:7453 -> agent with Host rewritten). The snippet can't set header_up, so the Host
 # rewrite lives here. Origin passes through unchanged (https://monitor.ludius.se), which the agent's allowed-origin
 # setting accepts. WebSocket upgrades are proxied by Caddy without extra config.
-http://127.0.0.1:18452 {
+http://:18452 {
 	bind 127.0.0.1
 	reverse_proxy __BOX_TAILNET_IP__:__TS_PORT__ {
 		header_up Host __BOX_DNS_NAME__:__TS_PORT__
