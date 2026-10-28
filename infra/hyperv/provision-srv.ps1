@@ -168,6 +168,13 @@ $script = $script.Replace('__PERSONAS__', ($personas -join ' ')).Replace('__ADDR
 $script | ssh -i $key -o UserKnownHostsFile=$known -o StrictHostKeyChecking=accept-new -o BatchMode=yes "ludius@$ip" 'tr -d ''
 '' | sudo bash -s'  # pwsh ends piped stdin with CRLF
 if ($LASTEXITCODE) { throw "provisioning failed on $vm ($LASTEXITCODE)" }
+# The same key under the name the other host scripts pin (mail.py, set-clock.ps1: HostKeyAlias=ludius-srv01), since
+# srv01's Default Switch address changes when the host reboots.
+if (-not (ssh-keygen -F ludius-srv01 -f $known)) {
+    $lines = @(ssh-keygen -F $ip -f $known | Where-Object { $_ -and $_ -notmatch '^#' })
+    if (-not $lines) { throw "no host key for $ip in $known" }
+    $lines | ForEach-Object { [IO.File]::AppendAllText($known, "ludius-srv01 $(($_ -split ' ', 2)[1])`n") }
+}
 # The domain Administrator password set above, for host scripts that join members (provision-client.ps1).
 if (-not $cfg.LUDIUS_SRV_DC_ADMIN_PASSWORD) {
     $envFile = Join-Path $root '.env'
