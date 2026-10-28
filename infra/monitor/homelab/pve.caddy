@@ -1,0 +1,9 @@
+# BEGIN ludius-pve
+# Remove with BLOCK=ludius-pve infra/monitor/homelab/remove-monitor.sh (it needs the BEGIN and END lines exactly as they are).
+# Proxmox web UI behind Claustra. pveproxy does not check Host, so no rewrite hop is needed; the box's tailscale serve
+# (:__PVE_TS_PORT__) terminates the self-signed TLS (https+insecure) and forwards plain HTTP from here over the tailnet.
+# Caddy proxies the noVNC and xterm.js WebSocket upgrades without extra config. PVE's own login stays on.
+pve.ludius.se {
+	import claustra_forward http://__BOX_TAILNET_IP__:__PVE_TS_PORT__
+}
+# END ludius-pve

@@ -43,6 +43,9 @@
 - name: Running the newest Proxmox kernel
   ansible.builtin.include_tasks: reboot-if-needed.yml
 
+- name: Proxmox web UI on loopback before proxmox-ve is installed (first start included)
+  ansible.builtin.include_tasks: pve-exposure.yml
+
 - name: Postfix local-only (no mail leaves the box)
   ansible.builtin.debconf:
     name: postfix
@@ -53,6 +56,9 @@
 - name: Proxmox VE
   ansible.builtin.apt:
     name: [proxmox-ve, postfix, open-iscsi, chrony, dnsmasq, iptables, xorriso]
+
+- name: Proxmox web UI on loopback, SPICE proxy and rpcbind off
+  ansible.builtin.include_tasks: pve-exposure.yml
 
 - name: No Debian kernel or os-prober
   ansible.builtin.apt:

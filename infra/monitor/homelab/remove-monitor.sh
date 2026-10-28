@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# Removes the ludius-monitor block from the edge Caddyfile (run on the homelab, after the owner's OK).
+# Removes a marked block (ludius-monitor, or ludius-pve with BLOCK=ludius-pve) from the edge Caddyfile (run on the homelab, after the owner's OK).
 # It touches the file only if there is exactly one BEGIN and one END marker line, BEGIN first. It backs up first,
 # validates the result with Caddy, puts the backup back if validation fails, and reloads only after validation.
 #   CADDY='docker compose -f /srv/compose/edge/compose.yaml exec -T <caddy-service> caddy' \
 #     infra/monitor/homelab/remove-monitor.sh [/srv/compose/edge/Caddyfile]
 # CADDY is the command prefix that runs `caddy` where the Caddyfile is mounted; CADDY_CONF is the Caddyfile path
-# in that environment (default /etc/caddy/Caddyfile). DRY_RUN=1 checks the markers and prints, changes nothing.
+# in that environment (default /etc/caddy/Caddyfile). BLOCK names the marker pair (default ludius-monitor). DRY_RUN=1 checks the markers and prints, changes nothing.
 set -euo pipefail
 
 file=${1:-/srv/compose/edge/Caddyfile}
 : "${CADDY:?set CADDY to the command that runs caddy, e.g. 'docker compose exec -T <service> caddy'}"
 : "${CADDY_CONF:=/etc/caddy/Caddyfile}"
-backup=$file.bak-before-ludius-monitor-teardown
-begin='# BEGIN ludius-monitor'
-end='# END ludius-monitor'
+: "${BLOCK:=ludius-monitor}"
+[[ $BLOCK =~ ^[a-z][a-z0-9-]*$ ]] || { echo "ABORT: bad BLOCK name: $BLOCK" >&2; exit 1; }
+backup=$file.bak-before-$BLOCK-teardown
+begin="# BEGIN $BLOCK"
+end="# END $BLOCK"
 read -ra caddy <<<"$CADDY"
 
 [[ -f $file ]] || { echo "ABORT: $file not found" >&2; exit 1; }

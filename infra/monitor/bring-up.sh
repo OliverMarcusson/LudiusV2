@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Box side of the monitor: Tailscale (tagged key, tailnet only), `tailscale serve` for the agent's monitor
-# endpoint, and the built monitor UI. Run as root on the Proxmox box from a checkout of this repo:
+# Box side of the monitor and of the Proxmox web UI: Tailscale (tagged key, tailnet only), `tailscale serve` for the
+# agent's monitor endpoint (:8452) and for pveproxy (:8453), and the built monitor UI. Run as root on the Proxmox box from a checkout of this repo:
 #   TS_AUTHKEY=tskey-auth-... infra/monitor/bring-up.sh
 #   DRY_RUN=1 infra/monitor/bring-up.sh        # prints the mutating commands, changes nothing
 # Re-runnable: each step is skipped or repeated harmlessly.
@@ -10,7 +10,10 @@ set -euo pipefail
 : "${TS_TAG:=tag:ludius-box}"
 : "${TS_PORT:=8452}"                    # tailnet-side port; the agent itself stays on 127.0.0.1:7452
 : "${AGENT_MONITOR:=http://127.0.0.1:7452}"
+: "${PVE_TS_PORT:=8453}"                # tailnet-side port for the Proxmox web UI
+: "${PVE_TARGET:=https+insecure://127.0.0.1:8006}" # pveproxy has a self-signed certificate
 : "${BUN_VERSION:=1.3.14}"
+PVEPROXY_DEFAULT=${PVEPROXY_DEFAULT:-/etc/default/pveproxy} # overridable for the tests
 DRY_RUN=${DRY_RUN:-}
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -90,17 +93,36 @@ else
     echo "+ tailscale up --auth-key=<TS_AUTHKEY> --hostname=$TS_HOSTNAME --advertise-tags=$TS_TAG --accept-dns=false --accept-routes=false"
     echo "+ verify_identity"
   else
-    tailscale up --auth-key="$TS_AUTHKEY" --hostname="$TS_HOSTNAME" --advertise-tags="$TS_TAG"       --accept-dns=false --accept-routes=false
+    tailscale up --auth-key="$TS_AUTHKEY" --hostname="$TS_HOSTNAME" --advertise-tags="$TS_TAG" \
+      --accept-dns=false --accept-routes=false
     verify_identity # the key's own tags decide, not the flag: a key without the tag must not get through
   fi
 fi
 
-# tailnet-side HTTP listener (inside tailscaled, tailnet addresses only) -> the agent's loopback monitor endpoint
+# Proxmox stays off the public addresses (infra/ansible does this on a fresh box; repeated here for a box that was
+# set up another way): pveproxy on loopback, SPICE proxy and rpcbind masked. Restarting pveproxy ends open web sessions.
+bind_pve_loopback() {
+  local changed=
+  grep -qx 'LISTEN_IP="127.0.0.1"' "$PVEPROXY_DEFAULT" 2>/dev/null || {
+    printf '%s\n' '# Managed by infra/monitor/bring-up.sh. Reached over the tailnet via tailscale serve.' 'LISTEN_IP="127.0.0.1"' >"$PVEPROXY_DEFAULT"
+    changed=1
+  }
+  [[ -z $changed ]] || systemctl restart pveproxy
+  local u
+  for u in spiceproxy.service rpcbind.service rpcbind.socket; do
+    if systemctl cat "$u" >/dev/null 2>&1; then systemctl mask --now "$u"; fi
+  done
+}
+run bind_pve_loopback
+
+# tailnet-side HTTP listeners (inside tailscaled, tailnet addresses only): the agent's loopback monitor endpoint and
+# pveproxy. An existing mapping on the same port is replaced, anything else on serve is left to check.sh to flag.
 run tailscale serve --bg --http="$TS_PORT" "$AGENT_MONITOR"
+run tailscale serve --bg --http="$PVE_TS_PORT" "$PVE_TARGET"
 
 command -v bun >/dev/null || run install_bun
 run build_monitor
 
 echo "monitor UI built: $repo/web/monitor/dist"
 echo "agent needs: Monitor__Root=$repo/web/monitor/dist  Monitor__AllowedOrigins=https://monitor.ludius.se"
-[[ -n $DRY_RUN ]] || TS_PORT=$TS_PORT AGENT_MONITOR=$AGENT_MONITOR "$repo/infra/monitor/check.sh"
+[[ -n $DRY_RUN ]] || TS_PORT=$TS_PORT AGENT_MONITOR=$AGENT_MONITOR PVE_TS_PORT=$PVE_TS_PORT PVE_TARGET=$PVE_TARGET "$repo/infra/monitor/check.sh"
