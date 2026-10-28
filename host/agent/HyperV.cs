@@ -10,23 +10,29 @@ namespace Ludius.HostAgent;
 // Hyper-V backend: synthetic keyboard and mouse through WMI (root\virtualization\v2),
 // lifecycle through the Hyper-V PowerShell module, console frames through the
 // thumbnail API. Coordinates are guest physical pixels.
-sealed partial class HyperV(Guid observerService, string oneVmScript)
+sealed partial class HyperV(Guid observerService, string oneVmScript) : IHypervisor
 {
+    VmHandle IHypervisor.Get(string name) => Get(name);
+    Task IHypervisor.Move(VmHandle vm, int x, int y, uint durationMs, CancellationToken ct) => Move((Vm)vm, x, y, durationMs, ct);
+    Task IHypervisor.Click(VmHandle vm, int button, uint count, CancellationToken ct) => Click((Vm)vm, button, count, ct);
+    void IHypervisor.Key(VmHandle vm, uint vk, bool down) => Key((Vm)vm, vk, down);
+    Task IHypervisor.Chord(VmHandle vm, IReadOnlyList<uint> keys, CancellationToken ct) => Chord((Vm)vm, keys, ct);
+    Task IHypervisor.Type(VmHandle vm, string text, uint meanMs, uint jitterMs, CancellationToken ct) => Type((Vm)vm, text, meanMs, jitterMs, ct);
+    void IHypervisor.CtrlAltDel(VmHandle vm) => CtrlAltDel((Vm)vm);
+    Task IHypervisor.Scroll(VmHandle vm, int notches, CancellationToken ct) => Scroll((Vm)vm, notches, ct);
+    (byte[] Png, int Width, int Height) IHypervisor.Screenshot(VmHandle vm) => Screenshot((Vm)vm);
+
     static readonly ManagementScope Scope = new(@"\\.\root\virtualization\v2");
 
     [GeneratedRegex(@"^[\w .-]{1,64}$")]
     private static partial Regex SafeName();
 
-    public sealed class Vm
+    public sealed class Vm : VmHandle
     {
-        public required string Name;
         public required Guid Id;
         public required ManagementObject System;
         public required ManagementObject Keyboard;
         public required ManagementObject Mouse;
-        public required GuestChannel Channel;
-        public readonly SemaphoreSlim InputGate = new(1, 1);
-        public (int X, int Y)? Pointer;
     }
 
     readonly Dictionary<string, Vm> vms = [];
@@ -47,11 +53,23 @@ sealed partial class HyperV(Guid observerService, string oneVmScript)
                 System = system,
                 Keyboard = Related(system, "Msvm_Keyboard"),
                 Mouse = Related(system, "Msvm_SyntheticMouse"),
-                Channel = new GuestChannel(id, observerService),
+                Channel = new GuestChannel(ct => Connect(id, ct)),
             };
             vms[name] = vm;
             return vm;
         }
+    }
+
+    async Task<System.Net.Sockets.Socket> Connect(Guid vmId, CancellationToken ct)
+    {
+        var s = new System.Net.Sockets.Socket(Ludius.Observer.HyperVEndPoint.Family, System.Net.Sockets.SocketType.Stream, Ludius.Observer.HyperVEndPoint.RawProtocol);
+        try
+        {
+            // ConnectEx (ConnectAsync) is TCP-only: WSAEINVAL on AF_HYPERV.
+            await Task.Run(() => s.Connect(new Ludius.Observer.HyperVEndPoint(vmId, observerService)), ct).WaitAsync(ct);
+            return s;
+        }
+        catch { s.Dispose(); throw; }
     }
 
     // Lifecycle changes invalidate device handles and the guest channel.
@@ -87,25 +105,11 @@ sealed partial class HyperV(Guid observerService, string oneVmScript)
 
     public async Task Move(Vm vm, int x, int y, uint durationMs, CancellationToken ct)
     {
-        var from = vm.Pointer;
-        int steps = from is null || durationMs < 30 ? 1 : (int)Math.Clamp(durationMs / 15, 2, 60);
-        // A slightly curved, eased path rather than a teleport or a ruler line.
-        double bend = (Random.Shared.NextDouble() - 0.5) * 0.25;
-        for (int i = 1; i <= steps; i++)
+        int steps = Human.Steps(vm.Pointer, durationMs), i = 0;
+        foreach (var (px, py) in Human.Path(vm.Pointer, x, y, steps))
         {
-            double t = (double)i / steps, e = t * t * (3 - 2 * t);
-            int px = x, py = y;
-            if (from is { } f && i < steps)
-            {
-                double dx = x - f.X, dy = y - f.Y;
-                double arc = Math.Sin(Math.PI * t) * bend;
-                // Stay inside the box spanned by start and target: Hyper-V rejects off-screen points (32773)
-                // and ignores (0, 0).
-                px = Math.Max(1, Math.Clamp((int)Math.Round(f.X + dx * e - dy * arc), Math.Min(f.X, x), Math.Max(f.X, x)));
-                py = Math.Max(1, Math.Clamp((int)Math.Round(f.Y + dy * e + dx * arc), Math.Min(f.Y, y), Math.Max(f.Y, y)));
-            }
             Call(vm.Mouse, "SetAbsolutePosition", px, py);
-            if (i < steps) await Task.Delay((int)(durationMs / steps), ct);
+            if (++i < steps) await Task.Delay((int)(durationMs / steps), ct);
         }
         vm.Pointer = (x, y);
     }
@@ -142,10 +146,7 @@ sealed partial class HyperV(Guid observerService, string oneVmScript)
                 case '\t': Call(vm.Keyboard, "TypeKey", 0x09u); break;
                 default: Call(vm.Keyboard, "TypeText", c.ToString()); break;
             }
-            // Heavy-ish tail: mostly near the mean, sometimes a pause.
-            double delay = meanMs + (Random.Shared.NextDouble() * 2 - 1) * jitterMs;
-            if (Random.Shared.NextDouble() < 0.04) delay += meanMs * (2 + Random.Shared.NextDouble() * 4);
-            if (delay > 0) await Task.Delay((int)delay, ct);
+            if (Human.KeyDelay(meanMs, jitterMs) is var delay and > 0) await Task.Delay(delay, ct);
         }
     }
 
@@ -250,8 +251,6 @@ sealed partial class HyperV(Guid observerService, string oneVmScript)
     }
 
     // Monitoring (view only) ------------------------------------------------
-
-    public sealed record VmInfo(string Name, string State, int Width, int Height);
 
     // Every VM on the host: Msvm_ComputerSystem rows named by GUID (the host's own row carries its computer name).
     public List<VmInfo> ListVms() =>

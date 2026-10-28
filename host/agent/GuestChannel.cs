@@ -1,14 +1,13 @@
 using System.Buffers.Binary;
 using System.Net.Sockets;
 using Google.Protobuf;
-using Ludius.Observer;
 using Ludius.V1;
 
 namespace Ludius.HostAgent;
 
-// The host end of one VM's observer link: request/response over a Hyper-V
-// socket, reconnecting after drops (observer restarts, VM restores).
-sealed class GuestChannel(Guid vmId, Guid service) : IDisposable
+// The host end of one VM's observer link: request/response over a Hyper-V socket or vsock (the backend's
+// connect), reconnecting after drops (observer restarts, VM restores).
+sealed class GuestChannel(Func<CancellationToken, Task<Socket>> connect) : IDisposable
 {
     readonly SemaphoreSlim gate = new(1, 1);
     Socket? socket;
@@ -51,13 +50,11 @@ sealed class GuestChannel(Guid vmId, Guid service) : IDisposable
     async Task Connect(CancellationToken ct)
     {
         if (stream != null) return;
-        var s = new Socket(HyperVEndPoint.Family, SocketType.Stream, HyperVEndPoint.RawProtocol);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(5));
+        var s = await connect(cts.Token);
         try
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(5));
-            // ConnectEx (ConnectAsync) is TCP-only: WSAEINVAL on AF_HYPERV.
-            await Task.Run(() => s.Connect(new HyperVEndPoint(vmId, service)), ct).WaitAsync(cts.Token);
             var ns = new NetworkStream(s, ownsSocket: true);
             var hello = ObserverResponse.Parser.ParseFrom(await ReadFrame(ns, cts.Token));
             Hello = hello.Hello ?? throw new IOException("observer did not say hello");

@@ -11,14 +11,36 @@ using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddGrpc();
-builder.Services.AddSingleton(new HyperV(Guid.Parse(builder.Configuration["Agent:ObserverService"]!),
-    Path.GetFullPath(builder.Configuration["Agent:OneVmScript"] ?? "../../infra/hyperv/one-vm.ps1", builder.Environment.ContentRootPath)));
+// Agent:Backend picks the hypervisor: hyperv (default on Windows) or proxmox (default elsewhere, one agent per node).
+var backend = builder.Configuration["Agent:Backend"] ?? (OperatingSystem.IsWindows() ? "hyperv" : "proxmox");
+IHypervisor hypervisor = backend switch
+{
+#if WINDOWS
+    "hyperv" => new HyperV(Guid.Parse(builder.Configuration["Agent:ObserverService"]!),
+        Path.GetFullPath(builder.Configuration["Agent:OneVmScript"] ?? "../../infra/hyperv/one-vm.ps1", builder.Environment.ContentRootPath)),
+#endif
+    "proxmox" => new Proxmox(new Pvesh(), builder.Configuration["Proxmox:Node"] ?? Environment.MachineName, ProxmoxConfig(builder.Configuration)),
+    _ => throw new InvalidOperationException($"Agent:Backend {backend} is not available in this build"),
+};
+builder.Services.AddSingleton(hypervisor);
 builder.Services.AddSingleton<FeedHub>();
 var app = builder.Build();
 app.MapGrpcService<AgentService>();
 Monitor.Map(app);
-ClockSweep.Start(app);
+if (backend == "hyperv") ClockSweep.Start(app); // the sweep resets clocks through infra/hyperv (time-jump is Hyper-V only)
 app.Run();
+
+static ProxmoxOptions ProxmoxConfig(IConfiguration c)
+{
+    var o = new ProxmoxOptions();
+    // The vsock port follows the observer's service id (its first field), as Hyper-V's VSOCK template does.
+    if (c["Agent:ObserverService"] is { } svc) o = o with { VsockPort = BitConverter.ToUInt32(Guid.Parse(svc).ToByteArray(), 0) };
+    if (c["Proxmox:VsockPort"] is { } port) o = o with { VsockPort = uint.Parse(port) };
+    if (c["Proxmox:RunDir"] is { } run) o = o with { RunDir = run };
+    if (c["Proxmox:ScratchDir"] is { } scratch) o = o with { ScratchDir = scratch };
+    if (c["Proxmox:Resolution"] is { } res && res.Split('x') is [var w, var h]) o = o with { Screen = (int.Parse(w), int.Parse(h)) };
+    return o;
+}
 
 // Orphaned time-jumps: every 60 s, infra/hyperv/clock-sweep.ps1 resets the range clocks of any clock lease
 // (runs/locks/clock-<vm>.json) its controller stopped renewing, i.e. a controller that was killed mid-day.
@@ -85,7 +107,7 @@ static class Monitor
         var include = new System.Text.RegularExpressions.Regex(app.Configuration["Monitor:Include"] ?? "^ludius-",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         var api = app.MapGroup("/api").RequireHost(onMonitor);
-        api.MapGet("/vms", (HyperV hv) => hv.ListVms().Where(v => include.IsMatch(v.Name)));
+        api.MapGet("/vms", (IHypervisor hv) => hv.ListVms().Where(v => include.IsMatch(v.Name)));
 
         // OpenRouter request counts the controller writes (counts and timestamps only). Shared read so the
         // controller can still replace the file while it is open here.
@@ -113,7 +135,7 @@ static class Monitor
         app.UseWebSockets();
         api.MapGet("/vms/{name}/stream", async (HttpContext ctx, string name, int? w, FeedHub hub) =>
         {
-            if (!include.IsMatch(name) || !HyperV.ValidName(name)) return Results.NotFound();
+            if (!include.IsMatch(name) || !VmName.Valid(name)) return Results.NotFound();
             if (!ctx.WebSockets.IsWebSocketRequest) return Results.BadRequest("WebSocket only");
             // WebSockets ignore CORS: without this any page in an operator's browser could watch the desktops.
             var origin = ctx.Request.Headers.Origin.ToString();
@@ -224,7 +246,7 @@ static class Monitor
 
 // One capture loop per VM and size, shared by every viewer and stopped with the last one. A tick every
 // 1/12 s starts a capture unless three are already running; frames go out in order, older ones are dropped.
-sealed class FeedHub(HyperV hv)
+sealed class FeedHub(IHypervisor hv)
 {
     const int Fps = 12;
     const int MaxInFlight = 3;
@@ -309,7 +331,7 @@ sealed class FeedHub(HyperV hv)
     }
 }
 
-sealed class AgentService(HyperV hv, ILogger<AgentService> log) : HostAgent.HostAgentBase
+sealed class AgentService(IHypervisor hv, ILogger<AgentService> log) : HostAgent.HostAgentBase
 {
     static long Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -343,7 +365,25 @@ sealed class AgentService(HyperV hv, ILogger<AgentService> log) : HostAgent.Host
         var timeout = TimeSpan.FromMilliseconds((req.TimeoutMs == 0 ? 5000 : req.TimeoutMs) + 10000);
         var res = await vm.Channel.Request(new ObserverRequest { Snapshot = req }, timeout, ctx.CancellationToken);
         if (res.BodyCase == ObserverResponse.BodyOneofCase.Error) throw new InvalidOperationException("observer: " + res.Error);
+        if (res.Snapshot.ScreenWidth > 0 && res.Snapshot.ScreenHeight > 0) vm.Screen = (res.Snapshot.ScreenWidth, res.Snapshot.ScreenHeight);
         return new ObserveResult { Snapshot = res.Snapshot, Hello = vm.Channel.Hello, HostTimeMs = Now };
+    });
+
+    // Read-only, through the observer (it runs as the persona and reads only its own profile). An observer that
+    // predates read_file answers "unknown request": UNIMPLEMENTED, so the controller uses its older path.
+    public override async Task<FileContent> ReadGuestFile(GuestFileRequest r, ServerCallContext ctx) => await Guard(async () =>
+    {
+        var vm = hv.Get(r.Vm);
+        var res = await vm.Channel.Request(new ObserverRequest { ReadFile = r.File ?? throw new ArgumentException("no file") },
+            TimeSpan.FromSeconds(30), ctx.CancellationToken);
+        return res.BodyCase switch
+        {
+            ObserverResponse.BodyOneofCase.File => res.File,
+            ObserverResponse.BodyOneofCase.Error when res.Error == "unknown request" =>
+                throw new RpcException(new Status(StatusCode.Unimplemented, "observer has no read_file")),
+            ObserverResponse.BodyOneofCase.Error => throw new InvalidOperationException("observer: " + res.Error),
+            _ => throw new InvalidOperationException("observer: no file in the answer"),
+        };
     });
 
     public override async Task<LifecycleResult> Lifecycle(LifecycleRequest r, ServerCallContext ctx) => await Guard(async () =>
