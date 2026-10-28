@@ -1,0 +1,40 @@
+---
+# Owner's decision (2026-10-29): Microsoft Defender Antivirus off on the range servers too (dc01, ex01), as in the
+# persona image (roles/base): realtime off by preference while the service runs, DisableAntiSpyware/DisableAntiVirus/
+# DisableRealtimeMonitoring by policy. Tamper Protection is not on for an unmanaged server; checked anyway. Defender's
+# platform ignores DisableAntiSpyware from 4.18.2108 on, so the service may keep running with realtime off: the check
+# requires realtime off (or the service stopped/absent); unreadable while it runs fails. Exchange's exclusions stay.
+- name: Defender realtime off and off by policy (re-asserted every run)
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+      $f = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Defender\Features' -ErrorAction SilentlyContinue
+      if ($f.TamperProtection -eq 5) { throw 'Tamper Protection is on' }
+      $svc = Get-Service WinDefend -ErrorAction SilentlyContinue
+      if ($svc.Status -eq 'Running' -and (Get-MpPreference).DisableRealtimeMonitoring -ne $true) {
+        Set-MpPreference -DisableRealtimeMonitoring $true; $Ansible.Changed = $true }
+      $p = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
+      foreach ($k in @(@($p, 'DisableAntiSpyware'), @($p, 'DisableAntiVirus'), @("$p\Real-Time Protection", 'DisableRealtimeMonitoring'))) {
+        if (-not (Test-Path $k[0])) { New-Item $k[0] -Force | Out-Null }
+        if ((Get-ItemProperty $k[0] -ErrorAction SilentlyContinue).($k[1]) -ne 1) {
+          New-ItemProperty $k[0] -Name $k[1] -Value 1 -PropertyType DWord -Force | Out-Null; $Ansible.Changed = $true }
+      }
+      if (-not $svc) { return 'Defender not installed' }
+      # The status lags a just-set preference by some seconds: wait up to a minute for it.
+      for ($i = 0; $i -lt 12; $i++) {
+        try { $s = Get-MpComputerStatus } catch { $s = $null }
+        if (-not $s.RealTimeProtectionEnabled) { break }
+        Start-Sleep 5
+      }
+      if ($s) {
+        if ($s.RealTimeProtectionEnabled) { throw 'Defender realtime protection still on' }
+        "RealTimeProtectionEnabled=False AntivirusEnabled=$($s.AntivirusEnabled) platform $($s.AMProductVersion)"
+      }
+      elseif ($svc.Status -eq 'Running') { throw 'WinDefend is running but its status is unreadable' }
+      else { "WinDefend $($svc.Status): Defender antivirus not running" }
+  register: defender_off
+
+- name: Defender state
+  ansible.builtin.debug:
+    var: defender_off.output

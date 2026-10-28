@@ -139,6 +139,19 @@
           ansible.builtin.set_fact:
             winsrv_failures: "{{ winsrv_failures | default([]) + [ansible_failed_result.msg | default('failed')] }}"
 
+# Owner's decision: Defender antivirus off on both servers, every run (fast, idempotent).
+- name: Defender off on both servers
+  hosts: localhost:winsrv
+  gather_facts: false
+  tasks:
+    - name: Defender off
+      tags: [always]
+      when: inventory_hostname != 'localhost' and not hostvars['localhost'].winsrv_failures | default([])
+      ansible.builtin.include_tasks:
+        file: tasks/winsrv-defender-off.yml
+        apply:
+          tags: [always]
+
 # localhost stays in these plays so a failed server never ends the run before the close-down play.
 - name: Dc01 (AD DS, DNS, time, accounts)
   hosts: localhost:dc01

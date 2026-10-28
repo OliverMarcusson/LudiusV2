@@ -99,6 +99,8 @@
   ansible.windows.win_powershell:
     script: |
       param($media)
+      $Ansible.Changed = $false
+      if ((Get-Service WinDefend -ErrorAction SilentlyContinue).Status -ne 'Running') { return } # Defender off
       $p = Get-MpPreference
       $paths = 'C:\Program Files\Microsoft\Exchange Server', 'C:\ExchangeSetupLogs', "$env:SystemRoot\Temp", "$media\"
       $procs = 'ExSetup.exe', 'msiexec.exe', 'setup.exe'

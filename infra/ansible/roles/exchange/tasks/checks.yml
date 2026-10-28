@@ -59,7 +59,10 @@
       } until (($ev.EventId -contains 'FAIL') -or (Get-Date) -gt $deadline)
       if ($ev.EventId -notcontains 'FAIL') { throw "probe not rejected: $($ev.EventId -join ',')" }
       $why = "$(($ev | Where-Object EventId -eq FAIL).RecipientStatus)"
-      if ($why -notmatch '5\.7\.1' -or $why -notmatch 'Delivery outside') { throw "probe failed for another reason: $why" }
+      # Tracking logs the rule action, not its reason text; the only rejecting rule is ours, so that names the reason.
+      $rejecting = @(Get-TransportRule | Where-Object { $_.RejectMessageReasonText -or $_.RejectMessageEnhancedStatusCode })
+      if ($rejecting.Count -ne 1 -or $rejecting[0].Name -ne 'Ludius range only') { throw "rejecting rules: $($rejecting.Name -join ', ')" }
+      if ($why -notmatch '5\.7\.1' -or $why -notmatch 'TRANSPORT\.RULES\.RejectMessage') { throw "probe failed for another reason: $why" }
       if ($ev | Where-Object { $_.EventId -in 'SEND', 'SENDEXTERNAL' }) { throw 'probe was sent' }
       if (Get-Queue | Where-Object { $_.NextHopDomain -like '*example.com*' -and $_.MessageCount -gt 0 }) { throw 'probe queued' }
       $Ansible.Result = @{ rejected = "$(($ev | Where-Object EventId -eq FAIL | Select-Object -First 1).RecipientStatus)"; outside = $outside }
