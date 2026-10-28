@@ -106,6 +106,14 @@ class StuckAgent(ToggleAgent):
         return 0
 
 
+class MovesOnShot(ToggleAgent):
+    """The foreground changes between the observation and the screenshot."""
+
+    def screenshot(self) -> bytes:
+        self.open = not self.open
+        return b"PNG shot"
+
+
 def test_screenshot_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def reasons(name: str, agent: ToggleAgent) -> list[str | None]:
         jev = SeesImages()
@@ -125,3 +133,5 @@ def test_screenshot_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert image_reason(None, obs.Snapshot(windows=[obs.Window(kind=obs.Window.FOREGROUND)])) is None
     monkeypatch.setenv("LUDIUS_JEV_IMAGE", "1")
     assert reasons("forced", ToggleAgent(grows=True)) == ["forced"] * 12
+    # A screenshot taken after the screen moved never goes along with the older state.
+    assert reasons("moved", MovesOnShot()) == [None] * 12

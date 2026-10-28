@@ -439,11 +439,10 @@ class Runner:
             image = image_reason(shot_why, snap, self.image)
             shot_why = None
             try:
-                if image:
-                    shot = self.agent.screenshot()
-                    decision = self.jev.decide(state, choices, ask_progress=not recovering, image=shot)
-                else:
-                    decision = self.jev.decide(state, choices, ask_progress=not recovering)
+                shot = self.agent.screenshot() if image else None
+                if shot is not None and fingerprint(self.agent.observe(wait_settle=False).snapshot) != here:
+                    image = shot = None  # the screen moved after the observation: its pixels wouldn't match the state
+                decision = self.jev.decide(state, choices, ask_progress=not recovering, image=shot)
             except JevError as e:  # no usable answer even after retries: abandon the task, don't crash the process
                 self.log.write(event="decision_error", host_ms=_now(), task=task.template.task, subgoal=name,
                                step=step, error=str(e)[:300])  # fmt: skip
