@@ -95,7 +95,7 @@ class _Asks(Strict):
 class Request(Ask):
     manager: str
     msgid: str
-    status: Literal["planned", "sent", "failed"] = "planned"
+    status: Literal["planned", "sent", "failed", "rejected"] = "planned"  # rejected: unsafe under today's policy
 
 
 class Day(Strict):
@@ -219,12 +219,35 @@ def ensure(
         _dump(path, day.model_dump(), "x")
     people = {p.user: p for p in n.people if p.user}
     for r in day.requests:
+        if r.status == "planned" and (why := _unsafe_now(r, boss, people, templates, policy)):
+            r.status = "rejected"  # recorded under an earlier policy (a retry after an interruption)
+            day.rejects.append(f"to {r.to} {r.subject!r}: {why}")
+            _dump(path, day.model_dump())
         if r.status == "planned":
             ok = mail.deliver(f"{boss.user}@{mail.DOMAIN}", boss.name, f"{r.to}@{mail.DOMAIN}", people[r.to].name,
                               r.subject, r.body, r.msgid)  # fmt: skip
             r.status = "sent" if ok else "failed"
             _dump(path, day.model_dump())
     return day
+
+
+def _unsafe_now(r: Request, boss: Person, people: dict[str, Person], templates: dict[str, Template],
+                policy: Policy) -> str | None:  # fmt: skip
+    """The policy-dependent part of problem(), again right before sending: a recorded request may predate it."""
+    for who in (r.to, r.colleague):
+        if who and (who not in people or policy.reserved(f"{who}@{mail.DOMAIN}")):
+            return f"{who!r} is not a colleague's account or is scenario-reserved"
+    for x in (r.subject, r.body):
+        if why := policy.text_allowed(x, None):
+            return why
+    if policy.mail_reserved(f"{boss.user}@{mail.DOMAIN}", r.subject, r.body):
+        return "scenario-reserved mail"
+    t = templates.get(r.task)
+    if t is None:
+        return f"{r.task!r} is not a known task"
+    if r.file_name and any(file_reserved(r.to, w.replace("{file_name}", r.file_name), policy) for w in t.writes):
+        return f"file_name {r.file_name!r} is scenario-reserved"
+    return None
 
 
 def _plan(

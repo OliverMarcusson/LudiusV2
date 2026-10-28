@@ -308,14 +308,16 @@ class Runner:
                 paused = time.monotonic()
                 between()
                 t0 += time.monotonic() - paused  # an interruption does not use this task's time budget
-        reason = ""
+        reason, status = "", "done"
         if task.inst.request:  # a manager's request: done is the template's check; also, does it match the request?
             ok, reason = requests.fulfilled(task)
             self.log.write(event="request_check", host_ms=_now(), task=task.template.task,
                            request=task.inst.request, fulfilled=ok, reason=reason)  # fmt: skip
             reason = f"request: {reason}"
-        self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status="done", steps=steps)
-        return Outcome("done", steps, reason, done)
+            status = "done" if ok else "failed"  # ground truth never claims a request it didn't fulfil
+        self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status=status, steps=steps,
+                       reason=reason)  # fmt: skip
+        return Outcome(status, steps, reason, done)
 
     def _assisted(self, task: Task, name: str, sg: Subgoal, t0: float, steps: int) -> int:
         assert self.assist is not None

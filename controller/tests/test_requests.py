@@ -88,6 +88,22 @@ def test_requests_are_validated_sent_once_and_capped(tmp_path: Path, monkeypatch
     assert requests.Ask.model_validate({**ASK, "heading": "x"}).subject == ASK["subject"]  # extra keys dropped
 
 
+def test_a_recorded_request_is_checked_against_todays_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sol on 3ccc614: interrupted after recording, then the recipient is reserved: the retry must not send.
+    def boom(*_: Any) -> bool:
+        raise RuntimeError("interrupted")
+
+    monkeypatch.setattr(mail, "deliver", boom)
+    with pytest.raises(RuntimeError):
+        ensure(tmp_path, FakeLlm({"requests": [ASK]}))
+    sent: list[tuple[str, ...]] = []
+    monkeypatch.setattr(mail, "deliver", lambda *a: sent.append(a) or True)  # type: ignore[func-returns-value]
+    llm: Any = FakeLlm()
+    day = requests.ensure(llm, World(tmp_path), STORY, {"aberg": "- nothing"}, [ANNA, LARS], cli.load_templates(),
+                          Policy(reserved_paths=["aberg@"]), THU, BOSS, {"aberg": []}, {"aberg": []})  # fmt: skip
+    assert sent == [] and day.requests[0].status == "rejected" and "scenario-reserved" in day.rejects[-1]
+
+
 def test_persona_maps_a_request_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mail, "deliver", lambda *a: True)  # type: ignore[misc]
     msgid = ensure(tmp_path, FakeLlm({"requests": [ASK]})).requests[0].msgid
