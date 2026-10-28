@@ -93,6 +93,20 @@
     reboot_timeout: 1200
   when: prereqs.results | selectattr('reboot_required', 'defined') | selectattr('reboot_required') | list or ucma.reboot_required | default(false)
 
+# Defender scanning every file Setup reads and writes stretched the MSI phase past 15 min on the box; Microsoft
+# documents these folders and processes as antivirus exclusions for Exchange servers.
+- name: Defender exclusions for Exchange (setup media, install folder, setup processes)
+  ansible.windows.win_powershell:
+    script: |
+      param($media)
+      $p = Get-MpPreference
+      $paths = 'C:\Program Files\Microsoft\Exchange Server', 'C:\ExchangeSetupLogs', "$env:SystemRoot\Temp", "$media\"
+      $procs = 'ExSetup.exe', 'msiexec.exe', 'setup.exe'
+      $Ansible.Changed = [bool]($paths | Where-Object { $_ -notin $p.ExclusionPath }) -or [bool]($procs | Where-Object { $_ -notin $p.ExclusionProcess })
+      if ($Ansible.Changed) { Add-MpPreference -ExclusionPath $paths -ExclusionProcess $procs }
+    parameters:
+      media: "{{ media.result }}"
+
 - name: Exchange installed?
   ansible.windows.win_stat:
     path: C:\Program Files\Microsoft\Exchange Server\V15\Bin\ExSetup.exe
