@@ -113,8 +113,31 @@ def _clock_lease(vm: str | None = None) -> Lease:
     return Lease(RUNS / "locks" / f"clock-{vm}.json", vm)
 
 
-def set_clock(at: dt.datetime | None, *, vm: str | None = None) -> None:
-    """Time-jump: the guest clock to a logical time (test VM only, via infra/hyperv/set-clock.ps1)."""
+class ClockRefused(RuntimeError):
+    """Time-jump asked of an agent that is not Hyper-V on this machine."""
+
+
+@functools.cache
+def require_hyperv_clock(address: str | None, vm: str) -> None:
+    """Time-jump and the clock lease act through infra/hyperv on this machine, by VM name: refuse them unless the
+    host agent drives Hyper-V here, so a same-named local VM is never jumped while the persona runs elsewhere."""
+    address = address or os.environ.get("LUDIUS_AGENT", "127.0.0.1:7451")
+    agent = HostAgent(address, vm)
+    try:
+        ok = agent.local_hyperv()
+    finally:
+        agent.close()
+    if not ok:
+        raise ClockRefused(
+            f"time-jump refused: the host agent at {address} does not drive Hyper-V on this machine (the clock "
+            f"scripts would act on a local VM named {vm}); use --clock compressed or realtime"
+        )
+
+
+def set_clock(at: dt.datetime | None, *, vm: str | None = None, agent: str | None = None) -> None:
+    """Time-jump: the guest clock to a logical time (test VM only, via infra/hyperv/set-clock.ps1). Refused before
+    anything is touched unless the host agent is Hyper-V on this machine."""
+    require_hyperv_clock(agent, vm or os.environ["LUDIUS_VM"])
     script = str(ROOT / "infra" / "hyperv" / "set-clock.ps1")
     extra = ["-Reset"] if at is None else ["-Time", at.isoformat(timespec="seconds")]
     cmd = ["pwsh", "-NoProfile", "-NonInteractive", "-File", script, *extra]
@@ -246,6 +269,8 @@ def cmd_day(args: argparse.Namespace) -> int:
     if args.canary and not args.temporal:
         print("--canary needs --temporal (without it, run `ludius canary` before the day)", file=sys.stderr)
         return 2
+    if getattr(args, "clock", None) == "time-jump":  # before the agent restores or touches anything
+        require_hyperv_clock(getattr(args, "agent", None), args.vm or os.environ["LUDIUS_VM"])
     plan = planner.load_plan(Path(args.plan))
     persona = load_persona(args.persona or str(DATA / "personas" / f"{plan.persona}.yaml"))
     seed = args.seed if args.seed is not None else int(time.time())
@@ -294,7 +319,7 @@ def cmd_day(args: argparse.Namespace) -> int:
     finally:
         if args.clock == "time-jump" and _clock_lease(args.vm or os.environ["LUDIUS_VM"]).held:
             try:  # an exception or Ctrl+C mid-day must not leave the range on a jumped clock
-                set_clock(None, vm=args.vm or os.environ["LUDIUS_VM"])
+                set_clock(None, vm=args.vm or os.environ["LUDIUS_VM"], agent=args.agent)
             except (subprocess.CalledProcessError, OSError) as e:  # report it; never mask an exception in flight
                 reset_failed = True
                 detail = (getattr(e, "stderr", "") or str(e)).strip()[-500:]
@@ -324,11 +349,19 @@ def build_day(
     vm: str,
 ) -> DayRunner:
     """Shared runner construction for one-shot and lazy long-lived workers."""
+    if clock == "time-jump":
+        require_hyperv_clock(agent.address, vm)
     pacing = "compressed" if clock == "time-jump" else clock
     runner = Runner(agent, decider, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=make_policy(),
                     composer=make_composer())  # fmt: skip
     return DayRunner(
-        runner, make_session(agent, log), templates, log, clock, seed, set_clock=functools.partial(set_clock, vm=vm)
+        runner,
+        make_session(agent, log),
+        templates,
+        log,
+        clock,
+        seed,
+        set_clock=functools.partial(set_clock, vm=vm, agent=agent.address),
     )
 
 
@@ -412,7 +445,8 @@ def cmd_worker(args: argparse.Namespace) -> int:
                 already_failed = sys.exc_info()[0] is not None
                 if inp.clock == "time-jump" and _clock_lease(vm).held:
                     try:
-                        set_clock(None, vm=vm)  # never reset another process's lease on a failed claim/load
+                        # never reset another process's lease on a failed claim/load
+                        set_clock(None, vm=vm, agent=agent.address)
                     except Exception:
                         print("worker clock reset FAILED; lease/reservation retained for recovery", file=sys.stderr)
                         if not already_failed:
@@ -469,7 +503,7 @@ def cmd_reservation(args: argparse.Namespace) -> int:
         RUNS / "locks" / f"{vm}.lock",
         _clock_lease(vm).path,
         status,
-        functools.partial(set_clock, None, vm=vm),
+        functools.partial(set_clock, None, vm=vm, agent=args.agent),
         confirm=confirm,
     )
     print(json.dumps(out, indent=2))
@@ -577,10 +611,18 @@ def pb_kind(k: int) -> str:
     return obs.Window.Kind.Name(k).lower()  # pyright: ignore[reportArgumentType]
 
 
-def _contract_read_only(agent: HostAgent) -> int:
+def contract_verdict(failures: int, skipped: int) -> str:
+    """PASS only with no failure; a check an old agent can't run is reported as skipped, never as passed."""
+    if failures:
+        return f"FAIL: {failures} failure(s)" + (f", {skipped} skipped (old agent)" if skipped else "")
+    return "PASS" + (f", {skipped} skipped (old agent)" if skipped else "")
+
+
+def _contract_read_only(agent: HostAgent) -> tuple[int, int]:
     """The checks that change nothing in the guest: VM state, the observer's resolution against the console frame
-    (display fixed in VM config, spec section 4), and a guest file read (absent file in an existing folder)."""
-    failures = 0
+    (display fixed in VM config, spec section 4), and a guest file read (absent file in an existing folder). Returns
+    (failures, skipped): skipped only for UNIMPLEMENTED (agent or observer predates the call); any other error fails."""
+    failures = skipped = 0
 
     def check(ok: bool, what: str) -> None:
         nonlocal failures
@@ -602,18 +644,22 @@ def _contract_read_only(agent: HostAgent) -> int:
         check(not f.exists, f"guest file read: {missing} absent")
     except grpc.RpcError as e:
         code = e.code()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
-        print(f"skip guest file read: {code} (agent or observer predates ReadGuestFile)")
-    return failures
+        if code == grpc.StatusCode.UNIMPLEMENTED:
+            skipped += 1
+            print("skip guest file read: agent or observer predates ReadGuestFile (old agent)")
+        else:
+            check(False, f"guest file read: {code}")
+    return failures, skipped
 
 
 def cmd_contract(args: argparse.Namespace) -> int:
     """Pointer mapping and typing round trip, readable from the guest (spec section 4), after the read-only checks;
     --read-only stops there (nothing typed, pointer untouched)."""
     agent = agent_from(args)
-    failures = _contract_read_only(agent)
+    failures, skipped = _contract_read_only(agent)
     if args.read_only:
         agent.close()
-        print("contract (read-only): " + ("PASS" if failures == 0 else f"{failures} failure(s)"))
+        print("contract (read-only): " + contract_verdict(failures, skipped))
         return 0 if failures == 0 else 1
     s = agent.observe().snapshot
     w, h = s.screen_width, s.screen_height
@@ -642,7 +688,7 @@ def cmd_contract(args: argparse.Namespace) -> int:
         print(f"{'ok  ' if ok else 'FAIL'} typing {probe!r} -> {got!r}")
         agent.chord([0x1B])  # Esc closes the Run dialog
     agent.close()
-    print("contract: " + ("PASS" if failures == 0 else f"{failures} failure(s)"))
+    print("contract: " + contract_verdict(failures, skipped))
     return 0 if failures == 0 else 1
 
 

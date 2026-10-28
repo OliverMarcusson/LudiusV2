@@ -1,4 +1,5 @@
-"""guestfile.read: the observer's answer through the host agent first, PowerShell Direct only when it gave none."""
+"""guestfile.read: the observer's answer through the host agent; PowerShell Direct only for an agent or observer that
+predates ReadGuestFile (UNIMPLEMENTED) while the agent drives Hyper-V on this machine. Everything else is unknown."""
 
 from __future__ import annotations
 
@@ -13,11 +14,15 @@ from ludius.v1 import observation_pb2 as obs
 REL = r"Documents\a.txt"
 
 
-class _Down(grpc.RpcError):
-    pass
+class _Rpc(grpc.RpcError):
+    def __init__(self, code: grpc.StatusCode) -> None:
+        self._code = code
+
+    def code(self) -> grpc.StatusCode:
+        return self._code
 
 
-def _agent(answer: obs.FileContent | Exception, seen: list[str]) -> Any:
+def _agent(answer: obs.FileContent | Exception, seen: list[str], local_hyperv: bool = False) -> Any:
     class Agent:
         def __init__(self, address: str, vm: str) -> None:
             seen.append(f"{address} {vm}")
@@ -27,6 +32,10 @@ def _agent(answer: obs.FileContent | Exception, seen: list[str]) -> Any:
             if isinstance(answer, Exception):
                 raise answer
             return answer
+
+        def local_hyperv(self) -> bool:
+            seen.append("asked backend")
+            return local_hyperv
 
         def close(self) -> None:
             pass
@@ -42,7 +51,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     def powershell(path: str) -> guestfile.GuestFile | None:
         seen.append("powershell")
-        return None
+        return guestfile.GuestFile(True, 1, b"local")
 
     monkeypatch.setattr(guestfile, "_read_via_powershell", powershell)
     return seen
@@ -59,15 +68,34 @@ def test_the_observers_answer_is_used(env: list[str], monkeypatch: pytest.Monkey
     assert "powershell" not in env
 
 
-def test_no_answer_falls_back_and_stays_unknown(env: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(guestfile, "HostAgent", _agent(_Down(), env))  # UNIMPLEMENTED (old observer), or unreachable
-    assert guestfile.read("aberg", REL) is None
-    assert env[-1] == "powershell"
+def test_an_old_agent_on_local_hyperv_falls_back_to_powershell_direct(
+    env: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = _agent(_Rpc(grpc.StatusCode.UNIMPLEMENTED), env, local_hyperv=True)
+    monkeypatch.setattr(guestfile, "HostAgent", old)
+    assert guestfile.read("aberg", REL) == guestfile.GuestFile(True, 1, b"local")
+    assert env[-2:] == ["asked backend", "powershell"]
 
+
+def test_no_fallback_to_a_machine_the_agent_does_not_drive(env: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    # UNIMPLEMENTED from an agent that is not Hyper-V here (Proxmox, a remote host): unknown, never a local read.
+    monkeypatch.setattr(guestfile, "HostAgent", _agent(_Rpc(grpc.StatusCode.UNIMPLEMENTED), env, local_hyperv=False))
+    assert guestfile.read("aberg", REL) is None
+    # Any other error, even from a local Hyper-V agent: unknown, and the backend is not even asked.
+    for code in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.INTERNAL, grpc.StatusCode.PERMISSION_DENIED):
+        monkeypatch.setattr(guestfile, "HostAgent", _agent(_Rpc(code), env, local_hyperv=True))
+        assert guestfile.read("aberg", REL) is None
+    assert "powershell" not in env
+    assert env.count("asked backend") == 1
+
+
+def test_unknown_stays_unknown(env: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
     big = obs.FileContent(exists=True, data=b"x" * (guestfile.MAX_BYTES + 1))
     monkeypatch.setattr(guestfile, "HostAgent", _agent(big, env))
     assert guestfile.read("aberg", REL) is None  # over the limit: unknown, never parsed
 
     env.clear()
     assert guestfile.read("aberg", r"Desktop\a.txt") is None  # outside the noise folders: nothing is asked
+    monkeypatch.delenv("LUDIUS_VM")
+    assert guestfile.read("aberg", REL) is None
     assert env == []

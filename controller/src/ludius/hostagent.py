@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ipaddress
+import socket
 import time
 from typing import Any
 
@@ -14,7 +16,7 @@ from ludius.v1 import observation_pb2 as obs
 
 class HostAgent:
     def __init__(self, address: str, vm: str) -> None:
-        self.vm = vm
+        self.address, self.vm = address, vm
         self._channel = grpc.insecure_channel(address)
         # Generated stubs are untyped; results are annotated at each call.
         self._stub: Any = rpc.HostAgentStub(self._channel)
@@ -73,6 +75,27 @@ class HostAgent:
         result: obs.FileContent = self._stub.ReadGuestFile(req, timeout=60)
         return result
 
+    def local_hyperv(self) -> bool:
+        """Whether this agent drives Hyper-V on this machine, so host-local Hyper-V tools (PowerShell Direct, the
+        clock scripts) reach the VMs it drives and not a same-named VM elsewhere. An agent that predates Info is the
+        Windows build, Hyper-V only: local when its address is loopback. Any other answer or error is False."""
+        try:
+            info: pb.AgentInfo = self._stub.Info(pb.InfoRequest(), timeout=10)
+        except grpc.RpcError as e:
+            code = e.code()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+            return code == grpc.StatusCode.UNIMPLEMENTED and _loopback(self.address)
+        return info.backend == "hyperv" and info.host.casefold() == socket.gethostname().casefold()
+
     def screenshot(self) -> bytes:
         result: pb.ScreenshotResult = self._stub.Screenshot(pb.ScreenshotRequest(vm=self.vm), timeout=60)
         return result.png
+
+
+def _loopback(address: str) -> bool:
+    host = address.rsplit(":", 1)[0].strip("[]")
+    if host.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False

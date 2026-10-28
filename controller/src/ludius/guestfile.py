@@ -1,6 +1,7 @@
 """File done-checks read on the guest, never in the UI: one file in the persona's profile, through the host agent's
-ReadGuestFile (the observer reads it; any hypervisor), else over PowerShell Direct (the Hyper-V host's channel into the
-VM, as set-clock.ps1 uses) with the range admin from .env, for an observer that predates ReadGuestFile.
+ReadGuestFile (the observer reads it; any hypervisor). Only when that call is UNIMPLEMENTED (an older agent or
+observer) and the agent drives Hyper-V on this machine, over PowerShell Direct (the Hyper-V host's channel into the VM,
+as set-clock.ps1 uses) with the range admin from .env; never against a VM the agent does not drive.
 
 Read-only: the file is opened for reading with full sharing (an app may still hold it) and returned whole. Fails
 closed: no VM, no credential, a missing folder or any error is None (unknown), never "absent"; only a definite "no
@@ -67,22 +68,17 @@ def profile_path(user: str, rel: str) -> str | None:
 def read(user: str, rel: str) -> GuestFile | None:
     """The file `rel` (profile-relative, in a noise folder) of `user` on LUDIUS_VM, or None when unknown."""
     path = profile_path(user, rel)
-    if path is None:
-        return None
-    via_agent = _read_via_agent(path)
-    return via_agent if via_agent is not None else _read_via_powershell(path)
-
-
-def _read_via_agent(path: str) -> GuestFile | None:
-    """The observer's answer through the host agent (LUDIUS_AGENT), or None when it gave none: then the caller falls
-    back. An error is never "absent"; only the observer's definite "no such file" in an existing folder is."""
     vm = os.environ.get("LUDIUS_VM")
-    if not vm:
+    if path is None or not vm:
         return None
+    # An error is never "absent"; only the observer's definite "no such file" in an existing folder is.
     agent = HostAgent(os.environ.get("LUDIUS_AGENT", "127.0.0.1:7451"), vm)
     try:
         f = agent.read_file(path, MAX_BYTES)
-    except grpc.RpcError:
+    except grpc.RpcError as e:
+        code = e.code()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+        if code == grpc.StatusCode.UNIMPLEMENTED and agent.local_hyperv():
+            return _read_via_powershell(path)
         return None
     finally:
         agent.close()
