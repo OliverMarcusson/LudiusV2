@@ -136,8 +136,8 @@ class Runner:
         self.snap: obs.Snapshot = obs.Snapshot()
         self.display: tuple[int, int, int] | None = None  # (width, height, dpi) the pointer mapping was checked at
         self.mapping_ok = True
-        # LUDIUS_JEV_IMAGE=1: every step decision (and its subgoal_done/off_track checks) also gets the screenshot,
-        # for image-reading Decisions models (liquid/d1.1). Off by default.
+        # The screenshot goes with a step decision only where text is likely not enough (image_reason);
+        # LUDIUS_JEV_IMAGE=1 sends it with every step (bake-offs).
         self.image = os.environ.get("LUDIUS_JEV_IMAGE") == "1"
 
     # Observation and pacing -------------------------------------------------------
@@ -370,6 +370,7 @@ class Runner:
         snap = self.observe()
         seen = {fingerprint(snap)}
         guarded = False  # the last input passed this subgoal's require/forbid checks (send_confirmation)
+        shot_why: str | None = "subgoal_start"  # why the next decision gets the screenshot (image_reason)
         for step in range(1, budget + 1):
             if time.monotonic() - t0 > task.template.budget_minutes * 60:
                 return "failed", step - 1, "time budget"
@@ -435,8 +436,10 @@ class Runner:
             options = [o for o in options if _ident(o) not in dead.get(here, ())] or options
             state = build_state(v, task, sg, history, last_result)
             choices = {o.key: o.text for o in options}
+            image = image_reason(shot_why, snap, self.image)
+            shot_why = None
             try:
-                if self.image:
+                if image:
                     shot = self.agent.screenshot()
                     decision = self.jev.decide(state, choices, ask_progress=not recovering, image=shot)
                 else:
@@ -475,13 +478,14 @@ class Runner:
                 recovering = True
                 last_result = "screen looked unrelated to the goal"
                 self._log_step(task, name, snap, chosen, decision, "off_track -> recovery", step, options=options,
-                               code_done=code_done)  # fmt: skip
+                               code_done=code_done, image=image)  # fmt: skip
                 continue
             reason = self._post_check(chosen, sg, task)
             if reason:
                 self._log_step(task, name, snap, chosen, decision, f"blocked: {reason}", step, options=options,
-                               code_done=code_done)  # fmt: skip
+                               code_done=code_done, image=image)  # fmt: skip
                 last_result = f"that action is not allowed ({reason})"
+                shot_why = "refused"
                 continue
 
             self.think()
@@ -502,7 +506,8 @@ class Runner:
                 last_result += " (screen still busy)"
             history.append(f"{_short(chosen)} -> {outcome}")
             self._log_step(task, name, snap, chosen, decision, last_result, step, host_ms=host_ms, options=options,
-                           check=(sg, typed_ok), code_done=code_done)  # fmt: skip
+                           check=(sg, typed_ok), code_done=code_done, image=image)  # fmt: skip
+            shot_why = "refused" if refused else "no_change" if not changed else None
             recovering = False
 
             progress = changed and not revisit
@@ -626,6 +631,7 @@ class Runner:
         options: list[Option] | None = None,
         check: tuple[Subgoal, bool] | None = None,
         code_done: bool | None = None,
+        image: str | None = None,
     ) -> None:
         fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
         pixels = fg is not None and pixels_window(fg)
@@ -663,13 +669,22 @@ class Runner:
                 "off_track": d.off_track,
                 "cost": d.cost,
                 "model": d.model,
-                "image": d.image,
+                "image": image,  # why the screenshot went along (image_reason), None: text only
                 "latency_ms": d.latency_ms,
                 "retries_429": d.retries_429,
             },
             code_done=code_done,  # the subgoal's own check before this step (None: it has none, Jev judges done)
             result=result,
         )
+
+
+def image_reason(why: str | None, snap: obs.Snapshot, forced: bool = False) -> str | None:
+    """Why a step decision gets the screenshot, None for text only: the first step of a subgoal, the step after no
+    visible change or a refused step (`why`), or a foreground window UIA can't read (no tree, elevated, hung or
+    pixels-only)."""
+    fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
+    unreadable = fg is not None and (fg.no_tree or fg.elevated_unreadable or fg.unresponsive or pixels_window(fg))
+    return why or ("unreadable" if unreadable else "forced" if forced else None)
 
 
 def _window_id(w: obs.Window) -> tuple[Any, ...]:

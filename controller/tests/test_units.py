@@ -74,7 +74,7 @@ def test_rate_limit_retried_and_counted(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(jev.time, "sleep", waits.append)
 
     def client(codes: list[int]) -> jev.JevClient:
-        c = jev.JevClient("k")
+        c = jev.JevClient("k", model="typesafe/jev-1.14")
         replies = iter(codes)
 
         def reply(_: httpx.Request) -> httpx.Response:

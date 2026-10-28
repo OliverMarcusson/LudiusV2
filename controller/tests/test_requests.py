@@ -44,7 +44,9 @@ class FakeJev:
     def __init__(self, choice: str, p: float = 0.9) -> None:
         self.choice, self.p = choice, p
 
-    def decide(self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True) -> Decision:
+    def decide(
+        self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
+    ) -> Decision:
         assert "none" in options and set(options) <= {*requests.requestable(cli.load_templates()), "none"}
         return Decision(self.choice, self.p, {self.choice: self.p}, 0, 0, "jev")
 

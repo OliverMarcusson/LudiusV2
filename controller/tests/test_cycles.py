@@ -9,7 +9,7 @@ import pytest
 
 from ludius.cli import load_templates
 from ludius.jev import Decision
-from ludius.loop import GroundTruth, Runner
+from ludius.loop import GroundTruth, Runner, image_reason
 from ludius.tasks import Persona, Task, TaskInstance
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
@@ -57,7 +57,9 @@ class ToggleAgent:
 class PrefersStart:
     """A Jev stand-in that always wants the Start button while it is offered."""
 
-    def decide(self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True) -> Decision:
+    def decide(
+        self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
+    ) -> Decision:
         key = next((k for k, t in options.items() if "'Start'" in t), next(iter(options)))
         return Decision(key, 0.8, {key: 0.8}, 0.0, 0.0, "fake")
 
@@ -97,14 +99,29 @@ def test_new_screens_still_count_as_progress(tmp_path: Path) -> None:
     assert len(start) == 12 and not any(e.get("event") == "ladder" for e in events)
 
 
-def test_screenshot_goes_to_jev_only_with_the_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    off = SeesImages()
-    _run(tmp_path / "off", ToggleAgent(), off)
-    assert off.images and set(off.images) == {None}  # off by default: no screenshot taken or sent
+class StuckAgent(ToggleAgent):
+    """Clicks change nothing on screen."""
+
+    def click(self, button: int = 0, count: int = 1) -> int:
+        return 0
+
+
+def test_screenshot_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def reasons(name: str, agent: ToggleAgent) -> list[str | None]:
+        jev = SeesImages()
+        events = _run(tmp_path / name, agent, jev)
+        steps = [e["jev"]["image"] for e in events if e.get("event") == "step"]
+        assert [i is not None for i in jev.images] == [r is not None for r in steps]  # logged = sent
+        return steps
+
+    # Every step makes progress: only the subgoal's first step gets the screenshot.
+    assert reasons("grows", ToggleAgent(grows=True)) == ["subgoal_start"] + [None] * 11
+    # Nothing changes: every later step follows a "no visible change".
+    assert reasons("stuck", StuckAgent()) == ["subgoal_start"] + ["no_change"] * 11
+    # A foreground window UIA can't read gets it too; LUDIUS_JEV_IMAGE=1 forces it on every step.
+    fg = obs.Window(title="x", process_name="x.exe", kind=obs.Window.FOREGROUND, no_tree=True)
+    assert image_reason(None, obs.Snapshot(windows=[fg])) == "unreadable"
+    assert image_reason("refused", obs.Snapshot(windows=[fg])) == "refused"
+    assert image_reason(None, obs.Snapshot(windows=[obs.Window(kind=obs.Window.FOREGROUND)])) is None
     monkeypatch.setenv("LUDIUS_JEV_IMAGE", "1")
-    on = SeesImages()
-    events = _run(tmp_path / "on", ToggleAgent(), on)
-    assert set(on.images) == {b"PNG shot"}
-    step = next(e for e in events if e.get("event") == "step")
-    assert step["jev"]["model"] == "fake" and step["jev"]["image"] is True and step["jev"]["latency_ms"] == 7
-    assert step["code_done"] is False  # open_from_start has a code check (foreground notepad), not met yet
+    assert reasons("forced", ToggleAgent(grows=True)) == ["subgoal_start"] + ["forced"] * 11

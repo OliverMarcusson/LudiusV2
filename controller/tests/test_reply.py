@@ -119,7 +119,9 @@ class FakeJev:
     def __init__(self, yes: float | Exception) -> None:
         self.yes, self.calls = yes, list[dict[str, Any]]()
 
-    def decide(self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True) -> Decision:
+    def decide(
+        self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
+    ) -> Decision:
         self.calls.append({"state": state, "options": options, "ask_progress": ask_progress})
         if isinstance(self.yes, Exception):
             raise self.yes

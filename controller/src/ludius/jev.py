@@ -22,8 +22,9 @@ from ludius import calls
 ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 RATE_LIMIT_WAITS = (1, 2, 4)  # HTTP 429 (a model's shared capacity, seen on liquid/d1-ultra): retried after these
 # Any OpenRouter Decisions model works here (same request and answer shape); liquid/d1.1 and d1-ultra also read
-# screenshots. LUDIUS_JEV_MODEL picks one without code changes.
-DEFAULT_MODEL = os.environ.get("LUDIUS_JEV_MODEL", "typesafe/jev-1.14")
+# screenshots. Default liquid/d1.1 (owner, 2026-10-28, after the bake-off in runs/acceptance/20261028-bakeoff);
+# LUDIUS_JEV_MODEL picks another (typesafe/jev-1.14 reads text only) without code changes.
+DEFAULT_MODEL = os.environ.get("LUDIUS_JEV_MODEL", "liquid/d1.1")
 MAX_OPTIONS = 255
 
 _KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
