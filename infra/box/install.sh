@@ -16,15 +16,16 @@ dist=$repo/web/monitor/dist
 [[ -f $pub/ludius-host-agent ]] || { echo "no published agent in $pub" >&2; exit 1; }
 [[ -f $dist/index.html ]] || { echo "monitor UI not built in $dist (infra/monitor/bring-up.sh)" >&2; exit 1; }
 
+# The package ships a default site on :80. Caddy stays masked (no start now, none at boot) until our loopback
+# Caddyfile is installed and validated, so a run that stops anywhere before that leaves nothing listening.
+ln -sf /dev/null /etc/systemd/system/caddy.service
+systemctl daemon-reload
 if ! command -v caddy >/dev/null; then
-  # The package starts a default site on :80 at install; policy-rc.d keeps it stopped until our Caddyfile is in.
-  printf '#!/bin/sh\nexit 101\n' >/usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d
-  trap 'rm -f /usr/sbin/policy-rc.d' EXIT
   apt-get install -y caddy
-  rm -f /usr/sbin/policy-rc.d
 fi
 install -m 0644 "$repo/infra/box/Caddyfile" /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+rm -f /etc/systemd/system/caddy.service
 
 systemctl stop ludius-agent 2>/dev/null || true
 mkdir -p /opt/ludius-agent
