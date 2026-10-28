@@ -75,8 +75,12 @@ channel framing, the observer's file read) is covered offline by `dotnet test ho
       (set in `infra/box/ludius-agent.service`)
       in the box's agent config. The default is 1 on both backends (the owner's desktop limit). Check: a 9th persona
       start is refused with "VM cap 8"; srv01 starts beside 8 personas.
-- [ ] Temporal server up (`infra/compose/compose.yaml`); the box's timezone is the personas' (`timedatectl set-timezone
-      Europe/Stockholm`): per-persona budgets reset at host midnight.
+- [x] Temporal server up: on the box `infra/box/temporal/install.sh` (Podman Quadlet units for the `infra/compose`
+      stack: host networking, every port on 127.0.0.1, no firewall rules, no Docker; passwords generated into
+      `/etc/ludius/compose.env`, 0600; units start at boot). Check: `systemctl status ludius-temporal`,
+      `temporal operator cluster health --address 127.0.0.1:7233` (admin-tools image) says SERVING, `ss -tlnp` shows
+      5432 and 723x/693x on 127.0.0.1 only. The box's timezone is the personas' (`timedatectl set-timezone
+      Europe/Stockholm`, done 2026-10-28): per-persona budgets reset at host midnight.
 - [ ] `.env`: `LUDIUS_CAP_DECISION`/`LUDIUS_CAP_LLM` (total ceilings: current total + run budget),
       `LUDIUS_CAP_PERSONA_DECISION`/`LUDIUS_CAP_PERSONA_LLM` (per persona and day), `LUDIUS_PERSONA_PASSWORD_<USER>`
       per persona, `LUDIUS_SRV_HOST`. `ludius range up` refuses to start without them.
