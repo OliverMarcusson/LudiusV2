@@ -163,7 +163,7 @@ class DecisionsClient:
     def decide(
         self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
     ) -> Decision:
-        """`image`: a screenshot for models that read images (not Decisions); the state's text goes along with it."""
+        """`image`: a screenshot for models that read images (liquid/d1.1, not typesafe/jev); the state's text goes along with it."""
         body = build_request(self.model, state, options, ask_progress=ask_progress, image=image)
         last: Exception | None = None
         t0 = time.monotonic()
