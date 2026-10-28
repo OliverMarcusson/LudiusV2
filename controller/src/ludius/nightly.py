@@ -186,19 +186,22 @@ def generate_day(
     )  # fmt: skip
     colleagues = {p.user for p in auto.narrative.people if p.user and p.user != persona.user}
     for it in mapped:  # the same validation as the planner's own items, after them
-        while it.at in {x.at for x in plan.items}:
+        dups = requests.duplicates(plan.items, it, world.root)  # the planner did the request again: the mapped one wins
+        rest = [x for x in plan.items if x not in dups]
+        while it.at in {x.at for x in rest}:
             it.at = f"{(int(it.at[:2]) * 60 + int(it.at[3:]) + 1) // 60 % 24:02d}:{(int(it.at[3:]) + 1) % 60:02d}"
         planner.fill_recipient_names([it], people)
         why = dict(planner.validate(
-            [*plan.items, it], planner.role_templates(src.templates, persona), world.history(persona.user),
+            [*rest, it], planner.role_templates(src.templates, persona), world.history(persona.user),
             src.policy, colleagues, None, set(followups), existing, threads, people, persona.user, date.isoformat(),
             set(inbox),
-        )).get(len(plan.items)) or requests.planned(it, src.templates, world.root)  # fmt: skip
+        )).get(len(rest)) or requests.planned(it, src.templates, world.root)  # fmt: skip
         if why:
             requests.remember(world.root, persona.user, it.request, f"rejected: {why}")
             rejects.append(f"request {it.template} at {it.at}: {why}")
         else:
-            plan.items = sorted([*plan.items, it], key=lambda x: x.at)
+            plan.items = sorted([*rest, it], key=lambda x: x.at)
+            rejects += [f"{x.template} at {x.at}: dropped, it repeats the request {it.request}" for x in dups]
     rejects += notes
     return Generated(plan, rejects, auto)
 

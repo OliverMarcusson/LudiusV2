@@ -420,6 +420,17 @@ def planned(it: PlanItem, templates: dict[str, Template], root: Path = ROOT) -> 
     return mismatch(ask, t, {**t.defaults, **it.params, **it.content})
 
 
+def duplicates(items: list[PlanItem], it: PlanItem, root: Path = ROOT) -> list[PlanItem]:
+    """The planner's own items doing request `it`'s work again (it sees the mail too): same template, and every
+    phrase the request names in their content. A request naming no phrase has none."""
+    ask = find(it.request, root)
+    if ask is None or not ask.include:
+        return []
+    words = [mail.letters(p) for p in ask.include]
+    return [x for x in items if not x.request and x.template == ask.task
+            and all(w in mail.letters(" ".join({**x.params, **x.content}.values())) for w in words)]  # fmt: skip
+
+
 def _text(rel: str, data: bytes) -> str:
     """A written file's words: workbook cells, plain text (UTF-8 or UTF-16), or RTF without its control words."""
     if rel.lower().endswith(".xlsx"):

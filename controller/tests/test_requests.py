@@ -12,7 +12,7 @@ import pytest
 
 from ludius import cli, guestfile, mail, requests
 from ludius.jev import Decision
-from ludius.planner import Narrative, Person, World
+from ludius.planner import Narrative, Person, PlanItem, World
 from ludius.policy import Policy
 from ludius.tasks import Persona, Task
 
@@ -103,6 +103,11 @@ def test_persona_maps_a_request_fail_closed(tmp_path: Path, monkeypatch: pytest.
     items, notes = requests.candidates(llm, FakeJev("notepad_write_note"), w, ANNA, BOSS, [m], ts, THU, book)  # type: ignore[arg-type]
     assert [(i.template, i.request) for i in items] == [("notepad_write_note", msgid)] and not notes
     assert requests.planned(items[0], ts, tmp_path) is None
+    own = [
+        PlanItem(template="notepad_write_note", at="09:00", params={"file_name": "a", "body": "Totals"}),
+        PlanItem(template="notepad_write_note", at="10:00", params={"file_name": "b", "body": "sums"}),
+    ]
+    assert requests.duplicates(own, items[0], tmp_path) == own[:1]  # the planner wrote the requested note again
     items[0].params["body"] = "lund sums"
     assert requests.planned(items[0], ts, tmp_path) == "content lacks ['totals']"
     items[0].params["file_name"] = "other"
