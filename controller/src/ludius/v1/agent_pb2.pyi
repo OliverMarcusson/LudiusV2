@@ -8,6 +8,18 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class InfoRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class AgentInfo(_message.Message):
+    __slots__ = ("backend", "host")
+    BACKEND_FIELD_NUMBER: _ClassVar[int]
+    HOST_FIELD_NUMBER: _ClassVar[int]
+    backend: str
+    host: str
+    def __init__(self, backend: _Optional[str] = ..., host: _Optional[str] = ...) -> None: ...
+
 class GuestFileRequest(_message.Message):
     __slots__ = ("vm", "file")
     VM_FIELD_NUMBER: _ClassVar[int]

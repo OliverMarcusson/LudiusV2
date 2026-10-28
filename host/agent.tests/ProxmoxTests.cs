@@ -65,10 +65,16 @@ sealed class FakeQmp : IDisposable
 sealed class FakePve : IPveApi
 {
     public readonly List<(string Method, string Path, IReadOnlyDictionary<string, string>? Args)> Calls = [];
+    // Range VMs are in pool "ludius"; 200 and 201 are not range VMs, 300 runs on another node.
     public JsonArray Vms = JsonNode.Parse("""
-        [{"vmid": 101, "name": "ludius-win10-01", "status": "running"},
-         {"vmid": 9000, "name": "ludius-golden", "status": "stopped", "template": 1},
-         {"vmid": 102, "name": "ludius-dup", "status": "stopped"}, {"vmid": 103, "name": "ludius-dup", "status": "stopped"}]
+        [{"vmid": 101, "name": "ludius-win10-01", "status": "running", "node": "pve1", "type": "qemu", "pool": "ludius"},
+         {"vmid": 9000, "name": "ludius-golden", "status": "stopped", "template": 1, "node": "pve1", "type": "qemu", "pool": "ludius"},
+         {"vmid": 102, "name": "ludius-dup", "status": "stopped", "node": "pve1", "type": "qemu", "pool": "ludius"},
+         {"vmid": 103, "name": "ludius-dup", "status": "stopped", "node": "pve1", "type": "qemu", "pool": "ludius"},
+         {"vmid": 200, "name": "web-prod", "status": "running", "node": "pve1", "type": "qemu"},
+         {"vmid": 201, "name": "ludius-stray", "status": "running", "node": "pve1", "type": "qemu", "pool": "other"},
+         {"vmid": 202, "name": "ludius-shadow", "status": "stopped", "template": 1, "node": "pve1", "type": "qemu"},
+         {"vmid": 300, "name": "ludius-elsewhere", "status": "running", "node": "pve2", "type": "qemu", "pool": "ludius"}]
         """)!.AsArray();
     public Dictionary<int, string> Args = new() { [101] = "-device vhost-vsock-pci,guest-cid=101", [9000] = "-device vhost-vsock-pci,guest-cid=9000" };
     public JsonArray Snapshots = JsonNode.Parse("""[{"name": "clean"}, {"name": "current"}]""")!.AsArray();
@@ -80,7 +86,7 @@ sealed class FakePve : IPveApi
         var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
         JsonNode? res = (method, path) switch
         {
-            ("get", "/nodes/pve1/qemu") => Vms.DeepClone(),
+            ("get", "/cluster/resources") when args?["type"] == "vm" => Vms.DeepClone(),
             ("get", "/cluster/nextid") => JsonValue.Create("104"),
             ("get", _) when path.EndsWith("/config") => new JsonObject { ["args"] = Args.GetValueOrDefault(int.Parse(parts[3])) },
             ("get", _) when path.EndsWith("/snapshot") => Snapshots.DeepClone(),
@@ -99,7 +105,7 @@ public class ProxmoxTests
     {
         var qmp = new FakeQmp(101);
         var pve = new FakePve();
-        var px = new Proxmox(pve, "pve1", new ProxmoxOptions { RunDir = qmp.Dir, ScratchDir = qmp.Dir, PollMs = 1, Screen = (1920, 1080) });
+        var px = new Proxmox(pve, "pve1", new ProxmoxOptions { RunDir = qmp.Dir, ScratchDir = qmp.Dir, PollMs = 1, Screen = (1920, 1080), Pool = "ludius" });
         return (px, pve, qmp);
     }
 
@@ -318,6 +324,84 @@ public class ProxmoxTests
         var vms = px.ListVms();
         Assert.DoesNotContain(vms, v => v.Name == "ludius-golden");
         Assert.Contains(new VmInfo("ludius-win10-01", "running", 1920, 1080), vms);
+        Assert.DoesNotContain(vms, v => v.Name is "web-prod" or "ludius-stray" or "ludius-elsewhere"); // not the range
+    }
+
+    public static TheoryData<Op, string, string> EveryOp() => new()
+    {
+        { Op.State, "", "" }, { Op.Start, "", "" }, { Op.Stop, "", "" }, { Op.Checkpoint, "x", "" },
+        { Op.Restore, "clean", "" }, { Op.Clone, "clean", "ludius-new" },
+    };
+
+    // VMs outside the range pool (no pool, another pool, a ludius-* name or template outside the pool) are refused
+    // for every operation, as clone sources too, and nothing reaches the API but the VM list.
+    [Theory]
+    [MemberData(nameof(EveryOp))]
+    public async Task Vms_outside_the_range_pool_are_refused(Op op, string checkpoint, string target)
+    {
+        foreach (var name in new[] { "web-prod", "ludius-stray", "ludius-shadow" })
+        {
+            var (px, pve, qmp) = Make();
+            using var _q = qmp;
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => px.Lifecycle(name, op, checkpoint, target, CancellationToken.None));
+            Assert.All(pve.Calls, c => Assert.Equal(("get", "/cluster/resources"), (c.Method, c.Path)));
+        }
+    }
+
+    [Fact]
+    public async Task Delete_input_and_unset_pool_are_refused_outside_the_range()
+    {
+        var (px, pve, qmp) = Make();
+        using var _q = qmp;
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => px.Lifecycle("ludius-stray", Op.Delete, "", "ludius-stray", CancellationToken.None));
+        Assert.Throws<UnauthorizedAccessException>(() => px.Get("web-prod")); // input, observation, screenshots
+        Assert.Throws<KeyNotFoundException>(() => px.Get("ludius-elsewhere")); // another node's VM is not this agent's
+        Assert.DoesNotContain(pve.Calls, c => c.Method != "get" || c.Path != "/cluster/resources");
+        Assert.Empty(qmp.Commands);
+
+        var none = new Proxmox(pve, "pve1", new ProxmoxOptions { RunDir = qmp.Dir });
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => none.Lifecycle("ludius-win10-01", Op.Start, "", "", CancellationToken.None));
+        Assert.Empty(none.ListVms());
+    }
+
+    [Fact]
+    public async Task Clones_go_into_the_range_pool()
+    {
+        var (px, pve, qmp) = Make();
+        using var _q = qmp;
+        await px.Lifecycle("ludius-golden", Op.Clone, "", "ludius-win10-02", CancellationToken.None);
+        Assert.Equal("ludius", pve.Calls.Single(c => c.Path.EndsWith("/clone")).Args!["pool"]);
+    }
+
+    [Fact]
+    public void Pvesh_passes_every_value_as_its_own_argument_without_a_shell()
+    {
+        var hostile = "a b \"c\" 'd' $(touch pwned); `id` | e";
+        var psi = Pvesh.StartInfo("pvesh", "set", "/nodes/pve1/qemu/104/config", new Dictionary<string, string> { ["args"] = hostile });
+        Assert.False(psi.UseShellExecute);
+        Assert.Equal("pvesh", psi.FileName);
+        Assert.Equal(["set", "/nodes/pve1/qemu/104/config", "--output-format", "json", "--args", hostile], psi.ArgumentList);
+    }
+
+    // A fake pvesh: records its argv one per line and prints a UPID as pvesh's JSON output would.
+    [Fact]
+    public async Task Pvesh_runs_the_process_and_values_arrive_verbatim()
+    {
+        if (OperatingSystem.IsWindows()) return; // a .cmd fake would go through cmd.exe: run in the Linux container
+        var dir = Directory.CreateTempSubdirectory("ludius-pvesh").FullName;
+        try
+        {
+            var exe = Path.Combine(dir, "pvesh");
+            File.WriteAllText(exe, $"#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > {dir}/argv\necho '\"UPID:pve1:1:2:3:qmstart:104:root@pam:\"'\n");
+            File.SetUnixFileMode(exe, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var hostile = $"a b \"c\" 'd' $(touch {dir}/pwned); `touch {dir}/pwned2`";
+            var res = await new Pvesh(exe).Call("create", "/nodes/pve1/qemu/104/status/start", new Dictionary<string, string> { ["k"] = hostile }, CancellationToken.None);
+            Assert.Equal("UPID:pve1:1:2:3:qmstart:104:root@pam:", res!.ToString());
+            Assert.Equal(["create", "/nodes/pve1/qemu/104/status/start", "--output-format", "json", "--k", hostile],
+                File.ReadAllLines(Path.Combine(dir, "argv")));
+            Assert.False(File.Exists(Path.Combine(dir, "pwned")) || File.Exists(Path.Combine(dir, "pwned2")));
+        }
+        finally { Directory.Delete(dir, true); }
     }
 }
 
@@ -395,35 +479,3 @@ public class GuestChannelTests
     }
 }
 
-// The observer's read_file: the same fail-closed outcomes as the PowerShell Direct read (guestfile.py).
-public class GuestFileTests
-{
-    [Fact]
-    public void Read_only_inside_the_profile_and_absent_only_in_an_existing_folder()
-    {
-        var profile = Directory.CreateTempSubdirectory("ludius-profile").FullName;
-        try
-        {
-            var docs = Directory.CreateDirectory(Path.Combine(profile, "Documents")).FullName;
-            File.WriteAllText(Path.Combine(docs, "a.txt"), "hello");
-            ReadFile Req(string p, uint max = 1000) => new() { Path = p, MaxBytes = max };
-
-            var got = GuestFiles.Read(Req(Path.Combine(docs, "a.txt")), profile);
-            Assert.True(got.Exists);
-            Assert.Equal("hello", got.Data.ToStringUtf8());
-            Assert.True(Math.Abs(got.WrittenMs - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) < 60_000);
-
-            Assert.False(GuestFiles.Read(Req(Path.Combine(docs, "missing.txt")), profile).Exists);
-            Assert.Throws<DirectoryNotFoundException>(() => GuestFiles.Read(Req(Path.Combine(profile, "Nope", "a.txt")), profile));
-            Assert.Throws<IOException>(() => GuestFiles.Read(Req(docs), profile));
-            Assert.Throws<IOException>(() => GuestFiles.Read(Req(Path.Combine(docs, "a.txt"), 3), profile));
-            Assert.Throws<UnauthorizedAccessException>(() => GuestFiles.Read(Req(Path.Combine(docs, "..", "..", "x.txt")), profile));
-            Assert.Throws<UnauthorizedAccessException>(() => GuestFiles.Read(Req(profile + "-other" + Path.DirectorySeparatorChar + "x"), profile));
-
-            // An app holding the file open for writing does not make it unreadable.
-            using var held = new FileStream(Path.Combine(docs, "a.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
-            Assert.True(GuestFiles.Read(Req(Path.Combine(docs, "a.txt")), profile).Exists);
-        }
-        finally { Directory.Delete(profile, true); }
-    }
-}

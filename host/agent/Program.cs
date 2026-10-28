@@ -37,6 +37,7 @@ static ProxmoxOptions ProxmoxConfig(IConfiguration c)
     if (c["Agent:ObserverService"] is { } svc) o = o with { VsockPort = BitConverter.ToUInt32(Guid.Parse(svc).ToByteArray(), 0) };
     if (c["Proxmox:VsockPort"] is { } port) o = o with { VsockPort = uint.Parse(port) };
     if (c["Proxmox:RunDir"] is { } run) o = o with { RunDir = run };
+    if (c["Proxmox:Pool"] is { } pool) o = o with { Pool = pool };
     if (c["Proxmox:ScratchDir"] is { } scratch) o = o with { ScratchDir = scratch };
     if (c["Proxmox:Resolution"] is { } res && res.Split('x') is [var w, var h]) o = o with { Screen = (int.Parse(w), int.Parse(h)) };
     return o;
@@ -386,6 +387,9 @@ sealed class AgentService(IHypervisor hv, ILogger<AgentService> log) : HostAgent
         };
     });
 
+    public override Task<AgentInfo> Info(InfoRequest r, ServerCallContext ctx) =>
+        Task.FromResult(new AgentInfo { Backend = hv.Backend, Host = Environment.MachineName });
+
     public override async Task<LifecycleResult> Lifecycle(LifecycleRequest r, ServerCallContext ctx) => await Guard(async () =>
         new LifecycleResult { State = await hv.Lifecycle(r.Vm, r.Op, r.Checkpoint, r.Target, ctx.CancellationToken) });
 
@@ -402,6 +406,7 @@ sealed class AgentService(IHypervisor hv, ILogger<AgentService> log) : HostAgent
         catch (OperationCanceledException) { throw new RpcException(new Status(StatusCode.Cancelled, "cancelled")); }
         catch (Exception e) when (e is ArgumentException) { throw new RpcException(new Status(StatusCode.InvalidArgument, e.Message)); }
         catch (Exception e) when (e is KeyNotFoundException) { throw new RpcException(new Status(StatusCode.NotFound, e.Message)); }
+        catch (Exception e) when (e is UnauthorizedAccessException) { throw new RpcException(new Status(StatusCode.PermissionDenied, e.Message)); }
         catch (Exception e) when (e is IOException) { throw new RpcException(new Status(StatusCode.Unavailable, e.Message)); }
         catch (Exception e)
         {

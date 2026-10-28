@@ -62,6 +62,11 @@ class HostAgentStub:
                 request_serializer=ludius_dot_v1_dot_agent__pb2.GuestFileRequest.SerializeToString,
                 response_deserializer=ludius_dot_v1_dot_observation__pb2.FileContent.FromString,
                 _registered_method=True)
+        self.Info = channel.unary_unary(
+                '/ludius.v1.HostAgent/Info',
+                request_serializer=ludius_dot_v1_dot_agent__pb2.InfoRequest.SerializeToString,
+                response_deserializer=ludius_dot_v1_dot_agent__pb2.AgentInfo.FromString,
+                _registered_method=True)
 
 
 class HostAgentServicer:
@@ -100,6 +105,14 @@ class HostAgentServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Info(self, request, context):
+        """Which hypervisor and host this agent drives. Only for refusing host-local fallbacks (PowerShell Direct, the
+        Hyper-V clock scripts) when the VM is not on this host's Hyper-V; the controller's VM work never branches on it.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_HostAgentServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -127,6 +140,11 @@ def add_HostAgentServicer_to_server(servicer, server):
                     servicer.ReadGuestFile,
                     request_deserializer=ludius_dot_v1_dot_agent__pb2.GuestFileRequest.FromString,
                     response_serializer=ludius_dot_v1_dot_observation__pb2.FileContent.SerializeToString,
+            ),
+            'Info': grpc.unary_unary_rpc_method_handler(
+                    servicer.Info,
+                    request_deserializer=ludius_dot_v1_dot_agent__pb2.InfoRequest.FromString,
+                    response_serializer=ludius_dot_v1_dot_agent__pb2.AgentInfo.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -266,6 +284,33 @@ class HostAgent:
             '/ludius.v1.HostAgent/ReadGuestFile',
             ludius_dot_v1_dot_agent__pb2.GuestFileRequest.SerializeToString,
             ludius_dot_v1_dot_observation__pb2.FileContent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Info(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/ludius.v1.HostAgent/Info',
+            ludius_dot_v1_dot_agent__pb2.InfoRequest.SerializeToString,
+            ludius_dot_v1_dot_agent__pb2.AgentInfo.FromString,
             options,
             channel_credentials,
             insecure,

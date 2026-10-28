@@ -9,6 +9,8 @@ namespace Ludius.HostAgent;
 // Proxmox backend (production, spec section 4), node-local: input and console frames through the VM's QMP socket
 // (USB tablet, absolute 0-32767), the guest channel over vsock (CID from the VM's vhost-vsock device), lifecycle
 // through the Proxmox API (linked clones from templates, snapshots). Coordinates are guest physical pixels.
+// Confined to the range: every call (input, observation, lifecycle, clone sources) names a VM in the range's Proxmox
+// pool (Proxmox:Pool) on this node, and clones are created into that pool. Anything else is refused, never touched.
 sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) : IHypervisor
 {
     const int AbsMax = 0x7FFF;
@@ -24,6 +26,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     // Tests replace the vsock connect.
     public Func<uint, CancellationToken, Task<Socket>> ConnectGuest = (cid, ct) => Vsock.Connect(cid, options.VsockPort, ct);
 
+    public string Backend => "proxmox";
     VmHandle IHypervisor.Get(string name) => Get(name);
 
     public Vm Get(string name)
@@ -67,22 +70,29 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         Cid(args) is null ? $"{args} -device vhost-vsock-pci,guest-cid={cid}".Trim()
             : Regex.Replace(args!, @"(vhost-vsock-pci\b[^ ]*\bguest-cid=)\d+", $"${{1}}{cid}");
 
-    record struct PveVm(int Id, string Name, string Status, bool Template);
+    record struct PveVm(int Id, string Name, string Status, bool Template, string Pool);
 
+    // Every VM on this node, with its pool (the cluster resource list is the API call that carries it).
     async Task<List<PveVm>> List(CancellationToken ct) =>
-        (await api.Call("get", $"/nodes/{node}/qemu", null, ct))?.AsArray()
+        (await api.Call("get", "/cluster/resources", new Dictionary<string, string> { ["type"] = "vm" }, ct))?.AsArray()
+            .Where(v => v?["node"]?.GetValue<string>() == node && v["type"]?.GetValue<string>() == "qemu")
             .Select(v => new PveVm(v!["vmid"]!.GetValue<int>(), v["name"]?.GetValue<string>() ?? "", v["status"]?.GetValue<string>() ?? "",
-                v["template"] is { } t && t.ToString() is "1" or "true"))
+                v["template"] is { } t && t.ToString() is "1" or "true", v["pool"]?.GetValue<string>() ?? ""))
             .ToList() ?? [];
 
-    // Proxmox allows two VMs with one name: then neither is meant, the call fails.
-    async Task<PveVm> Find(string name, CancellationToken ct) =>
-        (await List(ct)).Where(v => v.Name == name).ToList() switch
-        {
-            [var one] => one,
-            [] => throw new KeyNotFoundException($"no VM named {name}"),
-            _ => throw new InvalidOperationException($"more than one VM named {name}"),
-        };
+    bool InRange(PveVm v) => options.Pool != "" && v.Pool == options.Pool;
+
+    // The one range VM with this name. Proxmox allows two VMs with one name: then neither is meant, and a name that
+    // also belongs to a VM outside the range is refused too.
+    async Task<PveVm> Find(string name, CancellationToken ct)
+    {
+        var named = (await List(ct)).Where(v => v.Name == name).ToList();
+        if (named.Count == 0) throw new KeyNotFoundException($"no VM named {name}");
+        if (options.Pool == "") throw new UnauthorizedAccessException("Proxmox:Pool is not set: no VM is in the range");
+        if (!named.All(InRange)) throw new UnauthorizedAccessException($"{name} is not a range VM (pool {options.Pool})");
+        if (named.Count > 1) throw new InvalidOperationException($"more than one VM named {name}");
+        return named[0];
+    }
 
     // Input --------------------------------------------------------------
 
@@ -196,7 +206,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     }
 
     public List<VmInfo> ListVms() =>
-        Wait(List(CancellationToken.None)).Where(v => !v.Template)
+        Wait(List(CancellationToken.None)).Where(v => !v.Template && InRange(v))
             .Select(v => v.Status == "running"
                 ? new VmInfo(v.Name, "running", options.Screen.W, options.Screen.H)
                 : new VmInfo(v.Name, v.Status == "stopped" ? "off" : "other", 0, 0))
@@ -254,7 +264,8 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         if (!src.Template && checkpoint == "") throw new ArgumentException("clone of a VM (not a template) needs a checkpoint");
         if ((await List(ct)).Any(v => v.Name == target)) throw new InvalidOperationException($"a VM named {target} exists");
         var newId = (await api.Call("get", "/cluster/nextid", null, ct))!.ToString();
-        var args = new Dictionary<string, string> { ["newid"] = newId, ["name"] = target, ["full"] = src.Template ? "0" : "1" };
+        var args = new Dictionary<string, string>
+            { ["newid"] = newId, ["name"] = target, ["full"] = src.Template ? "0" : "1", ["pool"] = options.Pool };
         if (checkpoint != "") args["snapname"] = checkpoint;
         await Complete(api.Call("create", $"/nodes/{node}/qemu/{src.Id}/clone", args, ct), ct);
         var cfg = await api.Call("get", $"/nodes/{node}/qemu/{newId}/config", null, ct);
@@ -301,4 +312,5 @@ public sealed record ProxmoxOptions
     public uint VsockPort { get; init; } = 4555; // 0x11cb: the observer's Hyper-V service id is the vsock port template
     public (int W, int H) Screen { get; init; } = (1920, 1080); // fixed in VM config; the observer's report wins
     public int PollMs { get; init; } = 1000;
+    public string Pool { get; init; } = ""; // the range's Proxmox pool; unset: every VM is refused
 }

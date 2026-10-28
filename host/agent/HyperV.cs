@@ -12,6 +12,7 @@ namespace Ludius.HostAgent;
 // thumbnail API. Coordinates are guest physical pixels.
 sealed partial class HyperV(Guid observerService, string oneVmScript) : IHypervisor
 {
+    public string Backend => "hyperv";
     VmHandle IHypervisor.Get(string name) => Get(name);
     Task IHypervisor.Move(VmHandle vm, int x, int y, uint durationMs, CancellationToken ct) => Move((Vm)vm, x, y, durationMs, ct);
     Task IHypervisor.Click(VmHandle vm, int button, uint count, CancellationToken ct) => Click((Vm)vm, button, count, ct);

@@ -6,6 +6,7 @@ namespace Ludius.HostAgent;
 // implement it; nothing above this line knows which one runs.
 interface IHypervisor
 {
+    string Backend { get; } // "hyperv" or "proxmox": reported by Info, never branched on above this line
     VmHandle Get(string name);
     Task Move(VmHandle vm, int x, int y, uint durationMs, CancellationToken ct);
     Task Click(VmHandle vm, int button, uint count, CancellationToken ct); // 1 left, 2 right, 3 middle

@@ -15,11 +15,12 @@ interface IPveApi
 
 // The API through pvesh, as root on the node the agent runs on: no API token to keep, no TLS to pin, and root@pam may
 // set a VM's `args` (the vsock device), which an API token may not.
-sealed partial class Pvesh : IPveApi
+sealed partial class Pvesh(string exe = "pvesh") : IPveApi
 {
-    public async Task<JsonNode?> Call(string method, string path, IReadOnlyDictionary<string, string>? args, CancellationToken ct)
+    // No shell: every value is its own argv entry, so spaces, quotes or `$(...)` in a value stay literal.
+    public static ProcessStartInfo StartInfo(string exe, string method, string path, IReadOnlyDictionary<string, string>? args)
     {
-        var psi = new ProcessStartInfo("pvesh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        var psi = new ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         psi.ArgumentList.Add(method);
         psi.ArgumentList.Add(path);
         psi.ArgumentList.Add("--output-format");
@@ -29,7 +30,12 @@ sealed partial class Pvesh : IPveApi
             psi.ArgumentList.Add("--" + k);
             psi.ArgumentList.Add(v);
         }
-        using var p = Process.Start(psi)!;
+        return psi;
+    }
+
+    public async Task<JsonNode?> Call(string method, string path, IReadOnlyDictionary<string, string>? args, CancellationToken ct)
+    {
+        using var p = Process.Start(StartInfo(exe, method, path, args))!;
         var stdout = p.StandardOutput.ReadToEndAsync(ct);
         var stderr = p.StandardError.ReadToEndAsync(ct);
         await p.WaitForExitAsync(ct);

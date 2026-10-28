@@ -15,6 +15,16 @@ service HostAgent {
   rpc Screenshot(ScreenshotRequest) returns (ScreenshotResult);
   // A guest file through the observer (done-checks). UNIMPLEMENTED when the VM's observer predates read_file.
   rpc ReadGuestFile(GuestFileRequest) returns (FileContent);
+  // Which hypervisor and host this agent drives. Only for refusing host-local fallbacks (PowerShell Direct, the
+  // Hyper-V clock scripts) when the VM is not on this host's Hyper-V; the controller's VM work never branches on it.
+  rpc Info(InfoRequest) returns (AgentInfo);
+}
+
+message InfoRequest {}
+
+message AgentInfo {
+  string backend = 1;  // "hyperv" or "proxmox"
+  string host = 2;     // the machine the agent runs on
 }
 
 message GuestFileRequest {
