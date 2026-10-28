@@ -56,6 +56,10 @@ range_servers: >-
   {{ [[srv01_vmid | int, 'ludius-srv01']] if mail_backend == 'grommunio'
      else [[srv01_vmid | int, 'ludius-dc01'], [ex01_vmid | int, 'ludius-ex01']] }}
 ex01_vmid: 111
+# range-exchange.yml: a tagged resume (--tags dc01, ex01, mailboxes, mail-boundary) only answers for the phases it ran.
+winsrv_full_run: "{{ 'all' in ansible_run_tags }}"
+winsrv_dc01_ran: "{{ winsrv_full_run or 'dc01' in ansible_run_tags }}"
+winsrv_ex01_ran: "{{ winsrv_full_run or ansible_run_tags | intersect(['ex01', 'mailboxes', 'mail-boundary']) | length > 0 }}"
 ex01_ip: "{{ range_net }}.12"
 # Windows Server 2025 Evaluation (180 days; activated online through the build bridge within 10 days, else it shuts
 # down hourly), from Microsoft's Evaluation Center, en-US; image 2 = Standard with Desktop Experience.
@@ -71,6 +75,7 @@ ex01_memory_mb: 16384 # Microsoft recommends 128 GB for production; 16 GB runs a
 exchange_media_dir: /var/lib/vz/template/ludius/exchange
 exchange_media:
   - name: ExchangeServerSE-x64.iso
+    dir: /var/lib/vz/template/iso # local:iso: qm attaches ISOs from storage only
     url: https://download.microsoft.com/download/ad9b1e53-f28e-4a82-987d-6c88803795b2/ExchangeServerSE-x64.iso
     sha256: cd2b13f2c297187776af4cff3541b4be3c677cf907cca69d85ab0e2b70377bd1
   - name: vcredist2012_x64.exe
@@ -85,6 +90,7 @@ exchange_media:
 exchange_org: Ludius
 ews_user: ludiussvc # AD service account with ApplicationImpersonation: the controller's EWS reads and sends
 ews_password: "{{ vault_ews_password | default('') }}"
+ews_scope_marker: ludius-noise # CustomAttribute1 on the narrative's mailboxes: the impersonation scope
 ews_password_file: /root/.ludius-ews # written on the node (0600) for the controller's LUDIUS_EWS_PASSWORD_FILE
 debian_image_url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
 debian_image_sums: https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS

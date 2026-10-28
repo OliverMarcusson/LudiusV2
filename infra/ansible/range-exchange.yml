@@ -1,6 +1,8 @@
 ---
 # Range mail server for mail_backend: exchange (imported by range-up.yml; also runnable alone on the node to build or
-# re-check just the servers: ansible-playbook range-exchange.yml). Two Windows Server 2025 evaluation VMs from the ISO,
+# re-check just the servers: ansible-playbook range-exchange.yml). Resume a phase without redoing the others with
+# --tags media | activation | dc01 | ex01 | mailboxes | mail-boundary: the VM checks, start and bootstrap (fast, no
+# reinstall of an existing VM; reopens WinRM) and the close-down always run. Two Windows Server 2025 evaluation VMs from the ISO,
 # both range NIC only: dc01 (srv01_vmid, srv01_ip: AD forest corp.ludius.test, range DNS, range time source) and ex01
 # (ex01_vmid, ex01_ip: Exchange SE in trial mode, no key). Two VMs, not one: Microsoft does not recommend Exchange on a
 # DC and a DC role change after Exchange is unsupported; 4 + 16 GB beside 8 personas at 8 GB is 84 of the box's 128.
@@ -22,6 +24,7 @@
           mac: "BC:24:11:4C:55:22", memory: "{{ ex01_memory_mb }}", disk: 128, password: "{{ range_admin_password }}" }
   tasks:
     - name: Inputs the servers need
+      tags: [always]
       ansible.builtin.assert:
         that:
           - mail_backend == 'exchange'
@@ -38,6 +41,7 @@
           <user><suffix> 6+)
 
     - name: Node and VMs (range-up.yml already read them; alone, read here)
+      tags: [always]
       when: pve_vms is not defined
       block:
         - name: Node name
@@ -56,6 +60,7 @@
             pve_vms: "{{ dict(resources.stdout | from_json | map(attribute='vmid') | zip(resources.stdout | from_json)) }}"
 
     - name: Both server ids are ours (range pool, this node, expected name) or free
+      tags: [always]
       ansible.builtin.assert:
         that: >-
           (item.vmid | int) not in pve_vms or
@@ -67,6 +72,7 @@
         label: "{{ item.vmid }} {{ item.name }}"
 
     - name: Windows Server evaluation ISO, checked
+      tags: [media]
       ansible.builtin.get_url:
         url: "{{ winsrv_iso_url }}"
         dest: /var/lib/vz/template/iso/{{ winsrv_iso }}
@@ -75,15 +81,17 @@
         timeout: 60
 
     - name: Exchange media folder
+      tags: [media]
       ansible.builtin.file:
         path: "{{ exchange_media_dir }}"
         state: directory
         mode: "0755"
 
     - name: Exchange SE and its prerequisites, checked
+      tags: [media]
       ansible.builtin.get_url:
         url: "{{ item.url }}"
-        dest: "{{ exchange_media_dir }}/{{ item.name }}"
+        dest: "{{ item.dir | default(exchange_media_dir) }}/{{ item.name }}"
         checksum: sha256:{{ item.sha256 }}
         mode: "0644"
         timeout: 60
@@ -95,26 +103,36 @@
     - name: Servers up, activated, Exchange media in
       block:
         - name: Server VM, install and bootstrap
-          ansible.builtin.include_tasks: tasks/winsrv-vm.yml
+          tags: [always]
+          ansible.builtin.include_tasks:
+            file: tasks/winsrv-vm.yml
+            apply:
+              tags: [always]
           loop: "{{ servers }}"
           loop_control:
             loop_var: s
             label: "{{ s.name }}"
 
         - name: Evaluation activated (uplink only for that, detached host-side)
-          ansible.builtin.include_tasks: tasks/winsrv-activate.yml
+          tags: [activation]
+          ansible.builtin.include_tasks:
+            file: tasks/winsrv-activate.yml
+            apply:
+              tags: [activation]
           loop: "{{ servers }}"
           loop_control:
             loop_var: s
             label: "{{ s.name }}"
 
         - name: Both activated
+          tags: [always]
           ansible.builtin.assert:
             that: winsrv_failures | default([]) | length == 0
-            fail_msg: "{{ winsrv_failures }}; uplinks are detached"
+            fail_msg: "{{ winsrv_failures | default([]) }}; uplinks are detached"
 
         - name: Exchange ISO in ex01's CD drive
-          ansible.builtin.command: qm set {{ ex01_vmid }} --sata0 {{ exchange_media_dir }}/ExchangeServerSE-x64.iso,media=cdrom
+          tags: [ex01]
+          ansible.builtin.command: qm set {{ ex01_vmid }} --sata0 local:iso/ExchangeServerSE-x64.iso,media=cdrom
           changed_when: true
       rescue:
         - name: Record the failure
@@ -127,27 +145,37 @@
   gather_facts: false
   tasks:
     - name: Dc01 role
+      tags: [dc01]
       when: inventory_hostname == 'dc01' and not hostvars['localhost'].winsrv_failures | default([])
       ansible.builtin.include_role:
         name: dc01
+        apply:
+          tags: [dc01]
 
 - name: Ex01 (domain member, Exchange SE trial, mailboxes, range-only transport)
   hosts: localhost:ex01
   gather_facts: false
   tasks:
-    - name: Exchange role (needs dc01 done)
+    - name: Exchange role (needs dc01 done, unless this run skipped dc01)
+      tags: [ex01, mailboxes, mail-boundary]
       when: >-
         inventory_hostname == 'ex01' and not hostvars['localhost'].winsrv_failures | default([])
-        and hostvars['dc01'].dc01_done | default(false)
+        and (hostvars['dc01'].dc01_done | default(false) or not winsrv_dc01_ran)
       ansible.builtin.include_role:
         name: exchange
+        apply:
+          tags: [ex01]
 
 - name: Servers closed, EWS secret for the controller, verdict
   hosts: localhost
   gather_facts: false
   tasks:
     - name: WinRM off on both, ex01's local Administrator disabled (guest agent), else the server is stopped
-      ansible.builtin.include_tasks: tasks/persona-teardown.yml
+      tags: [always]
+      ansible.builtin.include_tasks:
+        file: tasks/persona-teardown.yml
+        apply:
+          tags: [always]
       loop:
         - { user: dc01, vmid: "{{ srv01_vmid }}", ip: "{{ srv01_ip }}", local_admin: "" }
         - { user: ex01, vmid: "{{ ex01_vmid }}", ip: "{{ ex01_ip }}", local_admin: Administrator }
@@ -158,7 +186,36 @@
         range_admin_user: "{{ p.local_admin }}"
       when: bringup_teardown | bool and (p.vmid | int) in winsrv_started | default([])
 
+    # From the node, as the controller connects: TLS against the fetched certificate by address, Basic auth (curl's
+    # config on stdin, never on a command line); a persona's Inbox answers, a mailbox outside the scope is denied.
+    - name: EWS from the node, impersonation limited to the noise scope
+      tags: [always]
+      when: hostvars['ex01'].exchange_done | default(false)
+      ansible.builtin.command:
+        argv: [curl, -sS, -K, "-", --cacert, "{{ range_tls_ca }}", -H, "Content-Type: text/xml; charset=utf-8",
+               --data-binary, "{{ ews_probe }}", "https://{{ ex01_ip }}/EWS/Exchange.asmx"]
+        stdin: 'user = "{{ ews_user }}@{{ domain }}:{{ ews_password }}"'
+      vars:
+        ews_probe: >-
+          <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+          xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
+          xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"><soap:Header>
+          <t:RequestServerVersion Version="Exchange2016"/><t:ExchangeImpersonation><t:ConnectingSID>
+          <t:PrimarySmtpAddress>{{ item.mailbox }}</t:PrimarySmtpAddress></t:ConnectingSID></t:ExchangeImpersonation>
+          </soap:Header><soap:Body><m:GetFolder><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape></m:FolderShape>
+          <m:FolderIds><t:DistinguishedFolderId Id="inbox"/></m:FolderIds></m:GetFolder></soap:Body></soap:Envelope>
+      loop:
+        - { mailbox: "{{ people[0].user }}@{{ domain }}", want: "<m:ResponseCode>NoError</m:ResponseCode>" }
+        - { mailbox: "{{ hostvars['ex01'].boundary.result.outside | default('') }}", want: ErrorImpersonateUserDenied }
+      loop_control:
+        label: "{{ item.mailbox }}"
+      register: ews_probe_out
+      changed_when: false
+      failed_when: item.want not in ews_probe_out.stdout or not item.mailbox
+      no_log: true # stdin carries the password
+
     - name: EWS service password for the controller (root only)
+      tags: [always]
       ansible.builtin.copy:
         dest: "{{ ews_password_file }}"
         content: "{{ ews_password }}\n"
@@ -166,11 +223,12 @@
       no_log: true
 
     - name: Both servers provisioned and closed
+      tags: [always]
       ansible.builtin.assert:
         that:
           - winsrv_failures | default([]) | length == 0
-          - hostvars['dc01'].dc01_done | default(false)
-          - hostvars['ex01'].exchange_done | default(false)
+          - hostvars['dc01'].dc01_done | default(false) or not winsrv_dc01_ran
+          - hostvars['ex01'].exchange_done | default(false) or not winsrv_ex01_ran
           - closed_failures | default([]) | length == 0
         fail_msg: >-
           range servers incomplete: {{ winsrv_failures | default([]) }}; dc01 {{ 'done' if hostvars['dc01'].dc01_done | default(false) else 'failed' }},

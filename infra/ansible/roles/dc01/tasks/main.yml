@@ -53,7 +53,8 @@
         if ((Get-ItemProperty $k).$n -ne $want[$k][$n]) { Set-ItemProperty $k $n $want[$k][$n]; $Ansible.Changed = $true } } }
       if ($Ansible.Changed) { Restart-Service W32Time }
       w32tm /config /update | Out-Null
-      if ((w32tm /query /configuration) -notmatch 'Type: NoSync') { throw 'w32time is not NoSync' }
+      $cfg = w32tm /query /configuration | Out-String
+      if ($cfg -notmatch 'Type: NoSync' -or $cfg -notmatch 'AnnounceFlags: 5') { throw "w32time is not a NoSync reliable source: $cfg" }
 
 - name: AD user per narrative person
   microsoft.ad.user:
