@@ -20,6 +20,7 @@ import httpx
 from ludius import calls
 
 ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
+RATE_LIMIT_WAITS = (1, 2, 4)  # HTTP 429 (a model's shared capacity, seen on liquid/d1-ultra): retried after these
 # Any OpenRouter Decisions model works here (same request and answer shape); liquid/d1.1 and d1-ultra also read
 # screenshots. LUDIUS_JEV_MODEL picks one without code changes.
 DEFAULT_MODEL = os.environ.get("LUDIUS_JEV_MODEL", "typesafe/jev-1.14")
@@ -55,6 +56,7 @@ class Decision:
     cost: float | None = None
     latency_ms: int = 0  # the whole decide() call, retries included
     image: bool = False  # a screenshot went along with the state
+    retries_429: int = 0
     request: dict[str, Any] = field(default_factory=dict[str, Any])
     response: dict[str, Any] = field(default_factory=dict[str, Any])
 
@@ -164,10 +166,11 @@ class JevClient:
         body = build_request(self.model, state, options, ask_progress=ask_progress, image=image)
         last: Exception | None = None
         t0 = time.monotonic()
+        throttled = 0
         for _ in range(2):  # one retry on transport errors, 5xx and answers that break the contract
-            calls.count("jev")
             try:
-                res = self._http.post(self._endpoint, json=body)
+                res, n = self._post(body)
+                throttled += n
             except httpx.TransportError as e:
                 last = e
                 continue
@@ -184,8 +187,19 @@ class JevClient:
             decision.request = body
             decision.latency_ms = round((time.monotonic() - t0) * 1000)
             decision.image = image is not None
+            decision.retries_429 = throttled
             return decision
         raise JevError(f"Jev failed twice: {last}")
+
+    def _post(self, body: dict[str, Any]) -> tuple[httpx.Response, int]:
+        """One request, with HTTP 429 retried after RATE_LIMIT_WAITS; every send counts against the cap."""
+        for n, wait in enumerate((*RATE_LIMIT_WAITS, None)):
+            calls.count("jev")
+            res = self._http.post(self._endpoint, json=body)
+            if res.status_code != 429 or wait is None:
+                return res, n
+            time.sleep(wait)
+        raise AssertionError("unreachable")
 
     def close(self) -> None:
         self._http.close()

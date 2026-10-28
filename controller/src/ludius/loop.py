@@ -18,7 +18,7 @@ from typing import Any, Literal, Protocol
 
 from ludius import keys, requests
 from ludius.assist import Assist
-from ludius.jev import Decision
+from ludius.jev import Decision, JevError
 from ludius.options import (
     Option,
     StepView,
@@ -435,10 +435,16 @@ class Runner:
             options = [o for o in options if _ident(o) not in dead.get(here, ())] or options
             state = build_state(v, task, sg, history, last_result)
             choices = {o.key: o.text for o in options}
-            if self.image:
-                decision = self.jev.decide(state, choices, ask_progress=not recovering, image=self.agent.screenshot())
-            else:
-                decision = self.jev.decide(state, choices, ask_progress=not recovering)
+            try:
+                if self.image:
+                    shot = self.agent.screenshot()
+                    decision = self.jev.decide(state, choices, ask_progress=not recovering, image=shot)
+                else:
+                    decision = self.jev.decide(state, choices, ask_progress=not recovering)
+            except JevError as e:  # no usable answer even after retries: abandon the task, don't crash the process
+                self.log.write(event="decision_error", host_ms=_now(), task=task.template.task, subgoal=name,
+                               step=step, error=str(e)[:300])  # fmt: skip
+                return "failed", step - 1, "decision error"
             chosen = self._choose(decision, options)
 
             jev_done = code_done is None and decision.subgoal_done >= DONE_THRESHOLD and not recovering
@@ -659,6 +665,7 @@ class Runner:
                 "model": d.model,
                 "image": d.image,
                 "latency_ms": d.latency_ms,
+                "retries_429": d.retries_429,
             },
             code_done=code_done,  # the subgoal's own check before this step (None: it has none, Jev judges done)
             result=result,

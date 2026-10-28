@@ -3,9 +3,10 @@ from __future__ import annotations
 import random
 from typing import Any
 
+import httpx
 import pytest
 
-from ludius import keys
+from ludius import jev, keys
 from ludius.cli import DATA
 from ludius.jev import JevError, build_request, parse_response
 from ludius.policy import Policy
@@ -64,6 +65,35 @@ def test_request_limits() -> None:
     # A screenshot for image-reading Decisions models (liquid/d1.1): the JSON state as text, then the image part.
     state = build_request("liquid/d1.1", {"goal": "g"}, OPTIONS, image=b"\x89PNG...")["state"]
     assert state[0] == '{"goal": "g"}' and state[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_rate_limit_retried_and_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: list[str] = []
+    monkeypatch.setattr(jev.calls, "count", sent.append)
+    waits: list[float] = []
+    monkeypatch.setattr(jev.time, "sleep", waits.append)
+
+    def client(codes: list[int]) -> jev.JevClient:
+        c = jev.JevClient("k")
+        replies = iter(codes)
+
+        def reply(_: httpx.Request) -> httpx.Response:
+            code = next(replies)
+            return httpx.Response(code, json=response() if code == 200 else {})
+
+        c._http = httpx.Client(transport=httpx.MockTransport(reply))  # pyright: ignore[reportPrivateUsage]
+        return c
+
+    d = client([429, 200]).decide({}, OPTIONS)
+    assert d.choice == "o1" and d.retries_429 == 1 and sent == ["jev", "jev"]  # the retry counts against the cap
+    sent.clear()
+    with pytest.raises(JevError, match="429"):  # 3 retries, then the fourth 429 raises
+        client([429] * 4).decide({}, OPTIONS)
+    assert len(sent) == 4 and waits[-3:] == [1, 2, 4]
+    sent.clear()
+    with pytest.raises(JevError, match="400"):  # any other 4xx raises at once
+        client([400]).decide({}, OPTIONS)
+    assert len(sent) == 1
 
 
 def test_chords() -> None:
