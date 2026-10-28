@@ -25,6 +25,18 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
 
     readonly Dictionary<string, Vm> vms = [];
 
+    // Under the vms lock: per VMID, the clock value of its last invalidation (delete, clone), and the VMIDs a clone is
+    // still configuring. A lookup records the clock before it resolves and caches its handle only if its VMID was not
+    // invalidated since and is not being configured: a lookup that raced a delete or clone never caches a stale handle.
+    long clock;
+    readonly Dictionary<int, long> invalidated = [];
+    readonly HashSet<int> configuring = [];
+
+    bool ChangedSince(int id, long seen) => configuring.Contains(id) || invalidated.GetValueOrDefault(id) > seen;
+
+    static IOException Raced(string name, int id) =>
+        new($"{name} (VM {id}) was deleted, cloned or reconfigured during the lookup: try again");
+
     // Tests replace the vsock connect and the clock.
     public Func<uint, CancellationToken, Task<Socket>> ConnectGuest = (cid, ct) => Vsock.Connect(cid, options.VsockPort, ct);
     public Func<DateTime> Now = () => DateTime.UtcNow;
@@ -40,11 +52,20 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     {
         if (!VmName.Valid(name)) throw new ArgumentException("invalid VM name");
         Vm? cached;
-        lock (vms) vms.TryGetValue(name, out cached);
+        long seen;
+        lock (vms)
+        {
+            vms.TryGetValue(name, out cached);
+            seen = clock;
+        }
         if (cached is not null)
         {
-            if (Now() - cached.CheckedAt >= options.Recheck) Recheck(cached);
-            return cached;
+            if (Now() - cached.CheckedAt < options.Recheck) return cached;
+            Recheck(cached);
+            lock (vms)
+                if (!ChangedSince(cached.Id, seen) && vms.TryGetValue(name, out var still) && still == cached) return cached;
+            Forget(name);
+            throw Raced(name, cached.Id);
         }
         var id = Find(name, CancellationToken.None).GetAwaiter().GetResult().Id;
         var cfg = Wait(api.Call("get", $"/nodes/{node}/qemu/{id}/config", null, CancellationToken.None));
@@ -61,6 +82,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         };
         lock (vms)
         {
+            if (ChangedSince(id, seen)) { vm.Channel.Dispose(); throw Raced(name, id); }
             if (vms.TryGetValue(name, out var raced)) { vm.Channel.Dispose(); return raced; }
             return vms[name] = vm;
         }
@@ -102,15 +124,19 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         lock (vms) if (vms.Remove(name, out var vm)) vm.Channel.Dispose();
     }
 
-    // Every cached handle on this VMID, whatever name it was cached under (delete, clone, a VMID about to be reused).
-    void ForgetId(int id)
+    // Drops every cached handle on this VMID, whatever name it was cached under, and stamps the VMID so lookups
+    // already under way don't cache theirs (delete, clone, a VMID about to be reused).
+    void Invalidate(int id)
     {
         lock (vms)
+        {
+            invalidated[id] = ++clock;
             foreach (var (name, vm) in vms.Where(kv => kv.Value.Id == id).ToList())
             {
                 vms.Remove(name);
                 vm.Channel.Dispose();
             }
+        }
     }
 
     [GeneratedRegex(@"vhost-vsock-pci\b[^ ]*\bguest-cid=(\d+)")]
@@ -280,7 +306,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         if (op == Op.Delete && (!name.StartsWith("ludius-") || target != name))
             throw new ArgumentException("delete is limited to ludius-* VMs and needs the VM name repeated as confirmation");
         var vm = await Find(name, ct); // fresh every call: range pool, name and VMID as they are now
-        if (op != Op.State) { Forget(name); ForgetId(vm.Id); }
+        if (op != Op.State) { Forget(name); Invalidate(vm.Id); }
         var at = $"/nodes/{node}/qemu/{vm.Id}";
         switch (op)
         {
@@ -306,7 +332,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
             case Op.Delete:
                 if (vm.Status == "running") await Complete(api.Call("create", $"{at}/status/stop", null, ct), ct);
                 await Complete(api.Call("delete", at, new Dictionary<string, string> { ["purge"] = "1", ["destroy-unreferenced-disks"] = "1" }, ct), ct);
-                ForgetId(vm.Id); // also a handle cached while the delete ran
+                Invalidate(vm.Id); // also refuses a lookup that started before the delete
                 return "Deleted";
         }
         return await State(vm.Id, ct);
@@ -322,13 +348,29 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         var args = new Dictionary<string, string>
             { ["newid"] = newId, ["name"] = target, ["full"] = src.Template ? "0" : "1", ["pool"] = options.Pool };
         if (checkpoint != "") args["snapname"] = checkpoint;
-        ForgetId(int.Parse(newId)); // a handle left on a deleted VM with this VMID
-        Forget(target);
-        await Complete(api.Call("create", $"/nodes/{node}/qemu/{src.Id}/clone", args, ct), ct);
-        var cfg = await api.Call("get", $"/nodes/{node}/qemu/{newId}/config", null, ct);
-        await api.Call("set", $"/nodes/{node}/qemu/{newId}/config",
-            new Dictionary<string, string> { ["args"] = WithCid(cfg?["args"]?.GetValue<string>(), uint.Parse(newId)) }, ct);
-        return await State(int.Parse(newId), ct);
+        // Until its own vsock CID is set the clone carries its source's: no handle on it is cached or handed out (a
+        // lookup refuses), and the VMID is invalidated again once configured, so a lookup that ran meanwhile is refused.
+        var id = int.Parse(newId);
+        lock (vms) configuring.Add(id);
+        try
+        {
+            Invalidate(id); // a handle left on a deleted VM with this VMID
+            Forget(target);
+            await Complete(api.Call("create", $"/nodes/{node}/qemu/{src.Id}/clone", args, ct), ct);
+            var cfg = await api.Call("get", $"/nodes/{node}/qemu/{newId}/config", null, ct);
+            await api.Call("set", $"/nodes/{node}/qemu/{newId}/config",
+                new Dictionary<string, string> { ["args"] = WithCid(cfg?["args"]?.GetValue<string>(), (uint)id) }, ct);
+        }
+        finally
+        {
+            lock (vms)
+            {
+                configuring.Remove(id);
+                Invalidate(id);
+                Forget(target);
+            }
+        }
+        return await State(id, ct);
     }
 
     async Task<string> State(int id, CancellationToken ct)

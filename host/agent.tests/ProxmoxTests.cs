@@ -81,10 +81,15 @@ sealed class FakePve : IPveApi
     public string TaskExit = "OK";
     public Dictionary<int, long> Ctime = []; // a VM created anew under a VMID gets a new ctime
 
-    public Task<JsonNode?> Call(string method, string path, IReadOnlyDictionary<string, string>? args, CancellationToken ct)
+    // Race tests hold a call open here (method, path) until they let it go.
+    public Func<string, string, Task>? Gate;
+
+    public async Task<JsonNode?> Call(string method, string path, IReadOnlyDictionary<string, string>? args, CancellationToken ct)
     {
-        Calls.Add((method, path, args));
+        lock (Calls) Calls.Add((method, path, args));
+        if (Gate is { } gate) await gate(method, path);
         var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (method == "set" && path.EndsWith("/config") && args?.GetValueOrDefault("args") is { } a) Args[int.Parse(parts[3])] = a;
         JsonNode? res = (method, path) switch
         {
             ("get", "/cluster/resources") when args?["type"] == "vm" => Vms.DeepClone(),
@@ -101,7 +106,7 @@ sealed class FakePve : IPveApi
             ("create" or "delete", _) => JsonValue.Create("UPID:pve1:0000ABCD:00000001:00000001:qmstart:101:root@pam:"),
             _ => null,
         };
-        return Task.FromResult(res);
+        return res;
     }
 }
 

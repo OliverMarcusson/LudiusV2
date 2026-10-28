@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Ludius.HostAgent;
+using Ludius.V1;
 using Xunit;
 using Op = Ludius.V1.LifecycleRequest.Types.Op;
 
@@ -94,6 +95,107 @@ public class HandleRecheckTests
             Assert.Equal(lookups + 1, Lookups(pve)); // looked up now, not taken from the handle
         }
         Assert.DoesNotContain(pve.Calls, c => c.Method != "get");
+    }
+
+    // Holds the first call matching (method, path) until Release; Reached completes when it is held.
+    sealed class Hold(string method, string path)
+    {
+        readonly TaskCompletionSource reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        int used;
+        public Task Reached => reached.Task;
+        public void Release() => release.TrySetResult();
+
+        public async Task Gate(string m, string p)
+        {
+            if (m != method || p != path || Interlocked.Exchange(ref used, 1) == 1) return;
+            reached.TrySetResult();
+            await release.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    static int ConfigReads(FakePve pve, int vmid)
+    {
+        lock (pve.Calls) return pve.Calls.Count(c => c.Method == "get" && c.Path == $"/nodes/pve1/qemu/{vmid}/config");
+    }
+
+    [Fact]
+    public async Task A_lookup_that_raced_a_delete_never_caches_its_handle()
+    {
+        var (px, pve, qmp, _) = Make();
+        using var _q = qmp;
+        var hold = new Hold("get", "/nodes/pve1/qemu/101/config"); // between resolving the VMID and caching the handle
+        pve.Gate = hold.Gate;
+        var lookup = Task.Run(() => px.Get("ludius-win10-01"));
+        await hold.Reached;
+        await px.Lifecycle("ludius-win10-01", Op.Delete, "", "ludius-win10-01", CancellationToken.None); // lands in between
+        hold.Release();
+        var e = await Assert.ThrowsAsync<IOException>(() => lookup);
+        Assert.Contains("during the lookup", e.Message);
+
+        var reads = ConfigReads(pve, 101); // nothing stale was cached: the next lookup resolves afresh
+        px.Get("ludius-win10-01");
+        Assert.Equal(reads + 1, ConfigReads(pve, 101));
+    }
+
+    static JsonNode Clone104() =>
+        JsonNode.Parse("""{"vmid": 104, "name": "ludius-win10-02", "status": "stopped", "node": "pve1", "type": "qemu", "pool": "ludius"}""")!;
+
+    [Fact]
+    public async Task No_handle_on_a_clone_before_its_own_vsock_cid_is_set()
+    {
+        var (px, pve, qmp, _) = Make();
+        using var _q = qmp;
+        var hold = new Hold("set", "/nodes/pve1/qemu/104/config"); // clone created, CID not yet its own
+        pve.Gate = async (m, p) =>
+        {
+            if (m == "create" && p == "/nodes/pve1/qemu/9000/clone") lock (pve.Calls) pve.Vms.Add(Clone104());
+            await hold.Gate(m, p);
+        };
+        pve.Args[104] = pve.Args[9000]; // what Proxmox copies: the source's CID
+        var clone = px.Lifecycle("ludius-golden", Op.Clone, "", "ludius-win10-02", CancellationToken.None);
+        await hold.Reached;
+
+        var e = Assert.Throws<IOException>(() => px.Get("ludius-win10-02")); // resolves, then refuses: being configured
+        Assert.Contains("during the lookup", e.Message);
+        hold.Release();
+        await clone;
+
+        uint? cid = null;
+        px.ConnectGuest = (c, ct) => { cid = c; throw new IOException("no guest in this test"); };
+        var vm = px.Get("ludius-win10-02");
+        await Assert.ThrowsAsync<IOException>(() => vm.Channel.Request(new ObserverRequest { Ping = new Ping() }, TimeSpan.FromSeconds(1), CancellationToken.None));
+        Assert.Equal(104u, cid); // its own CID, not the source's 9000
+    }
+
+    [Fact]
+    public async Task A_lookup_that_overlapped_clone_configuration_is_refused_after_it()
+    {
+        var (px, pve, qmp, _) = Make();
+        using var _q = qmp;
+        var cloneHold = new Hold("set", "/nodes/pve1/qemu/104/config");
+        var lookupHold = new Hold("get", "/nodes/pve1/qemu/104/config");
+        var clone104 = false;
+        pve.Gate = async (m, p) =>
+        {
+            if (m == "create" && p == "/nodes/pve1/qemu/9000/clone") lock (pve.Calls) pve.Vms.Add(Clone104());
+            if (m == "set") await cloneHold.Gate(m, p);
+            else if (Volatile.Read(ref clone104)) await lookupHold.Gate(m, p); // only the lookup's read, not the clone's
+        };
+        pve.Args[104] = pve.Args[9000];
+        var clone = px.Lifecycle("ludius-golden", Op.Clone, "", "ludius-win10-02", CancellationToken.None);
+        await cloneHold.Reached;
+        Volatile.Write(ref clone104, true);
+        var lookup = Task.Run(() => px.Get("ludius-win10-02")); // reads the config with the source's CID
+        await lookupHold.Reached;
+        cloneHold.Release();
+        await clone; // configured and invalidated while the lookup holds its stale config
+        lookupHold.Release();
+        await Assert.ThrowsAsync<IOException>(() => lookup);
+
+        var reads = ConfigReads(pve, 104);
+        px.Get("ludius-win10-02");
+        Assert.Equal(reads + 1, ConfigReads(pve, 104)); // resolved afresh, with the clone's own CID
     }
 
     [Fact]
