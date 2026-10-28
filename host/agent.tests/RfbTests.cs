@@ -15,6 +15,9 @@ sealed class FakeRfb : IDisposable
     public readonly int W, H;
     public byte Fill = 0x40;
     public volatile bool Changing; // answer incremental requests too (a desktop that keeps changing)
+    public volatile bool Mute; // answer no request at all: a QEMU that stops answering without closing
+    public volatile bool SilentHandshake; // accept, then never greet
+    public int Closed; // sessions the client ended
     public readonly List<byte> ClientTypes = [];
     public readonly List<bool> Incremental = [];
     public string? Violation;
@@ -46,7 +49,7 @@ sealed class FakeRfb : IDisposable
             {
                 try { await Session(c.GetStream()); }
                 catch (Exception e) when (e is IOException or ObjectDisposedException or EndOfStreamException) { }
-                finally { c.Dispose(); }
+                finally { c.Dispose(); Interlocked.Increment(ref Closed); }
             });
         }
     }
@@ -54,6 +57,7 @@ sealed class FakeRfb : IDisposable
     async Task Session(NetworkStream s)
     {
         async Task<byte[]> Read(int n) { var b = new byte[n]; await s.ReadExactlyAsync(b); return b; }
+        if (SilentHandshake) { await Read(1); return; }
         await s.WriteAsync("RFB 003.008\n"u8.ToArray());
         if (System.Text.Encoding.ASCII.GetString(await Read(12)) != "RFB 003.008\n") { Violation = "version"; return; }
         await s.WriteAsync(new byte[] { 2, 2, 1 }); // VNC auth and None offered: the client must pick None
@@ -77,7 +81,7 @@ sealed class FakeRfb : IDisposable
                 case 3:
                     var incremental = (await Read(9))[0] == 1;
                     lock (ClientTypes) Incremental.Add(incremental);
-                    if (!incremental || Changing) await s.WriteAsync(Update());
+                    if (!Mute && (!incremental || Changing)) await s.WriteAsync(Update());
                     break;
                 default: Violation = $"client sent message type {t}"; return;
             }
@@ -135,7 +139,7 @@ public class RfbTests
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(Ct);
         var updates = 0;
         var three = new TaskCompletionSource();
-        var run = client.Run(TimeSpan.Zero, () => { if (++updates == 3) three.TrySetResult(); }, stop.Token);
+        var run = client.Run(TimeSpan.Zero, TimeSpan.FromSeconds(10), () => { if (++updates == 3) three.TrySetResult(); }, stop.Token);
         await three.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         lock (client.Lock)
         {
@@ -198,6 +202,56 @@ public class RfbTests
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
         while (seen.Count < 10) seen.Add((await live.Reader.ReadAsync(timeout.Token)).Jpeg![0]);
         Assert.True(stuck.Reader.Count <= 1); // its slot holds the latest frame only
+    }
+
+    [Fact]
+    public async Task A_handshake_that_never_finishes_is_closed_without_any_viewer()
+    {
+        using var server = new FakeRfb(64, 32) { SilentHandshake = true };
+        var captures = new Captures { Handshake = TimeSpan.FromMilliseconds(300), FirstFrame = TimeSpan.FromMilliseconds(100), IdleAfter = TimeSpan.FromMinutes(5) };
+        Assert.Equal("no console frame yet", Assert.Throws<InvalidOperationException>(() => captures.Frame("ludius-a", "1", server.Connect, 64)).Message);
+        await Until(() => Volatile.Read(ref server.Closed) == 1); // no further request: the deadline alone ends it
+        Assert.Equal("console capture did not start", Assert.Throws<InvalidOperationException>(() => captures.Frame("ludius-a", "1", server.Connect, 64)).Message);
+    }
+
+    [Fact]
+    public async Task A_session_that_stops_answering_reports_stalled_instead_of_its_last_frame()
+    {
+        using var server = new FakeRfb(64, 32); // an unchanged desktop: only full requests get answers
+        var captures = new Captures { Probe = TimeSpan.FromMilliseconds(100), Stall = TimeSpan.FromMilliseconds(400) };
+        captures.Frame("ludius-a", "1", server.Connect, 64);
+        for (var end = DateTime.UtcNow.AddSeconds(1); DateTime.UtcNow < end; await Task.Delay(50, Ct))
+            captures.Frame("ludius-a", "1", server.Connect, 64); // healthy and still: the probes keep it alive
+        lock (server.ClientTypes) Assert.True(server.Incremental.Count(i => !i) > 3);
+        Assert.Equal(1, server.Connections);
+
+        server.Mute = true;
+        await Until(() =>
+        {
+            try { captures.Frame("ludius-a", "1", server.Connect, 64); return false; } // the last frame, until the deadline
+            catch (InvalidOperationException e) { Assert.Equal("capture stalled", e.Message); return true; }
+        });
+        await Until(() => Volatile.Read(ref server.Closed) == 1);
+        Assert.Throws<InvalidOperationException>(() => captures.Frame("ludius-a", "1", server.Connect, 64)); // a new session, still unanswered: no old frame
+    }
+
+    [Fact]
+    public async Task Close_ends_a_session_at_once()
+    {
+        using var server = new FakeRfb(64, 32);
+        var captures = new Captures();
+        captures.Frame("ludius-a", "1", server.Connect, 64);
+        captures.Close("ludius-a");
+        await Until(() => Volatile.Read(ref server.Closed) == 1);
+        captures.Frame("ludius-a", "1", server.Connect, 64);
+        Assert.Equal(2, server.Connections);
+    }
+
+    static async Task<bool> Until(Func<bool> done)
+    {
+        for (var end = DateTime.UtcNow.AddSeconds(5); DateTime.UtcNow < end; await Task.Delay(20, Ct))
+            if (done()) return true;
+        throw new Xunit.Sdk.XunitException("condition not met within 5 s");
     }
 
     static (int W, int H) JpegSize(byte[] jpeg)

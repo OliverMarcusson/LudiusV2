@@ -79,17 +79,34 @@ sealed class RfbClient
     }
 
     // Requests an update, applies it, waits out the rest of interval, requests the next: at most one update per
-    // interval. QEMU answers an incremental request only once something changed, so a still desktop costs nothing.
-    public async Task Run(TimeSpan interval, Action updated, CancellationToken ct)
+    // interval. QEMU answers an incremental request only once something changed, so a still desktop costs nothing;
+    // after probe without a message a full (non-incremental) request goes out, which QEMU always answers. HeardAt is
+    // when the last update arrived: Captures ends a session that stays silent despite the probes.
+    public long HeardAt { get; private set; } = Environment.TickCount64;
+
+    public async Task Run(TimeSpan interval, TimeSpan probe, Action updated, CancellationToken ct)
     {
         var asked = System.Diagnostics.Stopwatch.StartNew();
         await writer.UpdateRequest(false, Width, Height, ct);
+        var next = Bytes(1, ct);
         while (true)
         {
-            switch ((await Bytes(1, ct))[0])
+            using (var quiet = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                var first = await Task.WhenAny(next, Task.Delay(probe, quiet.Token));
+                quiet.Cancel();
+                if (first != next)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    await writer.UpdateRequest(false, Width, Height, ct);
+                    continue;
+                }
+            }
+            switch ((await next)[0])
             {
                 case 0:
                     var resized = await Update(ct);
+                    HeardAt = Environment.TickCount64;
                     updated();
                     if (interval - asked.Elapsed is { Ticks: > 0 } wait) await Task.Delay(wait, ct);
                     asked.Restart();
@@ -108,6 +125,7 @@ sealed class RfbClient
                     break;
                 case var t: throw new IOException($"RFB: unexpected server message {t}");
             }
+            next = Bytes(1, ct);
         }
     }
 
@@ -162,11 +180,17 @@ sealed class RfbClient
 
 // One RFB session per VM, shared by every viewer and width, ended IdleAfter after the last frame request. Each width is
 // scaled and encoded once per framebuffer update; until the next update the same byte[] comes back (FeedHub relies on it).
+// A watchdog bounds every session from before it connects: no first frame within Handshake, or no update within Stall
+// once running (probes included), ends it with an error the next frame request gets, never the last frame as if live.
+// Ending a session disposes its socket.
 sealed class Captures
 {
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(1.0 / 15);
     public TimeSpan IdleAfter { get; init; } = TimeSpan.FromSeconds(10);
-    public TimeSpan FirstFrame { get; init; } = TimeSpan.FromSeconds(3);
+    public TimeSpan FirstFrame { get; init; } = TimeSpan.FromSeconds(3); // how long one frame request waits for a new session
+    public TimeSpan Handshake { get; init; } = TimeSpan.FromSeconds(10); // connect, handshake and first update
+    public TimeSpan Probe { get; init; } = TimeSpan.FromSeconds(2); // silence before a full update request
+    public TimeSpan Stall { get; init; } = TimeSpan.FromSeconds(5); // no update for this long, probes included: ended
     const int Quality = 80;
 
     sealed class Capture(string tag)
@@ -174,19 +198,26 @@ sealed class Captures
         public readonly string Tag = tag;
         public readonly CancellationTokenSource Stop = new();
         public readonly TaskCompletionSource<RfbClient> Ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public long AskedAt;
+        public long AskedAt = Environment.TickCount64;
+        public volatile Exception? Error; // why the session ended, unless idle, replaced or closed
         public readonly Dictionary<int, (long Version, byte[] Jpeg)> Encoded = [];
     }
 
     readonly Dictionary<string, Capture> live = [];
 
-    // tag: what the session is bound to (VMID and identity); a different tag for the same name starts a new session.
+    // tag: the VM identity the caller just validated. A session only serves the tag it was opened for; another tag for
+    // the name ends the old session and opens a new one with the caller's connect.
     public byte[] Frame(string vm, string tag, Func<CancellationToken, Task<Stream>> connect, int maxWidth)
     {
         Capture? c;
         lock (live)
         {
-            if (!live.TryGetValue(vm, out c) || c.Tag != tag || c.Stop.IsCancellationRequested)
+            if (live.TryGetValue(vm, out c) && c.Tag == tag && c.Error is { } failed)
+            {
+                live.Remove(vm); // reported once; the next request opens a new session
+                ExceptionDispatchInfo.Throw(failed);
+            }
+            if (c is null || c.Tag != tag || c.Stop.IsCancellationRequested)
             {
                 c?.Stop.Cancel();
                 live[vm] = c = new Capture(tag);
@@ -196,31 +227,56 @@ sealed class Captures
         }
         try { if (!c.Ready.Task.Wait(FirstFrame)) throw new InvalidOperationException("no console frame yet"); }
         catch (AggregateException e) { ExceptionDispatchInfo.Throw(e.InnerException!); }
+        if (c.Stop.IsCancellationRequested) // ended meanwhile: its last frame is no longer known to be current
+            throw c.Error as InvalidOperationException ?? new InvalidOperationException("console capture ended");
         return Encode(c, c.Ready.Task.Result, maxWidth);
+    }
+
+    // Ends the name's session now (its VM failed validation).
+    public void Close(string vm)
+    {
+        lock (live) if (live.Remove(vm, out var c)) c.Stop.Cancel();
     }
 
     async Task Run(string vm, Capture c, Func<CancellationToken, Task<Stream>> connect)
     {
         var ct = c.Stop.Token;
+        var watchdog = Watch(c);
         try
         {
             await using var s = await connect(ct);
+            await using var close = ct.Register(s.Dispose); // also unblocks a read that would never return
             var client = await RfbClient.Connect(s, ct);
-            var run = client.Run(Interval, () => c.Ready.TrySetResult(client), ct);
-            while (!run.IsCompleted && !ct.IsCancellationRequested
-                   && Environment.TickCount64 - Volatile.Read(ref c.AskedAt) < IdleAfter.TotalMilliseconds)
-                await Task.WhenAny(run, Task.Delay(250));
-            var failed = run.IsCompleted;
-            c.Stop.Cancel();
-            try { await run; }
-            catch (Exception) when (!failed) { } // idle or replaced: cancelled on purpose
+            await client.Run(Interval, Probe, () => c.Ready.TrySetResult(client), ct);
         }
-        catch (Exception e) { c.Ready.TrySetException(e); }
+        catch (Exception e)
+        {
+            if (!ct.IsCancellationRequested) c.Error ??= e;
+            c.Ready.TrySetException(c.Error ?? e);
+        }
         finally
         {
             c.Stop.Cancel();
             c.Ready.TrySetException(new InvalidOperationException("console capture ended"));
-            lock (live) if (live.TryGetValue(vm, out var now) && now == c) live.Remove(vm);
+            lock (live) if (c.Error is null && live.TryGetValue(vm, out var now) && now == c) live.Remove(vm);
+            await watchdog;
+        }
+    }
+
+    async Task Watch(Capture c)
+    {
+        var started = Environment.TickCount64;
+        while (!c.Stop.IsCancellationRequested)
+        {
+            await Task.Delay(100);
+            var now = Environment.TickCount64;
+            var running = c.Ready.Task.IsCompletedSuccessfully;
+            if (now - Volatile.Read(ref c.AskedAt) >= IdleAfter.TotalMilliseconds) c.Stop.Cancel();
+            else if (running ? now - c.Ready.Task.Result.HeardAt > Stall.TotalMilliseconds : now - started > Handshake.TotalMilliseconds)
+            {
+                c.Error = new InvalidOperationException(running ? "capture stalled" : "console capture did not start");
+                c.Stop.Cancel();
+            }
         }
     }
 

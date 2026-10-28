@@ -295,13 +295,19 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     }
 
     // The monitor's frames: from one persistent view-only VNC session per VM (Captures), not screendump, so watching
-    // costs QEMU's main loop no PNG encode. Every frame still resolves the range VM; a different VM behind the name
-    // (VMID or identity) starts a new session.
+    // costs QEMU's main loop no PNG encode. Every frame still resolves the range VM: if Get refuses the name the session
+    // ends at once; a different VM behind the name (VMID or identity) ends it and opens one on the VM Get just returned.
     readonly Captures captures = new();
 
     public byte[] Frame(string name, int maxWidth)
     {
-        var vm = Get(name);
+        Vm vm;
+        try { vm = Get(name); }
+        catch
+        {
+            captures.Close(name);
+            throw;
+        }
         return captures.Frame(name, $"{vm.Id}|{vm.Identity}", vm.Qmp.VncClient, maxWidth);
     }
 
