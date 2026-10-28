@@ -52,10 +52,20 @@ verify_identity() {
   local st prefs
   st=$(tailscale status --json) || { echo "cannot read tailscale status" >&2; return 1; }
   prefs=$(tailscale debug prefs) || { echo "cannot read tailscale prefs" >&2; return 1; }
+  # Every field must be present with its expected type: a missing or odd-shaped field is "cannot tell", which aborts.
   if ! jq -e --arg tag "$TS_TAG" '
-      (.Self.Tags // []) == [$tag]
-      and (((.User // {})[(.Self.UserID | tostring)].LoginName // "tagged-devices") == "tagged-devices")' <<<"$st" >/dev/null     || ! jq -e '((.AdvertiseRoutes // []) | length) == 0 and (.ExitNodeID // "") == "" and (.ExitNodeIP // "") == ""'       <<<"$prefs" >/dev/null; then
-    echo "ABORT: this box is already on a tailnet with an unexpected identity (need only $TS_TAG, no user owner, no routes or exit node):" >&2
+      (.Self.Tags | type) == "array" and .Self.Tags == [$tag]
+      and (.Self.UserID | type) == "number"
+      and (.User | type) == "object"
+      and (.User[(.Self.UserID | tostring)] | type) == "object"
+      and (.User[(.Self.UserID | tostring)].LoginName | type) == "string"
+      and .User[(.Self.UserID | tostring)].LoginName == "tagged-devices"' <<<"$st" >/dev/null \
+    || ! jq -e '
+      has("AdvertiseRoutes") and ((.AdvertiseRoutes | type) == "null" or (.AdvertiseRoutes | type) == "array")
+      and (.AdvertiseRoutes // [] | length) == 0
+      and (.ExitNodeID | type) == "string" and .ExitNodeID == ""
+      and (.ExitNodeIP | type) == "string" and .ExitNodeIP == ""' <<<"$prefs" >/dev/null; then
+    echo "ABORT: this box is already on a tailnet with an unexpected identity (need only $TS_TAG, no user owner, no routes or exit node, and every field readable):" >&2
     jq -c '{Tags: .Self.Tags, UserID: .Self.UserID, HostName: .Self.HostName}' <<<"$st" >&2 || true
     jq -c '{AdvertiseRoutes, ExitNodeID, ExitNodeIP}' <<<"$prefs" >&2 || true
     echo "Run 'tailscale logout' on the box, then run this script again with TS_AUTHKEY." >&2

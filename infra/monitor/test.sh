@@ -38,7 +38,7 @@ case "$1 $2" in
   *) echo "unexpected tailscale $*" >&2; exit 9 ;;
 esac
 EOF
-export SERVE_JSON=$good_serve TS_STATUS=$good_status TS_PREFS=$good_prefs PROBE_TIMEOUT=1
+export SERVE_JSON=$good_serve TS_STATUS=$good_status TS_PREFS=$good_prefs PROBE_TIMEOUT=0.3
 
 fails=0
 # expect <name> <exit code wanted, or "nonzero"> <command...>
@@ -68,6 +68,28 @@ expect "check: serve to another target" 1 with 'SERVE_JSON={"TCP":{"8452":{"HTTP
 expect "check: serve has an extra https port" 1 with 'SERVE_JSON={"TCP":{"8452":{"HTTP":true},"443":{"HTTPS":true}},"Web":{"h:8452":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:7452"}}}}}'
 expect "check: funnel on" 1 with 'SERVE_JSON={"TCP":{"8452":{"HTTP":true}},"Web":{"h:8452":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:7452"}}}},"AllowFunnel":{"h:8452":true}}'
 expect "check: serve empty" 1 with 'SERVE_JSON={}'
+expect "check: foreground session with its own port" 1 with 'SERVE_JSON={"TCP":{"8452":{"HTTP":true}},"Web":{"h:8452":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:7452"}}}},"Foreground":{"s1":{"TCP":{"9000":{"HTTP":true}}}}}'
+expect "check: foreground session with funnel" 1 with 'SERVE_JSON={"TCP":{"8452":{"HTTP":true}},"Web":{"h:8452":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:7452"}}}},"Foreground":{"s1":{"AllowFunnel":{"h:443":true}}}}'
+expect "check: empty Foreground is fine" 0 with 'SERVE_JSON={"TCP":{"8452":{"HTTP":true}},"Web":{"h:8452":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:7452"}}}},"Foreground":{}}'
+
+# a probe that cannot run is an abort, never a pass; malformed ip output is an abort, never a probed address
+mkdir "$tmp/noprobe" "$tmp/oddprobe"
+printf '#!/usr/bin/env bash
+exit 126
+' >"$tmp/noprobe/timeout"
+printf '#!/usr/bin/env bash
+echo "bash: something odd" >&2
+exit 1
+' >"$tmp/oddprobe/timeout"
+chmod +x "$tmp/noprobe/timeout" "$tmp/oddprobe/timeout"
+expect "check: probe tool cannot run (exit 126) -> abort" 2 with "PATH=$tmp/noprobe:$PATH"
+expect "check: probe fails with an unknown error -> abort" 2 with "PATH=$tmp/oddprobe:$PATH"
+expect "check: ip octet out of range -> abort" 2 with "IP_OUT=2: eth0    inet 999.1.1.1/24 scope global eth0"
+expect "check: ip address without prefix -> abort" 2 with "IP_OUT=2: eth0    inet 192.0.2.10 scope global eth0"
+expect "check: ip garbage IPv6 -> abort" 2 with "IP_OUT=2: eth0    inet6 not-an-address/64 scope global"
+expect "check: ip IPv6 literal under inet -> abort" 2 with "IP_OUT=2: eth0    inet 2001:db8::10/64 scope global"
+expect "check: ip unknown family -> abort" 2 with "IP_OUT=2: eth0    link/ether 192.0.2.10/24 scope global"
+expect "check: no global address at all fails" 1 with "IP_OUT=3: tailscale0    inet 100.100.1.1/32 scope global tailscale0"
 
 # a connect that succeeds on a global address fails the check, in both families
 for py in python3 python; do "$py" -c "" 2>/dev/null && break; done # the Windows python3 is a Store shim
@@ -102,8 +124,32 @@ expect "bring-up: advertises a route" 1 bad_id 'TS_PREFS={"AdvertiseRoutes":["10
 no_serve
 expect "bring-up: advertises an exit node" 1 bad_id 'TS_PREFS={"AdvertiseRoutes":["0.0.0.0/0","::/0"]}'
 no_serve
-expect "bring-up: uses an exit node" 1 bad_id 'TS_PREFS={"AdvertiseRoutes":null,"ExitNodeID":"nabc"}'
+expect "bring-up: uses an exit node" 1 bad_id 'TS_PREFS={"AdvertiseRoutes":null,"ExitNodeID":"nabc","ExitNodeIP":""}'
 no_serve
+# a field that is missing or the wrong type is "cannot tell", not "safe"
+expect "bring-up: status has no User map" 1 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box"],"UserID":123}}'
+no_serve
+expect "bring-up: status has no UserID" 1 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box"]},"User":{"123":{"LoginName":"tagged-devices"}}}'
+no_serve
+expect "bring-up: User entry for UserID is missing" 1 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box"],"UserID":123},"User":{"999":{"LoginName":"tagged-devices"}}}'
+no_serve
+expect "bring-up: LoginName missing" 1 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box"],"UserID":123},"User":{"123":{}}}'
+no_serve
+expect "bring-up: Tags is a string" 1 bad_id 'TS_STATUS={"Self":{"Tags":"tag:ludius-box","UserID":123},"User":{"123":{"LoginName":"tagged-devices"}}}'
+no_serve
+expect "bring-up: UserID is a string" 1 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box"],"UserID":"123"},"User":{"123":{"LoginName":"tagged-devices"}}}'
+no_serve
+expect "bring-up: prefs is {}" 1 bad_id 'TS_PREFS={}'
+no_serve
+expect "bring-up: prefs lack AdvertiseRoutes" 1 bad_id 'TS_PREFS={"ExitNodeID":"","ExitNodeIP":""}'
+no_serve
+expect "bring-up: prefs lack ExitNodeIP" 1 bad_id 'TS_PREFS={"AdvertiseRoutes":null,"ExitNodeID":""}'
+no_serve
+expect "bring-up: prefs ExitNodeID is null" 1 bad_id 'TS_PREFS={"AdvertiseRoutes":null,"ExitNodeID":null,"ExitNodeIP":""}'
+no_serve
+expect "bring-up: AdvertiseRoutes is a string" 1 bad_id 'TS_PREFS={"AdvertiseRoutes":"","ExitNodeID":"","ExitNodeIP":""}'
+no_serve
+expect "bring-up: empty AdvertiseRoutes array is fine" 0 bad_id 'TS_PREFS={"AdvertiseRoutes":[],"ExitNodeID":"","ExitNodeIP":""}'
 
 # homelab removal: only an ordered marker pair is touched; a failed validate puts the file back
 cat >"$tmp/caddy.sh" <<'STUB'
