@@ -1,7 +1,9 @@
-"""Mail and meeting done-checks read on the range server, never in the UI: grommunio's store on ludius-srv01 over SSH.
+"""Mail and meeting done-checks read on the range server, never in the UI. Two backends behind these functions,
+chosen by LUDIUS_MAIL_BACKEND: grommunio (default; the Hyper-V test range's ludius-srv01, read over SSH, below) and
+exchange (the Proxmox range's Exchange server over EWS, ludius.ews). Only _query, read_state and deliver's send differ.
 
-Read-only: one sqlite3 -readonly query on the mailbox's exchange.sqlite3 for messages in a folder with the exact
-(normalised, so without RE:) subject, with their sender's SMTP address, class, times and recipients, then their
+grommunio, read-only: one sqlite3 -readonly query on the mailbox's exchange.sqlite3 for messages in a folder with the
+exact (normalised, so without RE:) subject, with their sender's SMTP address, class, times and recipients, then their
 stored plain-text bodies (zstd, or plain). Fails closed: no server, no key or any error is "not delivered".
 """
 
@@ -15,6 +17,8 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from ludius import ews
 
 ROOT = Path(__file__).resolve().parents[3]
 SRV = ROOT / "infra" / "hyperv" / "build" / "srv"
@@ -60,6 +64,10 @@ class Message:
     read: bool = False  # marked read on the server now (a hint: mail.read's done check reads read_state())
 
 
+def _exchange() -> bool:
+    return os.environ.get("LUDIUS_MAIL_BACKEND", "grommunio") == "exchange"
+
+
 @functools.cache
 def _host() -> str:
     """LUDIUS_SRV_HOST when set (Proxmox: the server's fixed address), else the server's Default Switch address on
@@ -96,6 +104,8 @@ def read_state(user: str, message_id: int, folder: str = "inbox") -> bool | None
     could not be read, or the message is not (or no longer) in that folder."""
     if not re.fullmatch(r"[a-z0-9]+", user) or message_id <= 0:
         return None
+    if _exchange():
+        return ews.read_state(f"{user}@{DOMAIN}", message_id, folder)
     db = f"/var/lib/gromox/user/{DOMAIN}/{user}/exmdb/exchange.sqlite3"
     sql = (f"select read_state from messages where message_id={int(message_id)} and parent_fid={FOLDERS[folder]} "
            f"and is_associated=0 and coalesce(is_deleted, 0)=0")  # fmt: skip
@@ -125,6 +135,9 @@ def _query(user: str, folder: str, subject: str | None) -> list[Message] | None:
     """As messages() (subject None: as newest()), but None when the server could not be read."""
     if not re.fullmatch(r"[a-z0-9]+", user):
         return None
+    if _exchange():
+        items = ews.query(f"{user}@{DOMAIN}", folder, subject)
+        return None if items is None else [Message(**i) for i in items]
     db = f"/var/lib/gromox/user/{DOMAIN}/{user}"
     # Hex literal: the subject reaches neither the shell nor SQL as text.
     rcpt = (f"(select group_concat(coalesce(cast(a.propval as text), cast(e.propval as text), '?'), ',') "
@@ -329,8 +342,9 @@ def invited(
 def deliver(sender: str, sender_name: str, to: str, to_name: str, subject: str, body: str, msgid: str) -> bool:
     """Send one plain-text mail server-side, as `sender` (a range mailbox without a VM: a manager), through srv01's
     local LDA ([::1]:25, which refuses any recipient outside DOMAIN), with our own Message-ID so a retry can tell it
-    was delivered. Idempotent: True at once when `to`'s Inbox already holds `msgid`. Irreversible once True; False
-    (nothing known to be sent) on any refusal or error. Both addresses must be DOMAIN accounts."""
+    was delivered (exchange: EWS as the sender, no Sent Items copy, as the LDA). Idempotent: True at once when `to`'s
+    Inbox already holds `msgid`. Irreversible once True; False (nothing known to be sent) on any refusal or error.
+    Both addresses must be DOMAIN accounts."""
     addrs = [a.strip().lower() for a in (sender, to)]
     if any(not re.fullmatch(rf"[a-z0-9]+@{re.escape(DOMAIN)}", a) for a in addrs) or addrs[0] == addrs[1]:
         return False
@@ -339,6 +353,8 @@ def deliver(sender: str, sender_name: str, to: str, to_name: str, subject: str, 
         return False
     if any(m.msgid == msgid for m in have):
         return True
+    if _exchange():  # EWS as the sender (impersonated); Exchange has no route out and rejects outside recipients
+        return ews.send(addrs[0], sender_name, addrs[1], to_name, subject, body, msgid)
     # the values travel as one JSON line on stdin, never on a command line or as code
 
     script = (
