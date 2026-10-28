@@ -4,3 +4,9 @@
 range_personas:
   - { user: aberg, vmid: 121, ip: 10.77.0.21 }
   - { user: lnord, vmid: 122, ip: 10.77.0.22 }
+  - { user: dkoster, vmid: 123, ip: 10.77.0.23 }
+  - { user: pvanloon, vmid: 124, ip: 10.77.0.24 }
+  - { user: nokafor, vmid: 125, ip: 10.77.0.25 }
+  - { user: lsmit, vmid: 126, ip: 10.77.0.26 }
+  - { user: eyilmaz, vmid: 127, ip: 10.77.0.27 }
+  - { user: sdekker, vmid: 128, ip: 10.77.0.28 }

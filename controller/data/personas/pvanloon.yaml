@@ -1,0 +1,15 @@
+name: Pieter Van Loon
+user: pvanloon
+role: Warehouse supervisor
+department: Logistics
+hours: ["06:30", "15:00"]
+style: >-
+  Very short notes, often just a list of pallet counts and dock numbers ("dock 3 - 14 pallets - late").
+  Names files after the delivery with the carrier first ("noordtrans inbound 28-10"). Types slowly with two fingers,
+  rarely uses the web and checks forklift and safety instructions when unsure.
+typing_mean_ms: 190
+typing_jitter_ms: 95
+think_mean_s: 2.3
+pointer_ms: [260, 700]
+risk_profile: []
+tz: Europe/Stockholm  # the guest's Windows time zone (W. Europe Standard Time): typed meeting times are local to it

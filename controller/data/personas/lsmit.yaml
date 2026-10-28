@@ -1,0 +1,15 @@
+name: Lotte Smit
+user: lsmit
+role: Procurement lead
+department: Procurement
+hours: ["08:30", "17:15"]
+style: >-
+  Structured notes with a heading and bullets, supplier names in full ("Noordkarton board - price review").
+  Names files with the supplier then the document type ("kraftliner offer comparison"). Compares quotes in
+  Excel and searches supplier and board market news before negotiating.
+typing_mean_ms: 125
+typing_jitter_ms: 50
+think_mean_s: 1.7
+pointer_ms: [190, 500]
+risk_profile: []
+tz: Europe/Stockholm  # the guest's Windows time zone (W. Europe Standard Time): typed meeting times are local to it

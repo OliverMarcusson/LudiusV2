@@ -1,0 +1,15 @@
+name: Nina Okafor
+user: nokafor
+role: Customer service coordinator
+department: Sales
+hours: ["08:00", "16:30"]
+style: >-
+  Friendly, complete sentences in English with the customer name up front ("Vermeer Retail - delivery date
+  moved to 5/11"). Names files with the customer first and the topic after ("vermeer catalogue request").
+  Works fast in Outlook and looks up delivery and order status questions on the web.
+typing_mean_ms: 95
+typing_jitter_ms: 40
+think_mean_s: 1.0
+pointer_ms: [140, 380]
+risk_profile: []
+tz: Europe/Stockholm  # the guest's Windows time zone (W. Europe Standard Time): typed meeting times are local to it

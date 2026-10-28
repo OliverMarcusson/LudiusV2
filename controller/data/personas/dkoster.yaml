@@ -1,0 +1,15 @@
+name: Daan Koster
+user: dkoster
+role: Production planner
+department: Operations
+hours: ["06:50", "15:30"]
+style: >-
+  Practical notes in plain English with line numbers and shift codes ("L2 night shift short on reel stock").
+  Names files with the week first ("wk44 planning board"). Keeps a running list in Notepad, builds schedules
+  in Excel and looks up board grades and machine manuals on the web.
+typing_mean_ms: 118
+typing_jitter_ms: 55
+think_mean_s: 1.4
+pointer_ms: [170, 470]
+risk_profile: []
+tz: Europe/Stockholm  # the guest's Windows time zone (W. Europe Standard Time): typed meeting times are local to it
