@@ -1,0 +1,31 @@
+# PostgreSQL for Temporal and the Ludius store. Same image and settings as infra/compose/compose.yaml, run by Podman
+# (Quadlet) with host networking and loopback binds: no bridge, no NAT, so no firewall rules are added on the box.
+[Unit]
+Description=Ludius PostgreSQL (Temporal + store, 127.0.0.1:5432)
+After=network-online.target
+
+[Container]
+ContainerName=ludius-postgres
+Image=docker.io/library/postgres:16.15-alpine3.24@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+Network=host
+EnvironmentFile=/etc/ludius/compose.env
+Environment=POSTGRES_USER=temporal
+Volume=ludius-pgdata.volume:/var/lib/postgresql/data
+Volume=/etc/ludius/initdb:/docker-entrypoint-initdb.d:ro
+Exec=postgres -c listen_addresses=127.0.0.1
+HealthCmd=pg_isready -h 127.0.0.1 -U temporal -d postgres
+HealthInterval=5s
+HealthTimeout=5s
+HealthRetries=20
+HealthStartPeriod=10s
+Notify=healthy
+# Podman 5.4's containers-default AppArmor profile denies AF_UNIX sockets here (postgres cannot create its socket;
+# dmesg: apparmor DENIED ... "failed protocol match"), so this one container runs unconfined.
+PodmanArgs=--security-opt apparmor=unconfined
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
