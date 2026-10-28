@@ -62,7 +62,10 @@ class Message:
 
 @functools.cache
 def _host() -> str:
-    """The server's Default Switch address (it changes across host reboots), as set-clock.ps1 finds it."""
+    """LUDIUS_SRV_HOST when set (Proxmox: the server's fixed address), else the server's Default Switch address on
+    Hyper-V (it changes across host reboots), as set-clock.ps1 finds it."""
+    if fixed := os.environ.get("LUDIUS_SRV_HOST"):
+        return fixed
     vm = os.environ.get("LUDIUS_SRV_VM", "ludius-srv01")
     ps = (f"(Get-VMNetworkAdapter -VMName '{vm}' | Where-Object SwitchName -eq 'Default Switch').IPAddresses"
           " | Where-Object { $_ -match '^\\d+\\.' } | Select-Object -First 1")  # fmt: skip

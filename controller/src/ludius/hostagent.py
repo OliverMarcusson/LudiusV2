@@ -67,6 +67,12 @@ class HostAgent:
         result: pb.LifecycleResult = self._stub.Lifecycle(req, timeout=1800)  # a clone copies the whole disk
         return result.state
 
+    def read_file(self, path: str, max_bytes: int) -> obs.FileContent:
+        """One guest file through the observer (read-only); raises grpc.RpcError when it can't say."""
+        req = pb.GuestFileRequest(vm=self.vm, file=obs.ReadFile(path=path, max_bytes=max_bytes))
+        result: obs.FileContent = self._stub.ReadGuestFile(req, timeout=60)
+        return result
+
     def screenshot(self) -> bytes:
         result: pb.ScreenshotResult = self._stub.Screenshot(pb.ScreenshotRequest(vm=self.vm), timeout=60)
         return result.png

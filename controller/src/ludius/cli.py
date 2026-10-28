@@ -22,6 +22,7 @@ from contextlib import ExitStack, closing, contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import grpc
 import yaml
 from google.protobuf import json_format
 
@@ -576,10 +577,44 @@ def pb_kind(k: int) -> str:
     return obs.Window.Kind.Name(k).lower()  # pyright: ignore[reportArgumentType]
 
 
-def cmd_contract(args: argparse.Namespace) -> int:
-    """Pointer mapping and typing round trip, readable from the guest (spec section 4)."""
-    agent = agent_from(args)
+def _contract_read_only(agent: HostAgent) -> int:
+    """The checks that change nothing in the guest: VM state, the observer's resolution against the console frame
+    (display fixed in VM config, spec section 4), and a guest file read (absent file in an existing folder)."""
     failures = 0
+
+    def check(ok: bool, what: str) -> None:
+        nonlocal failures
+        failures += not ok
+        print(f"{'ok  ' if ok else 'FAIL'} {what}")
+
+    state = agent.lifecycle(pb.LifecycleRequest.STATE)
+    check(state == "Running", f"state {state!r}")
+    res = agent.observe(wait_settle=False)
+    s = res.snapshot
+    check(s.screen_width > 0 and s.screen_height > 0, f"observer {res.hello.version} as {res.hello.user}: "
+          f"screen {s.screen_width}x{s.screen_height}, cursor {(s.cursor_x, s.cursor_y)}")  # fmt: skip
+    png = agent.screenshot()
+    size = (int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")) if png[1:4] == b"PNG" else None
+    check(size == (s.screen_width, s.screen_height), f"console frame {size} matches the observer's screen")
+    missing = rf"C:\Users\{res.hello.user}\Documents\ludius-contract-{random.getrandbits(32):08x}.txt"
+    try:
+        f = agent.read_file(missing, 1024)
+        check(not f.exists, f"guest file read: {missing} absent")
+    except grpc.RpcError as e:
+        code = e.code()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+        print(f"skip guest file read: {code} (agent or observer predates ReadGuestFile)")
+    return failures
+
+
+def cmd_contract(args: argparse.Namespace) -> int:
+    """Pointer mapping and typing round trip, readable from the guest (spec section 4), after the read-only checks;
+    --read-only stops there (nothing typed, pointer untouched)."""
+    agent = agent_from(args)
+    failures = _contract_read_only(agent)
+    if args.read_only:
+        agent.close()
+        print("contract (read-only): " + ("PASS" if failures == 0 else f"{failures} failure(s)"))
+        return 0 if failures == 0 else 1
     s = agent.observe().snapshot
     w, h = s.screen_width, s.screen_height
     # Hyper-V's absolute pointer rounds to within 1 px (measured: x off by one below ~40).
@@ -785,6 +820,7 @@ def main(argv: list[str] | None = None) -> int:
     o.set_defaults(fn=cmd_observe)
 
     c = sub.add_parser("contract", help="pointer and typing contract test")
+    c.add_argument("--read-only", action="store_true", help="only the checks that change nothing in the guest")
     c.set_defaults(fn=cmd_contract)
 
     s = sub.add_parser("session", help="session hygiene: lock (test), unlock, normalize")
