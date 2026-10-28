@@ -1,0 +1,219 @@
+---
+# ex01 (mail_backend exchange), over WinRM: joins corp.ludius.test, installs the Exchange SE prerequisites the docs list
+# for Windows Server 2025 and Exchange SE (Mailbox role) unattended with no product key (trial edition: Standard
+# features, 180 days; the EAC reminds after that), then: a log-in mailbox per narrative person, a self-signed
+# certificate for mail/autodiscover/ex01 and the address (persona clones import it through the domain role as
+# range_tls_ca; the controller verifies EWS against it), internal URLs and the Autodiscover SCP on the mail names, EWS
+# Basic auth over TLS and ApplicationImpersonation for the service account, and the range boundary: no send connector,
+# corp.ludius.test the only accepted domain, a transport rule rejecting any recipient outside the organisation, all
+# asserted, plus a probe mail to an outside address through the pickup folder that must fail and never be sent.
+# Expects the Exchange ISO in a CD drive (range-exchange.yml) and the prerequisites in exchange_media_dir on the node.
+- name: Join corp.ludius.test as EX01
+  microsoft.ad.membership:
+    dns_domain_name: "{{ domain }}"
+    hostname: EX01
+    domain_admin_user: Administrator@{{ domain }}
+    domain_admin_password: "{{ dc_admin_password }}"
+    state: domain
+    reboot: true
+  no_log: true
+
+- name: From here as the domain's Administrator
+  ansible.builtin.set_fact:
+    ansible_user: "{{ domain_netbios }}\\Administrator"
+    ansible_password: "{{ dc_admin_password }}"
+    ansible_become_user: "{{ domain_netbios }}\\Administrator"
+    ansible_become_password: "{{ dc_admin_password }}"
+    ansible_become_method: runas
+  no_log: true
+
+- name: New connection as the domain's Administrator
+  ansible.builtin.meta: reset_connection
+
+- name: Windows features for the Mailbox role (Exchange SE prerequisites, Desktop Experience)
+  ansible.windows.win_feature:
+    name: [Server-Media-Foundation, NET-Framework-45-Core, NET-Framework-45-ASPNET, NET-WCF-HTTP-Activation45,
+           NET-WCF-Pipe-Activation45, NET-WCF-TCP-Activation45, NET-WCF-TCP-PortSharing45, RPC-over-HTTP-proxy,
+           RSAT-Clustering, RSAT-Clustering-CmdInterface, RSAT-Clustering-Mgmt, RSAT-Clustering-PowerShell,
+           WAS-Process-Model, Web-Asp-Net45, Web-Basic-Auth, Web-Client-Auth, Web-Digest-Auth, Web-Dir-Browsing,
+           Web-Dyn-Compression, Web-Http-Errors, Web-Http-Logging, Web-Http-Redirect, Web-Http-Tracing, Web-ISAPI-Ext,
+           Web-ISAPI-Filter, Web-Metabase, Web-Mgmt-Console, Web-Mgmt-Service, Web-Net-Ext45, Web-Request-Monitor,
+           Web-Server, Web-Stat-Compression, Web-Static-Content, Web-Windows-Auth, Web-WMI, Windows-Identity-Foundation,
+           RSAT-ADDS]
+  register: features
+
+- name: Restart after the features
+  ansible.windows.win_reboot:
+    reboot_timeout: 1200
+  when: features.reboot_required
+
+- name: Prerequisite installers to the server
+  ansible.windows.win_copy:
+    src: "{{ exchange_media_dir }}/{{ item }}"
+    dest: C:\Windows\Temp\ludius-exchange\
+  loop: [vcredist2012_x64.exe, vcredist2013_x64.exe, rewrite_amd64_en-US.msi]
+
+- name: Visual C++ 2012 and 2013 runtimes, IIS URL Rewrite
+  ansible.windows.win_package:
+    path: C:\Windows\Temp\ludius-exchange\{{ item.file }}
+    product_id: "{{ item.id | default(omit) }}"
+    arguments: "{{ item.args | default(omit) }}"
+    creates_path: "{{ item.creates | default(omit) }}"
+  loop:
+    - { file: vcredist2012_x64.exe, args: /install /quiet /norestart, creates: C:\Windows\System32\msvcr110.dll }
+    - { file: vcredist2013_x64.exe, args: /install /quiet /norestart, creates: C:\Windows\System32\msvcr120.dll }
+    - { file: rewrite_amd64_en-US.msi, creates: C:\Windows\System32\inetsrv\rewrite.dll }
+  loop_control:
+    label: "{{ item.file }}"
+  register: prereqs
+
+- name: Exchange media drive (the CD holding Setup.exe and UCMARedist)
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      $d = Get-Volume | Where-Object { $_.DriveLetter -and (Test-Path "$($_.DriveLetter):\Setup.exe") -and
+        (Test-Path "$($_.DriveLetter):\UCMARedist\Setup.exe") } | Select-Object -First 1
+      if (-not $d) { throw 'Exchange ISO not attached' }
+      $Ansible.Result = "$($d.DriveLetter):"
+  register: media
+
+- name: UCMA 4.0 runtime (from the Exchange media)
+  ansible.windows.win_package:
+    path: '{{ media.result }}\UCMARedist\Setup.exe'
+    arguments: /quiet /norestart
+    creates_path: C:\Program Files\Microsoft UCMA 4.0\Runtime\Uninstaller\Setup.exe
+  register: ucma
+
+- name: Restart after the prerequisites
+  ansible.windows.win_reboot:
+    reboot_timeout: 1200
+  when: prereqs.results | selectattr('reboot_required', 'defined') | selectattr('reboot_required') | list or ucma.reboot_required | default(false)
+
+- name: Exchange installed?
+  ansible.windows.win_stat:
+    path: C:\Program Files\Microsoft\Exchange Server\V15\Bin\ExSetup.exe
+  register: exsetup
+
+# AD preparation (schema, organisation) runs inside the first install; runas gives Setup the domain admin's network
+# credentials, which a WinRM logon doesn't carry. ~60 to 90 min.
+- name: Exchange SE Mailbox role, unattended, trial (no product key)
+  ansible.windows.win_command: >-
+    {{ media.result }}\Setup.exe /Mode:Install /Roles:Mailbox /OrganizationName:"{{ exchange_org }}"
+    /IAcceptExchangeServerLicenseTerms_DiagnosticDataOFF
+  become: true
+  async: 10800
+  poll: 60
+  when: not exsetup.stat.exists
+
+- name: Restart after Setup
+  ansible.windows.win_reboot:
+    reboot_timeout: 1800
+  when: not exsetup.stat.exists
+
+- name: Range certificate, client URLs, EWS access, mailboxes, range-only transport
+  ansible.windows.win_powershell:
+    script: |
+      param($domain, $ip, $people, $svc)
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+      Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
+      $mail, $auto, $fqdn = "mail.$domain", "autodiscover.$domain", "ex01.$domain"
+      # Self-signed, also valid for the address (the controller on the node connects by IP: no range DNS there).
+      $c = Get-ChildItem Cert:\LocalMachine\My | Where-Object FriendlyName -eq 'Ludius range mail' | Select-Object -First 1
+      if (-not $c) {
+        $c = New-SelfSignedCertificate -CertStoreLocation Cert:\LocalMachine\My -Subject "CN=$mail" `
+          -FriendlyName 'Ludius range mail' -KeyAlgorithm RSA -KeyLength 2048 -KeyExportPolicy NonExportable `
+          -NotAfter (Get-Date).AddYears(5) -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.1",
+          "2.5.29.17={text}DNS=$mail&DNS=$auto&DNS=$fqdn&DNS=ex01&IPAddress=$ip")
+        $Ansible.Changed = $true
+      }
+      if ((Get-ExchangeCertificate -Thumbprint $c.Thumbprint).Services -notmatch 'IIS') {
+        Enable-ExchangeCertificate -Thumbprint $c.Thumbprint -Services IIS,SMTP -Force -Confirm:$false
+        $Ansible.Changed = $true
+      }
+      $pem = "-----BEGIN CERTIFICATE-----`n" + [Convert]::ToBase64String($c.RawData, 'InsertLineBreaks') + "`n-----END CERTIFICATE-----`n"
+      [IO.File]::WriteAllText('C:\Windows\Temp\range-mail.crt', $pem)
+      # Clients: Autodiscover SCP and every virtual directory on the mail names.
+      $srv = $env:COMPUTERNAME
+      Set-ClientAccessService $srv -AutoDiscoverServiceInternalUri "https://$auto/Autodiscover/Autodiscover.xml"
+      Get-OwaVirtualDirectory -Server $srv | Set-OwaVirtualDirectory -InternalUrl "https://$mail/owa"
+      Get-EcpVirtualDirectory -Server $srv | Set-EcpVirtualDirectory -InternalUrl "https://$mail/ecp"
+      Get-OabVirtualDirectory -Server $srv | Set-OabVirtualDirectory -InternalUrl "https://$mail/OAB"
+      Get-ActiveSyncVirtualDirectory -Server $srv | Set-ActiveSyncVirtualDirectory -InternalUrl "https://$mail/Microsoft-Server-ActiveSync"
+      Get-MapiVirtualDirectory -Server $srv | Set-MapiVirtualDirectory -InternalUrl "https://$mail/mapi" -IISAuthenticationMethods Ntlm,Negotiate
+      Get-OutlookAnywhere -Server $srv | Set-OutlookAnywhere -InternalHostname $mail -InternalClientsRequireSsl $true -InternalClientAuthenticationMethod Ntlm
+      $ews = Get-WebServicesVirtualDirectory -Server $srv
+      if (-not $ews.BasicAuthentication) { $Ansible.Changed = $true; $iis = $true }
+      $ews | Set-WebServicesVirtualDirectory -InternalUrl "https://$mail/EWS/Exchange.asmx" -BasicAuthentication $true
+      if (-not (Get-ManagementRoleAssignment -RoleAssignee $svc -Role ApplicationImpersonation -ErrorAction SilentlyContinue)) {
+        New-ManagementRoleAssignment -Name 'Ludius EWS impersonation' -Role ApplicationImpersonation -User $svc | Out-Null
+        $Ansible.Changed = $true
+      }
+      # Every narrative person logs in (no licence cap on Exchange).
+      foreach ($u in $people) {
+        if (-not (Get-Mailbox $u -ErrorAction SilentlyContinue)) { Enable-Mailbox $u | Out-Null; $Ansible.Changed = $true }
+      }
+      # Range boundary.
+      Get-SendConnector | ForEach-Object { Remove-SendConnector $_.Identity -Confirm:$false; $Ansible.Changed = $true }
+      Get-AcceptedDomain | Where-Object DomainName -ne $domain | ForEach-Object { Remove-AcceptedDomain $_.Identity -Confirm:$false; $Ansible.Changed = $true }
+      if (-not (Get-TransportRule 'Ludius range only' -ErrorAction SilentlyContinue)) {
+        New-TransportRule 'Ludius range only' -SentToScope NotInOrganization -Priority 0 `
+          -RejectMessageReasonText "Delivery outside $domain is not allowed" -RejectMessageEnhancedStatusCode '5.7.1' | Out-Null
+        $Ansible.Changed = $true
+      }
+      Enable-TransportRule 'Ludius range only'
+      if ($iis) { iisreset /noforce | Out-Null }
+    parameters:
+      domain: "{{ domain }}"
+      ip: "{{ ex01_ip }}"
+      people: "{{ people | map(attribute='user') | list }}"
+      svc: "{{ ews_user }}"
+  become: true
+
+- name: Range boundary and mailboxes asserted, outside probe rejected and never sent
+  ansible.windows.win_powershell:
+    script: |
+      param($domain, $people)
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+      Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
+      if (Get-SendConnector) { throw 'a send connector exists' }
+      $ad = @(Get-AcceptedDomain | ForEach-Object { "$($_.DomainName)" })
+      if ($ad.Count -ne 1 -or $ad[0] -ne $domain) { throw "accepted domains: $($ad -join ', ')" }
+      $r = Get-TransportRule 'Ludius range only'
+      if ($r.State -ne 'Enabled' -or "$($r.SentToScope)" -ne 'NotInOrganization' -or -not $r.RejectMessageReasonText) { throw 'transport rule not as set' }
+      $missing = @($people | Where-Object { -not (Get-Mailbox $_ -ErrorAction SilentlyContinue) })
+      if ($missing) { throw "no mailbox: $($missing -join ', ')" }
+      # Probe: a mail to an outside address, dropped into the pickup folder like any submission.
+      $id = "<probe-$([guid]::NewGuid().ToString('N'))@$domain>"
+      $pickup = (Get-TransportService $env:COMPUTERNAME).PickupDirectoryPath.PathName
+      $eml = "From: postmaster@$domain`r`nTo: probe@example.com`r`nSubject: Ludius range boundary probe`r`nMessage-ID: $id`r`n`r`nprobe`r`n"
+      [IO.File]::WriteAllText((Join-Path $pickup "ludius-probe.eml"), $eml)
+      $deadline = (Get-Date).AddMinutes(5)
+      do {
+        Start-Sleep 10
+        $ev = @(Get-MessageTrackingLog -MessageId $id -Start (Get-Date).AddMinutes(-15) -ErrorAction SilentlyContinue)
+      } until (($ev.EventId -contains 'FAIL') -or (Get-Date) -gt $deadline)
+      if ($ev.EventId -notcontains 'FAIL') { throw "probe not rejected: $($ev.EventId -join ',')" }
+      if ($ev | Where-Object { $_.EventId -in 'SEND', 'SENDEXTERNAL' }) { throw 'probe was sent' }
+      if (Get-Queue | Where-Object { $_.NextHopDomain -like '*example.com*' -and $_.MessageCount -gt 0 }) { throw 'probe queued' }
+      $Ansible.Result = "rejected: $(($ev | Where-Object EventId -eq FAIL | Select-Object -First 1).RecipientStatus)"
+    parameters:
+      domain: "{{ domain }}"
+      people: "{{ people | map(attribute='user') | list }}"
+  become: true
+  register: boundary
+
+- name: Boundary probe result
+  ansible.builtin.debug:
+    var: boundary.result
+
+- name: Range mail certificate to the control node (clients trust it, the controller verifies EWS with it)
+  ansible.builtin.fetch:
+    src: C:\Windows\Temp\range-mail.crt
+    dest: "{{ range_tls_ca }}"
+    flat: true
+
+- name: Exchange done
+  ansible.builtin.set_fact:
+    exchange_done: true

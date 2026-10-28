@@ -2,7 +2,8 @@ $ErrorActionPreference = 'Stop'
 # Run as SYSTEM by the guest agent after bring-up, also after a failed one: the bring-up admin can't log on and WinRM no
 # longer listens. Safe when bootstrap only got part way (no account yet). The disabled account and the stopped service
 # stay visible to a trainee (forensic footprint; known infrastructure).
-$u = Get-LocalUser '{{ range_admin_user }}' -ErrorAction SilentlyContinue
+# range_admin_user empty: no local account to close (a domain controller has none).
+$u = if ('{{ range_admin_user }}') { Get-LocalUser '{{ range_admin_user }}' -ErrorAction SilentlyContinue }
 if ($u) { Disable-LocalUser $u.Name }
 Stop-Service WinRM -Force
 Set-Service WinRM -StartupType Disabled

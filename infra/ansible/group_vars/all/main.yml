@@ -45,8 +45,47 @@ bringup_teardown: true # after bring-up: bring-up account disabled, WinRM stoppe
 observer_check_cmd: uv run --project {{ playbook_dir }}/../../controller ludius # channel check through the host agent
 narrative_file: "{{ playbook_dir }}/../../runs/world/narrative.yaml" # the planner's company narrative
 people: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).people }}" # name, user: AD users, mailboxes
-range_tls_ca: "{{ playbook_dir }}/build/range-ca.crt" # srv01's grommunio CA, fetched by the srv01 role
+range_tls_ca: "{{ playbook_dir }}/build/range-ca.crt" # grommunio's CA or Exchange's self-signed cert, fetched by its role
 grommunio_login_mailboxes: 5 # community licence cap on log-in mailboxes; raise only with a grommunio licence installed
+# Range mail server. exchange: Windows Server 2025 evaluation DC (dc01, VM srv01_vmid at srv01_ip: AD, DNS, time) plus
+# an Exchange SE trial member server (ex01); every narrative person gets a log-in mailbox. grommunio: srv01 (Debian,
+# Samba AD + grommunio), personas capped at grommunio_login_mailboxes. The controller's LUDIUS_MAIL_BACKEND must match.
+mail_backend: exchange
+login_mailbox_cap: "{{ grommunio_login_mailboxes if mail_backend == 'grommunio' else 99 }}"
+range_servers: >-
+  {{ [[srv01_vmid | int, 'ludius-srv01']] if mail_backend == 'grommunio'
+     else [[srv01_vmid | int, 'ludius-dc01'], [ex01_vmid | int, 'ludius-ex01']] }}
+ex01_vmid: 111
+ex01_ip: "{{ range_net }}.12"
+# Windows Server 2025 Evaluation (180 days; activated online through the build bridge within 10 days, else it shuts
+# down hourly), from Microsoft's Evaluation Center, en-US; image 2 = Standard with Desktop Experience.
+winsrv_iso: ws2025-eval.iso # in local:iso
+winsrv_iso_url: https://software-static.download.prss.microsoft.com/dbazure/998969d5-f34g-4e03-ac9d-1f9786c66749/26100.32230.260111-0550.lt_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso
+winsrv_iso_sha256: 7b052573ba7894c9924e3e87ba732ccd354d18cb75a883efa9b900ea125bfd51
+winsrv_image_index: 2
+winsrv_build_mac: { dc01: "BC:24:11:4C:55:11", ex01: "BC:24:11:4C:55:12" } # temporary uplink NICs (activation only)
+dc01_memory_mb: 4096
+ex01_memory_mb: 16384 # Microsoft recommends 128 GB for production; 16 GB runs a range of tens of mailboxes
+# Exchange media, fetched on the node (never by a guest) and checked: SE RTM ISO (KB5047155's hash) and the
+# prerequisites the docs list for Windows Server 2025 (VC++ 2012 and 2013, IIS URL Rewrite; UCMA is on the ISO).
+exchange_media_dir: /var/lib/vz/template/ludius/exchange
+exchange_media:
+  - name: ExchangeServerSE-x64.iso
+    url: https://download.microsoft.com/download/ad9b1e53-f28e-4a82-987d-6c88803795b2/ExchangeServerSE-x64.iso
+    sha256: cd2b13f2c297187776af4cff3541b4be3c677cf907cca69d85ab0e2b70377bd1
+  - name: vcredist2012_x64.exe
+    url: https://download.microsoft.com/download/1/6/b/16b06f60-3b20-4ff2-b699-5e9b7962f9ae/VSU_4/vcredist_x64.exe
+    sha256: 681be3e5ba9fd3da02c09d7e565adfa078640ed66a0d58583efad2c1e3cc4064
+  - name: vcredist2013_x64.exe
+    url: https://download.visualstudio.microsoft.com/download/pr/10912041/cee5d6bca2ddbcd039da727bf4acb48a/vcredist_x64.exe
+    sha256: a4bba7701e355ae29c403431f871a537897c363e215cafe706615e270984f17c
+  - name: rewrite_amd64_en-US.msi
+    url: https://download.microsoft.com/download/1/2/8/128E2E22-C1B9-44A4-BE2A-5859ED1D4592/rewrite_amd64_en-US.msi
+    sha256: 37342ff2f585f263f34f48e9de59eb1051d61015a8e967dbde4075716230a32a
+exchange_org: Ludius
+ews_user: ludiussvc # AD service account with ApplicationImpersonation: the controller's EWS reads and sends
+ews_password: "{{ vault_ews_password | default('') }}"
+ews_password_file: /root/.ludius-ews # written on the node (0600) for the controller's LUDIUS_EWS_PASSWORD_FILE
 debian_image_url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
 debian_image_sums: https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS
 

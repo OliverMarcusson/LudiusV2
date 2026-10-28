@@ -7,7 +7,9 @@
 
 ## Proxmox range from a bare box
 
-srv01 is built by an Ansible role from the stock Debian 13 cloud image, not a Packer template. It is one VM that is never cloned, the cloud image needs no installer automation, and it is the same image and cloud-init path `hyperv/new-srv.ps1` already uses.
+The range mail server follows `mail_backend` in `group_vars/all/main.yml`: `exchange` (the default here: `range-exchange.yml`, two Windows Server VMs, below) or `grommunio` (`range-srv01.yml`, the Debian srv01 the Hyper-V test range also uses). The controller must match: `LUDIUS_MAIL_BACKEND=exchange` (see Controller settings below), unset for grommunio.
+
+The Windows servers are installed from the ISO by Ansible, not Packer: two VMs that are never cloned, so a template buys nothing. srv01 is built by an Ansible role from the stock Debian 13 cloud image, not a Packer template. It is one VM that is never cloned, the cloud image needs no installer automation, and it is the same image and cloud-init path `hyperv/new-srv.ps1` already uses.
 
 ### Inputs
 
@@ -18,10 +20,11 @@ srv01 is built by an Ansible role from the stock Debian 13 cloud image, not a Pa
 | Signed observer and the range code-signing root, from the desktop: `pwsh infra/packer/observer-artifacts.ps1` | `out/observer/uiprobe.exe` and `secrets/range-root-ca.cer` in the repo checkout on the box |
 | Company narrative and personas: `runs/world/narrative.yaml` and one `controller/data/personas/<user>.yaml` per persona | the checkout on the box (`runs/` is gitignored, so copy it) |
 | Persona to VM id (= vsock CID) and range address | `ansible/group_vars/all/range-vms.yml` (committed; one line per persona) |
-| Secrets: `ansible/group_vars/all/vault.yml` from `vault.yml.example` (per-range bring-up admin, DC admin, grommunio admin, user password suffix, Office MAK or KMS host) | encrypted with `ansible-vault encrypt`; its password in a file named by `ANSIBLE_VAULT_PASSWORD_FILE` |
+| Exchange backend: the Windows Server 2025 evaluation ISO and the Exchange SE media (ISO, VC++ 2012/2013, URL Rewrite) | fetched by `range-exchange.yml` on the node and checked against the sha256 sums in `group_vars/all/main.yml` (WS2025 eval `26100.32230.260111-0550` en-US from the Evaluation Center, `7b0525…bfd51`; Exchange SE RTM 15.2.2562.17, KB5047155's `cd2b13…77bd1`) |
+| Secrets: `ansible/group_vars/all/vault.yml` from `vault.yml.example` (per-range bring-up admin, DC admin, grommunio admin, EWS service account, user password suffix, Office MAK or KMS host) | encrypted with `ansible-vault encrypt`; its password in a file named by `ANSIBLE_VAULT_PASSWORD_FILE` |
 | A build-only admin password for Packer (the account is disabled with a random password at the end of the build) | `PKR_VAR_admin_password` |
 
-At most 5 personas fit grommunio's community licence (log-in mailboxes); colleagues get shared mailboxes. `range-up.yml` refuses more unless `grommunio_login_mailboxes` is raised after a licence is installed.
+Exchange: every narrative person gets a log-in mailbox, no cap. grommunio: at most 5 personas fit its community licence (log-in mailboxes); colleagues get shared mailboxes. `range-up.yml` refuses more unless `grommunio_login_mailboxes` is raised after a licence is installed.
 
 ### Commands
 
@@ -47,6 +50,24 @@ About 4 to 5 hours end to end, almost all of it unattended (Windows updates and 
 
 - Bridges: `vmbr1` (range, `10.77.0.0/24`, no ports, forwarding dropped; the host is `.1`), `vmbr2` (NAT build bridge `10.78.0.0/24` with DHCP, for the image build and srv01's apt).
 - Template 9000: Windows 10 Pro, updates baked in, Windows Update, Defender's scheduled scans and automatic maintenance off, Office 2024, Temurin with the Access Bridge, virtio-win including viosock, the signed observer, sysprepped.
-- Pool `ludius`: the template, srv01 and every clone; an existing VM id outside it, or under another name, is refused.
+- Pool `ludius`: the template, the range servers and every clone; an existing VM id outside it, or under another name, is refused.
 - srv01 (VM 110, `10.77.0.11`, hostname `srv01`): range NIC only; an uplink NIC on `vmbr2` is attached only while it is provisioned and detached on the host afterwards whatever happened (srv01 is stopped if the detach cannot be confirmed), then the guest is checked for routes off the range. Samba AD `corp.ludius.test`, chrony as the range time source, grommunio with an outbound SMTP drop, one AD user and mailbox per narrative person.
+- Exchange backend, both range NIC only, both Windows Server 2025 Standard Evaluation (180 days) from the ISO, unattended (SeaBIOS, one-off answer ISO deleted after the guest agent set the vault password):
+  - dc01 (VM 110, `10.77.0.11`): AD forest `corp.ludius.test`, DNS on the range address only with no forwarders, the range time source on its own clock (w32time `NoSync`, announced reliable; members follow the domain), the range password policy (no complexity, 6+), one AD user per narrative person and the EWS service account `ludiussvc`, `mail`/`autodiscover` at ex01.
+  - ex01 (VM 111, `10.77.0.12`, 16 GB): domain member, Exchange SE Mailbox role unattended with no product key (trial edition: Standard features, 180 days, then EAC reminders), a log-in mailbox per narrative person, a self-signed certificate for mail/autodiscover/ex01 and the address (fetched to `ansible/build/range-ca.crt`: the clones import it, the controller verifies EWS with it), internal URLs and the Autodiscover SCP on the mail names, EWS Basic auth over TLS, ApplicationImpersonation for `ludiussvc`. Range boundary: no send connector, `corp.ludius.test` the only accepted domain, a transport rule rejecting every recipient outside the organisation, all asserted, and a probe mail to `probe@example.com` through the pickup folder that must FAIL in message tracking and never be sent.
+  - Two VMs rather than one: Microsoft does not recommend Exchange on a DC and a DC role change after Exchange is unsupported; 4 + 16 GB beside 8 personas at 8 GB is 84 of the box's 128 GB.
+  - Each gets an uplink NIC on `vmbr2` only for its online evaluation activation (required within 10 days, else hourly shutdowns), detached host-side whatever happened (stopped if that can't be confirmed), then checked in the guest for any route off the range. The Exchange media never pass through a guest uplink: they are fetched on the node, the ISO goes in as a CD, the installers over WinRM. At the end WinRM is off on both and ex01's local Administrator disabled, through the guest agent; a server that can't be closed is stopped.
+  - Personas: DNS and domain from dc01; Outlook builds its profile from Autodiscover at first start (`ZeroConfigExchange` in the persona hive).
 - Persona VMs (ids and addresses from `range-vms.yml`): linked clones; on every run, before any start, one NIC on `vmbr1`, a `vhost-vsock-pci` device (CID = VM id) and a fixed 1920x1080 display, asserted from the running config. Joined as `WS-<USER>01`, autologon as `CORP\<user>`, persona hive settings, inactivity lock, the observer started with `--transport vsock` and checked through the host agent (`ludius observe`). Then, whether bring-up succeeded or not, the per-range bring-up admin is disabled and WinRM stopped on every bootstrapped clone through the guest agent; a clone that cannot be closed is stopped.
+
+### Controller settings (Exchange backend)
+
+In the repo's `.env` on the node (gitignored):
+
+```sh
+LUDIUS_MAIL_BACKEND=exchange
+LUDIUS_EWS_URL=https://10.77.0.12/EWS/Exchange.asmx      # by address: the node has no range DNS; the certificate covers it
+LUDIUS_EWS_USER=ludiussvc@corp.ludius.test
+LUDIUS_EWS_PASSWORD_FILE=/root/.ludius-ews               # written by range-exchange.yml from the vault, 0600
+LUDIUS_EWS_CA=<checkout>/infra/ansible/build/range-ca.crt
+```

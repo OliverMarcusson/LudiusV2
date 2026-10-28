@@ -1,0 +1,99 @@
+---
+# One range server VM (s: host, vmid, name, ip, dns, mac, memory, disk, password; from range-exchange.yml), on the
+# node. A new VM installs unattended from the evaluation ISO with a one-off answer ISO; every run then asserts range
+# NIC only before the start, and the guest agent sets the range address, the vault password and WinRM (bootstrap).
+# Out: the server in the inventory group winsrv.
+- name: Answer ISO and VM, {{ s.name }}
+  when: (s.vmid | int) not in pve_vms
+  block:
+    - name: Answer file folder, {{ s.name }}
+      ansible.builtin.tempfile:
+        state: directory
+      register: answer_dir
+
+    - name: Answer file, {{ s.name }}
+      ansible.builtin.template:
+        src: winsrv-autounattend.xml.j2
+        dest: "{{ answer_dir.path }}/autounattend.xml"
+        mode: "0600"
+      vars:
+        # One-off (complexity-safe): replaced through the guest agent before anything else uses the server.
+        oneoff: "{{ lookup('ansible.builtin.password', '/dev/null', length=20, chars=['ascii_letters', 'digits']) }}aA1!"
+      no_log: true
+
+    - name: Answer ISO, {{ s.name }}
+      ansible.builtin.command: >-
+        genisoimage -quiet -J -r -V AUTOUNATTEND -o /var/lib/vz/template/iso/{{ s.name }}-answer.iso
+        {{ answer_dir.path }}/autounattend.xml
+      changed_when: true
+
+    - name: Answer ISO readable by root only, folder gone, {{ s.name }}
+      ansible.builtin.shell: chmod 0600 /var/lib/vz/template/iso/{{ s.name }}-answer.iso && rm -rf {{ answer_dir.path }}
+      changed_when: true
+
+    - name: Create the VM, range NIC only, {{ s.name }}
+      ansible.builtin.command: >-
+        qm create {{ s.vmid }} --name {{ s.name }} --pool {{ range_pool }} --ostype win11 --cores 4
+        --memory {{ s.memory }} --cpu host --scsihw virtio-scsi-single --agent 1
+        --scsi0 {{ storage }}:{{ s.disk }},discard=on,iothread=1
+        --ide2 local:iso/{{ winsrv_iso }},media=cdrom --ide0 local:iso/virtio-win.iso,media=cdrom
+        --sata0 local:iso/{{ s.name }}-answer.iso,media=cdrom --boot 'order=scsi0;ide2'
+        --net0 virtio={{ s.mac }},bridge={{ range_bridge }} --onboot 1
+      changed_when: true
+
+- name: Range NIC only, asserted before every start, {{ s.name }}
+  ansible.builtin.include_tasks: range-nic-only.yml
+  vars:
+    nic_vmid: "{{ s.vmid }}"
+
+- name: Expected name, {{ s.name }}
+  ansible.builtin.assert:
+    that: nic_cfg.name == s.name
+    fail_msg: VM {{ s.vmid }} is {{ nic_cfg.name }}, not {{ s.name }}
+
+- name: Start, {{ s.name }}
+  ansible.builtin.command: qm start {{ s.vmid }}
+  register: start
+  changed_when: start.rc == 0
+  failed_when: start.rc != 0 and 'already running' not in start.stderr
+
+# From here the server may have WinRM on: the close-down play in range-exchange.yml covers it whatever happens next.
+- name: Mark the server for close-down, {{ s.name }}
+  ansible.builtin.set_fact:
+    winsrv_started: "{{ (winsrv_started | default([])) + [s.vmid | int] }}"
+
+# A fresh install takes ~20 min before the guest agent answers (setup, then the one autologon installs it).
+- name: Range address, vault password and WinRM through the guest agent, {{ s.name }}
+  ansible.builtin.command:
+    argv: [qm, guest, exec, "{{ s.vmid }}", --pass-stdin, "1", --timeout, "120", --, powershell.exe, -NoProfile,
+           -NonInteractive, -EncodedCommand, "{{ lookup('ansible.builtin.template', 'winsrv-bootstrap.ps1.j2') | b64encode(encoding='utf-16-le') }}"]
+    stdin: "{{ s.password }}"
+  register: boot
+  until: boot.rc == 0 and (boot.stdout | from_json).exitcode | default(1) == 0
+  retries: 120
+  delay: 20
+  changed_when: true
+  no_log: true
+
+- name: Answer ISO ejected (live) and deleted (its one-off password is void now), {{ s.name }}
+  ansible.builtin.shell: |
+    set -eo pipefail
+    if qm config {{ s.vmid }} | grep -q '^sata0:.*answer'; then qm set {{ s.vmid }} --sata0 none,media=cdrom; fi
+    rm -f /var/lib/vz/template/iso/{{ s.name }}-answer.iso
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Server in the inventory, {{ s.name }}
+  ansible.builtin.add_host:
+    name: "{{ s.host }}"
+    groups: winsrv
+    ansible_host: "{{ s.ip }}"
+    ansible_user: Administrator
+    ansible_password: "{{ s.password }}"
+    ansible_connection: winrm
+    ansible_winrm_transport: ntlm
+    ansible_port: 5985
+    ansible_winrm_operation_timeout_sec: 120
+    ansible_winrm_read_timeout_sec: 150
+  no_log: true

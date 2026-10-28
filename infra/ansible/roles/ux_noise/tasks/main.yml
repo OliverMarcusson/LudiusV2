@@ -2,6 +2,7 @@
 # ux_noise and the per-user accessibility part, in the persona's own hive after its first logon (spec section 7).
 # Same values as provision.ps1's $roles: no minimize/taskbar animations, 100% scaling, no toasts over tasks, access
 # keys always underlined; and the Java Access Bridge enabled for the persona (what `jabswitch -enable` writes).
+# Outlook builds the persona's profile silently from Autodiscover at first start (ZeroConfigExchange).
 # Read at logon: they apply from the persona's next logon (range-up.yml restarts afterwards).
 - name: Persona hive settings
   ansible.windows.win_powershell:
@@ -21,6 +22,9 @@
       Set-ItemProperty "$hive\Control Panel\Desktop" Win8DpiScaling 1 -Type DWord
       Set-ItemProperty $push ToastEnabled 0 -Type DWord
       Set-ItemProperty $cues On '1'
+      $zc = "$hive\Software\Policies\Microsoft\Office\16.0\Outlook\AutoDiscover"
+      if (-not (Test-Path $zc)) { New-Item $zc -Force | Out-Null }
+      Set-ItemProperty $zc ZeroConfigExchange 1 -Type DWord
       $home_ = (Get-CimInstance Win32_UserProfile | Where-Object SID -eq $sid).LocalPath
       Set-Content "$home_\.accessibility.properties" "assistive_technologies=com.sun.java.accessibility.AccessBridge`r`nscreen_magnifier_present=true" -Encoding ASCII
     parameters:

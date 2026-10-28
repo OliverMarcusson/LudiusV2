@@ -1,0 +1,73 @@
+---
+# Evaluation activation (s from range-exchange.yml), on the node, through the guest agent only: the evaluation must be
+# activated online within 10 days or the server shuts down hourly. If not activated yet, an uplink NIC on the build
+# bridge is attached for slmgr /ato alone and detached on the host whatever happened (range-nic-only.yml; the VM is
+# stopped if the detach can't be confirmed); then the guest is checked for any route off the range.
+# Out: winsrv_failures (appended).
+- name: Activated already? {{ s.name }}
+  ansible.builtin.command:
+    argv: [qm, guest, exec, "{{ s.vmid }}", --timeout, "60", --, powershell.exe, -NoProfile, -NonInteractive, -Command, "{{ licensed }}"]
+  vars:
+    licensed: >-
+      if ((Get-CimInstance SoftwareLicensingProduct -Filter "PartialProductKey IS NOT NULL AND Name LIKE 'Windows%'"
+      | Where-Object LicenseStatus -eq 1)) { exit 0 } else { exit 1 }
+  register: lic
+  changed_when: false
+  failed_when: lic.rc != 0
+
+- name: Activate through a temporary uplink, {{ s.name }}
+  when: (lic.stdout | from_json).exitcode | default(1) != 0
+  block:
+    - name: Uplink NIC on the build bridge, {{ s.name }}
+      ansible.builtin.command: qm set {{ s.vmid }} --net1 virtio={{ winsrv_build_mac[s.host] }},bridge={{ build_bridge }}
+      changed_when: true
+
+    - name: Online activation, {{ s.name }}
+      ansible.builtin.command:
+        argv: [qm, guest, exec, "{{ s.vmid }}", --timeout, "180", --, powershell.exe, -NoProfile, -NonInteractive,
+               -Command, "{{ activate }}"]
+      vars:
+        activate: >-
+          cscript //nologo $env:windir\System32\slmgr.vbs /ato | Out-Null;
+          if ((Get-CimInstance SoftwareLicensingProduct -Filter "PartialProductKey IS NOT NULL AND Name LIKE 'Windows%'"
+          | Where-Object LicenseStatus -eq 1)) { exit 0 } else { exit 1 }
+      register: act
+      retries: 12
+      delay: 20
+      until: act.rc == 0 and (act.stdout | from_json).exitcode | default(1) == 0
+      changed_when: true
+  rescue:
+    - name: Record it (the detach still runs), {{ s.name }}
+      ansible.builtin.set_fact:
+        winsrv_failures: "{{ winsrv_failures | default([]) + [s.name ~ ': activation failed'] }}"
+  always:
+    - name: Uplink off (host side), else stop the server, {{ s.name }}
+      block:
+        - name: Range NIC only, {{ s.name }}
+          ansible.builtin.include_tasks: range-nic-only.yml
+          vars:
+            nic_vmid: "{{ s.vmid }}"
+      rescue:
+        - name: Stop the server (its uplink could not be confirmed gone), {{ s.name }}
+          ansible.builtin.command: qm stop {{ s.vmid }}
+          changed_when: true
+          failed_when: false
+
+        - name: Fail after stopping it, {{ s.name }}
+          ansible.builtin.fail:
+            msg: "{{ s.name }}'s uplink NIC could not be detached; it was stopped. Check qm config {{ s.vmid }}."
+
+- name: No default route and no route off the range in the guest, {{ s.name }}
+  ansible.builtin.command:
+    argv: [qm, guest, exec, "{{ s.vmid }}", --timeout, "60", --, powershell.exe, -NoProfile, -NonInteractive, -Command, "{{ routes }}"]
+  vars:
+    routes: >-
+      $off = Get-NetRoute -ErrorAction SilentlyContinue | Where-Object {
+      $_.DestinationPrefix -in '0.0.0.0/0', '::/0' -or ($_.AddressFamily -eq 'IPv4' -and $_.DestinationPrefix -notmatch
+      '^(10\.77\.0\.[0-9]+/(24|32)|127\.|224\.0\.0\.0/4|255\.255\.255\.255/32)') };
+      if ($off) { $off | ForEach-Object DestinationPrefix; exit 1 } else { exit 0 }
+  register: routes_out
+  retries: 12
+  delay: 5
+  until: routes_out.rc == 0 and (routes_out.stdout | from_json).exitcode | default(1) == 0
+  changed_when: false

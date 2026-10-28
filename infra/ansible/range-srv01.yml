@@ -1,0 +1,174 @@
+---
+# Range mail server for mail_backend: grommunio (imported by range-up.yml after its validation play, which sets
+# pve_node and pve_vms and checked the ids): srv01 from the stock Debian 13 cloud image + the srv01 role (Samba AD,
+# chrony, grommunio), with an uplink only while it is provisioned.
+- name: Srv01 VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    srv01_key: /root/.ssh/ludius_srv01
+    srv01_image: /var/lib/vz/template/ludius/debian-13-genericcloud-amd64.qcow2
+    srv01_user_data: ludius-srv01-user.yaml
+  tasks:
+    - name: Srv01 SSH key
+      ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -C ludius@srv01 -f {{ srv01_key }}
+      args:
+        creates: "{{ srv01_key }}"
+
+    # Proxmox's own cloud-init user-data names the host after the VM (ludius-srv01) and rewrites /etc/hosts at boot;
+    # this snippet replaces it: hostname srv01 (what the domain was provisioned with), /etc/hosts left to the role,
+    # no package upgrade at first boot (srv01 has no uplink then).
+    - name: Srv01 cloud-init user-data
+      ansible.builtin.copy:
+        dest: /var/lib/vz/snippets/{{ srv01_user_data }}
+        mode: "0644"
+        content: |
+          #cloud-config
+          hostname: srv01
+          fqdn: srv01.{{ domain }}
+          prefer_fqdn_over_hostname: false
+          manage_etc_hosts: false
+          package_update: false
+          package_upgrade: false
+          users:
+            - name: ludius
+              groups: [sudo]
+              shell: /bin/bash
+              sudo: 'ALL=(ALL) NOPASSWD:ALL'
+              lock_passwd: true
+              ssh_authorized_keys: ['{{ lookup('ansible.builtin.file', srv01_key ~ '.pub') }}']
+          ssh_pwauth: false
+
+    - name: Create srv01
+      when: (srv01_vmid | int) not in pve_vms
+      block:
+        - name: Image folder
+          ansible.builtin.file:
+            path: "{{ srv01_image | dirname }}"
+            state: directory
+            mode: "0755"
+
+        - name: Debian 13 cloud image, checked against Debian's SHA512SUMS
+          ansible.builtin.get_url:
+            url: "{{ debian_image_url }}"
+            dest: "{{ srv01_image }}"
+            checksum: "sha512:{{ debian_image_sums }}"
+            mode: "0644"
+
+        - name: Srv01 VM, range NIC only (the uplink is attached while provisioning)
+          ansible.builtin.command: >-
+            qm create {{ srv01_vmid }} --name ludius-srv01 --pool {{ range_pool }} --ostype l26 --cores 2
+            --memory 3072 --cpu host --scsihw virtio-scsi-single
+            --scsi0 {{ storage }}:0,import-from={{ srv01_image }},discard=on
+            --ide2 {{ storage }}:cloudinit --boot order=scsi0 --serial0 socket --vga serial0
+            --net0 virtio,bridge={{ range_bridge }} --ipconfig0 ip={{ srv01_ip }}/24 --onboot 1
+          changed_when: true
+
+        - name: Srv01 disk 24G (cloud-init grows the root partition)
+          ansible.builtin.command: qm disk resize {{ srv01_vmid }} scsi0 24G
+          changed_when: true
+
+    - name: Srv01 range NIC only and cloud-init, asserted before every start
+      ansible.builtin.include_tasks: tasks/range-nic-only.yml
+      vars:
+        nic_vmid: "{{ srv01_vmid }}"
+        nic_extra: [--cicustom, "user=local:snippets/{{ srv01_user_data }}", --ciupgrade, "0", --ipconfig0, "ip={{ srv01_ip }}/24"]
+
+    - name: Srv01 running
+      ansible.builtin.command: qm start {{ srv01_vmid }}
+      register: start
+      changed_when: start.rc == 0
+      failed_when: start.rc != 0 and 'already running' not in start.stderr
+
+    - name: Srv01 SSH up on the range address
+      ansible.builtin.wait_for:
+        host: "{{ srv01_ip }}"
+        port: 22
+        timeout: 600
+
+    - name: Srv01 in the inventory
+      ansible.builtin.add_host:
+        name: srv01
+        ansible_host: "{{ srv01_ip }}"
+        ansible_user: ludius
+        ansible_ssh_private_key_file: "{{ srv01_key }}"
+        ansible_ssh_common_args: -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/ludius_known_hosts
+
+# Guest work runs as srv01's own host, never delegated from localhost: a failed or unreachable srv01 only drops srv01
+# from the run (localhost is in this play so the run goes on), and the host-side detach in the next play runs whatever
+# happened to the guest. A delegated task that can't reach srv01 would mark localhost unreachable and skip it.
+- name: Srv01 (Samba AD, NTP, grommunio), uplink only while provisioning
+  hosts: localhost:srv01
+  gather_facts: false
+  tasks:
+    - name: Attach the uplink NIC (host side)
+      when: inventory_hostname == 'localhost'
+      block:
+        - name: Uplink NIC on the build bridge
+          ansible.builtin.command: qm set {{ srv01_vmid }} --net1 virtio={{ srv01_build_mac }},bridge={{ build_bridge }}
+          changed_when: true
+      rescue:
+        - name: Record it (the detach still runs)
+          ansible.builtin.set_fact:
+            srv01_failures: "{{ srv01_failures | default([]) + ['uplink attach: ' ~ ansible_failed_result.msg | default('failed')] }}"
+
+    - name: Provision srv01 through the uplink
+      when: inventory_hostname == 'srv01'
+      become: true
+      block:
+        - name: Uplink up in the guest
+          ansible.builtin.include_tasks: tasks/srv01-uplink-guest.yml
+          vars:
+            uplink: present
+
+        - name: Srv01 role
+          ansible.builtin.include_role:
+            name: srv01
+
+        - name: Srv01 provisioned
+          ansible.builtin.set_fact:
+            srv01_provisioned: true
+
+- name: Srv01 uplink off (host side), then srv01's verdict
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Detach the uplink NIC (host side, no guest involved), else stop srv01
+      block:
+        - name: Range NIC only
+          ansible.builtin.include_tasks: tasks/range-nic-only.yml
+          vars:
+            nic_vmid: "{{ srv01_vmid }}"
+      rescue:
+        - name: Stop srv01 (its uplink could not be confirmed gone)
+          ansible.builtin.command: qm stop {{ srv01_vmid }}
+          register: srv01_stop
+          changed_when: true
+          failed_when: false
+
+        - name: Fail after stopping srv01
+          ansible.builtin.fail:
+            msg: >-
+              srv01's uplink NIC could not be detached;
+              {{ 'srv01 was stopped' if srv01_stop.rc == 0 else 'qm stop also failed, srv01 may still have its uplink' }}.
+              Check qm config {{ srv01_vmid }}.
+
+    - name: No off-range route left in the guest (after the detach; skipped if srv01 is unreachable)
+      ansible.builtin.include_tasks:
+        file: tasks/srv01-uplink-guest.yml
+        apply:
+          delegate_to: srv01
+          become: true
+          ignore_unreachable: true
+      vars:
+        uplink: absent
+
+    - name: Srv01 provisioned (a failed or unreachable srv01 fails the run here, after the detach)
+      ansible.builtin.assert:
+        that:
+          - srv01_failures | default([]) | length == 0
+          - hostvars['srv01'].srv01_provisioned | default(false)
+        fail_msg: >-
+          srv01 was not provisioned ({{ srv01_failures | default([]) | join('; ') or 'its tasks failed or it was unreachable, see above' }});
+          its uplink NIC is detached.

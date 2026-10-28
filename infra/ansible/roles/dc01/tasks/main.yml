@@ -1,0 +1,118 @@
+---
+# dc01 (mail_backend exchange), over WinRM as Administrator: new AD forest corp.ludius.test with its DNS answering on
+# the range address only and no forwarders (the range has no way out), the range time source on its own clock (no
+# upstream; members follow the domain hierarchy, so time-jump sets the range here first), the range's simple password
+# policy (as srv01's Samba), one AD user per narrative person and the EWS service account, and the mail names pointing
+# at ex01. Expects people, srv01_ip, ex01_ip, dc_admin_password, ews_user/ews_password, user_password_suffix.
+- name: AD DS role
+  ansible.windows.win_feature:
+    name: AD-Domain-Services
+    include_management_tools: true
+
+- name: Forest corp.ludius.test with DNS
+  microsoft.ad.domain:
+    dns_domain_name: "{{ domain }}"
+    domain_netbios_name: "{{ domain_netbios }}"
+    safe_mode_password: "{{ dc_admin_password }}"
+    install_dns: true
+    reboot: true
+  no_log: true
+
+- name: AD answers (Web Services up after the promotion reboot)
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      Get-ADDomain | Out-Null
+  register: adws
+  retries: 30
+  delay: 20
+  until: adws is succeeded
+
+- name: Range password policy, DNS on the range address only, no forwarders
+  ansible.windows.win_powershell:
+    script: |
+      param($ip)
+      $Ansible.Changed = $false
+      Set-ADDefaultDomainPasswordPolicy -Identity $env:USERDNSDOMAIN -ComplexityEnabled $false -MinPasswordLength 6 `
+        -MaxPasswordAge ([TimeSpan]::Zero) -PasswordHistoryCount 0
+      $s = Get-DnsServerSetting -All
+      if (@($s.ListeningIPAddress) -join ',' -ne $ip) { $s.ListeningIPAddress = @($ip); Set-DnsServerSetting $s; $Ansible.Changed = $true }
+      if ((Get-DnsServerForwarder).IPAddress) { Get-DnsServerForwarder | Remove-DnsServerForwarder -Force; $Ansible.Changed = $true }
+      Set-DnsClientServerAddress -InterfaceAlias (Get-NetIPAddress -IPAddress $ip).InterfaceAlias -ServerAddresses $ip
+    parameters:
+      ip: "{{ srv01_ip }}"
+
+- name: Range time source on its own clock (PDC, no upstream, announced reliable)
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      $p = 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time'
+      $want = @{ "$p\Parameters" = @{ Type = 'NoSync' }; "$p\Config" = @{ AnnounceFlags = 5 };
+                 "$p\TimeProviders\NtpServer" = @{ Enabled = 1 } }
+      foreach ($k in $want.Keys) { foreach ($n in $want[$k].Keys) {
+        if ((Get-ItemProperty $k).$n -ne $want[$k][$n]) { Set-ItemProperty $k $n $want[$k][$n]; $Ansible.Changed = $true } } }
+      if ($Ansible.Changed) { Restart-Service W32Time }
+      w32tm /config /update | Out-Null
+      if ((w32tm /query /configuration) -notmatch 'Type: NoSync') { throw 'w32time is not NoSync' }
+
+- name: AD user per narrative person
+  microsoft.ad.user:
+    name: "{{ item.user }}"
+    sam_account_name: "{{ item.user }}"
+    upn: "{{ item.user }}@{{ domain }}"
+    firstname: "{{ item.name.split(' ', 1)[0] }}"
+    surname: "{{ item.name.split(' ', 1)[1] | default(omit) }}"
+    display_name: "{{ item.name }}"
+    email: "{{ item.user }}@{{ domain }}"
+    password: "{{ item.user }}{{ user_password_suffix }}"
+    update_password: always
+    password_never_expires: true
+    state: present
+  loop: "{{ people }}"
+  loop_control:
+    label: "{{ item.user }}"
+  no_log: true
+
+- name: EWS service account (no mailbox; impersonation is granted on ex01)
+  microsoft.ad.user:
+    name: "{{ ews_user }}"
+    sam_account_name: "{{ ews_user }}"
+    upn: "{{ ews_user }}@{{ domain }}"
+    description: Ludius mail checks (EWS)
+    password: "{{ ews_password }}"
+    update_password: always
+    password_never_expires: true
+    state: present
+  no_log: true
+
+- name: Mail and Autodiscover names at ex01
+  ansible.windows.win_powershell:
+    script: |
+      param($zone, $ip)
+      $Ansible.Changed = $false
+      foreach ($n in 'mail', 'autodiscover') {
+        $r = Get-DnsServerResourceRecord -ZoneName $zone -Name $n -RRType A -ErrorAction SilentlyContinue
+        if (@($r).Count -ne 1 -or $r.RecordData.IPv4Address.IPAddressToString -ne $ip) {
+          if ($r) { $r | Remove-DnsServerResourceRecord -ZoneName $zone -Force }
+          Add-DnsServerResourceRecordA -ZoneName $zone -Name $n -IPv4Address $ip
+          $Ansible.Changed = $true
+        }
+      }
+    parameters:
+      zone: "{{ domain }}"
+      ip: "{{ ex01_ip }}"
+
+- name: Checks (SRV records, Kerberos KDC, time service, no forwarder)
+  ansible.windows.win_powershell:
+    script: |
+      param($zone)
+      $Ansible.Changed = $false
+      if (-not (Resolve-DnsName "_ldap._tcp.$zone" -Type SRV -DnsOnly -ErrorAction SilentlyContinue)) { throw 'no LDAP SRV' }
+      if ((Get-Service kdc, W32Time, DNS | Where-Object Status -ne Running)) { throw 'kdc, W32Time or DNS not running' }
+      if ((Get-DnsServerForwarder).IPAddress) { throw 'DNS forwarder present' }
+    parameters:
+      zone: "{{ domain }}"
+
+- name: Dc01 done
+  ansible.builtin.set_fact:
+    dc01_done: true

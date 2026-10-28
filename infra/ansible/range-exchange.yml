@@ -1,0 +1,178 @@
+---
+# Range mail server for mail_backend: exchange (imported by range-up.yml; also runnable alone on the node to build or
+# re-check just the servers: ansible-playbook range-exchange.yml). Two Windows Server 2025 evaluation VMs from the ISO,
+# both range NIC only: dc01 (srv01_vmid, srv01_ip: AD forest corp.ludius.test, range DNS, range time source) and ex01
+# (ex01_vmid, ex01_ip: Exchange SE in trial mode, no key). Two VMs, not one: Microsoft does not recommend Exchange on a
+# DC and a DC role change after Exchange is unsupported; 4 + 16 GB beside 8 personas at 8 GB is 84 of the box's 128.
+# A guest only gets an uplink (build bridge) for its online evaluation activation; the Exchange media are fetched and
+# checked on the node and handed in as a CD and over WinRM. Mail never leaves corp.ludius.test: no send connector,
+# only that accepted domain, and a transport rule rejecting every recipient outside the organisation, all asserted,
+# plus a probe to an outside address that must be rejected. Whatever happens, WinRM is switched off on both servers
+# and ex01's local Administrator disabled again (through the guest agent) at the end; a server that can't be closed
+# is stopped. Re-runnable.
+- name: Range servers (VMs, install, bootstrap, activation)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    servers:
+      - { host: dc01, vmid: "{{ srv01_vmid }}", name: ludius-dc01, ip: "{{ srv01_ip }}", dns: "{{ srv01_ip }}",
+          mac: "BC:24:11:4C:55:21", memory: "{{ dc01_memory_mb }}", disk: 64, password: "{{ dc_admin_password }}" }
+      - { host: ex01, vmid: "{{ ex01_vmid }}", name: ludius-ex01, ip: "{{ ex01_ip }}", dns: "{{ srv01_ip }}",
+          mac: "BC:24:11:4C:55:22", memory: "{{ ex01_memory_mb }}", disk: 128, password: "{{ range_admin_password }}" }
+  tasks:
+    - name: Inputs the servers need
+      ansible.builtin.assert:
+        that:
+          - mail_backend == 'exchange'
+          - people | map(attribute='user') | select('match', '^[a-z][a-z0-9._-]{0,9}$') | list | length == people | length
+          - people | map(attribute='user') | unique | length == people | length
+          - ews_user not in people | map(attribute='user')
+          - dc_admin_password is match('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}$')
+          - ews_password is match('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{12,}$')
+          - range_admin_password is match('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{12,}$')
+          - (people | map(attribute='user') | map('length') | min) + (user_password_suffix | length) >= 6
+        fail_msg: >-
+          mail_backend is not exchange, unsafe or duplicate narrative users, a narrative user named {{ ews_user }}, or a
+          password Windows would refuse (DC admin 8+, EWS and bring-up 12+, each with upper, lower and digit;
+          <user><suffix> 6+)
+
+    - name: Node and VMs (range-up.yml already read them; alone, read here)
+      when: pve_vms is not defined
+      block:
+        - name: Node name
+          ansible.builtin.command: hostname
+          register: node
+          changed_when: false
+
+        - name: Proxmox VMs
+          ansible.builtin.command: pvesh get /cluster/resources --type vm --output-format json
+          register: resources
+          changed_when: false
+
+        - name: Existing VMs by id
+          ansible.builtin.set_fact:
+            pve_node: "{{ node.stdout }}"
+            pve_vms: "{{ dict(resources.stdout | from_json | map(attribute='vmid') | zip(resources.stdout | from_json)) }}"
+
+    - name: Both server ids are ours (range pool, this node, expected name) or free
+      ansible.builtin.assert:
+        that: >-
+          (item.vmid | int) not in pve_vms or
+          (pve_vms[item.vmid | int].pool | default('') == range_pool and pve_vms[item.vmid | int].name == item.name
+           and pve_vms[item.vmid | int].node == pve_node)
+        fail_msg: VM {{ item.vmid }} exists but is not {{ item.name }} in pool {{ range_pool }}; refusing to touch it
+      loop: "{{ servers }}"
+      loop_control:
+        label: "{{ item.vmid }} {{ item.name }}"
+
+    - name: Windows Server evaluation ISO, checked
+      ansible.builtin.get_url:
+        url: "{{ winsrv_iso_url }}"
+        dest: /var/lib/vz/template/iso/{{ winsrv_iso }}
+        checksum: sha256:{{ winsrv_iso_sha256 }}
+        mode: "0644"
+        timeout: 60
+
+    - name: Exchange media folder
+      ansible.builtin.file:
+        path: "{{ exchange_media_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Exchange SE and its prerequisites, checked
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "{{ exchange_media_dir }}/{{ item.name }}"
+        checksum: sha256:{{ item.sha256 }}
+        mode: "0644"
+        timeout: 60
+      loop: "{{ exchange_media }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Never fails the play: a failure is recorded and the close-down play still runs for every started server.
+    - name: Servers up, activated, Exchange media in
+      block:
+        - name: Server VM, install and bootstrap
+          ansible.builtin.include_tasks: tasks/winsrv-vm.yml
+          loop: "{{ servers }}"
+          loop_control:
+            loop_var: s
+            label: "{{ s.name }}"
+
+        - name: Evaluation activated (uplink only for that, detached host-side)
+          ansible.builtin.include_tasks: tasks/winsrv-activate.yml
+          loop: "{{ servers }}"
+          loop_control:
+            loop_var: s
+            label: "{{ s.name }}"
+
+        - name: Both activated
+          ansible.builtin.assert:
+            that: winsrv_failures | default([]) | length == 0
+            fail_msg: "{{ winsrv_failures }}; uplinks are detached"
+
+        - name: Exchange ISO in ex01's CD drive
+          ansible.builtin.command: qm set {{ ex01_vmid }} --sata0 {{ exchange_media_dir }}/ExchangeServerSE-x64.iso,media=cdrom
+          changed_when: true
+      rescue:
+        - name: Record the failure
+          ansible.builtin.set_fact:
+            winsrv_failures: "{{ winsrv_failures | default([]) + [ansible_failed_result.msg | default('failed')] }}"
+
+# localhost stays in these plays so a failed server never ends the run before the close-down play.
+- name: Dc01 (AD DS, DNS, time, accounts)
+  hosts: localhost:dc01
+  gather_facts: false
+  tasks:
+    - name: Dc01 role
+      when: inventory_hostname == 'dc01' and not hostvars['localhost'].winsrv_failures | default([])
+      ansible.builtin.include_role:
+        name: dc01
+
+- name: Ex01 (domain member, Exchange SE trial, mailboxes, range-only transport)
+  hosts: localhost:ex01
+  gather_facts: false
+  tasks:
+    - name: Exchange role (needs dc01 done)
+      when: >-
+        inventory_hostname == 'ex01' and not hostvars['localhost'].winsrv_failures | default([])
+        and hostvars['dc01'].dc01_done | default(false)
+      ansible.builtin.include_role:
+        name: exchange
+
+- name: Servers closed, EWS secret for the controller, verdict
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: WinRM off on both, ex01's local Administrator disabled (guest agent), else the server is stopped
+      ansible.builtin.include_tasks: tasks/persona-teardown.yml
+      loop:
+        - { user: dc01, vmid: "{{ srv01_vmid }}", ip: "{{ srv01_ip }}", local_admin: "" }
+        - { user: ex01, vmid: "{{ ex01_vmid }}", ip: "{{ ex01_ip }}", local_admin: Administrator }
+      loop_control:
+        loop_var: p
+        label: "{{ p.user }}"
+      vars:
+        range_admin_user: "{{ p.local_admin }}"
+      when: bringup_teardown | bool and (p.vmid | int) in winsrv_started | default([])
+
+    - name: EWS service password for the controller (root only)
+      ansible.builtin.copy:
+        dest: "{{ ews_password_file }}"
+        content: "{{ ews_password }}\n"
+        mode: "0600"
+      no_log: true
+
+    - name: Both servers provisioned and closed
+      ansible.builtin.assert:
+        that:
+          - winsrv_failures | default([]) | length == 0
+          - hostvars['dc01'].dc01_done | default(false)
+          - hostvars['ex01'].exchange_done | default(false)
+          - closed_failures | default([]) | length == 0
+        fail_msg: >-
+          range servers incomplete: {{ winsrv_failures | default([]) }}; dc01 {{ 'done' if hostvars['dc01'].dc01_done | default(false) else 'failed' }},
+          ex01 {{ 'done' if hostvars['ex01'].exchange_done | default(false) else 'failed' }}; not closed (stopped):
+          {{ closed_failures | default([]) }}

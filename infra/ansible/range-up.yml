@@ -3,20 +3,17 @@
 # agent running with Proxmox:Pool=ludius):
 #   ansible-playbook range-up.yml
 # Every VM it touches (template, srv01, persona clones) must be in the range pool under its expected name; an existing
-# VM id that isn't is refused, never adopted. srv01 comes from the stock Debian 13 cloud image + the srv01 role, with an
-# uplink only while it is provisioned. Each persona gets the linked clone named in range-vms.yml (VM id = vsock CID),
+# VM id that isn't is refused, never adopted. The range mail server follows mail_backend: exchange (range-exchange.yml:
+# Windows Server dc01 + Exchange SE ex01) or grommunio (range-srv01.yml: srv01, Debian with Samba AD and grommunio),
+# each with an uplink only while it needs one. Each persona gets the linked clone named in range-vms.yml (VM id = vsock CID),
 # isolated on the range bridge before every start; the guest agent gives it its range address, WinRM and a per-range
 # bring-up admin; then domain join, persona autologon, hive settings and the observer task, checked through the host
 # agent's observe call; then, whatever happened, the bring-up account and WinRM are switched off again on every
 # bootstrapped clone (or the clone is stopped). Re-runnable.
-- name: Validate inputs and ownership, srv01 VM
+- name: Validate inputs and ownership
   hosts: localhost
   connection: local
   gather_facts: false
-  vars:
-    srv01_key: /root/.ssh/ludius_srv01
-    srv01_image: /var/lib/vz/template/ludius/debian-13-genericcloud-amd64.qcow2
-    srv01_user_data: ludius-srv01-user.yaml
   tasks:
     - name: Narrative people, personas and passwords are safe to use
       ansible.builtin.assert:
@@ -28,7 +25,8 @@
           - personas | length >= 1
           - personas | difference(people | map(attribute='user')) | length == 0
           - personas | difference(persona_files) | length == 0
-          - personas | length <= grommunio_login_mailboxes | int
+          - personas | length <= login_mailbox_cap | int
+          - mail_backend in ['grommunio', 'exchange']
           # Samba's policy (min length 6, set by the srv01 role) and provisioning (default complexity) must accept them.
           - (people | map(attribute='user') | map('length') | min) + (user_password_suffix | length) >= 6
           - dc_admin_password is match('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}$')
@@ -36,8 +34,8 @@
         fail_msg: >-
           unsafe or duplicate narrative people (user: lower case, at most 10 characters, so WS-<USER>01 fits a
           computer name), a persona outside the narrative or without controller/data/personas/<user>.yaml, no persona,
-          more personas than grommunio log-in mailboxes ({{ grommunio_login_mailboxes }}), or a password Samba would
-          refuse (<user><suffix> under 6, DC admin under 8 or without upper, lower and digit), or a bring-up password
+          more personas than {{ mail_backend }} log-in mailboxes ({{ login_mailbox_cap }}), an unknown mail_backend,
+          or a password Samba would refuse (<user><suffix> under 6, DC admin under 8 or without upper, lower and digit), or a bring-up password
           under 12 characters
 
     - name: Persona VM map is explicit and collision-free
@@ -48,9 +46,9 @@
           - range_personas | map(attribute='ip') | unique | length == range_personas | length
           - range_personas | map(attribute='vmid') | select('integer') | select('>=', 100) | select('<', 1000) | list | length == range_personas | length
           - template_vmid not in range_personas | map(attribute='vmid')
-          - srv01_vmid not in range_personas | map(attribute='vmid')
+          - range_servers | map('first') | intersect(range_personas | map(attribute='vmid') | map('int')) | length == 0
           - range_personas | map(attribute='ip') | select('match', '^' ~ (range_net | regex_escape) ~ '\.([2-9][0-9])$') | list | length == range_personas | length
-        fail_msg: range-vms.yml has a duplicate user, VM id or address, an id outside 100-999 or used by the template or srv01, or an address outside {{ range_net }}.20-99
+        fail_msg: range-vms.yml has a duplicate user, VM id or address, an id outside 100-999 or used by the template or a range server, or an address outside {{ range_net }}.20-99
 
     - name: Node name
       ansible.builtin.command: hostname
@@ -67,7 +65,7 @@
         pve_node: "{{ node.stdout }}"
         pve_vms: "{{ dict(resources.stdout | from_json | map(attribute='vmid') | zip(resources.stdout | from_json)) }}"
         owned: >-
-          {{ [[template_vmid | int, 'ludius-win10-golden'], [srv01_vmid | int, 'ludius-srv01']]
+          {{ [[template_vmid | int, 'ludius-win10-golden']] + range_servers
              + (range_personas | map(attribute='vmid') | map('int') | zip(range_personas | map(attribute='user') | map('regex_replace', '^', 'ludius-')) | list) }}
 
     - name: Every VM id we touch is ours (range pool, this node, expected name) or free
@@ -91,167 +89,13 @@
           - pve_vms[template_vmid | int].pool | default('') == range_pool
         fail_msg: no template {{ template_vmid }} (ludius-win10-golden, pool {{ range_pool }}); run the Packer build first
 
-    - name: Srv01 SSH key
-      ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -C ludius@srv01 -f {{ srv01_key }}
-      args:
-        creates: "{{ srv01_key }}"
+- name: Range mail server, grommunio (srv01)
+  ansible.builtin.import_playbook: range-srv01.yml
+  when: mail_backend == 'grommunio'
 
-    # Proxmox's own cloud-init user-data names the host after the VM (ludius-srv01) and rewrites /etc/hosts at boot;
-    # this snippet replaces it: hostname srv01 (what the domain was provisioned with), /etc/hosts left to the role,
-    # no package upgrade at first boot (srv01 has no uplink then).
-    - name: Srv01 cloud-init user-data
-      ansible.builtin.copy:
-        dest: /var/lib/vz/snippets/{{ srv01_user_data }}
-        mode: "0644"
-        content: |
-          #cloud-config
-          hostname: srv01
-          fqdn: srv01.{{ domain }}
-          prefer_fqdn_over_hostname: false
-          manage_etc_hosts: false
-          package_update: false
-          package_upgrade: false
-          users:
-            - name: ludius
-              groups: [sudo]
-              shell: /bin/bash
-              sudo: 'ALL=(ALL) NOPASSWD:ALL'
-              lock_passwd: true
-              ssh_authorized_keys: ['{{ lookup('ansible.builtin.file', srv01_key ~ '.pub') }}']
-          ssh_pwauth: false
-
-    - name: Create srv01
-      when: (srv01_vmid | int) not in pve_vms
-      block:
-        - name: Image folder
-          ansible.builtin.file:
-            path: "{{ srv01_image | dirname }}"
-            state: directory
-            mode: "0755"
-
-        - name: Debian 13 cloud image, checked against Debian's SHA512SUMS
-          ansible.builtin.get_url:
-            url: "{{ debian_image_url }}"
-            dest: "{{ srv01_image }}"
-            checksum: "sha512:{{ debian_image_sums }}"
-            mode: "0644"
-
-        - name: Srv01 VM, range NIC only (the uplink is attached while provisioning)
-          ansible.builtin.command: >-
-            qm create {{ srv01_vmid }} --name ludius-srv01 --pool {{ range_pool }} --ostype l26 --cores 2
-            --memory 3072 --cpu host --scsihw virtio-scsi-single
-            --scsi0 {{ storage }}:0,import-from={{ srv01_image }},discard=on
-            --ide2 {{ storage }}:cloudinit --boot order=scsi0 --serial0 socket --vga serial0
-            --net0 virtio,bridge={{ range_bridge }} --ipconfig0 ip={{ srv01_ip }}/24 --onboot 1
-          changed_when: true
-
-        - name: Srv01 disk 24G (cloud-init grows the root partition)
-          ansible.builtin.command: qm disk resize {{ srv01_vmid }} scsi0 24G
-          changed_when: true
-
-    - name: Srv01 range NIC only and cloud-init, asserted before every start
-      ansible.builtin.include_tasks: tasks/range-nic-only.yml
-      vars:
-        nic_vmid: "{{ srv01_vmid }}"
-        nic_extra: [--cicustom, "user=local:snippets/{{ srv01_user_data }}", --ciupgrade, "0", --ipconfig0, "ip={{ srv01_ip }}/24"]
-
-    - name: Srv01 running
-      ansible.builtin.command: qm start {{ srv01_vmid }}
-      register: start
-      changed_when: start.rc == 0
-      failed_when: start.rc != 0 and 'already running' not in start.stderr
-
-    - name: Srv01 SSH up on the range address
-      ansible.builtin.wait_for:
-        host: "{{ srv01_ip }}"
-        port: 22
-        timeout: 600
-
-    - name: Srv01 in the inventory
-      ansible.builtin.add_host:
-        name: srv01
-        ansible_host: "{{ srv01_ip }}"
-        ansible_user: ludius
-        ansible_ssh_private_key_file: "{{ srv01_key }}"
-        ansible_ssh_common_args: -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/ludius_known_hosts
-
-# Guest work runs as srv01's own host, never delegated from localhost: a failed or unreachable srv01 only drops srv01
-# from the run (localhost is in this play so the run goes on), and the host-side detach in the next play runs whatever
-# happened to the guest. A delegated task that can't reach srv01 would mark localhost unreachable and skip it.
-- name: Srv01 (Samba AD, NTP, grommunio), uplink only while provisioning
-  hosts: localhost:srv01
-  gather_facts: false
-  tasks:
-    - name: Attach the uplink NIC (host side)
-      when: inventory_hostname == 'localhost'
-      block:
-        - name: Uplink NIC on the build bridge
-          ansible.builtin.command: qm set {{ srv01_vmid }} --net1 virtio={{ srv01_build_mac }},bridge={{ build_bridge }}
-          changed_when: true
-      rescue:
-        - name: Record it (the detach still runs)
-          ansible.builtin.set_fact:
-            srv01_failures: "{{ srv01_failures | default([]) + ['uplink attach: ' ~ ansible_failed_result.msg | default('failed')] }}"
-
-    - name: Provision srv01 through the uplink
-      when: inventory_hostname == 'srv01'
-      become: true
-      block:
-        - name: Uplink up in the guest
-          ansible.builtin.include_tasks: tasks/srv01-uplink-guest.yml
-          vars:
-            uplink: present
-
-        - name: Srv01 role
-          ansible.builtin.include_role:
-            name: srv01
-
-        - name: Srv01 provisioned
-          ansible.builtin.set_fact:
-            srv01_provisioned: true
-
-- name: Srv01 uplink off (host side), then srv01's verdict
-  hosts: localhost
-  gather_facts: false
-  tasks:
-    - name: Detach the uplink NIC (host side, no guest involved), else stop srv01
-      block:
-        - name: Range NIC only
-          ansible.builtin.include_tasks: tasks/range-nic-only.yml
-          vars:
-            nic_vmid: "{{ srv01_vmid }}"
-      rescue:
-        - name: Stop srv01 (its uplink could not be confirmed gone)
-          ansible.builtin.command: qm stop {{ srv01_vmid }}
-          register: srv01_stop
-          changed_when: true
-          failed_when: false
-
-        - name: Fail after stopping srv01
-          ansible.builtin.fail:
-            msg: >-
-              srv01's uplink NIC could not be detached;
-              {{ 'srv01 was stopped' if srv01_stop.rc == 0 else 'qm stop also failed, srv01 may still have its uplink' }}.
-              Check qm config {{ srv01_vmid }}.
-
-    - name: No off-range route left in the guest (after the detach; skipped if srv01 is unreachable)
-      ansible.builtin.include_tasks:
-        file: tasks/srv01-uplink-guest.yml
-        apply:
-          delegate_to: srv01
-          become: true
-          ignore_unreachable: true
-      vars:
-        uplink: absent
-
-    - name: Srv01 provisioned (a failed or unreachable srv01 fails the run here, after the detach)
-      ansible.builtin.assert:
-        that:
-          - srv01_failures | default([]) | length == 0
-          - hostvars['srv01'].srv01_provisioned | default(false)
-        fail_msg: >-
-          srv01 was not provisioned ({{ srv01_failures | default([]) | join('; ') or 'its tasks failed or it was unreachable, see above' }});
-          its uplink NIC is detached.
+- name: Range mail server, Exchange (dc01, ex01)
+  ansible.builtin.import_playbook: range-exchange.yml
+  when: mail_backend == 'exchange'
 
 - name: Persona clones
   hosts: localhost

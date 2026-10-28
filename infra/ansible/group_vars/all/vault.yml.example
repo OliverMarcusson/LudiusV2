@@ -2,8 +2,9 @@
 # Copy to vault.yml (gitignored) and encrypt it: ansible-vault encrypt group_vars/all/vault.yml
 # Point ANSIBLE_VAULT_PASSWORD_FILE at the vault password file before running Packer or the playbooks.
 vault_range_admin_password: CHANGE-ME # per-range bring-up admin on the clones (never the image's build password)
-vault_dc_admin_password: CHANGE-ME # CORP\Administrator on srv01; 8+ characters, upper, lower and digit
+vault_dc_admin_password: CHANGE-ME # CORP\Administrator on srv01 / dc01; 8+ characters, upper, lower and digit
 vault_grommunio_admin_password: CHANGE-ME # grommunio admin API/web
 vault_user_password_suffix: CHANGE-ME # each AD user and log-in mailbox gets <user><suffix>, at least 6 characters
 vault_office_pidkey: "" # Office 2024 MAK, or empty for the volume GVLK
 vault_office_kms_host: "" # KMS host reachable from the range bridge, or empty
+vault_ews_password: CHANGE-ME # mail_backend exchange: CORP\ludiussvc (EWS impersonation); 12+ characters, upper, lower, digit

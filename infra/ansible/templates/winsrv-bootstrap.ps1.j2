@@ -1,0 +1,30 @@
+$ErrorActionPreference = 'Stop'
+# Range server (s: host, ip, dns), run as SYSTEM by the guest agent on every run: static range address and DNS on the
+# range NIC, Administrator's password from stdin (the vault's; replaces the answer file's one-off), autologon off,
+# WinRM on for the provisioning plays. A DC has no local accounts: Administrator is then the domain's.
+$s = Get-ItemProperty HKLM:\SYSTEM\Setup
+if ($s.SystemSetupInProgress -or $s.OOBEInProgress) { exit 3 }  # setup still running: retried
+$pw = [Console]::In.ReadToEnd().Trim()
+if ($pw.Length -lt 8) { exit 5 }  # no password on stdin
+$n = Get-NetAdapter -Physical | Where-Object MacAddress -eq '{{ s.mac | replace(':', '-') | upper }}'
+if (-not $n) { exit 4 }
+if (-not (Get-NetIPAddress -InterfaceIndex $n.ifIndex -IPAddress {{ s.ip }} -ErrorAction SilentlyContinue)) {
+    Set-NetIPInterface -InterfaceIndex $n.ifIndex -Dhcp Disabled
+    Get-NetIPAddress -InterfaceIndex $n.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false
+    New-NetIPAddress -InterfaceIndex $n.ifIndex -IPAddress {{ s.ip }} -PrefixLength 24 | Out-Null  # no gateway: range only
+}
+Set-DnsClientServerAddress -InterfaceIndex $n.ifIndex -ServerAddresses {{ s.dns }}
+$sp = ConvertTo-SecureString $pw -AsPlainText -Force
+if ((Get-CimInstance Win32_ComputerSystem).DomainRole -ge 4) {
+    Set-ADAccountPassword Administrator -Reset -NewPassword $sp
+} else {
+    Set-LocalUser Administrator -Password $sp
+    Enable-LocalUser Administrator
+}
+$wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+Set-ItemProperty $wl AutoAdminLogon '0'
+Remove-ItemProperty $wl DefaultPassword -ErrorAction SilentlyContinue
+Set-Service WinRM -StartupType Automatic
+Get-NetFirewallRule -DisplayGroup 'Windows Remote Management' -ErrorAction SilentlyContinue | Enable-NetFirewallRule
+Enable-PSRemoting -SkipNetworkProfileCheck -Force | Out-Null
+exit 0
