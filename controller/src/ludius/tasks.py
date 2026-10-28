@@ -231,6 +231,9 @@ class Dialogs(Strict):
         for w in [*self.discard, *self.leave]:
             if any(re.fullmatch(w, c, re.I) for c in COMMITS):
                 raise ValueError(f"dialog word {w!r} names a button that commits")
+        # OK only confirms the discard choice already selected; any other committing button is refused.
+        if self.choice_ok.lower() != "ok" and any(self.choice_ok.lower() == c for c in COMMITS):
+            raise ValueError(f"choice_ok {self.choice_ok!r} names a button that commits")
         return self
 
 
@@ -250,6 +253,16 @@ class Profile(Strict):
     dialogs: Dialogs
     forms: dict[Literal["mail", "meeting"], Form] = Field(default_factory=dict[Literal["mail", "meeting"], Form])
     overwrite: Overwrite
+
+    @model_validator(mode="after")
+    def _safe_close(self) -> Profile:
+        # Abandon presses this without any send, reserved or overwrite check: only keys that close or cancel.
+        if self.keys.get("close") not in CLOSE_KEYS:
+            raise ValueError(f"close key {self.keys.get('close')!r} is not one of {sorted(CLOSE_KEYS)}")
+        return self
+
+
+CLOSE_KEYS = {"Alt+F4", "Esc", "Ctrl+W"}
 
 
 def _merge(base: Any, own: Any) -> Any:

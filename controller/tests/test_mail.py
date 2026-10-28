@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from ludius import cli, mail
+from ludius import cli, mail, tasks
 from ludius.planner import PlanItem, validate
 from ludius.policy import Policy
 from ludius.tasks import Task, check_done, preconditions
@@ -502,6 +502,11 @@ def test_mail_templates_get_the_shared_send_contract() -> None:
         Form.model_validate({"to": {"name": "^To$"}, "empty": [{"name": "^Cc$", "value": ".*"}]})
     with pytest.raises(ValueError, match="commits"):
         Dialogs.model_validate({"discard": ["don'?t save", "send( anyway)?"], "choice_ok": "OK", "leave": []})
+    with pytest.raises(ValueError, match="commits"):  # Sol on bb21c4f: the radio's confirm can't be Send
+        Dialogs.model_validate({"discard": ["don'?t save"], "choice_ok": "Send", "leave": []})
+    base = tasks.profile("outlook").model_dump()
+    with pytest.raises(ValueError, match="close key"):  # abandon presses it unchecked: never a send shortcut
+        tasks.Profile.model_validate(base | {"keys": base["keys"] | {"close": "Alt+S"}})
 
 
 def test_mail_from_an_earlier_playback_never_counts_after_a_clock_rewind(monkeypatch: pytest.MonkeyPatch) -> None:
