@@ -13,13 +13,18 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddGrpc();
 // Agent:Backend picks the hypervisor: hyperv (default on Windows) or proxmox (default elsewhere, one agent per node).
 var backend = builder.Configuration["Agent:Backend"] ?? (OperatingSystem.IsWindows() ? "hyperv" : "proxmox");
+// The host's cap on running range VMs, either backend: 1 unless this host's config says more (the owner's desktop keeps
+// 1; the rented Proxmox box sets 8, one per persona). Infrastructure VMs are exempt (Hyper-V: build\srvm-id;
+// Proxmox: Proxmox:CapExemptIds).
+var maxRunning = int.Parse(builder.Configuration["Agent:MaxRunningVms"] ?? "1");
+if (maxRunning < 1) throw new InvalidOperationException("Agent:MaxRunningVms must be at least 1");
 IHypervisor hypervisor = backend switch
 {
 #if WINDOWS
     "hyperv" => new HyperV(Guid.Parse(builder.Configuration["Agent:ObserverService"]!),
-        Path.GetFullPath(builder.Configuration["Agent:OneVmScript"] ?? "../../infra/hyperv/one-vm.ps1", builder.Environment.ContentRootPath)),
+        Path.GetFullPath(builder.Configuration["Agent:OneVmScript"] ?? "../../infra/hyperv/one-vm.ps1", builder.Environment.ContentRootPath), maxRunning),
 #endif
-    "proxmox" => new Proxmox(new Pvesh(), builder.Configuration["Proxmox:Node"] ?? Environment.MachineName, ProxmoxConfig(builder.Configuration)),
+    "proxmox" => new Proxmox(new Pvesh(), builder.Configuration["Proxmox:Node"] ?? Environment.MachineName, ProxmoxConfig(builder.Configuration) with { MaxRunning = maxRunning }),
     _ => throw new InvalidOperationException($"Agent:Backend {backend} is not available in this build"),
 };
 builder.Services.AddSingleton(hypervisor);
@@ -39,6 +44,7 @@ static ProxmoxOptions ProxmoxConfig(IConfiguration c)
     if (c["Proxmox:RunDir"] is { } run) o = o with { RunDir = run };
     if (c["Proxmox:Pool"] is { } pool) o = o with { Pool = pool };
     if (c["Proxmox:ScratchDir"] is { } scratch) o = o with { ScratchDir = scratch };
+    if (c["Proxmox:CapExemptIds"] is { } ex) o = o with { CapExemptIds = ex.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(int.Parse).ToHashSet() };
     if (c["Proxmox:Resolution"] is { } res && res.Split('x') is [var w, var h]) o = o with { Screen = (int.Parse(w), int.Parse(h)) };
     return o;
 }

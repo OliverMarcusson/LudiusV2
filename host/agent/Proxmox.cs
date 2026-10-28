@@ -24,6 +24,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     }
 
     readonly Dictionary<string, Vm> vms = [];
+    readonly SemaphoreSlim activation = new(1, 1); // the cap's count and the start it allows, one at a time
 
     // Under the vms lock: per VMID, the clock value of its last invalidation (delete, clone), and the VMIDs a clone is
     // still configuring (a count per VMID: each clone removes only its own mark). A lookup records the clock before it resolves and caches its handle only if its VMID was not
@@ -323,7 +324,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         {
             case Op.State: break;
             case Op.Start:
-                if (vm.Status != "running") await Complete(api.Call("create", $"{at}/status/start", null, ct), ct);
+                if (vm.Status != "running") await Capped(vm, () => Complete(api.Call("create", $"{at}/status/start", null, ct), ct), ct);
                 break;
             case Op.Stop:
                 await Complete(api.Call("create", $"{at}/status/shutdown", new Dictionary<string, string> { ["forceStop"] = "1", ["timeout"] = "120" }, ct), ct);
@@ -336,7 +337,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
                     { ["snapname"] = checkpoint, ["vmstate"] = vm.Status == "running" ? "1" : "0" }, ct), ct);
                 break;
             case Op.Restore: // a snapshot with RAM comes back running, as a Hyper-V checkpoint of a running VM does
-                await Complete(api.Call("create", $"{at}/snapshot/{checkpoint}/rollback", null, ct), ct);
+                await Capped(vm, () => Complete(api.Call("create", $"{at}/snapshot/{checkpoint}/rollback", null, ct), ct), ct);
                 break;
             case Op.Clone:
                 return await Clone(vm, checkpoint, target, ct);
@@ -347,6 +348,26 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
                 return "Deleted";
         }
         return await State(vm.Id, ct);
+    }
+
+    // The host's VM cap (Agent:MaxRunningVms): a start or restore is refused while that many other range VMs run.
+    // Infrastructure (Proxmox:CapExemptIds, srv01 and the like) neither counts nor is capped. One activation at a time
+    // in this agent (one agent per node), so two racing starts can't both see room for one.
+    async Task Capped(PveVm vm, Func<Task> activate, CancellationToken ct)
+    {
+        await activation.WaitAsync(ct);
+        try
+        {
+            if (!options.CapExemptIds.Contains(vm.Id))
+            {
+                var up = (await List(ct)).Where(v => InRange(v) && !v.Template && v.Id != vm.Id && v.Status != "stopped"
+                    && !options.CapExemptIds.Contains(v.Id)).Select(v => v.Name).ToList();
+                if (up.Count >= options.MaxRunning)
+                    throw new InvalidOperationException($"VM cap {options.MaxRunning} (Agent:MaxRunningVms): {string.Join(", ", up)} up; {vm.Name} not activated");
+            }
+            await activate();
+        }
+        finally { activation.Release(); }
     }
 
     // A template clones linked (spec: linked clones), from its base; any other VM as a full copy of `checkpoint`.
@@ -427,4 +448,6 @@ public sealed record ProxmoxOptions
     public int PollMs { get; init; } = 1000;
     public TimeSpan Recheck { get; init; } = TimeSpan.FromSeconds(5); // a cached VM handle's range check, at most this old
     public string Pool { get; init; } = ""; // the range's Proxmox pool; unset: every VM is refused
+    public int MaxRunning { get; init; } = 1; // Agent:MaxRunningVms, the host's cap on running range VMs (owner's default)
+    public HashSet<int> CapExemptIds { get; init; } = []; // infrastructure VMs (srv01, dc01, ex01): not counted, not capped
 }

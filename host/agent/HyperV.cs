@@ -10,7 +10,7 @@ namespace Ludius.HostAgent;
 // Hyper-V backend: synthetic keyboard and mouse through WMI (root\virtualization\v2),
 // lifecycle through the Hyper-V PowerShell module, console frames through the
 // thumbnail API. Coordinates are guest physical pixels.
-sealed partial class HyperV(Guid observerService, string oneVmScript) : IHypervisor
+sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRunning = 1) : IHypervisor
 {
     public string Backend => "hyperv";
     VmHandle IHypervisor.Get(string name) => Get(name);
@@ -197,10 +197,10 @@ sealed partial class HyperV(Guid observerService, string oneVmScript) : IHypervi
         'Deleted'
         """;
 
-    // Owner's cap: at most one Ludius VM up. Start and restore (a checkpoint of a running VM comes back running) go
+    // Host's cap (Agent:MaxRunningVms, default 1: the owner's limit on this machine). Start and restore (a checkpoint of a running VM comes back running) go
     // through infra/hyperv/one-vm.ps1, which rechecks and activates under a host-wide lock shared with the scripts.
     // A missing script fails the call: no activation without the lock.
-    static string OneVm(string activate) => $". $env:LUDIUS_ONEVM; Invoke-OneVm $env:LUDIUS_VM {{ {activate} }}";
+    static string OneVm(string activate) => $". $env:LUDIUS_ONEVM; Invoke-OneVm $env:LUDIUS_VM {{ {activate} }} -Max $env:LUDIUS_MAXVMS";
 
     public async Task<string> Lifecycle(string vm, Ludius.V1.LifecycleRequest.Types.Op op, string checkpoint, string target, CancellationToken ct)
     {
@@ -228,7 +228,7 @@ sealed partial class HyperV(Guid observerService, string oneVmScript) : IHypervi
         var psi = new ProcessStartInfo("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script])
         {
             RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
-            Environment = { ["LUDIUS_VM"] = vm, ["LUDIUS_CP"] = checkpoint, ["LUDIUS_TARGET"] = target, ["LUDIUS_ONEVM"] = oneVmScript },
+            Environment = { ["LUDIUS_VM"] = vm, ["LUDIUS_CP"] = checkpoint, ["LUDIUS_TARGET"] = target, ["LUDIUS_ONEVM"] = oneVmScript, ["LUDIUS_MAXVMS"] = $"{maxRunning}" },
         };
         using var p = Process.Start(psi)!;
         var stdout = p.StandardOutput.ReadToEndAsync(ct);

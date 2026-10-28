@@ -294,6 +294,24 @@ public class ProxmoxTests
     }
 
     [Fact]
+    public async Task The_host_cap_counts_running_range_vms_except_infrastructure()
+    {
+        using var qmp = new FakeQmp(101);
+        var pve = new FakePve();
+        pve.Vms.Add(JsonNode.Parse("""{"vmid": 105, "name": "ludius-b", "status": "stopped", "node": "pve1", "type": "qemu", "pool": "ludius"}"""));
+        pve.Vms.Add(JsonNode.Parse("""{"vmid": 110, "name": "ludius-srv01", "status": "running", "node": "pve1", "type": "qemu", "pool": "ludius"}"""));
+        Proxmox Px(int max) => new(pve, "pve1", new ProxmoxOptions { RunDir = qmp.Dir, ScratchDir = qmp.Dir, PollMs = 1, Pool = "ludius", MaxRunning = max, CapExemptIds = [110] });
+        // Default 1: ludius-win10-01 runs (srv01 is exempt, other pools and nodes don't count), so neither start nor restore.
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => Px(1).Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None));
+        Assert.Contains("ludius-win10-01", e.Message);
+        Assert.DoesNotContain("ludius-srv01", e.Message);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Px(1).Lifecycle("ludius-b", Op.Restore, "clean", "", CancellationToken.None));
+        Assert.DoesNotContain(pve.Calls, c => c.Method == "create");
+        await Px(2).Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None);
+        Assert.Contains(pve.Calls, c => c.Path == "/nodes/pve1/qemu/105/status/start");
+    }
+
+    [Fact]
     public async Task A_template_clones_linked_with_its_own_vsock_cid()
     {
         var (px, pve, qmp) = Make();
