@@ -293,7 +293,7 @@ public class ProxmoxTests
         Assert.DoesNotContain(pve.Calls, c => c.Method == "create");
         await Assert.ThrowsAsync<ArgumentException>(() => px.Lifecycle("ludius-win10-01", Op.Restore, "", "", CancellationToken.None));
         pve.TaskExit = "snapshot 'nope' does not exist";
-        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => px.Lifecycle("ludius-win10-01", Op.Restore, "nope", "", CancellationToken.None));
+        var e = await Assert.ThrowsAsync<PveTaskFailed>(() => px.Lifecycle("ludius-win10-01", Op.Restore, "nope", "", CancellationToken.None));
         Assert.Contains("does not exist", e.Message);
     }
 
@@ -362,9 +362,22 @@ public class ProxmoxTests
         Assert.Contains("ludius-b", e.Message); // still stopped by its state, but its start may be under way
         pve.TaskExit = "start failed";
         now += TimeSpan.FromMinutes(6);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None));
+        await Assert.ThrowsAsync<PveTaskFailed>(() => agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None));
         pve.TaskExit = "OK";
         await agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None); // a failed start held no room
+    }
+
+    [Fact]
+    public async Task An_unreadable_task_outcome_keeps_the_reservation()
+    {
+        using var qmp = new FakeQmp(101);
+        var (pve, px) = Capped(qmp);
+        var agent = px(2);
+        pve.Gate = (_, path) => path.Contains("/tasks/") ? throw new InvalidOperationException("pvesh get: timeout") : Task.CompletedTask;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None));
+        pve.Gate = null;
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None));
+        Assert.Contains("ludius-b", e.Message); // its start may still complete
     }
 
     [Fact]

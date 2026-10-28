@@ -384,8 +384,10 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
                 await activate();
                 confirmed = true;
             }
-            catch (OperationCanceledException) { throw; } // the Proxmox task may still run: the reservation stays
-            catch { confirmed = true; throw; } // the task failed: nothing is coming up
+            // Only a task Proxmox reports as finished and failed releases the slot. A cancellation or any other error (an
+            // unreadable task status, a failed create call) may leave the VM coming up: the reservation stays until it is
+            // seen running or ReservationTtl passes.
+            catch (PveTaskFailed) { confirmed = true; throw; }
             finally { if (confirmed) reserved.Remove(vm.Id); }
         }
         finally { activation.Release(); }
@@ -466,13 +468,16 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
             if (s?["status"]?.GetValue<string>() == "stopped")
             {
                 var exit = s["exitstatus"]?.GetValue<string>();
-                if (exit != "OK") throw new InvalidOperationException($"{upid}: {exit}");
+                if (exit != "OK") throw new PveTaskFailed($"{upid}: {exit}");
                 return;
             }
             await Task.Delay(options.PollMs, ct);
         }
     }
 }
+
+// A Proxmox task that finished with an error: its effect did not happen (unlike an unreadable task status).
+sealed class PveTaskFailed(string message) : InvalidOperationException(message);
 
 public sealed record ProxmoxOptions
 {
