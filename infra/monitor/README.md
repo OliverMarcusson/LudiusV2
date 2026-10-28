@@ -75,7 +75,7 @@ The `tests` block is the proof at save time: Tailscale rejects a policy file whe
    TS_AUTHKEY=tskey-auth-... infra/monitor/bring-up.sh
    ```
    Installs Tailscale from Tailscale's apt repo (and `jq`) unless it is already there (this box has 1.104.4 from pkgs.tailscale.com), joins the tailnet unless it is already enrolled (then `TS_AUTHKEY` is not needed), then **verifies the box's identity: tagged `tag:ludius-box` and nothing else, no user owner, no advertised routes or exit node, no exit node in use.** If the box is already enrolled with anything else it aborts before `serve` and tells you to `tailscale logout` and start over. Only then it runs `tailscale serve --bg --http=8452 http://127.0.0.1:7452`, installs Bun (pinned, sha256-checked against the release's `SHASUMS256.txt`), builds `web/monitor`, and runs `check.sh`. Before `serve` it also binds pveproxy to loopback and masks spiceproxy and rpcbind (see above), and it publishes a second mapping, `tailscale serve --bg --http=8453 https+insecure://127.0.0.1:8006`. `DRY_RUN=1` prints the mutating commands only (the identity check is read-only and still runs on an enrolled machine).
-3. **Box:** start the agent with `Monitor__Root` and `Monitor__AllowedOrigins` (values printed by step 2).
+3. **Box:** install and start the agent and the Host-fixing Caddy: `infra/box/install.sh` (systemd unit `ludius-agent`, `/opt/ludius-agent`, `Monitor__Root` and `Monitor__AllowedOrigins` set in the unit). Then point serve at the Caddy: `AGENT_MONITOR=http://127.0.0.1:7453 infra/monitor/bring-up.sh` (see "Fallback if `tailscale serve` rewrites Host"; this is the box's real path).
 4. **Homelab** (the orchestrator applies after the owner's OK; nothing here is applied by the worker):
    ```sh
    scp infra/monitor/homelab/monitor.caddy root@192.168.0.67:/tmp/monitor.caddy
@@ -196,8 +196,8 @@ Remove `monitor.ludius.se` and `pve.ludius.se` from `DOMAINS` and `docker compos
 Put a tiny Caddy on the box that sets Host, and point serve at it. Binds loopback only, so the exposure story is unchanged:
 
 ```
-# /etc/caddy/Caddyfile on the box (apt install caddy; systemctl disable --now the default site if it listens on :80)
-http://127.0.0.1:7453 {
+# infra/box/Caddyfile, installed by infra/box/install.sh (apt install caddy; systemctl disable --now the default site if it listens on :80)
+http://:7453 {   # port only: a site named 127.0.0.1:7453 answers an empty 200 to the forwarded MagicDNS Host
 	bind 127.0.0.1
 	reverse_proxy 127.0.0.1:7452 {
 		header_up Host 127.0.0.1:7452

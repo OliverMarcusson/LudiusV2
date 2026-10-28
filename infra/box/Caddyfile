@@ -1,0 +1,15 @@
+# Box-side Host fix for the monitor: `tailscale serve` forwards the box's MagicDNS Host unchanged, the agent answers
+# only Host 127.0.0.1:7452. Loopback only; Origin is untouched (the agent's WebSocket check needs
+# Monitor__AllowedOrigins=https://monitor.ludius.se). Admin API off: apply changes with `systemctl restart caddy`.
+{
+	admin off
+	auto_https off
+}
+
+# Port-only address: a site named 127.0.0.1:7453 would answer an empty 200 to the forwarded MagicDNS Host.
+http://:7453 {
+	bind 127.0.0.1
+	reverse_proxy 127.0.0.1:7452 {
+		header_up Host 127.0.0.1:7452
+	}
+}

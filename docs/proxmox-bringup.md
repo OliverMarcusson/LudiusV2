@@ -9,6 +9,7 @@ channel framing, the observer's file read) is covered offline by `dotnet test ho
 - [ ] Proxmox VE 8.x installed; `pveversion -v` and `qemu-system-x86_64 --version` (QEMU >= 7.1: `screendump` needs
       `format: png`).
 - [ ] `modprobe vhost_vsock && ls -l /dev/vhost-vsock` (vsock for the guest channel).
+- [ ] (Installed by `infra/box/install.sh`: unit `ludius-agent`, `/opt/ludius-agent`, loopback 7451/7452, Pool `ludius`; see `infra/box/`.)
 - [ ] Agent published and running as root on the node (pvesh and `/var/run/qemu-server/*.qmp` are root-only):
       `dotnet publish host/agent -f net10.0 -r linux-x64 --self-contained -c Release -o /opt/ludius-agent`.
       Config: `Agent:Backend` defaults to `proxmox` on Linux; `Proxmox:Node` (default: hostname),
