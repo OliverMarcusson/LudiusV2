@@ -62,7 +62,8 @@ verify_identity() {
       and (.User | type) == "object"
       and (.User[(.Self.UserID | tostring)] | type) == "object"
       and (.User[(.Self.UserID | tostring)].LoginName | type) == "string"
-      and .User[(.Self.UserID | tostring)].LoginName == "tagged-devices"' <<<"$st" >/dev/null \
+      and (.User[(.Self.UserID | tostring)].LoginName as $l
+           | $l == "tagged-devices" or ($l | test("^[a-z0-9-]+\\.[a-z0-9-]+\\.ts\\.net$")))' <<<"$st" >/dev/null \
     || ! jq -e '
       has("AdvertiseRoutes") and ((.AdvertiseRoutes | type) == "null" or (.AdvertiseRoutes | type) == "array")
       and (.AdvertiseRoutes // [] | length) == 0

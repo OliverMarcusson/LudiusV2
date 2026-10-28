@@ -165,6 +165,10 @@ grep -q '^+ tailscale serve --bg --http=8453 https+insecure://127.0.0.1:8006$' "
 [[ $(grep -n -m1 '^+ bind_pve_loopback' "$tmp/out" | cut -d: -f1) -lt $(grep -n -m1 '^+ tailscale serve' "$tmp/out" | cut -d: -f1) ]]   || { echo "FAIL: pveproxy must be bound to loopback before serve is published"; fails=$((fails + 1)); }
 bad_id() { env "$@" DRY_RUN=1 "$here/bring-up.sh"; }
 no_serve() { grep -q 'tailscale serve' "$tmp/out" && { echo "FAIL: serve printed after abort"; fails=$((fails + 1)); }; }
+# Tailscale 1.104.4 on the box: a tagged device's own login is its MagicDNS name, not "tagged-devices"
+expect "bring-up: tagged box, 1.104 login shape" 0 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box"],"UserID":77,"HostName":"ludius-box"},"User":{"77":{"LoginName":"ludius-box.tailec5e26.ts.net"},"5":{"LoginName":"owner@example.com"}}}'
+expect "bring-up: login that only ends in ts.net" 1 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box"],"UserID":5},"User":{"5":{"LoginName":"someone@x.tailnet.ts.net"}}}'
+no_serve
 expect "bring-up: user-owned (untagged)" 1 bad_id 'TS_STATUS={"Self":{"Tags":null,"UserID":5},"User":{"5":{"LoginName":"someone@example.com"}}}'
 no_serve
 expect "bring-up: extra tag" 1 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box","tag:homelab"],"UserID":123},"User":{"123":{"LoginName":"tagged-devices"}}}'
@@ -222,7 +226,7 @@ cmp -s "$tmp/Caddyfile" <(printf '%s%s' "$site" "$site") || { echo "FAIL: wrong 
 [[ -e $tmp/Caddyfile.bak-before-ludius-monitor-teardown ]] || { echo "FAIL: no backup"; fails=$((fails + 1)); }
 [[ $(cut -d' ' -f1-2 "$tmp/caddy.log" | tr '\n' ,) == "caddy validate,caddy reload," ]] || { echo "FAIL: validate then reload expected"; fails=$((fails + 1)); }
 
-fixture "$site$(sed -e 's/__BOX_TAILNET_IP__/100.1.2.3/' -e 's/__TS_PORT__/8452/' "$here/homelab/monitor.caddy")"$'\n'
+fixture "$site$(sed -e 's/__BOX_TAILNET_IP__/100.1.2.3/' -e 's/__BOX_DNS_NAME__/box.t.ts.net/' -e 's/__TS_PORT__/8452/g' "$here/homelab/monitor.caddy")"$'\n'
 expect "remove: the shipped monitor.caddy, as appended by the README" 0 remove
 grep -q ludius "$tmp/Caddyfile" && { echo "FAIL: shipped block still present"; fails=$((fails + 1)); }
 
@@ -238,7 +242,7 @@ fixture "$site$block"
 expect "remove: validate fails -> restored, no reload" 1 remove CADDY_VALIDATE_RC=1
 if cmp -s "$tmp/before" "$tmp/Caddyfile" && ! grep -q '^caddy reload' "$tmp/caddy.log"; then :; else echo "FAIL: not restored, or reloaded"; fails=$((fails + 1)); fi
 
-fixture "$site$block$(sed -e 's/__BOX_TAILNET_IP__/100.1.2.3/' -e 's/__PVE_TS_PORT__/8453/' "$here/homelab/pve.caddy")"$'\n'"$site"
+fixture "$site$block$(sed -e 's/__BOX_TAILNET_IP__/100.1.2.3/' -e 's/__BOX_DNS_NAME__/box.t.ts.net/' -e 's/__PVE_TS_PORT__/8453/g' "$here/homelab/pve.caddy")"$'\n'"$site"
 expect "remove: BLOCK=ludius-pve takes only the Proxmox block" 0 remove BLOCK=ludius-pve
 grep -q 'pve.ludius.se' "$tmp/Caddyfile" && { echo "FAIL: pve block still present"; fails=$((fails + 1)); }
 grep -q '^# BEGIN ludius-monitor' "$tmp/Caddyfile" || { echo "FAIL: monitor block was removed too"; fails=$((fails + 1)); }
@@ -248,7 +252,7 @@ grep -q ludius "$tmp/Caddyfile" && { echo "FAIL: blocks still present"; fails=$(
 fixture "$site$block"
 expect "remove: BLOCK=ludius-pve without a Proxmox block -> abort" 1 remove BLOCK=ludius-pve; untouched "no pve markers"
 expect "remove: bad BLOCK name -> abort" 1 remove 'BLOCK=a b'; untouched "bad BLOCK"
-grep -q 'claustra_forward http://100\.\|claustra_forward http://__' "$here/homelab/pve.caddy" || { echo "FAIL: pve.caddy lost its forward"; fails=$((fails + 1)); }
+grep -q 'claustra_forward http://127.0.0.1:18453' "$here/homelab/pve.caddy" && grep -q 'header_up Host __BOX_DNS_NAME__:__PVE_TS_PORT__' "$here/homelab/pve.caddy" || { echo "FAIL: pve.caddy lost its forward or its Host hop"; fails=$((fails + 1)); }
 
 # bring-up: pveproxy is bound to loopback (only restarted when it changed), SPICE proxy and rpcbind masked
 cat >"$tmp/bin/systemctl" <<'STUB'

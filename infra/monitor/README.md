@@ -81,10 +81,10 @@ The `tests` block is the proof at save time: Tailscale rejects a policy file whe
    scp infra/monitor/homelab/monitor.caddy root@192.168.0.67:/tmp/monitor.caddy
    ssh root@192.168.0.67
    cd /srv/compose/edge
-   BOX_IP=<tailnet ip>; TS_PORT=8452
+   BOX_IP=<tailnet ip>; BOX_DNS=<box MagicDNS name, e.g. ludius-box.tailec5e26.ts.net>; TS_PORT=8452
    grep -q 'BEGIN ludius-monitor' Caddyfile && echo "already applied" && exit
    [ -e Caddyfile.bak-before-ludius-monitor ] || cp -a Caddyfile Caddyfile.bak-before-ludius-monitor
-   sed -e "s/__BOX_TAILNET_IP__/$BOX_IP/" -e "s/__TS_PORT__/$TS_PORT/" /tmp/monitor.caddy >> Caddyfile
+   sed -e "s/__BOX_TAILNET_IP__/$BOX_IP/" -e "s/__BOX_DNS_NAME__/$BOX_DNS/" -e "s/__TS_PORT__/$TS_PORT/g" /tmp/monitor.caddy >> Caddyfile
    ss -ltn | grep -w 18452 && echo "port 18452 is taken, pick another in the snippet"
    docker compose exec <caddy-service> caddy validate --config /etc/caddy/Caddyfile   # service and path unconfirmed
    ```
@@ -96,13 +96,27 @@ The `tests` block is the proof at save time: Tailscale rejects a policy file whe
    ```sh
    scp infra/monitor/homelab/pve.caddy root@192.168.0.67:/tmp/pve.caddy     # from the desktop, before ssh
    cd /srv/compose/edge
-   BOX_IP=<tailnet ip>; PVE_TS_PORT=8453
+   BOX_IP=<tailnet ip>; BOX_DNS=<box MagicDNS name>; PVE_TS_PORT=8453
    grep -q 'BEGIN ludius-pve' Caddyfile && echo "already applied" && exit
    [ -e Caddyfile.bak-before-ludius-pve ] || cp -a Caddyfile Caddyfile.bak-before-ludius-pve
-   sed -e "s/__BOX_TAILNET_IP__/$BOX_IP/" -e "s/__PVE_TS_PORT__/$PVE_TS_PORT/" /tmp/pve.caddy >> Caddyfile
+   sed -e "s/__BOX_TAILNET_IP__/$BOX_IP/" -e "s/__BOX_DNS_NAME__/$BOX_DNS/" -e "s/__PVE_TS_PORT__/$PVE_TS_PORT/g" /tmp/pve.caddy >> Caddyfile
    docker compose exec <caddy-service> caddy validate --config /etc/caddy/Caddyfile
    ```
    On a validate failure `cp -a Caddyfile.bak-before-ludius-pve Caddyfile`, otherwise reload as above. WebSockets (noVNC console, xterm.js shell) need no extra Caddy config: `reverse_proxy` upgrades them, and `tailscale serve` proxies upgrades as well (unconfirmed for the installed version; the browser console test in "Verify" settles it).
+   **Host header (seen on the box, Tailscale 1.104.4):** `tailscale serve` answers only the box's MagicDNS name as Host (`<ip>:8453` gets a 404) and passes that Host to the backend unchanged. Hence the loopback hops set `Host <BOX_DNS>:<port>`; pveproxy ignores Host, but the agent answers only `127.0.0.1:7452`, so the monitor needs the box-side Caddy fallback below (`AGENT_MONITOR=http://127.0.0.1:7453`).
+
+   **Claustra:** each host must be registered as a forward-auth relying party, or Claustra answers `403 unknown relying party`. Same pattern as `ark.marcusson.dev` in `nixos-infra/modules/claustra.nix` (copy agh's owner allowlist), run on the homelab:
+   ```sh
+   sudo -u claustra psql --set=ON_ERROR_STOP=1 --dbname=claustra <<'SQL'
+   INSERT INTO forward_hosts (host, name, enabled, access_policy, created_by)
+   SELECT 'pve.ludius.se', 'Ludius Proxmox (rented box)', true, 'allowlist', created_by FROM forward_hosts WHERE host = 'agh.marcusson.dev'
+   ON CONFLICT (host) DO UPDATE SET name = EXCLUDED.name, enabled = true, access_policy = 'allowlist';
+   INSERT INTO forward_allowed_emails (rp_host, normalized_email, added_by)
+   SELECT 'pve.ludius.se', normalized_email, added_by FROM forward_allowed_emails WHERE rp_host = 'agh.marcusson.dev'
+   ON CONFLICT DO NOTHING;
+   SQL
+   ```
+   (`monitor.ludius.se` the same way.) Teardown: `DELETE FROM forward_allowed_emails WHERE rp_host = '<host>'; DELETE FROM forward_hosts WHERE host = '<host>';`
 5. **Homelab DNS:** `grep -rn DOMAINS /srv/compose/edge` finds the `favonia/cloudflare-ddns` containers. Back up the file first (`cp -a compose.yaml compose.yaml.bak-before-ludius-monitor`, matching the Caddyfile pattern). Add `monitor.ludius.se` and `pve.ludius.se` to the `DOMAINS` of a container whose sops-sealed token covers the `ludius.se` zone (the list is comma-separated: `DOMAINS=monitor.ludius.se,pve.ludius.se`), then `docker compose up -d <that-ddns-service>`. If no such container exists (none for `ludius.se` yet), copy an existing ddns service, give it its own sealed token and `DOMAINS=monitor.ludius.se,pve.ludius.se`. Follow the existing containers' `PROXIED` setting.
 
 ### Proxmox admin account (box, once, before the UI is used)

@@ -5,13 +5,15 @@ monitor.ludius.se {
 	import claustra_forward http://127.0.0.1:18452
 }
 
-# Loopback-only hop. The agent only answers Host 127.0.0.1:7452 (RequireHost and AllowedHosts), and the snippet
-# can't set header_up, so the Host rewrite lives here. Origin passes through unchanged (https://monitor.ludius.se),
-# which the agent's allowed-origin setting accepts. WebSocket upgrades are proxied by Caddy without extra config.
+# Loopback-only hop. The box's tailscale serve answers only its MagicDNS name as Host (anything else is a 404) and
+# passes that Host on unchanged, so the agent (Host 127.0.0.1:7452 only) needs the box-side Caddy fallback in the
+# README (serve :8452 -> 127.0.0.1:7453 -> agent with Host rewritten). The snippet can't set header_up, so the Host
+# rewrite lives here. Origin passes through unchanged (https://monitor.ludius.se), which the agent's allowed-origin
+# setting accepts. WebSocket upgrades are proxied by Caddy without extra config.
 http://127.0.0.1:18452 {
 	bind 127.0.0.1
 	reverse_proxy __BOX_TAILNET_IP__:__TS_PORT__ {
-		header_up Host 127.0.0.1:7452
+		header_up Host __BOX_DNS_NAME__:__TS_PORT__
 	}
 }
 # END ludius-monitor
