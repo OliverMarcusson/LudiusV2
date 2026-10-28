@@ -1,12 +1,15 @@
 """Jev (TypeSafe) through OpenRouter's Decisions API: one call per step, three questions.
 
-Jev only chooses among options built in code; it never plans, writes text or sees pixels.
+Jev only chooses among options built in code; it never plans or writes text.
+Models that read images (liquid/d1.1) can also get a screenshot.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -16,7 +19,9 @@ import httpx
 from ludius import calls
 
 ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
-DEFAULT_MODEL = "typesafe/jev-1.14"
+# Any OpenRouter Decisions model works here (same request and answer shape); liquid/d1.1 and d1-ultra also read
+# screenshots. LUDIUS_JEV_MODEL picks one without code changes.
+DEFAULT_MODEL = os.environ.get("LUDIUS_JEV_MODEL", "typesafe/jev-1.14")
 MAX_OPTIONS = 255
 
 _KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -54,8 +59,20 @@ class Decision:
         return sorted(self.probabilities.items(), key=lambda kv: -kv[1])[:n]
 
 
+def with_image(state: dict[str, Any], image: bytes) -> list[Any]:
+    """The state as Decisions media parts: the JSON state as text, then the screenshot (PNG or JPEG)."""
+    mime = "image/png" if image.startswith(b"\x89PNG") else "image/jpeg"
+    url = f"data:{mime};base64,{base64.b64encode(image).decode()}"
+    return [json.dumps(state), {"type": "image_url", "image_url": {"url": url}}]
+
+
 def build_request(
-    model: str, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True
+    model: str,
+    state: dict[str, Any],
+    options: dict[str, str],
+    *,
+    ask_progress: bool = True,
+    image: bytes | None = None,
 ) -> dict[str, Any]:
     if not 1 <= len(options) <= MAX_OPTIONS:
         raise JevError(f"option count {len(options)} outside 1..{MAX_OPTIONS}")
@@ -79,7 +96,7 @@ def build_request(
                 "false": "The screen is part of the way to the goal.",
             },
         }
-    return {"model": model, "state": state, "questions": questions}
+    return {"model": model, "state": with_image(state, image) if image else state, "questions": questions}
 
 
 def _prob(v: object) -> float:
@@ -137,8 +154,11 @@ class JevClient:
             timeout=timeout, follow_redirects=False, headers={"Authorization": f"Bearer {api_key}"}
         )
 
-    def decide(self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True) -> Decision:
-        body = build_request(self.model, state, options, ask_progress=ask_progress)
+    def decide(
+        self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
+    ) -> Decision:
+        """`image`: a screenshot for models that read images (not Jev); the state's text goes along with it."""
+        body = build_request(self.model, state, options, ask_progress=ask_progress, image=image)
         last: Exception | None = None
         for _ in range(2):  # one retry on transport errors, 5xx and answers that break the contract
             calls.count("jev")

@@ -61,6 +61,9 @@ def test_request_limits() -> None:
         build_request("m", {}, {"bad key!": "x"})
     q = build_request("m", {}, OPTIONS)["questions"]
     assert set(q) == {"action", "subgoal_done", "off_track"} and q["subgoal_done"]["type"] == "noul"
+    # A screenshot for image-reading Decisions models (liquid/d1.1): the JSON state as text, then the image part.
+    state = build_request("liquid/d1.1", {"goal": "g"}, OPTIONS, image=b"\x89PNG...")["state"]
+    assert state[0] == '{"goal": "g"}' and state[1]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
 def test_chords() -> None:
