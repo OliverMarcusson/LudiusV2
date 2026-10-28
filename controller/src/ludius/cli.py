@@ -537,7 +537,9 @@ async def _range_schedules(args: argparse.Namespace, users: list[str], today: dt
     if not args.today:
         return
     world, src = planner.World(RUNS), plan_sources()
-    llm = functools.partial(LlmClient, os.environ.get("OPENROUTER_API_KEY", ""), model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))
+    llm = functools.partial(
+        LlmClient, os.environ.get("OPENROUTER_API_KEY", ""), model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL)
+    )
     for u in users:
         persona = next(p for p in src.personas if p.user == u)
         calls.persona = u
