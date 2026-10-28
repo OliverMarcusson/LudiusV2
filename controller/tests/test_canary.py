@@ -9,16 +9,16 @@ import pytest
 
 from ludius import canary
 from ludius.cli import DATA, load_templates
-from ludius.jev import JevError
+from ludius.decisions import DecisionError
 from ludius.loop import GroundTruth, Outcome
 
 
 def test_canary_states_retry_and_health(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Per app, scripted runs: notepad passes on the retry, paint fails twice, explorer only loses runs to Jev.
+    # Per app, scripted runs: notepad passes on the retry, paint fails twice, explorer only loses runs to Decisions.
     script: dict[str, list[Any]] = {
         "notepad": ["failed", "done"],
         "paint": ["abandoned", "failed"],
-        "explorer": [JevError("down"), JevError("down")],
+        "explorer": [DecisionError("down"), DecisionError("down")],
     }
     seen: list[tuple[str, int | None]] = []
 

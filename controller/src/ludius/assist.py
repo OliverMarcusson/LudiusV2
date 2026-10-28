@@ -1,7 +1,7 @@
 """LLM in the loop, rarely (spec section 6): never per action, only for open-ended subgoals.
 
-- verify: Jev says an open-ended subgoal is done; the LLM confirms from the element table and history.
-- next_subgoal: Jev is stuck in an open-ended subgoal; the LLM proposes one intermediate subgoal.
+- verify: Decisions says an open-ended subgoal is done; the LLM confirms from the element table and history.
+- next_subgoal: Decisions is stuck in an open-ended subgoal; the LLM proposes one intermediate subgoal.
 """
 
 from __future__ import annotations

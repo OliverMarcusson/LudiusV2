@@ -1,4 +1,4 @@
-"""Jev state and option set, built in code from one settled snapshot."""
+"""Decisions state and option set, built in code from one settled snapshot."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from ludius.jev import MAX_OPTIONS
+from ludius.decisions import MAX_OPTIONS
 from ludius.policy import SHELL_PROCESSES, Policy, alt_f4_safe
 from ludius.tasks import (
     LAUNCH_TEXT,
@@ -35,9 +35,9 @@ _ASCII = re.compile(r"^[\x20-\x7e]{3,200}$")  # the virtual keyboard types ASCII
 
 @dataclass
 class Option:
-    key: str  # Jev choice key: o1, o2, ...
+    key: str  # Decisions choice key: o1, o2, ...
     kind: str  # click | double_click | type | key | scroll | rescan
-    text: str  # what Jev reads
+    text: str  # what Decisions reads
     element: obs.Element | None = None
     keys: str = ""
     content: str = ""  # content key for type
@@ -172,7 +172,7 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
     for e in v.allowed:
         if any(element_matches(e, c, task) for c in sg.avoid):
             continue
-        # Nothing to type: Jev never writes text, so an edit field (a search box) leads nowhere (Excel run2: 12
+        # Nothing to type: Decisions never writes text, so an edit field (a search box) leads nowhere (Excel run2: 12
         # clicks on Microsoft search over F12). No template subgoal without text needs one focused by a click.
         if content is None and not sg.copy_text and e.role == "edit":
             continue
@@ -221,8 +221,8 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
         add("scroll", "scroll up", notches=3)
     add("rescan", "rescan: wait for the screen to finish loading and look again")
     if len(opts) > MAX_OPTIONS:
-        # Over Jev's limit, element options give way: cutting the tail lost the keys, F12 among them, behind
-        # Excel's ~250 ribbon controls (runs 2 and 4 never saw the subgoal's own key).
+        # Over the decision model's limit, element options give way: cutting the tail lost the keys, F12 among them,
+        # behind Excel's ~250 ribbon controls (runs 2 and 4 never saw the subgoal's own key).
         opts = opts[: elements - (len(opts) - MAX_OPTIONS)] + opts[elements:]
         for i, o in enumerate(opts, start=1):
             o.key = f"o{i}"

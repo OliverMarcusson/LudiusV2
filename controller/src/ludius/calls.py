@@ -2,7 +2,7 @@
 
 One count per HTTP request actually sent: a retry or a validation re-ask that posts again counts again.
 Totals are cumulative in runs/openrouter-calls.json until that file is deleted; the host agent serves it read-only.
-A deployment caps spend with LUDIUS_CAP_JEV / LUDIUS_CAP_LLM: absolute ceilings on these shared totals, so the cap
+A deployment caps spend with LUDIUS_CAP_DECISION / LUDIUS_CAP_LLM: absolute ceilings on these shared totals, so the cap
 holds across every controller process and restart (set them to the current total plus the budget).
 """
 
@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 PATH = Path(__file__).resolve().parents[3] / "runs" / "openrouter-calls.json"
 
-Kind = Literal["jev", "llm"]
+Kind = Literal["decision", "llm"]
 
 
 def _lock(fd: int) -> None:
@@ -50,6 +50,8 @@ def count(kind: Kind) -> None:
                 if cap is not None:  # a lost counter would restart from 0 and grant the whole ceiling again
                     raise
                 old = {}
+            if "decision" not in old and "jev" in old:  # counter files from before the rename keep their count
+                old["decision"] = old.pop("jev")
             if cap is not None:
                 total = old.get(kind)
                 if type(total) is not int or total < 0:
@@ -58,7 +60,7 @@ def count(kind: Kind) -> None:
                     raise CapReached(f"{kind} request cap LUDIUS_CAP_{kind.upper()}={cap} reached; nothing sent")
             now = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
             data = {
-                "jev": int(old.get("jev", 0)) + (kind == "jev"),
+                "decision": int(old.get("decision", 0)) + (kind == "decision"),
                 "llm": int(old.get("llm", 0)) + (kind == "llm"),
                 "since": old.get("since") or now,
                 "updated": now,

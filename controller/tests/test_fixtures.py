@@ -1,6 +1,6 @@
-"""Fixture replay: recorded observations + subgoal -> expected option (offline), expected Jev choice (live).
+"""Fixture replay: recorded observations + subgoal -> expected option (offline), expected Decisions choice (live).
 
-Live Jev replay runs only with LUDIUS_LIVE_JEV=1 and OPENROUTER_API_KEY set.
+Live Decisions replay runs only with LUDIUS_LIVE_DECISION=1 and OPENROUTER_API_KEY set.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import yaml
 from google.protobuf import json_format
 
 from ludius.cli import DATA, ROOT, load_env
-from ludius.jev import JevClient
+from ludius.decisions import DecisionsClient
 from ludius.options import build_options, build_state, view
 from ludius.policy import Policy
 from ludius.tasks import Task, TaskInstance, load_template, load_yaml
@@ -47,23 +47,25 @@ def test_expected_option_offered_and_forbidden_absent(case_dir: Path) -> None:
         pytest.fail(f"none of {case['expect']} offered; got {texts[:40]}")
     for bad in case.get("forbid", []):
         assert not any(bad in t for t in texts), f"forbidden option {bad!r} offered"
-    # Bounds and sources stay in the controller; Jev only sees ids, roles, names, values, states, hints.
+    # Bounds and sources stay in the controller; Decisions only sees ids, roles, names, values, states, hints.
     state = build_state(v, task, sg, [], "start")
     assert "bounds" not in str(state)
 
 
-@pytest.mark.skipif(os.environ.get("LUDIUS_LIVE_JEV") != "1", reason="live Jev replay: set LUDIUS_LIVE_JEV=1")
+@pytest.mark.skipif(
+    os.environ.get("LUDIUS_LIVE_DECISION") != "1", reason="live Decisions replay: set LUDIUS_LIVE_DECISION=1"
+)
 @pytest.mark.parametrize("case_dir", CASES, ids=[c.name for c in CASES])
-def test_jev_choice(case_dir: Path) -> None:
+def test_decision_choice(case_dir: Path) -> None:
     load_env()
     snap, task, name, case = load(case_dir)
     sg = task.subgoal(name)
     v = view(snap, task, sg, Policy())
     options = build_options(v, task, sg, Policy())
-    jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""))
+    decider = DecisionsClient(os.environ.get("OPENROUTER_API_KEY", ""))
     try:
-        d = jev.decide(build_state(v, task, sg, [], "start of subgoal"), {o.key: o.text for o in options})
+        d = decider.decide(build_state(v, task, sg, [], "start of subgoal"), {o.key: o.text for o in options})
     finally:
-        jev.close()
+        decider.close()
     chosen = next(o.text for o in options if o.key == d.choice)
-    assert any(re.search(p, chosen) for p in case["expect"]), f"Jev chose {chosen!r} ({d.confidence:.2f})"
+    assert any(re.search(p, chosen) for p in case["expect"]), f"Decisions chose {chosen!r} ({d.confidence:.2f})"

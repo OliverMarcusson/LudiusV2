@@ -6,9 +6,9 @@ from typing import Any
 import httpx
 import pytest
 
-from ludius import jev, keys
+from ludius import decisions, keys
 from ludius.cli import DATA
-from ludius.jev import JevError, build_request, parse_response
+from ludius.decisions import DecisionError, build_request, parse_response
 from ludius.policy import Policy
 from ludius.tasks import Done, Persona, Task, TaskInstance, WindowCheck, check_done, load_template
 from ludius.v1 import observation_pb2 as obs
@@ -46,19 +46,19 @@ def test_parse_valid() -> None:
 )
 def test_parse_rejects_inconsistent_answers(answers: dict[str, Any]) -> None:
     full = response()["answers"] | answers
-    with pytest.raises(JevError):
+    with pytest.raises(DecisionError):
         parse_response(response(answers=full), "typesafe/jev-1.14", OPTIONS)
 
 
 def test_parse_rejects_model_drift() -> None:
-    with pytest.raises(JevError):
+    with pytest.raises(DecisionError):
         parse_response(response(model="other/model"), "typesafe/jev-1.14", OPTIONS)
 
 
 def test_request_limits() -> None:
-    with pytest.raises(JevError):
+    with pytest.raises(DecisionError):
         build_request("m", {}, {f"o{i}": "x" for i in range(256)})
-    with pytest.raises(JevError):
+    with pytest.raises(DecisionError):
         build_request("m", {}, {"bad key!": "x"})
     q = build_request("m", {}, OPTIONS)["questions"]
     assert set(q) == {"action", "subgoal_done", "off_track"} and q["subgoal_done"]["type"] == "noul"
@@ -69,12 +69,12 @@ def test_request_limits() -> None:
 
 def test_rate_limit_retried_and_counted(monkeypatch: pytest.MonkeyPatch) -> None:
     sent: list[str] = []
-    monkeypatch.setattr(jev.calls, "count", sent.append)
+    monkeypatch.setattr(decisions.calls, "count", sent.append)
     waits: list[float] = []
-    monkeypatch.setattr(jev.time, "sleep", waits.append)
+    monkeypatch.setattr(decisions.time, "sleep", waits.append)
 
-    def client(codes: list[int]) -> jev.JevClient:
-        c = jev.JevClient("k", model="typesafe/jev-1.14")
+    def client(codes: list[int]) -> decisions.DecisionsClient:
+        c = decisions.DecisionsClient("k", model="typesafe/jev-1.14")
         replies = iter(codes)
 
         def reply(_: httpx.Request) -> httpx.Response:
@@ -85,13 +85,15 @@ def test_rate_limit_retried_and_counted(monkeypatch: pytest.MonkeyPatch) -> None
         return c
 
     d = client([429, 200]).decide({}, OPTIONS)
-    assert d.choice == "o1" and d.retries_429 == 1 and sent == ["jev", "jev"]  # the retry counts against the cap
+    assert (
+        d.choice == "o1" and d.retries_429 == 1 and sent == ["decision", "decision"]
+    )  # the retry counts against the cap
     sent.clear()
-    with pytest.raises(JevError, match="429"):  # 3 retries, then the fourth 429 raises
+    with pytest.raises(DecisionError, match="429"):  # 3 retries, then the fourth 429 raises
         client([429] * 4).decide({}, OPTIONS)
     assert len(sent) == 4 and waits[-3:] == [1, 2, 4]
     sent.clear()
-    with pytest.raises(JevError, match="400"):  # any other 4xx raises at once
+    with pytest.raises(DecisionError, match="400"):  # any other 4xx raises at once
         client([400]).decide({}, OPTIONS)
     assert len(sent) == 1
 
@@ -206,7 +208,7 @@ def test_growth_checker_accepts_catalog_templates() -> None:
 
 
 def test_near_tie_only_between_equivalent_options() -> None:
-    from ludius.jev import Decision
+    from ludius.decisions import Decision
     from ludius.loop import Runner
     from ludius.options import Option
 

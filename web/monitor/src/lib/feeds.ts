@@ -50,7 +50,7 @@ export function useVms(intervalMs = 5000): { vms: Vm[]; error: string | null; lo
 // OpenRouter requests the controller has sent, cumulative across runs (runs/openrouter-calls.json).
 // Polling only reads the totals; it never makes a request of its own to OpenRouter.
 export interface Calls {
-  jev: number
+  decision: number
   llm: number
   since: Date | null // when counting started; null before the first call
 }
@@ -77,10 +77,11 @@ function record(data: unknown, what: string): Record<string, unknown> {
 
 // Accept only what the counters can show truthfully: two non-negative integers and an optional valid date.
 export function parseCalls(data: unknown): Calls {
-  const { jev, llm, since } = record(data, "counter data")
-  if (!count(jev) || !count(llm)) throw new Error("malformed counter data")
+  const { decision, jev, llm, since } = record(data, "counter data")
+  const decisions = decision ?? jev // counter files from before the rename say `jev`
+  if (!count(decisions) || !count(llm)) throw new Error("malformed counter data")
   const at = typeof since === "string" ? new Date(since) : null
-  return { jev, llm, since: at && !Number.isNaN(at.getTime()) ? at : null }
+  return { decision: decisions, llm, since: at && !Number.isNaN(at.getTime()) ? at : null }
 }
 
 // running: an event in the last 90 s. completed: the log ends with an admission_end record. stale: quiet in the

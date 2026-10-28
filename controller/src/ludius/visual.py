@@ -1,7 +1,7 @@
 """Visual fallback and pixels-only observation (spec section 3), host side: a screenshot becomes element-table rows.
 
 OCR runs PaddleOCR's PP-OCR models on ONNX Runtime (rapidocr-onnxruntime; `uv sync --group visual`). Elements use
-the observer's format with framework_id "visual" and a hint that they were read from pixels, so Jev knows there is
+the observer's format with framework_id "visual" and a hint that they were read from pixels, so Decisions knows there is
 no accessibility data behind them. Fallback mode fills windows the observer marked no_tree; pixels-only mode builds
 the whole snapshot from screenshots, settling when two frames a quiet period apart are identical.
 

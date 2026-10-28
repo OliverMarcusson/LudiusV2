@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from ludius.cli import load_templates
-from ludius.jev import Decision
+from ludius.decisions import Decision
 from ludius.loop import GroundTruth, Runner, image_reason
 from ludius.tasks import Persona, Task, TaskInstance
 from ludius.v1 import agent_pb2 as pb
@@ -55,7 +55,7 @@ class ToggleAgent:
 
 
 class PrefersStart:
-    """A Jev stand-in that always wants the Start button while it is offered."""
+    """A Decisions stand-in that always wants the Start button while it is offered."""
 
     def decide(
         self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
@@ -77,9 +77,9 @@ class SeesImages(PrefersStart):
         return d
 
 
-def _run(tmp_path: Path, agent: ToggleAgent, jev: PrefersStart | None = None) -> list[dict[str, Any]]:
+def _run(tmp_path: Path, agent: ToggleAgent, decider: PrefersStart | None = None) -> list[dict[str, Any]]:
     log = tmp_path / "gt.jsonl"
-    runner = Runner(agent, jev or PrefersStart(), Persona(name="t", user="t"), GroundTruth(log), seed=1)  # type: ignore[arg-type]
+    runner = Runner(agent, decider or PrefersStart(), Persona(name="t", user="t"), GroundTruth(log), seed=1)  # type: ignore[arg-type]
     tpl = load_templates()["notepad_write_note"]
     task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
     runner._subgoal(task, "open_from_start", task.subgoal("open_from_start"), budget=12, t0=1e18)  # pyright: ignore[reportPrivateUsage]
@@ -121,22 +121,22 @@ class FailsOnShot(ToggleAgent):
 
 def test_screenshot_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def reasons(name: str, agent: ToggleAgent) -> list[str | None]:
-        jev = SeesImages()
-        events = _run(tmp_path / name, agent, jev)
-        steps = [e["jev"]["image"] for e in events if e.get("event") == "step"]
-        assert [i is not None for i in jev.images] == [r is not None for r in steps]  # logged = sent
+        decider = SeesImages()
+        events = _run(tmp_path / name, agent, decider)
+        steps = [e["decision"]["image"] for e in events if e.get("event") == "step"]
+        assert [i is not None for i in decider.images] == [r is not None for r in steps]  # logged = sent
         return steps
 
     # Every step makes progress: text only.
     assert reasons("grows", ToggleAgent(grows=True)) == [None] * 12
     # Nothing changes: every later step follows a "no visible change".
     assert reasons("stuck", StuckAgent()) == [None] + ["no_change"] * 11
-    # A foreground window UIA can't read gets it too; LUDIUS_JEV_IMAGE=1 forces it on every step.
+    # A foreground window UIA can't read gets it too; LUDIUS_DECISION_IMAGE=1 forces it on every step.
     fg = obs.Window(title="x", process_name="x.exe", kind=obs.Window.FOREGROUND, no_tree=True)
     assert image_reason(None, obs.Snapshot(windows=[fg])) == "unreadable"
     assert image_reason("refused", obs.Snapshot(windows=[fg])) == "refused"
     assert image_reason(None, obs.Snapshot(windows=[obs.Window(kind=obs.Window.FOREGROUND)])) is None
-    monkeypatch.setenv("LUDIUS_JEV_IMAGE", "1")
+    monkeypatch.setenv("LUDIUS_DECISION_IMAGE", "1")
     assert reasons("forced", ToggleAgent(grows=True)) == ["forced"] * 12
     # A screenshot taken after the screen moved never goes along with the older state.
     assert reasons("moved", MovesOnShot()) == [None] * 12

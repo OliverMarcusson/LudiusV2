@@ -162,7 +162,7 @@ class Done(Strict):
 class Subgoal(Strict):
     goal: str
     text: str | None = None  # content key whose value may be typed
-    # Navigation text the template writes (never Jev or an LLM: growth refuses it), e.g. "save as" for an app's
+    # Navigation text the template writes (never Decisions or an LLM: growth refuses it), e.g. "save as" for an app's
     # search box: the text to type in a subgoal without `text`. One printable ASCII line, no Enter; the scenario
     # policy checks it at plan load (planner.item_problem) and on every step (options, loop._post_check).
     search: str = Field(default="", pattern=r"^[ -~]{0,40}$")
@@ -493,7 +493,7 @@ class TaskInstance(Strict):
     params: dict[str, str] = Field(default_factory=dict[str, str])
     content: dict[str, str] = Field(default_factory=dict[str, str])
     variant: int | None = None
-    context: str = ""  # one line of narrative for Jev: why the persona is doing this
+    context: str = ""  # one line of narrative for Decisions: why the persona is doing this
     request: str = ""  # Internet message id of the manager's mail this task does (ludius.requests)
 
 
@@ -639,7 +639,7 @@ def pixels_region(snap: obs.Snapshot, window: int, task: Task) -> list[obs.Eleme
 
 
 def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool, outside: bool = True) -> bool | None:
-    """True/False when the subgoal has a code check, None when it has none (Jev decides). `outside=False`: the
+    """True/False when the subgoal has a code check, None when it has none (Decisions decides). `outside=False`: the
     checks on screen only (None when there are none), so the runner can wait for the server instead of acting."""
     if done is None:
         return None
@@ -653,7 +653,7 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
         and not on_pixels
         and not (done.window or done.foreground or done.element or done.added or done.typed)
     ):
-        return None  # a completion only pixels mode checks: with an accessibility tree, Jev decides as before
+        return None  # a completion only pixels mode checks: with an accessibility tree, Decisions decides as before
     if done.typed and not typed_ok:
         return False
     if on_pixels and not done.pixels:

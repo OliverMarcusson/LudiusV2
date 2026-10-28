@@ -12,7 +12,7 @@ import pydantic
 import pytest
 
 from ludius.cli import load_templates
-from ludius.jev import Decision
+from ludius.decisions import Decision
 from ludius.loop import FILENAME_ROWS, FILENAME_TEXT, Runner
 from ludius.options import Option, build_options, build_state, describe, view
 from ludius.policy import Policy
@@ -362,7 +362,7 @@ def test_only_pixels_filename_steps_get_the_diagnostic() -> None:
 def test_unnamed_title_bar_icons_are_told_apart_by_their_visible_bounds() -> None:
     # Live saved-note Notepad (runs/visual/20261027-close-perception.txt, UIA ground truth: Minimise 1501,209,
     # Maximise 1548,209, Close 1594,209): the detector's unnamed caption icons, two of them with the same id
-    # (outer button and glyph share a 16 px key cell). Without bounds their lines were identical, Jev could not
+    # (outer button and glyph share a 16 px key cell). Without bounds their lines were identical, Decisions could not
     # pick the Close icon, and the merged menu row's 52 px box (284,239) said nothing about where File is.
     icons = [(50003, 1511, 209, 34, 31), (50004, 1555, 209, 34, 30), (50004, 1566, 215, 14, 16),
              (50005, 1603, 209, 33, 30), (50005, 1612, 214, 14, 18)]  # fmt: skip

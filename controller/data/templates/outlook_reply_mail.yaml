@@ -1,7 +1,7 @@
 # Reply in Outlook (classic) to a colleague's real mail in the Inbox, found by its subject.
 # The mail and the reply text are chosen at task time (capability mail.reply, ludius.reply): the newest unanswered
 # mail from the planned colleague, read on the range server; one LLM call writes the reply to its text, code and a
-# Jev yes/no check validate it, and the recipient is that mail's sender. Done is checked on the range server, not
+# Decisions yes/no check validate it, and the recipient is that mail's sender. Done is checked on the range server, not
 # in the UI (ludius.mail): an "RE:" message answering that mail (In-Reply-To = its message id) in the sender's
 # inbox and the persona's Sent Items, with the typed text above the quote. Variants: Ctrl+R vs the Reply button.
 task: outlook_reply_mail

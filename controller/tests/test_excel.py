@@ -286,8 +286,8 @@ def test_no_text_no_edit_clicks_and_template_search_text(task: tuple[Task, dict[
 
 
 def test_keys_survive_the_option_limit(task: tuple[Task, dict[str, Any]]) -> None:
-    """Run4: ~250 ribbon controls pushed F12 past Jev's 255 options; elements give way, never keys or rescan."""
-    from ludius.jev import MAX_OPTIONS
+    """Run4: ~250 ribbon controls pushed F12 past the 255 options; elements give way, never keys or rescan."""
+    from ludius.decisions import MAX_OPTIONS
 
     tk, _ = task
     s, p = run2_snap(), Policy()
@@ -336,15 +336,15 @@ def test_search_text_only_into_a_checked_field_of_the_task_app(task: tuple[Task,
     r.snap = snap("EXCEL.EXE", "Microsoft search")
     assert post_check(Option("o1", "type", "t", element=r.snap.elements[0], literal="save as"), nav, tk) is None
     with pytest.raises(ValueError):
-        tasks.Subgoal(goal="g", keys=["F1"] * 17)  # capped, so keys always fit beside Jev's option limit
+        tasks.Subgoal(goal="g", keys=["F1"] * 17)  # capped, so keys always fit beside the decision model's option limit
 
 
 @pytest.mark.parametrize("planner_text", [True, False])
 def test_typing_rechecks_its_target_on_a_fresh_snapshot(
     task: tuple[Task, dict[str, Any]], tmp_path: Any, planner_text: bool
 ) -> None:
-    """Sol re-check: the screen changes while Jev decides. Right before typing, a fresh snapshot must still show the
-    decided foreground window and the target by its key (an id is per snapshot), passing the element policy."""
+    """Sol re-check: the screen changes while Decisions decides. Right before typing, a fresh snapshot must still show
+    the decided foreground window and the target by its key (an id is per snapshot), passing the element policy."""
     from ludius.loop import GroundTruth, Runner
     from ludius.options import Option
     from ludius.tasks import Persona

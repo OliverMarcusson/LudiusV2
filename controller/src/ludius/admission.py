@@ -3,7 +3,7 @@
 A variant is admitted when it completes in at least two thirds of its runs; a template is admitted with its
 reliable variants only. Proposed templates (data/templates/proposed/) move into the catalog on admission.
 
-A run that fails on infrastructure (Jev or LLM contract/HTTP errors, an RPC to the host agent or observer, an
+A run that fails on infrastructure (Decisions or LLM contract/HTTP errors, an RPC to the host agent or observer, an
 observer that never comes back) is recorded as "error": a failed attempt, never a pass. The next run starts
 only after a successful restore; a failed restore stops admission, keeping the runs done so far.
 """
@@ -22,14 +22,14 @@ import httpx
 import yaml
 
 from ludius.day import run_task
-from ludius.jev import JevError
+from ludius.decisions import DecisionError
 from ludius.llm import LlmError
 from ludius.loop import Runner
 from ludius.session import Session
 from ludius.tasks import Task, TaskInstance, Template
 
 # Operational failures isolated per run. Anything else is a bug and still raises.
-OPERATIONAL = (JevError, LlmError, grpc.RpcError, httpx.HTTPError, TimeoutError)
+OPERATIONAL = (DecisionError, LlmError, grpc.RpcError, httpx.HTTPError, TimeoutError)
 
 
 def reliable(passes: int, runs: int) -> bool:

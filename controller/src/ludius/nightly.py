@@ -89,7 +89,9 @@ class Sources(NamedTuple):
     templates: dict[str, Template]
     policy: Policy
     inbox: Callable[[str], list[mail.Message] | None] = lambda _: []  # a persona's Inbox on the range server
-    jev: Callable[[], Decider] | None = None  # maps manager requests to task types (ludius.requests); None: not mapped
+    decider: Callable[[], Decider] | None = (
+        None  # maps manager requests to task types (ludius.requests); None: not mapped
+    )
 
 
 class Generated(NamedTuple):
@@ -159,15 +161,15 @@ def generate_day(
         notes += [f"requests by {boss.user}: {r}" for r in day.rejects]
         notes += [f"requests by {boss.user}: {r.status} to {r.to} {r.subject!r}" for r in day.requests]
     inbox_mails = src.inbox(persona.user)
-    if not isinstance(boss, str) and src.jev is not None:
-        jev = src.jev()
+    if not isinstance(boss, str) and src.decider is not None:
+        decider = src.decider()
         try:
             mails = requests.pending(world, persona.user, boss, inbox_mails, src.policy, date)
             role = planner.role_templates(src.templates, persona)
-            mapped, more = requests.candidates(llm, jev, world, persona, boss, mails, role, date, people)
+            mapped, more = requests.candidates(llm, decider, world, persona, boss, mails, role, date, people)
             notes += more
         finally:
-            getattr(jev, "close", lambda: None)()
+            getattr(decider, "close", lambda: None)()
     asked = {m.subject for m in inbox_mails or [] if m.msgid in {it.request for it in mapped}}
     inbox = reply.hints(inbox_mails, persona.user, people, src.policy)
     unread = {(m.sender.partition("@")[0], m.subject) for m in inbox_mails or [] if not m.read}

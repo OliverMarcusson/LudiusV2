@@ -4,7 +4,7 @@ Background user activity (noise) for Windows VMs in DFIR training ranges. See [t
 
 Progress against the spec is tracked in [`docs/progress.html`](docs/progress.html), published at https://marcusson.dev/ludius-progress. Update its `SECTIONS` list and change log whenever work lands, then republish.
 
-Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrative and each persona's day plan, including all content. A day runner plays the plan through the hypervisor's virtual keyboard and mouse. The guest reads the screen through UI Automation, and Jev (TypeSafe, via OpenRouter) chooses one action per step.
+Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrative and each persona's day plan, including all content. A day runner plays the plan through the hypervisor's virtual keyboard and mouse. The guest reads the screen through UI Automation, and a Decisions model (via OpenRouter, default `liquid/d1.1`) chooses one action per step.
 
 ## Layout
 
@@ -13,7 +13,7 @@ Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrati
 | `proto/` | gRPC schemas: observation (guest channel) and host agent API |
 | `guest/observer/` | C# observer (`uiprobe.exe`): UIA3 snapshots, element table, hints, stable ids, cap, settle (UIA events + DXGI dirty rects), Hyper-V socket server. Read-only; writes nothing to disk |
 | `host/agent/` | C# host agent: gRPC on `127.0.0.1:7451`, Hyper-V WMI keyboard/mouse, observer relay, lifecycle, console frames |
-| `controller/` | Python: planner (narrative, day plans, content, near-duplicate check), day runner (clock modes, breaks, interruptions), Jev client, options, policy, completion checks, step loop, session hygiene, unlock, failure ladder 1–8, ground truth and instructor timeline, CLI |
+| `controller/` | Python: planner (narrative, day plans, content, near-duplicate check), day runner (clock modes, breaks, interruptions), Decisions client, options, policy, completion checks, step loop, session hygiene, unlock, failure ladder 1–8, ground truth and instructor timeline, CLI |
 | `controller/data/` | Templates (Notepad, Explorer, Edge), personas, hand-written task instances |
 | `web/monitor/` | Operator monitor: view-only desktop feeds of the range VMs (React, shadcn/ui), served by the host agent |
 | `fixtures/` | Recorded snapshots + console frames + expected choices, used for offline replay |
@@ -61,7 +61,7 @@ bun run dev                                    # development, proxies /api to th
 
 The monitor runs on its own HTTP/1.1 endpoint (`Kestrel:Endpoints:Monitor`, default `127.0.0.1:7452`) with GET routes only: it cannot send input or change VM state. Only VMs whose names match `Monitor:Include` (default `^ludius-`) are listed or served. The stream rejects WebSocket connections from other origins, and the agent only answers to the host names in `AllowedHosts` (DNS rebinding). It has no authentication, so keep it on localhost, or bind it to an operator network only behind a reverse proxy with auth.
 
-The header also shows two OpenRouter counters, **Jev calls** (Decisions API) and **LLM calls** (chat completions). Each counts one HTTP request sent to OpenRouter, so a retry or validation re-ask that sends another request counts again. Every controller process adds to the same totals in `runs/openrouter-calls.json` (`Monitor:Calls`). The totals survive restarts and keep growing until you delete that file; the page polls them every 2 s.
+The header also shows two OpenRouter counters, **Decision calls** (Decisions API) and **LLM calls** (chat completions). Each counts one HTTP request sent to OpenRouter, so a retry or validation re-ask that sends another request counts again. Every controller process adds to the same totals in `runs/openrouter-calls.json` (`Monitor:Calls`). The totals survive restarts and keep growing until you delete that file; the page polls them every 2 s.
 
 ## Checks
 
@@ -69,7 +69,7 @@ The header also shows two OpenRouter counters, **Jev calls** (Decisions API) and
 cd controller
 uv run ruff check src tests; uv run ruff format --check src tests; uv run pyright; uv run pytest    # full: starts temporary Temporal, PostgreSQL and MinIO servers; skips any it cannot start
 uv run pytest -m "not service"    # offline: same suite minus the tests marked service, starts nothing
-$env:LUDIUS_LIVE_JEV=1; uv run pytest -k jev_choice    # live Jev replay on fixtures
+$env:LUDIUS_LIVE_DECISION=1; uv run pytest -k decision_choice    # live Decisions replay on fixtures
 dotnet build Ludius.sln
 cd web\monitor; bun run lint; bun run build
 ```

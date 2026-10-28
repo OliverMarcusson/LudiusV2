@@ -10,7 +10,7 @@ Playback side (SYNTHETIC start): the next day's calendar is not fired. `Schedule
 explicit TemporalScheduledStartTime of occurrence + 1 day, only to prove it reads the plan nightly wrote and runs it
 once on a fake desktop.
 
-Uses only the Temporal CLI the SDK already cached; never downloads one. No VM, Jev, LLM network or paid call.
+Uses only the Temporal CLI the SDK already cached; never downloads one. No VM, Decisions, LLM network or paid call.
 """
 
 from __future__ import annotations

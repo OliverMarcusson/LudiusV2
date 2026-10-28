@@ -95,10 +95,15 @@ static class Monitor
             try
             {
                 using var f = new FileStream(calls, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                return Results.Text(new StreamReader(f).ReadToEnd(), "application/json");
+                var text = new StreamReader(f).ReadToEnd();
+                // A counter file from before the rename says "jev": serve it as "decision", same count.
+                var o = System.Text.Json.Nodes.JsonNode.Parse(text) as System.Text.Json.Nodes.JsonObject;
+                if (o is not null && !o.ContainsKey("decision") && o.Remove("jev", out var old))
+                    o["decision"] = old;
+                return Results.Text(o?.ToJsonString() ?? text, "application/json");
             }
-            catch (FileNotFoundException) { return Results.Json(new { jev = 0, llm = 0 }); }
-            catch (DirectoryNotFoundException) { return Results.Json(new { jev = 0, llm = 0 }); }
+            catch (FileNotFoundException) { return Results.Json(new { decision = 0, llm = 0 }); }
+            catch (DirectoryNotFoundException) { return Results.Json(new { decision = 0, llm = 0 }); }
         });
 
         var admission = Path.GetFullPath(app.Configuration["Monitor:Admission"] ?? "../../runs/admission", app.Environment.ContentRootPath);

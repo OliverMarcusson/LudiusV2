@@ -23,7 +23,7 @@ Add a template-level guard only for an effect the shared layer does not cover ye
 - Parameters validated at plan load.
 - Bounded steps, and an abandon path.
 - An outcome check outside the UI that tells *this* task's result from pre-existing state.
-- One repeatable live run on the VM (compressed clock, escalation off, Jev cap) with external evidence.
+- One repeatable live run on the VM (compressed clock, escalation off, decision cap) with external evidence.
 
 ## Reviews
 

@@ -91,7 +91,7 @@ pixels:
     close_app: {absent: ['-Notepad$'], present: ['ypeheretosearch|RecycleBin']}
   hints:
     write_body: "If nothing else was clicked since Notepad opened, try typing at the keyboard focus."
-    # Evidence (runs/visual/20261027-focus-evidence-run1-ABC.txt, run2-C2.txt; UIA ground truth, zero Jev): a fresh
+    # Evidence (runs/visual/20261027-focus-evidence-run1-ABC.txt, run2-C2.txt; UIA ground truth, zero Decisions calls): a fresh
     # Ctrl+S puts the keyboard focus in the File name field with '*.txt' selected, so typing replaces it. After
     # clicking the Encoding control and then the 'File name:' label the focus stays on Encoding, and typing changed
     # Encoding to UTF-16 LE while the file name stayed '*.txt'. Alt+N did not move focus back.

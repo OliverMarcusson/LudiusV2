@@ -14,7 +14,7 @@ each valid request is sent from the manager's mailbox through srv01's local LDA 
 only). A sent mail is irreversible; a retry finds it by Message-ID and never sends twice.
 
 Persona side (candidates()): each new mail from the persona's manager in the persona's real Inbox is mapped to one
-request-capable template or "none" by one Jev choice (fail closed: "none", a weak choice or an error maps nothing),
+request-capable template or "none" by one Decisions choice (fail closed: "none", a weak choice or error maps nothing),
 then one LLM call writes that item's parameters from the mail; the item goes through planner.validate with the
 rest of the day (nightly.generate_day) and carries `request`, the mail's Message-ID. Mails decided "none" or
 rejected are remembered in runs/world/requests/seen-<user>.yaml and never cost a call again.
@@ -56,9 +56,9 @@ if TYPE_CHECKING:
 REQUESTABLE = ("file.write", "mail.send", "mail.reply", "calendar.invite")  # capabilities a request may ask for
 WEEKLY = 3  # requests per report and ISO week, at most
 MAPPED_MAX = 2  # manager mails mapped per persona and night, at most (bounded calls)
-JEV_MIN = 0.6  # Jev's choice must be at least this probable
+DECISION_MIN = 0.6  # the decision model's choice must be at least this probable
 READ_LEAD = 5  # minutes: a request mail is read (mail.read) this long before the task it asks for
-SHOWN = 2000  # characters of a mail Jev and the LLM see
+SHOWN = 2000  # characters of a mail Decisions and the LLM see
 _LINE = re.compile(r"[\x20-\x7e]+")
 _TEXT = re.compile(r"[\x20-\x7e\n]+")
 _FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _-]{0,59}")  # a requested file name: plain, no extension
@@ -357,7 +357,7 @@ def pending(
 
 def candidates(
     llm: LlmClient,
-    jev: Decider,
+    decider: Decider,
     world: World,
     persona: Persona,
     boss: Person,
@@ -380,14 +380,14 @@ def candidates(
         options = {k: f"{k}: {t.about}" for k, t in kinds.items()}
         options["none"] = "none: it asks for none of these tasks, or for nothing to do"
         try:
-            d = jev.decide(state, options, ask_progress=False)
+            d = decider.decide(state, options, ask_progress=False)
         except Exception as e:  # noqa: BLE001  fail closed: no answer maps nothing (asked again next night)
-            notes.append(f"request {m.subject!r}: Jev failed: {e}")
+            notes.append(f"request {m.subject!r}: Decisions failed: {e}")
             continue
         p = d.probabilities.get(d.choice, 0.0)
-        if d.choice not in kinds or p < JEV_MIN:
-            remember(world.root, persona.user, m.msgid, f"jev {d.choice} {p:.2f}")
-            notes.append(f"request {m.subject!r}: Jev maps it to {d.choice} ({p:.2f}), not planned")
+        if d.choice not in kinds or p < DECISION_MIN:
+            remember(world.root, persona.user, m.msgid, f"decision {d.choice} {p:.2f}")
+            notes.append(f"request {m.subject!r}: Decisions maps it to {d.choice} ({p:.2f}), not planned")
             continue
         t = kinds[d.choice]
         params = ", ".join(x for x in t.params if x not in DERIVED)

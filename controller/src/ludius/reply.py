@@ -6,11 +6,11 @@ Before any input the runner calls Composer.prepare(), which
    neither from nor about anything the scenario reserves;
 2. makes ONE LLM call (ludius.llm, counted) that writes a short reply to that mail's text in the persona's voice;
 3. checks the text in code where an exact rule does better (typeable ASCII, one paragraph, length, scenario policy,
-   no reserved person's name), and asks Jev one yes/no question, failing closed: does it answer the mail?
+   no reserved person's name), and asks Decisions one yes/no question, failing closed: does it answer the mail?
 4. fills the task's to, to_name (from the narrative), subject, body and reply_to (the mail's Internet message id,
    which the server-side done check requires as In-Reply-To).
 Any failure is a reason: the task is abandoned before its first input and the reason recorded. Unreadable is
-unknown, never empty. Jev never writes text; it only answers yes or no.
+unknown, never empty. Decisions never writes text; it only answers yes or no.
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ if TYPE_CHECKING:
 RECENT_DAYS = 7  # a mail older than this (by the guest's clock) is not answered any more
 DAY_MS = 86_400_000
 TEXT_MIN, TEXT_MAX, LINES_MAX = 20, 300, 4
-SHOWN = 2000  # characters of the mail the LLM and Jev see
-JEV_MIN = 0.6  # Jev's "yes" must be chosen and at least this probable
+SHOWN = 2000  # characters of the mail the LLM and Decisions see
+DECISION_MIN = 0.6  # the decision model's "yes" must be chosen and at least this probable
 _TYPEABLE = re.compile(r"[\x20-\x7e\n]+")  # the virtual keyboard types ASCII only
 
 SYSTEM = (
@@ -151,7 +151,8 @@ def hints(
 
 
 def problem(text: str, people: dict[str, str], policy: Policy) -> str | None:
-    """Why the reply text must not be typed (exact rules only; whether it answers the mail is Jev's question)."""
+    """Why the reply text must not be typed (exact rules only; whether it answers the mail is for the decision
+    model)."""
     if not _TYPEABLE.fullmatch(text):
         return "not plain ASCII"
     lines = text.split("\n")
@@ -174,9 +175,11 @@ def problem(text: str, people: dict[str, str], policy: Policy) -> str | None:
 class Composer:
     llm: LlmClient
     narrative: Path  # world/narrative.yaml: who the colleagues are and their names
-    confirm: bool = True  # Jev's yes/no check
+    confirm: bool = True  # the decision model's yes/no check
 
-    def prepare(self, task: Task, persona: Persona, jev: Decider, policy: Policy) -> tuple[str | None, dict[str, Any]]:
+    def prepare(
+        self, task: Task, persona: Persona, decider: Decider, policy: Policy
+    ) -> tuple[str | None, dict[str, Any]]:
         """Fill the task's reply values; (why not, record for the ground-truth log)."""
         rec: dict[str, Any] = {}
         try:
@@ -211,11 +214,14 @@ class Composer:
                      "body": shown}, "reply": text}  # fmt: skip
             options = {"yes": "Yes: " + QUESTION, "no": "No: it does not answer the mail, or is not a plain reply."}
             try:
-                d = jev.decide(state, options, ask_progress=False)
+                d = decider.decide(state, options, ask_progress=False)
             except Exception as e:  # noqa: BLE001  fail closed: no answer is no
-                return f"reply check: Jev failed: {e}", rec
-            rec.update(jev_yes=round(d.probabilities.get("yes", 0.0), 3), jev_cost=d.cost)
-            if d.choice != "yes" or d.probabilities.get("yes", 0.0) < JEV_MIN:
-                return f"reply check: Jev says it does not answer the mail ({json.dumps(rec['jev_yes'])})", rec
+                return f"reply check: Decisions failed: {e}", rec
+            rec.update(decision_yes=round(d.probabilities.get("yes", 0.0), 3), decision_cost=d.cost)
+            if d.choice != "yes" or d.probabilities.get("yes", 0.0) < DECISION_MIN:
+                return (
+                    f"reply check: Decisions says it does not answer the mail ({json.dumps(rec['decision_yes'])})",
+                    rec,
+                )
         task.values.update(to=m.sender, to_name=name, subject=m.subject, body=text, reply_to=m.msgid)
         return None, rec

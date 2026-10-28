@@ -328,7 +328,7 @@ def test_ludius_day_refuses_a_plan_with_a_bad_recipient(tmp_path: Path, to_name:
     path = _range(tmp_path, to_name, narrative)
     args = argparse.Namespace(plan=str(path), canary=False, temporal=None)
     with pytest.raises(ValueError, match="company story|colleague.s address"):
-        cli.cmd_day(args)  # raises in the shared loader, before any agent, Jev or VM
+        cli.cmd_day(args)  # raises in the shared loader, before any agent, Decisions or VM
 
 
 def test_a_plan_with_the_narrative_name_loads(tmp_path: Path) -> None:
@@ -350,7 +350,7 @@ def test_proposals_may_not_mark_typing_unreadable() -> None:
     assert any("unreadable_ok not permitted" in p for p in growth.check(proposal, caps, {}))
 
 
-def test_a_blocked_subgoal_waits_without_asking_jev(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_blocked_subgoal_waits_without_asking_decisions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from ludius import loop
     from ludius.loop import GroundTruth, Runner
     from ludius.tasks import Persona
@@ -362,9 +362,9 @@ def test_a_blocked_subgoal_waits_without_asking_jev(tmp_path: Path, monkeypatch:
         def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
             return pb.ObserveResult(snapshot=obs.Snapshot(screen_width=1920, screen_height=1080, dpi=96))
 
-    class NoJev:
+    class NoDecisions:
         def decide(self, *_: object, **__: object) -> None:
-            pytest.fail("Jev asked while no input was allowed")
+            pytest.fail("Decisions asked while no input was allowed")
 
     polls: list[object] = []
 
@@ -377,7 +377,7 @@ def test_a_blocked_subgoal_waits_without_asking_jev(tmp_path: Path, monkeypatch:
     t = cli.load_templates()["outlook_send_mail"]
     task = Task(t, PlanItem.model_validate(item()), random.Random(0))
     task.owner, task.started_ms = "aberg", 1
-    runner = Runner(Agent(), NoJev(), Persona(name="t", user="aberg"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    runner = Runner(Agent(), NoDecisions(), Persona(name="t", user="aberg"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
     status, steps, _ = runner._subgoal(task, "send_button", task.subgoal("send_button"), budget=12, t0=1e18)  # pyright: ignore[reportPrivateUsage]
     assert (status, steps, len(polls)) == ("done", 2, 3)
 

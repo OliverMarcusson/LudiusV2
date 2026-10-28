@@ -1,4 +1,4 @@
-"""Code-enforced guardrails. Jev never sees an option this module would refuse."""
+"""Code-enforced guardrails. Decisions never sees an option this module would refuse."""
 
 from __future__ import annotations
 

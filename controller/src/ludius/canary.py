@@ -2,7 +2,7 @@
 
 Each app's canary is its first admitted template (by name) at its first admitted variant, run on the VM as it
 is (a persistent range VM: no restore). A failed canary is retried once; the app is marked "drift" only when
-both runs fail on the task itself. Runs lost to infrastructure (Jev, host agent, observer) leave the app
+both runs fail on the task itself. Runs lost to infrastructure (Decisions, host agent, observer) leave the app
 "unknown", never "drift". Results go to runs/health.json, which `ludius day` reads to skip drifted apps.
 """
 

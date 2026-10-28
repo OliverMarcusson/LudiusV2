@@ -14,14 +14,14 @@ Ludius generates realistic, coherent background user activity (noise) on Windows
 
 - **Human interface only for actions.** All input goes through the hypervisor's virtual keyboard and mouse, so artifacts match a person at the console.
 - **Privileged, minimal reading.** An in-guest observer reads the UI Automation tree; its forensic footprint is a design requirement.
-- **Each layer has one owner.** The LLM plans and writes content, code owns structure, policy and verification, Jev makes step-level decisions. Jev never plans, never writes text and never sees pixels.
+- **Each layer has one owner.** The LLM plans and writes content, code owns structure, policy and verification, Decisions makes step-level decisions. Decisions never plans, never writes text and never sees pixels.
 - **No LLM in the step loop.** LLM calls happen per day and per task, not per action.
 - **Noise must be coherent, varied and non-destructive.** Full human-like tasks, no trivially filterable patterns, never damage to scenario artifacts.
 - **Hypervisor-agnostic.** Everything hypervisor-specific sits behind the host agent.
 
 ## 2. Architecture
 
-Four layers with one owner each. Code in the guest observes the screen and acts through the hypervisor; the host agent hides the hypervisor; the controller runs the step loop and calls Jev for one action at a time; the planner (LLM) decides what each persona does. Jev never plans, writes or sees pixels.
+Four layers with one owner each. Code in the guest observes the screen and acts through the hypervisor; the host agent hides the hypervisor; the controller runs the step loop and calls Decisions for one action at a time; the planner (LLM) decides what each persona does. Decisions never plans, writes or sees pixels.
 
 &#91;embedded content: architecture · guest, host, decision and planning layers\]
 
@@ -65,12 +65,12 @@ The observer is a single long-running, read-only process in each persona's inter
 
 Password fields never expose their value, only `empty` or `filled`.
 
-**Hints** give Jev the lookahead it cannot compute: `ExpandCollapse` → "opens list/menu"; hyperlink → "link to \<url>"; dialog buttons → "closes dialog" or "submits"; names from a destructive word list (Delete, Remove, Discard, Send, Pay, Uninstall, Format) → `destructive`; default button → "Enter triggers this"; scrollable list → "list continues, N visible".
+**Hints** give Decisions the lookahead it cannot compute: `ExpandCollapse` → "opens list/menu"; hyperlink → "link to \<url>"; dialog buttons → "closes dialog" or "submits"; names from a destructive word list (Delete, Remove, Discard, Send, Pay, Uninstall, Format) → `destructive`; default button → "Enter triggers this"; scrollable list → "list continues, N visible".
 
 ### Framework handling
 
 - **Chromium, Edge, Electron, WebView2** (`FrameworkId = Chrome`): the tree builds lazily once a UIA client queries; re-snapshot after \~200 ms if a `Document` is near-empty. Clip to the document viewport, since off-screen nodes are exposed. Do not use `--force-renderer-accessibility` (visible in process command lines).
-- **WPF, WinUI/XAML, Explorer:** virtualized lists; report "items 1–14 shown, list continues" and let Jev scroll.
+- **WPF, WinUI/XAML, Explorer:** virtualized lists; report "items 1–14 shown, list continues" and let Decisions scroll.
 - **Legacy Win32:** fall back to `LegacyIAccessiblePattern`.
 - **Java:** Java Access Bridge enabled in the image.
 - **No usable tree** (canvas apps, custom-drawn controls): send a window screenshot to the host for the visual fallback (OCR + detector), scoped to the window's bounds.
@@ -78,7 +78,7 @@ Password fields never expose their value, only `empty` or `filled`.
 ### Stable IDs, ranking and cap
 
 - ID = hash of `ControlType + AutomationId + Name + ancestor path`, sibling index only when needed. Never `RuntimeId`. A mapping between snapshots keeps IDs stable.
-- Cap at \~200 elements (Jev's Choice allows 255 options; keys need room). Priority: focused element and container → open modal or popup (then almost nothing else) → actionable elements in reading order → shell.
+- Cap at \~200 elements (Decisions' Choice allows 255 options; keys need room). Priority: focused element and container → open modal or popup (then almost nothing else) → actionable elements in reading order → shell.
 - Non-actionable text goes into the state as context lines, not options.
 
 ### Settle detection
@@ -126,20 +126,20 @@ RDP is never used for input, since it changes the session the observer runs in. 
 
 Runs in CI against both backends: move the pointer to known pixel positions and compare with the guest's `GetCursorPos`; type a known string into a test field and read it back via UIA. This catches mapping and timing drift between test and production.
 
-## 5. Controller and Jev decision loop
+## 5. Controller and decision loop
 
-The controller executes one subgoal at a time: observe, ask Jev, enforce policy, act, verify. Jev only ever chooses the next action toward one concrete subgoal.
+The controller executes one subgoal at a time: observe, ask Decisions, enforce policy, act, verify. Decisions only ever chooses the next action toward one concrete subgoal.
 
 ### Step loop
 
 1. Wait for a settled snapshot from the observer.
-2. Build the Jev state and option set in code.
-3. Call Jev once with three questions.
+2. Build the Decisions state and option set in code.
+3. Call Decisions once with three questions.
 4. Apply policy to the chosen option; block or substitute if needed.
 5. Send input through the host agent.
-6. Verify on the next snapshot (code check first, Jev `subgoal_done` as backup) and record `last_result`.
+6. Verify on the next snapshot (code check first, Decisions `subgoal_done` as backup) and record `last_result`.
 
-### Jev state
+### Decisions state
 
 ```json
 {
@@ -154,7 +154,7 @@ The controller executes one subgoal at a time: observe, ask Jev, enforce policy,
 }
 ```
 
-The state is plain JSON built by code; field names follow TypeSafe's current API. Only id, role, name, value, state and hint reach Jev; bounds, actions and source stay in the controller.
+The state is plain JSON built by code; field names follow TypeSafe's current API. Only id, role, name, value, state and hint reach Decisions; bounds, actions and source stay in the controller.
 
 ### Questions per step
 
@@ -168,7 +168,7 @@ The state is plain JSON built by code; field names follow TypeSafe's current API
 
 - Each option combines action and target: `click:[14]`, `key:Ctrl+R`, `type:content.body→[22]`, `scroll:down`, `rescan`.
 - Only options that make sense: no typing into buttons, no apps outside the task's allowlist, no app launches unless the subgoal calls for one.
-- Text options reference content prepared by the planner or text visible on screen (`type:copy[31]→[22]`). Jev never writes text.
+- Text options reference content prepared by the planner or text visible on screen (`type:copy[31]→[22]`). Decisions never writes text.
 - Keyboard actions are always offered (Tab, Enter, Esc, arrows, common shortcuts), which tolerates perception gaps.
 
 ### Choosing
@@ -176,7 +176,7 @@ The state is plain JSON built by code; field names follow TypeSafe's current API
 - Take the top option. Optional small variation: sample only among options close to the top probability that a code check confirms are equivalent (two Reply buttons, ribbon vs. context menu).
 - Variety comes from the planning layer (section 6), not from step-level randomness.
 
-### Policy (code-enforced, never Jev)
+### Policy (code-enforced, never Decisions)
 
 - Destructive options are only offered when the task allowlists them.
 - Never: clear browser history or cache, empty the Recycle Bin, run Disk Cleanup, delete or overwrite files outside the persona's noise folders, uninstall software, clear or resize event logs.
@@ -213,7 +213,7 @@ The planner decides what each persona does, why and with what content, so noise 
 | Day plan | LLM | Nightly per persona | Mail in the morning, budget sheet, lunch, meeting prep |
 | Task instance | LLM | At plan time | Reply to Anna about the Q3 draft, with attachment |
 | Subgoals | Template, or LLM-decomposed and validated | Per task | select mail → open reply → write body → send |
-| Action | Jev | Per step | `click:[14]` |
+| Action | Decisions | Per step | `click:[14]` |
 | Verification | Code; LLM only for open-ended tasks | Per subgoal / task end | Sent count +1 |
 
 ### Company narrative and world state
@@ -279,7 +279,7 @@ Role-appropriate work that looks like tradecraft, with a narrative reason: IT ad
 
 ### LLM in the loop (rare)
 
-- Fallback when Jev is stuck in an open-ended task: one call to propose the next subgoal.
+- Fallback when Decisions is stuck in an open-ended task: one call to propose the next subgoal.
 - End-of-task verification for tasks without code-checkable completion.
 
 ## 7. Clock modes, range lifecycle and provisioning
@@ -339,7 +339,7 @@ Quality is measured from the trainee's side: artifacts collected and parsed with
 
 | Layer | Runs on | Checks |
 | --- | --- | --- |
-| Fixture replay | Laptop / CI, no VMs | Recorded observations + subgoal → expected Jev choice; regression suite per app and template |
+| Fixture replay | Laptop / CI, no VMs | Recorded observations + subgoal → expected Decisions choice; regression suite per app and template |
 | Contract tests | Both hypervisors | Coordinate mapping, typing, channel round trip |
 | Template validation | Compressed mode, Hyper-V | New and changed templates complete reliably before admission |
 | Range test runs | Compressed or time-jump mode | Full metrics below |

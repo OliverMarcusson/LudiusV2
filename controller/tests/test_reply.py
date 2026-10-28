@@ -1,5 +1,5 @@
-"""Task-time replies (ludius.reply): the mail picked on the server, the one LLM call, code and Jev checks, the runner's
-abandon before any input, the server-side reply link, and plan-time inbox hints (offline)."""
+"""Task-time replies (ludius.reply): the mail picked on the server, the one LLM call, code and Decisions checks, the
+runner's abandon before any input, the server-side reply link, and plan-time inbox hints (offline)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from ludius import cli, mail, reply
-from ludius.jev import Decision
+from ludius.decisions import Decision
 from ludius.llm import LlmError
 from ludius.loop import GroundTruth, Runner
 from ludius.planner import PlanItem, validate
@@ -115,7 +115,7 @@ class FakeLlm:
         return cls(body=self.body)
 
 
-class FakeJev:
+class FakeDecisions:
     def __init__(self, yes: float | Exception) -> None:
         self.yes, self.calls = yes, list[dict[str, Any]]()
 
@@ -126,7 +126,7 @@ class FakeJev:
         if isinstance(self.yes, Exception):
             raise self.yes
         y = float(self.yes)
-        return Decision("yes" if y >= 0.5 else "no", 0.9, {"yes": y, "no": 1 - y}, 0, 0, "jev")
+        return Decision("yes" if y >= 0.5 else "no", 0.9, {"yes": y, "no": 1 - y}, 0, 0, "decision")
 
 
 def reply_task() -> Task:
@@ -144,41 +144,41 @@ def narrative(tmp_path: Path) -> Path:
     return path
 
 
-def test_prepare_fills_the_reply_with_one_llm_call_and_a_jev_yes(
+def test_prepare_fills_the_reply_with_one_llm_call_and_a_decision_yes(
     monkeypatch: pytest.MonkeyPatch, narrative: Path
 ) -> None:
     server(monkeypatch, [msg(7)])
-    llm, jev, task = FakeLlm("Hi Marcus,\nyes, all booked yesterday.\n- Anna"), FakeJev(0.9), reply_task()
-    why, rec = reply.Composer(llm, narrative).prepare(task, ANNA, jev, Policy())  # type: ignore[arg-type]
-    assert why is None and rec["mail_id"] == 7 and rec["jev_yes"] == 0.9
+    llm, decider, task = FakeLlm("Hi Marcus,\nyes, all booked yesterday.\n- Anna"), FakeDecisions(0.9), reply_task()
+    why, rec = reply.Composer(llm, narrative).prepare(task, ANNA, decider, Policy())  # type: ignore[arg-type]
+    assert why is None and rec["mail_id"] == 7 and rec["decision_yes"] == 0.9
     assert [c["attempts"] for c in llm.calls] == [1]  # exactly one request, never a re-ask
     assert "are the lund accruals booked?" in llm.calls[0]["user"]  # it answers the mail's actual text
-    assert jev.calls[0]["ask_progress"] is False and jev.calls[0]["state"]["reply"].startswith("Hi Marcus")
+    assert decider.calls[0]["ask_progress"] is False and decider.calls[0]["state"]["reply"].startswith("Hi Marcus")
     assert {k: task.values[k] for k in ("to", "to_name", "subject", "reply_to")} == {
         "to": TO, "to_name": "Marcus Vellinga", "subject": "lund q4", "reply_to": "<7@corp.ludius.test>"}  # fmt: skip
     assert task.text(task.subgoal("write_reply")) == "Hi Marcus,\nyes, all booked yesterday.\n- Anna"
 
 
 @pytest.mark.parametrize(
-    ("llm_body", "jev_yes", "why"),
+    ("llm_body", "decision_yes", "why"),
     [
-        ("Hi Marcus, the weather is lovely today. Anna", 0.2, "Jev says it does not answer"),
-        ("Hi Marcus, yes, booked. Anna", 0.55, "Jev says it does not answer"),  # chosen, but not confident enough
-        ("Hi Marcus, yes, booked. Anna", RuntimeError("timeout"), "Jev failed"),  # no answer is no
-        ("Hi Marcus,\n\nbooked.", 0.9, "not one paragraph"),  # code rule first: Jev is not asked
+        ("Hi Marcus, the weather is lovely today. Anna", 0.2, "Decisions says it does not answer"),
+        ("Hi Marcus, yes, booked. Anna", 0.55, "Decisions says it does not answer"),  # chosen, but not confident enough
+        ("Hi Marcus, yes, booked. Anna", RuntimeError("timeout"), "Decisions failed"),  # no answer is no
+        ("Hi Marcus,\n\nbooked.", 0.9, "not one paragraph"),  # code rule first: Decisions is not asked
         (LlmError("OpenRouter 500"), 0.9, "reply text: OpenRouter 500"),
     ],
 )
 def test_prepare_fails_closed(
-    monkeypatch: pytest.MonkeyPatch, narrative: Path, llm_body: Any, jev_yes: Any, why: str
+    monkeypatch: pytest.MonkeyPatch, narrative: Path, llm_body: Any, decision_yes: Any, why: str
 ) -> None:
     server(monkeypatch, [msg(7)])
-    jev, task = FakeJev(jev_yes), reply_task()
-    got, _ = reply.Composer(FakeLlm(llm_body), narrative).prepare(task, ANNA, jev, Policy())  # type: ignore[arg-type]
+    decider, task = FakeDecisions(decision_yes), reply_task()
+    got, _ = reply.Composer(FakeLlm(llm_body), narrative).prepare(task, ANNA, decider, Policy())  # type: ignore[arg-type]
     assert got is not None and why in got
     assert "body" not in task.values and "reply_to" not in task.values  # nothing to type
     if "paragraph" in why or "OpenRouter" in why:
-        assert jev.calls == []
+        assert decider.calls == []
 
 
 def test_runner_abandons_before_any_input(monkeypatch: pytest.MonkeyPatch, narrative: Path, tmp_path: Path) -> None:
@@ -203,13 +203,13 @@ def test_runner_abandons_before_any_input(monkeypatch: pytest.MonkeyPatch, narra
     monkeypatch.setattr("ludius.loop.mail_baseline", baseline)
     agent, log = Agent(), GroundTruth(tmp_path / "gt.jsonl")
     composer = reply.Composer(FakeLlm("unused"), narrative)  # type: ignore[arg-type]
-    r = Runner(agent, FakeJev(0.9), ANNA, log, composer=composer)  # type: ignore[arg-type]
+    r = Runner(agent, FakeDecisions(0.9), ANNA, log, composer=composer)  # type: ignore[arg-type]
     out = r.run(reply_task())
     log.close()
     assert out.status == "abandoned" and out.steps == 0 and "start: no mail to answer" in out.reason
     assert agent.inputs == [] and composer.llm.calls == []  # type: ignore[attr-defined]
     assert '"event": "task_content"' in (tmp_path / "gt.jsonl").read_text(encoding="utf-8")
-    without = Runner(Agent(), FakeJev(0.9), ANNA, GroundTruth(tmp_path / "gt2.jsonl"))  # type: ignore[arg-type]
+    without = Runner(Agent(), FakeDecisions(0.9), ANNA, GroundTruth(tmp_path / "gt2.jsonl"))  # type: ignore[arg-type]
     assert "no reply composer" in without.run(reply_task()).reason
 
 

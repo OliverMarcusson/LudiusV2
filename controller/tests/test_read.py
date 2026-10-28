@@ -142,12 +142,12 @@ def test_runner_waits_for_the_read_flag_without_acting(
         def observe(self, **_: Any) -> Any:
             return type("R", (), {"snapshot": closed if len(asked) >= 4 else reading})()
 
-    class Jev:
+    class Decisions:
         def decide(self, *_: Any, **__: Any) -> Any:
-            pytest.fail("no Jev call: every subgoal is done by code or waits for the server")
+            pytest.fail("no Decisions call: every subgoal is done by code or waits for the server")
 
     log = GroundTruth(tmp_path / "gt.jsonl")
-    out = Runner(Agent(), Jev(), ANNA, log).run(read_task())  # type: ignore[arg-type]
+    out = Runner(Agent(), Decisions(), ANNA, log).run(read_task())  # type: ignore[arg-type]
     log.close()
     text = (tmp_path / "gt.jsonl").read_text(encoding="utf-8")
     assert out.status == "done" and out.subgoals_done == template().variants[0]

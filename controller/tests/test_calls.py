@@ -1,4 +1,4 @@
-"""OpenRouter call counters: one count per request sent, retries included, Jev and LLM kept apart."""
+"""OpenRouter call counters: one count per request sent, retries included, Decisions and LLM kept apart."""
 
 import json
 from pathlib import Path
@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from ludius import calls
-from ludius.jev import JevClient
+from ludius.decisions import DecisionsClient
 from ludius.llm import LlmClient
 
 
@@ -19,7 +19,7 @@ def _replies(*responses: httpx.Response) -> httpx.Client:
 
 def _counts(path: Path) -> tuple[int, int]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    return data["jev"], data["llm"]
+    return data["decision"], data["llm"]
 
 
 def _chat(text: str) -> httpx.Response:
@@ -33,10 +33,13 @@ class _Answer(BaseModel):
 def test_counts_each_request_and_keeps_kinds_apart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(calls, "PATH", tmp_path / "calls.json")
 
-    jev = JevClient("k")
-    answer = {"model": jev.model, "answers": {"action": {"type": "choice", "choice": "a", "probabilities": {"a": 1}}}}
-    jev._http = _replies(httpx.Response(503), httpx.Response(200, json=answer))  # pyright: ignore[reportPrivateUsage]
-    assert jev.decide({}, {"a": "open"}, ask_progress=False).choice == "a"
+    decider = DecisionsClient("k")
+    answer = {
+        "model": decider.model,
+        "answers": {"action": {"type": "choice", "choice": "a", "probabilities": {"a": 1}}},
+    }
+    decider._http = _replies(httpx.Response(503), httpx.Response(200, json=answer))  # pyright: ignore[reportPrivateUsage]
+    assert decider.decide({}, {"a": "open"}, ask_progress=False).choice == "a"
     assert _counts(calls.PATH) == (2, 0)  # the 5xx retry was a second request
 
     llm = LlmClient("k")

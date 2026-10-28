@@ -29,8 +29,8 @@ from ludius import admission, artifacts, canary, growth, keys, mail, metrics, pl
 from ludius.assist import Assist
 from ludius.clocklease import Lease
 from ludius.day import DayRunner, run_task
+from ludius.decisions import DEFAULT_MODEL, DecisionsClient
 from ludius.hostagent import HostAgent
-from ludius.jev import DEFAULT_MODEL, JevClient
 from ludius.llm import DEFAULT_MODEL as PLANNER_MODEL
 from ludius.llm import LlmClient
 from ludius.loop import Clock, GroundTruth, Runner
@@ -71,13 +71,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     seed = args.seed if args.seed is not None else int(time.time())
     task = Task(template, inst, random.Random(seed))
     agent = start_agent(args)
-    jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
+    decider = DecisionsClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
     log_path = Path(args.log or RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-{template.task}.jsonl")
     log = GroundTruth(log_path)
     try:
         runner = Runner(
             agent,
-            jev,
+            decider,
             persona,
             log,
             clock=args.clock,
@@ -89,7 +89,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         out = run_task(runner, make_session(agent, log), task)
     finally:
         log.close()
-        jev.close()
+        decider.close()
         agent.close()
     print(
         f"{template.task} (variant {task.variant}, seed {seed}): {out.status} in {out.steps} steps"
@@ -140,17 +140,17 @@ def cmd_validate(args: argparse.Namespace) -> int:
                                   DATA / "templates" / "proposed" / f"{args.template}.yaml") if p.exists())  # fmt: skip
     template = load_template(source)
     agent = agent_from(args)
-    jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
+    decider = DecisionsClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
     log_path = RUNS / "admission" / f"{time.strftime('%Y%m%d-%H%M%S')}-{template.task}.jsonl"
     log = GroundTruth(log_path)
     try:
         try:
-            runner = Runner(agent, jev, load_persona(args.persona), log, clock="compressed", seed=0,
+            runner = Runner(agent, decider, load_persona(args.persona), log, clock="compressed", seed=0,
                             assist=make_assist(), policy=make_policy())  # fmt: skip
             results, stopped = admission.validate(template, args.runs, lambda: restore(agent, args.restore), runner,
                                                   make_session(agent, log))  # fmt: skip
         finally:
-            jev.close()
+            decider.close()
             agent.close()
         variants = {str(v): f"{st.count('done')}/{len(st)}" for v, st in results.items()}
         if stopped:
@@ -238,7 +238,7 @@ def plan_sources() -> nightly.Sources:
     personas = [load_yaml(Persona, p) for p in sorted((DATA / "personas").glob("*.yaml"))]
     key = os.environ.get("OPENROUTER_API_KEY", "")
     return nightly.Sources(personas, load_templates(), make_policy(), functools.partial(mail.newest, folder="inbox"),
-                           (lambda: JevClient(key)) if key else None)  # fmt: skip
+                           (lambda: DecisionsClient(key)) if key else None)  # fmt: skip
 
 
 def cmd_day(args: argparse.Namespace) -> int:
@@ -254,7 +254,7 @@ def cmd_day(args: argparse.Namespace) -> int:
     skipped = [i for i in plan.items if i.template in templates and templates[i.template].app in drift]
     plan = plan.model_copy(update={"items": [i for i in plan.items if i not in skipped]})
     agent = start_agent(args)
-    jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
+    decider = DecisionsClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
     if args.temporal:
         from ludius import durable  # needs the durable dependency group
 
@@ -263,11 +263,11 @@ def cmd_day(args: argparse.Namespace) -> int:
         log = GroundTruth(log_path)
     reset_failed = False
     try:
-        for i in skipped:  # the app's drift canary failed: don't burn Jev calls on a UI that has changed
+        for i in skipped:  # the app's drift canary failed: don't burn Decisions calls on a UI that has changed
             log.write(event="skipped_drift", host_ms=int(time.time() * 1000), at=i.at, task=i.template,
                       app=templates[i.template].app)  # fmt: skip
             print(f"  {i.at} {i.template}: skipped, {templates[i.template].app} drifted (runs/health.json)")
-        day = build_day(agent, jev, persona, log, templates, args.clock, seed, args.vm or os.environ["LUDIUS_VM"])
+        day = build_day(agent, decider, persona, log, templates, args.clock, seed, args.vm or os.environ["LUDIUS_VM"])
         if args.temporal:  # durable: resumes after the last finished slot if this day was started before
             from ludius import durable
 
@@ -300,7 +300,7 @@ def cmd_day(args: argparse.Namespace) -> int:
                 print(f"time-jump reset FAILED, range clocks may still be jumped: {detail}\n"
                       "  fix: pwsh infra/hyperv/set-clock.ps1 -Reset", file=sys.stderr)  # fmt: skip
         log.close()
-        jev.close()
+        decider.close()
         agent.close()
     for at, template, status in results:
         print(f"  {at} {template}: {status}")
@@ -314,7 +314,7 @@ def cmd_day(args: argparse.Namespace) -> int:
 
 def build_day(
     agent: HostAgent,
-    jev: JevClient,
+    decider: DecisionsClient,
     persona: Persona,
     log: GroundTruth,
     templates: dict[str, Template],
@@ -324,7 +324,7 @@ def build_day(
 ) -> DayRunner:
     """Shared runner construction for one-shot and lazy long-lived workers."""
     pacing = "compressed" if clock == "time-jump" else clock
-    runner = Runner(agent, jev, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=make_policy(),
+    runner = Runner(agent, decider, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=make_policy(),
                     composer=make_composer())  # fmt: skip
     return DayRunner(
         runner, make_session(agent, log), templates, log, clock, seed, set_clock=functools.partial(set_clock, vm=vm)
@@ -398,13 +398,15 @@ def cmd_worker(args: argparse.Namespace) -> int:
                 raise ValueError(
                     "worker requires the configured persona to be logged on; unknown identity fails closed"
                 )
-            jev = stack.enter_context(closing(JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)))
+            decider = stack.enter_context(
+                closing(DecisionsClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model))
+            )
             log = stack.enter_context(
                 closing(durable.HeartbeatLog(planner.World(RUNS).day_log(persona.user, inp.plan.date)))
             )
             seed = int.from_bytes(hashlib.sha256(f"{vm}/{persona.user}/{inp.plan.date}".encode()).digest()[:4])
             try:
-                yield build_day(agent, jev, persona, log, load_templates(), inp.clock, seed, vm)
+                yield build_day(agent, decider, persona, log, load_templates(), inp.clock, seed, vm)
             finally:
                 already_failed = sys.exc_info()[0] is not None
                 if inp.clock == "time-jump" and _clock_lease(vm).held:
@@ -476,17 +478,17 @@ def cmd_reservation(args: argparse.Namespace) -> int:
 def cmd_canary(args: argparse.Namespace) -> int:
     """Drift canaries: one admitted task per app on the VM as it is; results to runs/health.json."""
     agent = start_agent(args)
-    jev = JevClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
+    decider = DecisionsClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
     log_path = RUNS / "canary" / f"{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
     log = GroundTruth(log_path)
     try:
-        runner = Runner(agent, jev, load_persona(args.persona), log, clock="compressed", seed=0,
+        runner = Runner(agent, decider, load_persona(args.persona), log, clock="compressed", seed=0,
                         assist=make_assist(), policy=make_policy())  # fmt: skip
         states = canary.run(load_templates(), DATA / "admission.yaml", runner, make_session(agent, log),
                             RUNS / "health.json", set(args.app) or None)  # fmt: skip
     finally:
         log.close()
-        jev.close()
+        decider.close()
         agent.close()
     print(f"health: {RUNS / 'health.json'}\nlog: {log_path}")
     return 1 if "drift" in states.values() else 0
@@ -621,7 +623,7 @@ def make_assist() -> Assist | None:
 
 
 def make_composer() -> Composer | None:
-    """Task-time reply content: one planner-LLM call per reply task, always checked by Jev's yes/no.
+    """Task-time reply content: one planner-LLM call per reply task, always checked by the decision model's yes/no.
     Independent of LUDIUS_ASSIST (that switches the in-loop help off, not content)."""
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if not key:

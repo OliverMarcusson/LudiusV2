@@ -1,6 +1,6 @@
-"""Jev (TypeSafe) through OpenRouter's Decisions API: one call per step, three questions.
+"""OpenRouter's Decisions API (any Decisions model): one call per step, three questions.
 
-Jev only chooses among options built in code; it never plans or writes text.
+The decision model only chooses among options built in code; it never plans or writes text.
 Models that read images (liquid/d1.1) can also get a screenshot.
 """
 
@@ -23,8 +23,8 @@ ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 RATE_LIMIT_WAITS = (1, 2, 4)  # HTTP 429 (a model's shared capacity, seen on liquid/d1-ultra): retried after these
 # Any OpenRouter Decisions model works here (same request and answer shape); liquid/d1.1 and d1-ultra also read
 # screenshots. Default liquid/d1.1 (owner, 2026-10-28, after the bake-off in runs/acceptance/20261028-bakeoff);
-# LUDIUS_JEV_MODEL picks another (typesafe/jev-1.14 reads text only) without code changes.
-DEFAULT_MODEL = os.environ.get("LUDIUS_JEV_MODEL", "liquid/d1.1")
+# LUDIUS_DECISION_MODEL picks another (typesafe/jev-1.14 reads text only) without code changes.
+DEFAULT_MODEL = os.environ.get("LUDIUS_DECISION_MODEL", "liquid/d1.1")
 MAX_OPTIONS = 255
 
 _KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -42,7 +42,7 @@ OFF_TRACK_INSTRUCTIONS = (
 )
 
 
-class JevError(Exception):
+class DecisionError(Exception):
     pass
 
 
@@ -81,10 +81,10 @@ def build_request(
     image: bytes | None = None,
 ) -> dict[str, Any]:
     if not 1 <= len(options) <= MAX_OPTIONS:
-        raise JevError(f"option count {len(options)} outside 1..{MAX_OPTIONS}")
+        raise DecisionError(f"option count {len(options)} outside 1..{MAX_OPTIONS}")
     for key, text in options.items():
         if not _KEY.match(key) or not text.strip():
-            raise JevError(f"invalid option {key!r}")
+            raise DecisionError(f"invalid option {key!r}")
     questions: dict[str, Any] = {
         "action": {"type": "choice", "instructions": ACTION_INSTRUCTIONS, "criteria": options},
     }
@@ -107,7 +107,7 @@ def build_request(
 
 def _prob(v: object) -> float:
     if not isinstance(v, int | float) or isinstance(v, bool) or math.isnan(v) or not 0 <= v <= 1:
-        raise JevError(f"invalid probability {v!r}")
+        raise DecisionError(f"invalid probability {v!r}")
     return float(v)
 
 
@@ -115,24 +115,24 @@ def parse_response(data: dict[str, Any], model: str, options: dict[str, str], *,
     """Validate a raw response against the options it answers; reject anything inconsistent."""
     got_model = str(data.get("model", ""))
     if not got_model.startswith(model):
-        raise JevError(f"model drift: asked {model}, got {got_model}")
+        raise DecisionError(f"model drift: asked {model}, got {got_model}")
     answers: dict[str, Any] = data.get("answers") or {}
     action: dict[str, Any] = answers.get("action") or {}
     if action.get("type") != "choice" or action.get("choice") not in options:
-        raise JevError("action answer missing or not one of the options")
+        raise DecisionError("action answer missing or not one of the options")
     raw: dict[str, Any] = action.get("probabilities") or {}
     probs = {k: _prob(v) for k, v in raw.items()}
     if set(probs) != set(options) or abs(sum(probs.values()) - 1) > 0.02:
-        raise JevError("probabilities do not cover the options or do not sum to 1")
+        raise DecisionError("probabilities do not cover the options or do not sum to 1")
     choice = str(action["choice"])
     if probs[choice] < max(probs.values()) - 1e-9:
-        raise JevError("choice is not the most probable option")
+        raise DecisionError("choice is not the most probable option")
     done = off = 0.0
     if ask_progress:
         for name in ("subgoal_done", "off_track"):
             a: dict[str, Any] = answers.get(name) or {}
             if a.get("type") != "noul":
-                raise JevError(f"{name} answer missing")
+                raise DecisionError(f"{name} answer missing")
         done = _prob(answers["subgoal_done"]["noul"])
         off = _prob(answers["off_track"]["noul"])
     usage: dict[str, Any] = data.get("usage") or {}
@@ -149,10 +149,10 @@ def parse_response(data: dict[str, Any], model: str, options: dict[str, str], *,
     )
 
 
-class JevClient:
+class DecisionsClient:
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL, endpoint: str = ENDPOINT, timeout: float = 30) -> None:
         if not api_key.strip():
-            raise JevError("OPENROUTER_API_KEY is required")
+            raise DecisionError("OPENROUTER_API_KEY is required")
         self.model = model
         self._endpoint = endpoint
         # Never follow redirects with the key attached.
@@ -163,7 +163,7 @@ class JevClient:
     def decide(
         self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
     ) -> Decision:
-        """`image`: a screenshot for models that read images (not Jev); the state's text goes along with it."""
+        """`image`: a screenshot for models that read images (not Decisions); the state's text goes along with it."""
         body = build_request(self.model, state, options, ask_progress=ask_progress, image=image)
         last: Exception | None = None
         t0 = time.monotonic()
@@ -176,13 +176,13 @@ class JevClient:
                 last = e
                 continue
             if res.status_code >= 500:
-                last = JevError(f"HTTP {res.status_code}")
+                last = DecisionError(f"HTTP {res.status_code}")
                 continue
             if res.status_code != 200:
-                raise JevError(f"HTTP {res.status_code}: {res.text[:300]}")
+                raise DecisionError(f"HTTP {res.status_code}: {res.text[:300]}")
             try:
                 decision = parse_response(json.loads(res.content), self.model, options, ask_progress=ask_progress)
-            except (JevError, ValueError) as e:  # e.g. a choice that isn't the most probable option (seen once)
+            except (DecisionError, ValueError) as e:  # e.g. a choice that isn't the most probable option (seen once)
                 last = e
                 continue
             decision.request = body
@@ -190,12 +190,12 @@ class JevClient:
             decision.image = image is not None
             decision.retries_429 = throttled
             return decision
-        raise JevError(f"Jev failed twice: {last}")
+        raise DecisionError(f"Decisions failed twice: {last}")
 
     def _post(self, body: dict[str, Any]) -> tuple[httpx.Response, int]:
         """One request, with HTTP 429 retried after RATE_LIMIT_WAITS; every send counts against the cap."""
         for n, wait in enumerate((*RATE_LIMIT_WAITS, None)):
-            calls.count("jev")
+            calls.count("decision")
             res = self._http.post(self._endpoint, json=body)
             if res.status_code != 429 or wait is None:
                 return res, n

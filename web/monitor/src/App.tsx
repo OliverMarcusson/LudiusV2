@@ -49,8 +49,8 @@ function CallCounters({ state, now }: { state: Polled<Calls>; now: number }) {
       aria-busy={status === "loading"}
     >
       <div className="flex gap-1.5">
-        <dt>Jev calls</dt>
-        <dd className={cn("font-medium", status === "ok" && "text-foreground")}>{value(calls?.jev)}</dd>
+        <dt>Decision calls</dt>
+        <dd className={cn("font-medium", status === "ok" && "text-foreground")}>{value(calls?.decision)}</dd>
       </div>
       <div className="flex gap-1.5">
         <dt>LLM calls</dt>

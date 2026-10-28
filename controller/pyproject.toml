@@ -1,7 +1,7 @@
 [project]
 name = "ludius-controller"
 version = "0.1.0"
-description = "Ludius controller: step loop, Jev decisions, policy and templates"
+description = "Ludius controller: step loop, Decisions model, policy and templates"
 requires-python = ">=3.12"
 dependencies = [
     "grpcio>=1.70",

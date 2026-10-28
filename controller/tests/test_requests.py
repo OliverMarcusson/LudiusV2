@@ -1,5 +1,5 @@
 """Manager requests (ludius.requests): org chart, request validation and idempotent server-side sending, the persona's
-Jev mapping (fail closed), and the outcome check against the request (offline)."""
+Decisions mapping (fail closed), and the outcome check against the request (offline)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from ludius import cli, guestfile, mail, requests
-from ludius.jev import Decision
+from ludius.decisions import Decision
 from ludius.planner import Narrative, Person, PlanItem, World
 from ludius.policy import Policy
 from ludius.tasks import Persona, Task
@@ -40,7 +40,7 @@ class FakeLlm:
         return cls.model_validate(self.answers.pop(0))
 
 
-class FakeJev:
+class FakeDecisions:
     def __init__(self, choice: str, p: float = 0.9) -> None:
         self.choice, self.p = choice, p
 
@@ -48,7 +48,7 @@ class FakeJev:
         self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
     ) -> Decision:
         assert "none" in options and set(options) <= {*requests.requestable(cli.load_templates()), "none"}
-        return Decision(self.choice, self.p, {self.choice: self.p}, 0, 0, "jev")
+        return Decision(self.choice, self.p, {self.choice: self.p}, 0, 0, "decision")
 
 
 def ensure(tmp_path: Path, llm: FakeLlm, date: dt.date = THU, inbox: list[mail.Message] | None = None) -> Any:
@@ -118,7 +118,7 @@ def test_persona_maps_a_request_fail_closed(tmp_path: Path, monkeypatch: pytest.
     assert requests.pending(w, "aberg", BOSS, [m], Policy(reserved_subjects=["lund accruals note"]), THU) == []
     item = {"at": "09:30", "params": {"file_name": "lund accruals q4", "body": "lund totals\n- 12 400"}, "context": "c"}
     llm = FakeLlm(item)
-    items, notes = requests.candidates(llm, FakeJev("notepad_write_note"), w, ANNA, BOSS, [m], ts, THU, book)  # type: ignore[arg-type]
+    items, notes = requests.candidates(llm, FakeDecisions("notepad_write_note"), w, ANNA, BOSS, [m], ts, THU, book)  # type: ignore[arg-type]
     assert [(i.template, i.request) for i in items] == [("notepad_write_note", msgid)] and not notes
     assert requests.planned(items[0], ts, tmp_path) is None
     own = [
@@ -130,8 +130,11 @@ def test_persona_maps_a_request_fail_closed(tmp_path: Path, monkeypatch: pytest.
     assert requests.planned(items[0], ts, tmp_path) == "content lacks ['totals']"
     items[0].params["file_name"] = "other"
     assert "asked for 'lund accruals q4'" in str(requests.planned(items[0], ts, tmp_path))
-    for jev in (FakeJev("none"), FakeJev("notepad_write_note", 0.4)):  # none, or too unsure: nothing, never asked again
-        assert requests.candidates(llm, jev, w, ANNA, BOSS, [m], ts, THU, book)[0] == []  # type: ignore[arg-type]
+    for decider in (
+        FakeDecisions("none"),
+        FakeDecisions("notepad_write_note", 0.4),
+    ):  # none, or too unsure: nothing, never asked again
+        assert requests.candidates(llm, decider, w, ANNA, BOSS, [m], ts, THU, book)[0] == []  # type: ignore[arg-type]
         assert requests.pending(w, "aberg", BOSS, [m], Policy(), THU) == []
         (tmp_path / "world" / "requests" / "seen-aberg.yaml").unlink()
     assert llm.calls == 1

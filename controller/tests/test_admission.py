@@ -10,7 +10,7 @@ import pytest
 
 from ludius import admission
 from ludius.cli import load_templates
-from ludius.jev import JevError
+from ludius.decisions import DecisionError
 from ludius.loop import GroundTruth, Outcome
 
 
@@ -43,14 +43,14 @@ def test_operational_error_is_a_failed_run_and_admission_continues(
     (results, stopped), events = _validate(
         tmp_path,
         monkeypatch,
-        ["done", JevError("choice is not the most probable option"), "done", "done", "done", "done"],
+        ["done", DecisionError("choice is not the most probable option"), "done", "done", "done", "done"],
         [],
     )
     assert stopped == ""
     assert results == {0: ["done", "error"], 1: ["done", "done"], 2: ["done", "done"]}
     assert not admission.reliable(results[0].count("done"), len(results[0]))  # 1/2: an error never counts as a pass
     err = [e for e in events if e["event"] == "admission_run" and e["status"] == "error"]
-    assert err and err[0]["variant"] == 0 and err[0]["run"] == 2 and "JevError" in err[0]["reason"]
+    assert err and err[0]["variant"] == 0 and err[0]["run"] == 2 and "DecisionError" in err[0]["reason"]
 
 
 def test_failed_restore_stops_and_keeps_completed_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

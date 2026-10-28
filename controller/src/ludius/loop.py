@@ -1,4 +1,4 @@
-"""The controller step loop: observe, ask Jev, enforce policy, act, verify.
+"""The controller step loop: observe, ask Decisions, enforce policy, act, verify.
 
 Failure ladder steps 1-3 (rescan, in-app recovery, human-like abandonment) live here.
 Steps 4+ (restart app ... mark VM unhealthy) are logged as escalations for the operator.
@@ -18,7 +18,7 @@ from typing import Any, Literal, Protocol
 
 from ludius import keys, requests
 from ludius.assist import Assist
-from ludius.jev import Decision, JevError
+from ludius.decisions import Decision, DecisionError
 from ludius.options import (
     Option,
     StepView,
@@ -55,7 +55,7 @@ Clock = Literal["realtime", "compressed", "time-jump"]
 DONE_THRESHOLD = 0.85
 OFF_TRACK_THRESHOLD = 0.8
 NEAR_TIE = 0.05  # probability gap within which equivalent options may be sampled
-BLOCKED_WAIT_S = 1.5  # a step with no input allowed: wait this long, then look again (no Jev call)
+BLOCKED_WAIT_S = 1.5  # a step with no input allowed: wait this long, then look again (no Decisions call)
 LAUNCH_REASON = "the launch query goes into the Start search box only"
 NARRATIVE = requests.ROOT / "world" / "narrative.yaml"  # who the colleagues are (mail.read without a composer)
 
@@ -115,7 +115,7 @@ class Runner:
     def __init__(
         self,
         agent: Agent,
-        jev: Decider,
+        decider: Decider,
         persona: Persona,
         log: GroundTruth,
         *,
@@ -128,7 +128,7 @@ class Runner:
         self.agent = agent
         self.composer = composer  # task-time reply content (one LLM call per reply task); None: such tasks abandon
         self.assist = assist  # rare LLM help for open-ended subgoals; None disables it
-        self.jev = jev
+        self.decider = decider
         self.persona = persona
         self.log = log
         self.clock: Clock = clock
@@ -138,8 +138,8 @@ class Runner:
         self.display: tuple[int, int, int] | None = None  # (width, height, dpi) the pointer mapping was checked at
         self.mapping_ok = True
         # The screenshot goes with a step decision only where text is likely not enough (image_reason);
-        # LUDIUS_JEV_IMAGE=1 sends it with every step (bake-offs).
-        self.image = os.environ.get("LUDIUS_JEV_IMAGE") == "1"
+        # LUDIUS_DECISION_IMAGE=1 sends it with every step (bake-offs).
+        self.image = os.environ.get("LUDIUS_DECISION_IMAGE") == "1"
 
     # Observation and pacing -------------------------------------------------------
 
@@ -254,7 +254,7 @@ class Runner:
 
     def _type_target(self, o: Option, task: Task, sg: Subgoal, text: str) -> tuple[str | None, obs.Element | None]:
         """Typed input is checked again on a fresh snapshot right before it is sent, since the screen can change
-        while Jev decides: the foreground window is still the one decided on and in the task's scope, and the
+        while Decisions decides: the foreground window is still the one decided on and in the task's scope, and the
         target, found again by its stable key (ids are per snapshot), is still that element and passes the element
         and text policy (password, reserved, template text's own rule). Typing at the focus needs the focused
         element, if any, to pass the same. Returns (reason not to type, the fresh target)."""
@@ -303,7 +303,7 @@ class Runner:
         )
         why = None
         if task.template.capability == "mail.reply":  # before any input: the mail it answers and the text it types
-            why, rec = (self.composer.prepare(task, self.persona, self.jev, self.policy) if self.composer
+            why, rec = (self.composer.prepare(task, self.persona, self.decider, self.policy) if self.composer
                         else ("no reply composer (LLM) configured", {}))  # fmt: skip
             self.log.write(event="task_content", host_ms=_now(), task=task.template.task, reason=why, **rec)
         if task.template.capability == "mail.read":  # before any input: the mail it opens, proven unread now
@@ -322,7 +322,7 @@ class Runner:
             result = self._subgoal(task, name, sg, budget=min(sg.steps, task.template.budget_steps - steps), t0=t0)
             steps += result[1]
             if result[0] != "done" and result[2] == "step budget" and sg.done is None and self.assist and not assisted:
-                # Jev is stuck in an open-ended subgoal: one LLM call proposes an intermediate subgoal.
+                # Decisions is stuck in an open-ended subgoal: one LLM call proposes an intermediate subgoal.
                 assisted = True
                 steps += self._assisted(task, name, sg, t0, steps)
                 left = task.template.budget_steps - steps
@@ -426,7 +426,7 @@ class Runner:
                 return "failed", step - 1, OVERWRITE_REASON
             if (blocked := preconditions(sg, snap, task)) and guarded and (ok := send_confirmation(snap, task)):
                 # The guarded send's own prompt (its form's confirm), right after the input the contract allowed: answer
-                # it once, without Jev.
+                # it once, without Decisions.
                 guarded = False
                 self._move_to(ok)
                 self.agent.click()
@@ -435,7 +435,7 @@ class Runner:
                 snap = self.observe(timeout_ms=10000)
                 continue
             if blocked:
-                # No input is allowed (e.g. the mail is sent, its window closed, delivery still on its way): a Jev
+                # No input is allowed (e.g. the mail is sent, its window closed, delivery still on its way): a Decisions
                 # call could only pick a blocked action. Wait and look again; the step budget still bounds it.
                 self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
                                reason=blocked)  # fmt: skip
@@ -453,32 +453,32 @@ class Runner:
             try:
                 shot = self._shot(here) if image else None
                 image = image if shot is not None else None
-                decision = self.jev.decide(state, choices, ask_progress=not recovering, image=shot)
-            except JevError as e:  # no usable answer even after retries: abandon the task, don't crash the process
+                decision = self.decider.decide(state, choices, ask_progress=not recovering, image=shot)
+            except DecisionError as e:  # no usable answer even after retries: abandon the task, don't crash the process
                 self.log.write(event="decision_error", host_ms=_now(), task=task.template.task, subgoal=name,
                                step=step, error=str(e)[:300])  # fmt: skip
                 return "failed", step - 1, "decision error"
             chosen = self._choose(decision, options)
 
-            jev_done = code_done is None and decision.subgoal_done >= DONE_THRESHOLD and not recovering
-            if jev_done:
+            decider_done = code_done is None and decision.subgoal_done >= DONE_THRESHOLD and not recovering
+            if decider_done:
                 if self.assist is not None and verifications < 2:
-                    # Open-ended completion: the LLM confirms Jev's judgment (at most twice per subgoal).
+                    # Open-ended completion: the LLM confirms the decision model's judgment (at most twice per subgoal).
                     verifications += 1
                     verdict = self.assist.verify(state)
                     self.log.write(event="llm_verify", host_ms=_now(), task=task.template.task, subgoal=name,
                                    done=verdict.done, reason=verdict.reason)  # fmt: skip
                     if not verdict.done:
                         last_result = f"not done yet: {verdict.reason}"
-                        jev_done = False
-                if jev_done:
+                        decider_done = False
+                if decider_done:
                     self.log.write(
                         event="subgoal_done",
                         host_ms=_now(),
                         guest_ms=snap.guest_time_ms,
                         task=task.template.task,
                         subgoal=name,
-                        by="jev",
+                        by="decision",
                         p=decision.subgoal_done,
                         steps=step - 1,
                     )
@@ -646,7 +646,7 @@ class Runner:
         fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
         pixels = fg is not None and pixels_window(fg)
         # Pixels steps: which option keys were offered as what (kinds only, never option text or content), so
-        # Jev's top-3 keys can be read back. Clicks are counted, not listed.
+        # the decision model's top-3 keys can be read back. Clicks are counted, not listed.
         offered = (
             {"clicks": sum(x.kind == "click" for x in options), **{x.key: x.kind for x in options if x.kind != "click"}}
             if pixels and options
@@ -671,7 +671,7 @@ class Runner:
             element={"id": e.id, "key": e.key, "role": e.role, "name": e.name} if e else None,
             action=o.kind,
             option=o.text,
-            jev={
+            decision={
                 "choice": d.choice,
                 "confidence": d.confidence,
                 "top": d.top(3),
@@ -683,7 +683,7 @@ class Runner:
                 "latency_ms": d.latency_ms,
                 "retries_429": d.retries_429,
             },
-            code_done=code_done,  # the subgoal's own check before this step (None: it has none, Jev judges done)
+            code_done=code_done,  # the subgoal's own check before this step (None: it has none, Decisions judges done)
             result=result,
         )
 

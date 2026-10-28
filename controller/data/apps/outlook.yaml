@@ -27,7 +27,7 @@ forms:
     never_filled: [{name: "^Resources$"}]
     # The address book, room finder and location picker, the Scheduling Assistant and the form's data items (its
     # attendee grid adds attendees, its date cells move the meeting: run2, run1) are the only ways to add an attendee
-    # Jev doesn't type, so they are never targets.
+    # Decisions doesn't type, so they are never targets.
     avoid:
       - {role: edit, name: "^Info Bar$"}
       - {role: button, name: "^(Required|Optional|Location|Rooms|Room Finder|Address Book|Scheduling Assistant)$"}
