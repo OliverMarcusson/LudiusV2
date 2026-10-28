@@ -1,0 +1,120 @@
+# Make a short deck in PowerPoint (classic desktop, Office 2024) and save it in Documents as .pptx: a title slide,
+# then one or two Title and Content slides with bullets (the second only when slide2_title and bullets2 are planned).
+# Writes one new file, Documents\{file_name}.pptx (a noise folder), declared by confirm_save's file check: the runner
+# refuses to start if it exists, so the task never overwrites. Nothing it does is irreversible; on abandon PowerPoint
+# is closed with Don't Save. Done is read on the guest's disk, not in the UI (placeholders expose no text): the saved
+# deck's slides are exactly the planned title and each slide's title and bullets, in order (ludius.guestfile).
+# On screen, a slide's thumbnail is named "Slide <its title>" ("Slide" while untitled): the title checks read that.
+# Keys: on a blank presentation (or after Ctrl+M) typing goes into the slide's title; Ctrl+M adds a Title and Content
+# slide after it; Ctrl+Enter moves from the title to the slide's text box. Variants cover how the blank deck is opened
+# and how Save As is reached (F12, or Ctrl+S to the Backstage and Browse; never its OneDrive or Sign in).
+task: powerpoint_short_deck
+app: powerpoint
+capability: file.write  # creates one new file (writes); manager requests may ask for it
+processes: [powerpnt.exe]
+writes: ['Documents\{file_name}.pptx']
+params: [file_name, title, slide_title, bullets, slide2_title, bullets2]
+about: "Make a short slide deck in PowerPoint and save it as .pptx in Documents: a title slide, then one or two slides with a title and bullets. file_name: without extension; title: the deck's title; slide_title and bullets: the first content slide (bullets: 1-6 lines, one per bullet); slide2_title and bullets2: an optional second slide, both empty or both set. Text: letters, digits, spaces and , . ; : ! ? & % # + / -, each line starting with a letter or digit; no quotes, no ' - ' or '--', no list markers."
+defaults: {launch_query: powerpoint, slide2_title: "", bullets2: ""}
+example: {file_name: admission test deck, title: Admission test deck, slide_title: Open points, bullets: "first open point\nsecond open point", slide2_title: Next steps, bullets2: "book the review"}
+variants:
+  - [open_from_start, new_blank_enter, write_title, new_slide, write_slide_title, focus_bullets, write_bullets, new_slide2, write_slide2_title, focus_bullets2, write_bullets2, save_as, name_file, confirm_save, close_app]
+  - [open_from_start, new_blank_click, write_title, new_slide, write_slide_title, focus_bullets, write_bullets, new_slide2, write_slide2_title, focus_bullets2, write_bullets2, save_backstage, browse, name_file, confirm_save, close_app]
+weights: [1, 1]
+budget_steps: 60
+budget_minutes: 10
+on_abandon: close_without_saving
+subgoals:
+  open_from_start:
+    goal: "Open PowerPoint by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    done: {foreground: {process: powerpnt.exe}}
+  new_blank_enter:
+    goal: "Open a new blank presentation: the Blank Presentation tile on PowerPoint's start screen has the focus, press Enter"
+    done: {foreground: {process: powerpnt.exe, title: '^Presentation\d+ - PowerPoint$'}}
+  new_blank_click:
+    goal: "Open a new blank presentation with a click on Blank Presentation on PowerPoint's start screen"
+    done: {foreground: {process: powerpnt.exe, title: '^Presentation\d+ - PowerPoint$'}}
+  write_title:
+    goal: "Type the presentation's title at the keyboard focus: on the new blank first slide, typing goes into its title"
+    text: title
+    unreadable_ok: true  # placeholders have no UIA value; the thumbnail name and the file check decide
+    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}]
+    done: {typed: true, element: {role: list item, name: '^Slide {title}$'}}
+  new_slide:
+    goal: "Add a new slide after the title slide with Ctrl+M"
+    keys: [Ctrl+M]
+    # Never the ribbon's New Slide (any subgoal): its menu offers other layouts, and a click on it in a typing
+    # subgoal added a second untitled slide (run1). Done: the selected slide is a new, untitled one.
+    avoid: [{name: '^New Slide$'}]
+    done: {element: {role: list item, name: '^Slide$', selected: true}}
+  write_slide_title:
+    goal: "Type the new slide's title at the keyboard focus (typing goes into the new slide's title)"
+    text: slide_title
+    unreadable_ok: true
+    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}]
+    done: {typed: true, element: {role: list item, name: '^Slide {slide_title}$'}}
+  focus_bullets:
+    goal: "Move from the slide's title into its text box (Content Placeholder) with Ctrl+Enter"
+    keys: [Ctrl+Enter]
+    avoid: [{name: '^New Slide$'}]
+    done: {element: {name: '^Content Placeholder$', focused: true}}
+  write_bullets:
+    goal: "The slide's text box has the focus: type the bullet points at the keyboard focus (one line per bullet)"
+    text: bullets
+    unreadable_ok: true
+    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}]
+    # Bullets typed into the title would rename the slide: its thumbnail still names only the planned title.
+    done: {typed: true, element: {role: list item, name: '^Slide {slide_title}$'}}
+  new_slide2:
+    goal: "Add another new slide with Ctrl+M"
+    needs: slide2_title
+    keys: [Ctrl+M]
+    avoid: [{name: '^New Slide$'}]
+    done: {element: {role: list item, name: '^Slide$', selected: true}}
+  write_slide2_title:
+    goal: "Type the new slide's title at the keyboard focus (typing goes into the new slide's title)"
+    text: slide2_title
+    unreadable_ok: true
+    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}]
+    done: {typed: true, element: {role: list item, name: '^Slide {slide2_title}$'}}
+  focus_bullets2:
+    goal: "Move from the slide's title into its text box (Content Placeholder) with Ctrl+Enter"
+    needs: bullets2
+    keys: [Ctrl+Enter]
+    avoid: [{name: '^New Slide$'}]
+    done: {element: {name: '^Content Placeholder$', focused: true}}
+  write_bullets2:
+    goal: "The slide's text box has the focus: type the bullet points at the keyboard focus (one line per bullet)"
+    text: bullets2
+    unreadable_ok: true
+    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}]
+    done: {typed: true, element: {role: list item, name: '^Slide {slide2_title}$'}}
+  save_as:
+    goal: "Open the Save As dialog with F12"
+    keys: [F12]
+    avoid: [{name: '^(File Tab|Save)$'}]
+    done: {window: {process: powerpnt.exe, title: "^Save As$"}}
+  save_backstage:
+    goal: "Press Ctrl+S to open PowerPoint's Save As page (the Backstage)"
+    keys: [Ctrl+S]
+    avoid: [{name: '^File Tab$'}]
+    done: {element: {role: button, name: '^Browse$'}}
+  browse:
+    goal: "On PowerPoint's Save As page, click Browse to open the Save As dialog"
+    avoid: [{name: '^(OneDrive|Sign in|Share|Add a Place)$'}, {role: hyperlink}]
+    done: {window: {process: powerpnt.exe, title: "^Save As$"}}
+  name_file:
+    goal: "Enter {file_name} as the file name in the Save As dialog"
+    text: file_name
+    done: {typed: true, element: {name: "^File name", value: '^{file_name}(\.pptx)?$'}}
+  confirm_save:
+    goal: "Save the presentation as {file_name}"
+    done:
+      window: {process: powerpnt.exe, title: '^{file_name}(\.pptx)? - PowerPoint$'}
+      file: {path: 'Documents\{file_name}.pptx', slides: ["{title}", "{slide_title}\n{bullets}", "{slide2_title}\n{bullets2}"]}
+  close_app:
+    goal: "Close PowerPoint"
+    done: {window: {process: powerpnt.exe, absent: true}}
