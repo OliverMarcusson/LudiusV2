@@ -1,7 +1,9 @@
 """Manager requests (spec section 6, cross-persona interaction): managers mail work to the personas who report to them.
 
 Org chart: the narrative's people, each with `manager` (an account). A persona's manager is a narrative person with
-a range mailbox who is not a persona (no VM: it acts only server-side). Adding people or departments is data.
+a range mailbox. The request is sent server-side either way, also when the manager is itself a persona (has a VM):
+deterministic and checkable by Message-ID, at the cost of no Outlook send on the manager's desktop and no copy in its
+Sent Items (writing it in Outlook would need subject-based correlation and a day's delay). Adding people is data.
 
 Manager side, while a report's nightly plan is made (ensure()): one LLM call per manager and day writes requests
 for its persona reports, grounded in the narrative and each report's world state; only weekdays, at most one per
@@ -113,14 +115,14 @@ class _Item(Strict):
 
 
 def manager_of(n: Narrative, user: str, personas: list[Persona]) -> Person | str:
-    """The persona's manager from the org chart, or why it has none that may send."""
+    """The persona's manager from the org chart (a persona too, or not), or why it has none that may send."""
     people = {p.user: p for p in n.people if p.user}
     me = people.get(user)
     boss = people.get(me.manager) if me and me.manager else None
     if boss is None:
         return f"{user}: no manager with a mailbox in the org chart"
-    if boss.user == user or boss.user in {p.user for p in personas}:
-        return f"{user}: manager {boss.user} is a persona (has a VM), not a server-side manager"
+    if boss.user == user:
+        return f"{user}: is its own manager in the org chart"
     return boss
 
 

@@ -146,7 +146,9 @@ def test_generate_day_feeds_the_inventory_to_the_planner(tmp_path: Path) -> None
     llm = ScriptedLlm({"items": [note("admission test note")]}, {"items": [note("admission note oct")]})
     g = nightly.generate_day(llm, world, anna, src, DAY)  # type: ignore[arg-type]
     assert "- admission test note.txt" in llm.prompts[0]
-    assert [it.params["file_name"] for it in g.plan.items] == ["admission note oct"] and g.rejects == []
+    assert [it.params["file_name"] for it in g.plan.items] == ["admission note oct"]
+    # This world has no org chart: the only note is that aberg has no manager to send requests (since 3ccc614).
+    assert g.rejects == ["requests: aberg: no manager with a mailbox in the org chart"]
 
 
 def test_review_gaps_content_override_long_extension_and_renaming_earlier_content() -> None:

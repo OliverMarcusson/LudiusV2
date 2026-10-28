@@ -69,6 +69,23 @@ channel framing, the observer's file read) is covered offline by `dotnet test ho
       owner allows input on the test VM).
 - [ ] Mail checks: `LUDIUS_SRV_HOST=<srv01 address>` in `.env` (the Hyper-V Default Switch lookup does not apply).
 
+## 7. Multi-persona run (8 personas, `ludius range`)
+
+- [ ] VM cap: `Agent:MaxRunningVms=8` and `Proxmox:CapExemptIds=110` (srv01; with Exchange: the dc01 and ex01 ids)
+      in the box's agent config. The default is 1 on both backends (the owner's desktop limit). Check: a 9th persona
+      start is refused with "VM cap 8"; srv01 starts beside 8 personas.
+- [ ] Temporal server up (`infra/compose/compose.yaml`); the box's timezone is the personas' (`timedatectl set-timezone
+      Europe/Stockholm`): per-persona budgets reset at host midnight.
+- [ ] `.env`: `LUDIUS_CAP_DECISION`/`LUDIUS_CAP_LLM` (total ceilings: current total + run budget),
+      `LUDIUS_CAP_PERSONA_DECISION`/`LUDIUS_CAP_PERSONA_LLM` (per persona and day), `LUDIUS_PERSONA_PASSWORD_<USER>`
+      per persona, `LUDIUS_SRV_HOST`. `ludius range up` refuses to start without them.
+- [ ] `ludius range up --clock realtime --today` (first day: plans today and starts it at once; later days come from
+      the 22:00 plan and 06:30 day schedules). Under systemd: `KillMode=mixed`, so SIGTERM reaches the supervisor first
+      and it stops the workers in order. Check: `ludius range status`; kill one worker (`kill -9 <pid>`): it restarts
+      within seconds, its day resumes (`item_retry` in its day log), the others' logs never pause.
+- [ ] Check a manual schedule trigger carries `TemporalScheduledStartTime` (ScheduledDay refuses without it): the
+      `--today` days must start, not fail at `load_scheduled_day`.
+
 ## Not on Proxmox yet
 
 - Time-jump clock mode (`set-clock.ps1`, clock sweep) is Hyper-V only; the agent's clock sweep is off on Proxmox,

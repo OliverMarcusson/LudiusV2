@@ -59,7 +59,8 @@ def ensure(tmp_path: Path, llm: FakeLlm, date: dt.date = THU, inbox: list[mail.M
 
 def test_org_chart_managers() -> None:
     assert requests.manager_of(STORY, "aberg", [ANNA, LARS]) == BOSS
-    assert "is a persona" in str(requests.manager_of(STORY, "lnord", [ANNA, LARS]))  # has a VM: never sends
+    lnord = requests.manager_of(STORY, "lnord", [ANNA, LARS])  # a manager who is a persona sends server-side too
+    assert not isinstance(lnord, str) and lnord.user == "aberg"
     assert "no manager" in str(requests.manager_of(STORY, "mvellinga", [ANNA]))
 
 

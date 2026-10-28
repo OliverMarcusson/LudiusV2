@@ -59,7 +59,8 @@ with workflow.unsafe.imports_passed_through():
 
 ITEM_TIMEOUT = dt.timedelta(hours=2)
 QUICK = dt.timedelta(minutes=5)
-NOT_RETRYABLE = ["KeyError", "ValueError"]  # template or plan errors do not get better by retrying
+# Template or plan errors do not get better by retrying; nor does a spent budget (calls.CapReached): the day stops.
+NOT_RETRYABLE = ["KeyError", "ValueError", "CapReached"]
 
 
 class DayInput(BaseModel):

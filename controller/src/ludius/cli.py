@@ -477,6 +477,82 @@ def cmd_plan_worker(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_range(args: argparse.Namespace) -> int:
+    """The multi-persona run (ludius.rangerun): `up` starts and keeps it running, `status` summarizes it."""
+    import signal
+    from zoneinfo import ZoneInfo
+
+    from ludius import rangerun
+
+    known = rangerun.personas()
+    users = args.persona or known
+    if unknown := [u for u in users if u not in known]:
+        print(f"not in {rangerun.VMS}: {', '.join(unknown)}", file=sys.stderr)
+        return 2
+    today = dt.datetime.now(ZoneInfo(args.timezone)).date()
+    if args.what == "status":
+        print(rangerun.summary(planner.World(RUNS), users, today, RUNS / "range", dict(os.environ)))
+        return 0
+    if why := rangerun.refusals(users, dict(os.environ), DATA / "personas"):
+        print("range not started:", *why, sep="\n  ", file=sys.stderr)
+        return 2
+    asyncio.run(asyncio.wait_for(_range_schedules(args, users, today), timeout=60 + 600 * bool(args.today)))
+    agent = args.agent or os.environ.get("LUDIUS_AGENT", "127.0.0.1:7451")
+    sup = rangerun.Supervisor([rangerun.Child(s) for s in rangerun.specs(users, agent, args.temporal, args.model,
+                              dict(os.environ))], RUNS / "range", rangerun.popen)  # fmt: skip
+
+    def term(*_: object) -> None:
+        raise KeyboardInterrupt  # systemd's stop: the same orderly worker shutdown as Ctrl+C
+
+    signal.signal(signal.SIGTERM, term)
+    try:
+        while True:
+            sup.step()
+            time.sleep(5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sup.stop()
+    return 0
+
+
+async def _range_schedules(args: argparse.Namespace, users: list[str], today: dt.date) -> None:
+    """Every persona's nightly-plan and day schedules, active; existing ones are kept as they are. --today: plan
+    today where no plan exists yet, then start today's day now (a schedule trigger) instead of tomorrow."""
+    from temporalio.client import ScheduleAlreadyRunningError
+
+    from ludius import calls, durable, nightly
+
+    client = await durable.connect(durable.Target(args.temporal))
+    for u in users:
+        for sid, definition in (
+            (nightly.schedule_id(u), nightly.schedule_for(u, args.plan_at, args.timezone, paused=False)),
+            (durable.schedule_id(u), durable.schedule_for(u, args.day_at, args.timezone, args.clock, paused=False)),
+        ):
+            try:
+                await client.create_schedule(sid, definition)
+                print(f"{sid}: created")
+            except ScheduleAlreadyRunningError:
+                print(f"{sid}: exists, kept as it is")
+    if not args.today:
+        return
+    world, src = planner.World(RUNS), plan_sources()
+    llm = functools.partial(LlmClient, os.environ.get("OPENROUTER_API_KEY", ""), model=PLANNER_MODEL)
+    for u in users:
+        persona = next(p for p in src.personas if p.user == u)
+        calls.persona = u
+        try:
+            with durable.desk_lock(world.root / "locks" / "nightly.lock"):
+                print(f"{u}: plan {nightly.ensure_day(llm, world, persona, src, today).path}")
+        except Exception as e:  # noqa: BLE001  one persona's plan failing leaves the others' days to run
+            print(f"{u}: no plan for {today}, its day will fail to load: {e}", file=sys.stderr)
+            continue
+        finally:
+            calls.persona = None
+        await client.get_schedule_handle(durable.schedule_id(u)).trigger()
+        print(f"{u}: today's day started")
+
+
 def cmd_reservation(args: argparse.Namespace) -> int:
     from temporalio.client import WorkflowExecutionStatus
 
@@ -817,6 +893,18 @@ def main(argv: list[str] | None = None) -> int:
     pw.add_argument("--temporal", required=True, metavar="HOST:PORT")
     pw.add_argument("--model", default=PLANNER_MODEL)
     pw.set_defaults(fn=cmd_plan_worker)
+
+    rg = sub.add_parser("range", help="multi-persona run: start and supervise every persona's worker, or summarize")
+    rg.add_argument("what", choices=["up", "status"])
+    rg.add_argument("--temporal", default="127.0.0.1:7233", metavar="HOST:PORT")
+    rg.add_argument("--persona", action="append", help="only this persona (repeatable; default: all in range-vms.yml)")
+    rg.add_argument("--clock", choices=["realtime", "compressed"], default="realtime", help="for new day schedules")
+    rg.add_argument("--day-at", default="06:30", help="daily day-schedule fire HH:MM (new schedules)")
+    rg.add_argument("--plan-at", default="22:00", help="nightly planning HH:MM for the next day (new schedules)")
+    rg.add_argument("--timezone", default="Europe/Stockholm", help="IANA zone of the personas' days")
+    rg.add_argument("--today", action="store_true", help="up: plan today where missing and start today's days now")
+    rg.add_argument("--model", default=DEFAULT_MODEL, help="Decisions model for the desktop workers")
+    rg.set_defaults(fn=cmd_range)
 
     rv = sub.add_parser("reservation", help="inspect (default, dry run) or clear a closed workflow's day reservation")
     rv.add_argument("what", nargs="?", choices=["inspect", "clear"], default="inspect")

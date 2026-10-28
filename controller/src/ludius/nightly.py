@@ -44,7 +44,16 @@ if TYPE_CHECKING:
     from ludius.loop import Decider
 
 with workflow.unsafe.imports_passed_through():
-    from ludius import durable, mail, planner, reply, requests, revision, world_state
+    # `import ludius.x as x`, not `from ludius import x`: the sandbox already holds its own `ludius` package (this
+    # module's parent), so a from-import would run the submodules inside the sandbox (mail's Path.resolve fails).
+    import ludius.calls as calls
+    import ludius.durable as durable
+    import ludius.mail as mail
+    import ludius.planner as planner
+    import ludius.reply as reply
+    import ludius.requests as requests
+    import ludius.revision as revision
+    import ludius.world_state as world_state
     from ludius.llm import LlmClient
     from ludius.planner import DayPlan, World
     from ludius.policy import Policy
@@ -314,13 +323,16 @@ class PlanActivities:
         except (ValueError, KeyError) as e:  # bad input or setup does not get better by retrying
             raise ApplicationError(str(e), non_retryable=True) from e
         # Host-side lock: one planner at a time over shared world state, history and plans (no desktop involved).
+        calls.persona = fire.persona  # this persona's daily budget pays for its plan (one activity at a time)
         try:
             with durable.desk_lock(self.world.root / "locks" / "nightly.lock"):
                 return ensure_day(self.llm, self.world, persona, src, date)
         except durable.DeskBusy as e:
             raise RuntimeError("another nightly planner is running; retrying") from e
-        except PlanConflict as e:
+        except (PlanConflict, calls.CapReached) as e:
             raise ApplicationError(str(e), non_retryable=True) from e
+        finally:
+            calls.persona = None
 
 
 async def serve(client: Client, runs: Path, load: Callable[[], Sources], llm: Callable[[], LlmClient]) -> None:

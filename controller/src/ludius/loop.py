@@ -18,6 +18,7 @@ from typing import Any, Literal, Protocol
 
 from ludius import keys, requests
 from ludius.assist import Assist
+from ludius.calls import CapReached
 from ludius.decisions import Decision, DecisionError
 from ludius.options import (
     Option,
@@ -454,10 +455,10 @@ class Runner:
                 shot = self._shot(here) if image else None
                 image = image if shot is not None else None
                 decision = self.decider.decide(state, choices, ask_progress=not recovering, image=shot)
-            except DecisionError as e:  # no usable answer even after retries: abandon the task, don't crash the process
+            except (DecisionError, CapReached) as e:  # no usable answer or no budget: abandon the task, don't crash
                 self.log.write(event="decision_error", host_ms=_now(), task=task.template.task, subgoal=name,
                                step=step, error=str(e)[:300])  # fmt: skip
-                return "failed", step - 1, "decision error"
+                return "failed", step - 1, "budget spent" if isinstance(e, CapReached) else "decision error"
             chosen = self._choose(decision, options)
 
             decider_done = code_done is None and decision.subgoal_done >= DONE_THRESHOLD and not recovering
