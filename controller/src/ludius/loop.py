@@ -7,6 +7,7 @@ Steps 4+ (restart app ... mark VM unhealthy) are logged as escalations for the o
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import time
@@ -68,10 +69,13 @@ class Agent(Protocol):
     def scroll(self, notches: int) -> int: ...
     def ctrl_alt_del(self) -> int: ...
     def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult: ...
+    def screenshot(self) -> bytes: ...
 
 
 class Decider(Protocol):
-    def decide(self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True) -> Decision: ...
+    def decide(
+        self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
+    ) -> Decision: ...
 
 
 class GroundTruth:
@@ -132,6 +136,9 @@ class Runner:
         self.snap: obs.Snapshot = obs.Snapshot()
         self.display: tuple[int, int, int] | None = None  # (width, height, dpi) the pointer mapping was checked at
         self.mapping_ok = True
+        # LUDIUS_JEV_IMAGE=1: every step decision (and its subgoal_done/off_track checks) also gets the screenshot,
+        # for image-reading Decisions models (liquid/d1.1). Off by default.
+        self.image = os.environ.get("LUDIUS_JEV_IMAGE") == "1"
 
     # Observation and pacing -------------------------------------------------------
 
@@ -427,7 +434,11 @@ class Runner:
             here = fingerprint(snap)
             options = [o for o in options if _ident(o) not in dead.get(here, ())] or options
             state = build_state(v, task, sg, history, last_result)
-            decision = self.jev.decide(state, {o.key: o.text for o in options}, ask_progress=not recovering)
+            choices = {o.key: o.text for o in options}
+            if self.image:
+                decision = self.jev.decide(state, choices, ask_progress=not recovering, image=self.agent.screenshot())
+            else:
+                decision = self.jev.decide(state, choices, ask_progress=not recovering)
             chosen = self._choose(decision, options)
 
             jev_done = code_done is None and decision.subgoal_done >= DONE_THRESHOLD and not recovering
@@ -457,11 +468,13 @@ class Runner:
                 # Ladder step 2: in-app recovery with a restricted choice next step.
                 recovering = True
                 last_result = "screen looked unrelated to the goal"
-                self._log_step(task, name, snap, chosen, decision, "off_track -> recovery", step, options=options)
+                self._log_step(task, name, snap, chosen, decision, "off_track -> recovery", step, options=options,
+                               code_done=code_done)  # fmt: skip
                 continue
             reason = self._post_check(chosen, sg, task)
             if reason:
-                self._log_step(task, name, snap, chosen, decision, f"blocked: {reason}", step, options=options)
+                self._log_step(task, name, snap, chosen, decision, f"blocked: {reason}", step, options=options,
+                               code_done=code_done)  # fmt: skip
                 last_result = f"that action is not allowed ({reason})"
                 continue
 
@@ -483,7 +496,7 @@ class Runner:
                 last_result += " (screen still busy)"
             history.append(f"{_short(chosen)} -> {outcome}")
             self._log_step(task, name, snap, chosen, decision, last_result, step, host_ms=host_ms, options=options,
-                           check=(sg, typed_ok))  # fmt: skip
+                           check=(sg, typed_ok), code_done=code_done)  # fmt: skip
             recovering = False
 
             progress = changed and not revisit
@@ -606,6 +619,7 @@ class Runner:
         host_ms: int = 0,
         options: list[Option] | None = None,
         check: tuple[Subgoal, bool] | None = None,
+        code_done: bool | None = None,
     ) -> None:
         fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
         pixels = fg is not None and pixels_window(fg)
@@ -642,7 +656,11 @@ class Runner:
                 "subgoal_done": d.subgoal_done,
                 "off_track": d.off_track,
                 "cost": d.cost,
+                "model": d.model,
+                "image": d.image,
+                "latency_ms": d.latency_ms,
             },
+            code_done=code_done,  # the subgoal's own check before this step (None: it has none, Jev judges done)
             result=result,
         )
 

@@ -5,6 +5,8 @@ import random
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from ludius.cli import load_templates
 from ludius.jev import Decision
 from ludius.loop import GroundTruth, Runner
@@ -38,6 +40,9 @@ class ToggleAgent:
     def scroll(self, notches: int) -> int:
         return 0
 
+    def screenshot(self) -> bytes:
+        return b"PNG shot"
+
     def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
         fg = ("Search", "SearchApp.exe") if self.open else ("File Explorer", "explorer.exe")
         box = obs.Rect(x=0, y=1040, width=48, height=40)
@@ -57,9 +62,22 @@ class PrefersStart:
         return Decision(key, 0.8, {key: 0.8}, 0.0, 0.0, "fake")
 
 
-def _run(tmp_path: Path, agent: ToggleAgent) -> list[dict[str, Any]]:
+class SeesImages(PrefersStart):
+    def __init__(self) -> None:
+        self.images: list[bytes | None] = []
+
+    def decide(
+        self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
+    ) -> Decision:
+        self.images.append(image)
+        d = super().decide(state, options, ask_progress=ask_progress)
+        d.image, d.latency_ms = image is not None, 7
+        return d
+
+
+def _run(tmp_path: Path, agent: ToggleAgent, jev: PrefersStart | None = None) -> list[dict[str, Any]]:
     log = tmp_path / "gt.jsonl"
-    runner = Runner(agent, PrefersStart(), Persona(name="t", user="t"), GroundTruth(log), seed=1)  # type: ignore[arg-type]
+    runner = Runner(agent, jev or PrefersStart(), Persona(name="t", user="t"), GroundTruth(log), seed=1)  # type: ignore[arg-type]
     tpl = load_templates()["notepad_write_note"]
     task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
     runner._subgoal(task, "open_from_start", task.subgoal("open_from_start"), budget=12, t0=1e18)  # pyright: ignore[reportPrivateUsage]
@@ -77,3 +95,16 @@ def test_new_screens_still_count_as_progress(tmp_path: Path) -> None:
     events = _run(tmp_path, ToggleAgent(grows=True))
     start = [e for e in events if e.get("event") == "step" and "'Start'" in e["option"]]
     assert len(start) == 12 and not any(e.get("event") == "ladder" for e in events)
+
+
+def test_screenshot_goes_to_jev_only_with_the_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    off = SeesImages()
+    _run(tmp_path / "off", ToggleAgent(), off)
+    assert off.images and set(off.images) == {None}  # off by default: no screenshot taken or sent
+    monkeypatch.setenv("LUDIUS_JEV_IMAGE", "1")
+    on = SeesImages()
+    events = _run(tmp_path / "on", ToggleAgent(), on)
+    assert set(on.images) == {b"PNG shot"}
+    step = next(e for e in events if e.get("event") == "step")
+    assert step["jev"]["model"] == "fake" and step["jev"]["image"] is True and step["jev"]["latency_ms"] == 7
+    assert step["code_done"] is False  # open_from_start has a code check (foreground notepad), not met yet

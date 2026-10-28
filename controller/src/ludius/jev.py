@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,6 +53,8 @@ class Decision:
     off_track: float
     model: str
     cost: float | None = None
+    latency_ms: int = 0  # the whole decide() call, retries included
+    image: bool = False  # a screenshot went along with the state
     request: dict[str, Any] = field(default_factory=dict[str, Any])
     response: dict[str, Any] = field(default_factory=dict[str, Any])
 
@@ -160,6 +163,7 @@ class JevClient:
         """`image`: a screenshot for models that read images (not Jev); the state's text goes along with it."""
         body = build_request(self.model, state, options, ask_progress=ask_progress, image=image)
         last: Exception | None = None
+        t0 = time.monotonic()
         for _ in range(2):  # one retry on transport errors, 5xx and answers that break the contract
             calls.count("jev")
             try:
@@ -178,6 +182,8 @@ class JevClient:
                 last = e
                 continue
             decision.request = body
+            decision.latency_ms = round((time.monotonic() - t0) * 1000)
+            decision.image = image is not None
             return decision
         raise JevError(f"Jev failed twice: {last}")
 
