@@ -57,6 +57,7 @@ class Message:
     prefix: str = ""  # subject prefix as stored, e.g. "RE: "
     msgid: str = ""  # Internet message id, <...@...>
     in_reply_to: str = ""  # the Internet message id of the message this one answers
+    read: bool = False  # marked read on the server now (a hint: mail.read's done check reads read_state())
 
 
 @functools.cache
@@ -68,6 +69,37 @@ def _host() -> str:
     out = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", ps],
                          capture_output=True, text=True, timeout=30)  # fmt: skip
     return out.stdout.strip()
+
+
+def _ssh(remote: str, stdin: str | None = None, timeout: int = 30) -> subprocess.CompletedProcess[bytes] | None:
+    """Run `remote` on srv01 as ludius; None when it could not be reached."""
+    try:
+        host = _host()
+        if not host:
+            return None
+        # The host key is pinned by name, not by the address, which changes across host reboots.
+        cmd = ["ssh", "-i", str(SRV / "id_ed25519"), "-o", f"UserKnownHostsFile={SRV / 'known_hosts'}",
+               "-o", "HostKeyAlias=ludius-srv01", "-o", "BatchMode=yes",
+               "-o", "ConnectTimeout=10", f"ludius@{host}", remote]  # fmt: skip
+        data = None if stdin is None else stdin.encode()
+        return subprocess.run(cmd, input=data, capture_output=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def read_state(user: str, message_id: int, folder: str = "inbox") -> bool | None:
+    """Whether the message is marked read on the server: gromox keeps it in messages.read_state and derives
+    PR_MESSAGE_FLAGS' MSGFLAG_READ from it (the stored PR_MESSAGE_FLAGS lacks the bit). None when unknown: the server
+    could not be read, or the message is not (or no longer) in that folder."""
+    if not re.fullmatch(r"[a-z0-9]+", user) or message_id <= 0:
+        return None
+    db = f"/var/lib/gromox/user/{DOMAIN}/{user}/exmdb/exchange.sqlite3"
+    sql = (f"select read_state from messages where message_id={int(message_id)} and parent_fid={FOLDERS[folder]} "
+           f"and is_associated=0 and coalesce(is_deleted, 0)=0")  # fmt: skip
+    out = _ssh(f'sudo sqlite3 -readonly {db} "{sql}"')
+    if out is None or out.returncode:
+        return None
+    return {"0": False, "1": True}.get(out.stdout.decode("ascii", "replace").strip())
 
 
 def messages(user: str, folder: str, subject: str) -> list[Message]:
@@ -110,7 +142,8 @@ def _query(user: str, folder: str, subject: str | None) -> list[Message] | None:
     where = "" if subject is None else f"and cast(s.propval as text)=cast(x'{subject.encode().hex()}' as text)"
     order = f" order by coalesce(d.propval, 0) desc limit {LISTED}" if subject is None else ""
     # The body is optional (a meeting without text has none): '-' then, and an empty body is read.
-    sql = (f"select m.message_id, coalesce(t.propval, 0), coalesce(d.propval, 0), coalesce(f.propval, r.propval, '-'), "
+    sql = (f"select m.message_id, coalesce(m.read_state, 0), coalesce(t.propval, 0), coalesce(d.propval, 0), "
+           f"coalesce(f.propval, r.propval, '-'), "
            f"{extra}, coalesce({org}, '-'), coalesce({rcpt}, '-'), {texts}, coalesce(cast(b.propval as text), '-') "
            f"from messages m join message_properties s on s.message_id=m.message_id "
            f"and s.proptag={PR_NORMALIZED_SUBJECT} left join message_properties b on b.message_id=m.message_id "
@@ -121,31 +154,21 @@ def _query(user: str, folder: str, subject: str | None) -> list[Message] | None:
            f"and r.proptag={PR_SENT_REPRESENTING_SMTP} where m.parent_fid={FOLDERS[folder]} "
            f"and m.is_associated=0 {where}{order}")  # fmt: skip
     # pipefail: a locked or failing database must fail the query, never read as "no messages" (the baseline).
-    fields = "i t d s k a e n o r h p x y"
+    fields = "i u t d s k a e n o r h p x y"
     remote = (f"set -o pipefail; sudo sqlite3 -readonly -separator ' ' {db}/exmdb/exchange.sqlite3 \"{sql}\" | "
-              f"while read {fields} c; do printf '{' '.join(['%s'] * 14)}\\n' "
+              f"while read {fields} c; do printf '{' '.join(['%s'] * 15)}\\n' "
               + " ".join(f'\"${v}\"' for v in fields.split()) + "; "
               f"if [ \"$c\" != - ]; then sudo zstdcat -qf {db}/cid/$c || exit 1; fi; "
               f"printf '\\036'; done")  # fmt: skip
-    try:
-        host = _host()
-        if not host:
-            return None
-        # The host key is pinned by name, not by the address, which changes across host reboots.
-        cmd = ["ssh", "-i", str(SRV / "id_ed25519"), "-o", f"UserKnownHostsFile={SRV / 'known_hosts'}",
-               "-o", "HostKeyAlias=ludius-srv01", "-o", "BatchMode=yes",
-               "-o", "ConnectTimeout=10", f"ludius@{host}", remote]  # fmt: skip
-        out = subprocess.run(cmd, capture_output=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode:
+    out = _ssh(remote)
+    if out is None or out.returncode:
         return None
     found: list[Message] = []
     for rec in out.stdout.decode("utf-8", "replace").split("\x1e"):
         head, _, body = rec.lstrip("\r\n").partition("\n")
-        i, t, d, sender, cls, a, e, n, org, rcpt, *hexes = (head.split(" ") + [""] * 13)[:14]
+        i, u, t, d, sender, cls, a, e, n, org, rcpt, *hexes = (head.split(" ") + [""] * 14)[:15]
         subj, prefix, msgid, irt = (_unhex(x) for x in hexes)
-        if all(x.isdigit() for x in (i, t, d, a, e, n)):
+        if all(x.isdigit() for x in (i, u, t, d, a, e, n)):
             to = tuple(sorted(x.strip().lower() for x in rcpt.split(",") if rcpt.strip() not in ("", "-")))
             ms = [int(x) // 10_000 - FILETIME_UNIX_MS if int(x) else 0 for x in (t, d, a, e, n)]
             org = "" if org.strip() in ("", "-") or "," in org else org.strip().lower()  # one organiser, or none
@@ -166,6 +189,7 @@ def _query(user: str, folder: str, subject: str | None) -> list[Message] | None:
                     prefix,
                     msgid.strip(),
                     irt.strip(),
+                    u == "1",
                 )  # fmt: skip
             )
     return found
@@ -324,14 +348,5 @@ def deliver(sender: str, sender_name: str, to: str, to_name: str, subject: str, 
     )
     payload = json.dumps(dict(sender=addrs[0], sender_name=sender_name, to=addrs[1], to_name=to_name,
                               subject=subject, body=body, msgid=msgid))  # fmt: skip
-    try:
-        host = _host()
-        if not host:
-            return False
-        cmd = ["ssh", "-i", str(SRV / "id_ed25519"), "-o", f"UserKnownHostsFile={SRV / 'known_hosts'}",
-               "-o", "HostKeyAlias=ludius-srv01", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-               f"ludius@{host}", "python3 -c " + shlex.quote(script)]  # fmt: skip
-        out = subprocess.run(cmd, input=payload + "\n", capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return out.returncode == 0 and out.stdout.strip() == "sent"
+    out = _ssh("python3 -c " + shlex.quote(script), payload + "\n", 60)
+    return out is not None and out.returncode == 0 and out.stdout.decode("utf-8", "replace").strip() == "sent"

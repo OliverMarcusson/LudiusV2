@@ -1,10 +1,13 @@
-# Outlook (classic, Exchange profile on the range grommunio): how it does what the mail.send, mail.reply and
-# calendar.invite capabilities need. The send contract's rules are shared (ludius.tasks.Form): this file only says
-# where Outlook keeps each field and which of its prompts mean what.
+# Outlook (classic, Exchange profile on the range grommunio): how it does what the mail.send, mail.reply, mail.read
+# and calendar.invite capabilities need. The send contract's rules are shared (ludius.tasks.Form): this file only
+# says where Outlook keeps each field and which of its prompts mean what. mail.read: opening a mail marks it read,
+# and Outlook syncs the flag to the server a moment later (the done check reads it there).
 process: outlook.exe
 launch_query: outlook  # typed into Start search
 keys:
   send: Alt+S  # a template's `keys: [send]`
+  open: Enter  # mail.read: opens the selected Inbox mail in its own window, which marks it read
+  close_item: Esc  # closes an open mail's window (Outlook's own close key for it, never a send)
 dialogs:
   discard: ["don'?t save changes", "don'?t send"]  # the meeting close prompt's radio choice; "send without a location?"
 forms:

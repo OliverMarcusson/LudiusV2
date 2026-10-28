@@ -1,0 +1,49 @@
+# Read a colleague's mail in Outlook (classic): open it from the Inbox in its own window, read, close.
+# Capability mail.read (ludius.reply.prepare_read, before any input): the one Inbox mail with this subject from
+# `sender`, a noise colleague (a manager included), not reserved, and UNREAD on the range server at task start; a
+# mail read before can't show this task's read, so the task is abandoned then. Done is checked on the server, not
+# in the UI: that mail's read flag (gromox read_state, PR_MESSAGE_FLAGS MSGFLAG_READ) is set while it is open.
+# Effects: the read flag only (not undone); nothing typed, sent, moved or deleted (the template validator refuses
+# text, writes and destructive clicks for mail.read). Abandon closes the windows.
+# Variants: Enter on the selected mail vs a double-click.
+task: outlook_read_mail
+app: outlook
+capability: mail.read
+params: [sender, subject]
+defaults: {sender_name: ""}  # set at task start from the narrative (prepare_read)
+about: "Read a colleague's unread mail in the Outlook Inbox (open it, read it, close it). sender: the address of the colleague who sent it (<user>@corp.ludius.test); subject: that mail's exact subject, as listed in the inbox. Plan it before work the mail asks for, or as the morning look at new mail."
+example: {sender: mvellinga@corp.ludius.test, subject: "Points for tomorrow's ERP cost policy review"}
+variants:
+  - [open_outlook, open_message, close_message, close_outlook]
+  - [open_outlook, open_message_click, close_message, close_outlook]
+budget_steps: 40
+budget_minutes: 8
+on_abandon: close_without_saving
+subgoals:
+  open_outlook:
+    goal: "Open Outlook by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    steps: 8
+    done: {foreground: {process: outlook.exe, title: "Outlook"}}
+  open_message:
+    goal: "In the Inbox, select the mail from {sender_name} with the subject {subject} and open it in its own window with Enter"
+    keys: [open]
+    steps: 20  # some of them wait for Outlook to sync the read flag to the server
+    done:
+      window: {process: outlook.exe, title: '^{subject}\s*-\s*Message'}
+      read: true
+  open_message_click:
+    goal: "In the Inbox, double-click the mail from {sender_name} with the subject {subject} to open it in its own window"
+    steps: 20
+    done:
+      window: {process: outlook.exe, title: '^{subject}\s*-\s*Message'}
+      read: true
+  close_message:
+    goal: "Close the mail's window"
+    keys: [close_item]
+    done: {window: {process: outlook.exe, title: '^{subject}\s*-\s*Message', absent: true}}
+  close_outlook:
+    goal: "Close Outlook"
+    done: {window: {process: outlook.exe, absent: true}}

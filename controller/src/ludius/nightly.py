@@ -170,7 +170,9 @@ def generate_day(
             getattr(jev, "close", lambda: None)()
     asked = {m.subject for m in inbox_mails or [] if m.msgid in {it.request for it in mapped}}
     inbox = reply.hints(inbox_mails, persona.user, people, src.policy)
-    listed = "\n".join(f"- from {u}@{mail.DOMAIN}: {s}" for u, s in inbox if s not in asked)
+    unread = {(m.sender.partition("@")[0], m.subject) for m in inbox_mails or [] if not m.read}
+    listed = "\n".join(f"- from {u}@{mail.DOMAIN}: {s}" + (" (unread)" if (u, s) in unread else "")
+                       for u, s in inbox if s not in asked)  # fmt: skip
     listed = f"Inbox on the mail server (newest first; a reply answers one of these):\n{listed}" if listed else ""
     planned = "\n".join(f"- {it.at} {it.template}: {it.context}" for it in mapped)
     planned = f"Already planned from the manager's requests (keep these times free, do not plan them again):\n{planned}"
@@ -185,6 +187,16 @@ def generate_day(
         mail_threads=threads, inbox=set(inbox),
     )  # fmt: skip
     colleagues = {p.user for p in auto.narrative.people if p.user and p.user != persona.user}
+    role = planner.role_templates(src.templates, persona)
+    stale = [
+        x
+        for x in plan.items
+        if (t := role.get(x.template))
+        and t.capability == "mail.read"
+        and (x.params.get("sender", "").strip().lower().partition("@")[0], x.params.get("subject")) not in unread
+    ]
+    plan.items = [x for x in plan.items if x not in stale]  # a mail read already can't be read by the task: drop it
+    rejects += [f"{x.template} at {x.at}: dropped, the mail is not unread" for x in stale]  # fmt: skip
     for it in mapped:  # the same validation as the planner's own items, after them
         dups = requests.duplicates(plan.items, it, world.root)  # the planner did the request again: the mapped one wins
         rest = [x for x in plan.items if x not in dups]
@@ -202,6 +214,20 @@ def generate_day(
         else:
             plan.items = sorted([*rest, it], key=lambda x: x.at)
             rejects += [f"{x.template} at {x.at}: dropped, it repeats the request {it.request}" for x in dups]
+            if read := requests.read_first(it, inbox_mails, role, plan.items):  # the mail is read before the work
+                others = [
+                    x
+                    for x in plan.items
+                    if not (x.template == read.template and x.params.get("subject") == read.params["subject"])
+                ]
+                why = dict(planner.validate(
+                    [*others, read], role, [], src.policy, colleagues, None, set(followups), existing, threads,
+                    people, persona.user, date.isoformat(), set(inbox),
+                )).get(len(others))  # fmt: skip
+                if why:
+                    rejects.append(f"read before request {it.template} at {it.at}: {why}")
+                else:
+                    plan.items = sorted([*others, read], key=lambda x: x.at)
     rejects += notes
     return Generated(plan, rejects, auto)
 

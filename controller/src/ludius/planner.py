@@ -197,6 +197,7 @@ def plan_day(
     existing = list(existing)
     names = sorted({_leaf(e) for e in existing if _leaf(e)}, key=str.casefold)[:SHOWN_EXISTING]
     mail_tasks = ", ".join(sorted(k for k, t in templates.items() if t.capability in SENDS)) or "none"
+    reads = sorted(k for k, t in templates.items() if t.capability == "mail.read")
     user = (
         f"Company story:\n{narrative.model_dump_json(indent=1)}\n\n"
         f"Persona: {persona.name}, {persona.role} ({persona.department}). Usual hours {persona.hours[0]}-"
@@ -224,6 +225,12 @@ def plan_day(
             f"Pick up threads colleagues handed to this persona. Mail ({mail_tasks}) goes to one colleague: to is "
             f"<account>@{MAIL_DOMAIN} and handoff is that account; reply only to a due follow-up's mail or a mail "
             "listed under Inbox on the mail server (to its sender, with its subject exactly)."
+            + (
+                f" Reading a mail ({', '.join(reads)}) opens one listed Inbox mail marked unread (sender is its "
+                "sender's address, subject exactly as listed), e.g. the morning look at new mail; at most once each."
+                if reads
+                else ""
+            )  # fmt: skip
             if colleagues
             else ""
         )
@@ -300,8 +307,11 @@ def validate(
             why = _recipient(it, colleagues or set[str](), people or {})
         if not why:
             why = _meeting_day(it, day)
-        if not why and (t := templates.get(it.template)) and t.capability == "mail.reply":
+        cap = (t.capability if (t := templates.get(it.template)) else None) or ""
+        if not why and cap == "mail.reply":
             why = _reply_thread(it, mail_threads or {}, inbox or set[tuple[str, str]]())
+        if not why and cap == "mail.read":
+            why = _read_mail(it, colleagues or set[str](), inbox or set[tuple[str, str]](), items[:i])
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
         if not why and it.followup and it.followup not in (followups or set[str]()):
@@ -392,6 +402,29 @@ def _reply_thread(it: PlanItem, threads: dict[str, tuple[str, str]], inbox: set[
         return "a reply answers a colleague's mail: set followup to that mail's open follow-up, or a listed inbox mail"
     if thread != (sender, subject):
         return f"followup {it.followup!r} is {thread[0]!r}'s mail {thread[1]!r}: reply to that, with that subject"
+    return None
+
+
+def _sender(it: PlanItem, colleagues: set[str]) -> str | None:
+    """A mail.read item's sender is a colleague's range address (a narrative person, a manager included)."""
+    sender = {**it.params, **it.content}.get("sender")
+    if sender is None:
+        return None
+    user, _, domain = sender.strip().lower().partition("@")
+    return None if domain == MAIL_DOMAIN and user in colleagues else f"sender {sender!r} is not a colleague's address"
+
+
+def _read_mail(it: PlanItem, colleagues: set[str], inbox: set[tuple[str, str]], earlier: list[PlanItem]) -> str | None:
+    """A read opens one mail listed in the Inbox (sender account, exact subject), once a plan; whether it is still
+    unread is checked when the task starts (ludius.reply.to_read)."""
+    if why := _sender(it, colleagues):
+        return why
+    values = {**it.params, **it.content}
+    key = (values["sender"].strip().lower().partition("@")[0], values.get("subject", ""))
+    if key not in inbox:
+        return "a read opens a mail listed under Inbox on the mail server: its sender and exact subject"
+    if any(x.template == it.template and {**x.params, **x.content}.get("subject") == key[1] for x in earlier):
+        return f"the mail {key[1]!r} is already read earlier in the plan"
     return None
 
 
@@ -715,7 +748,7 @@ def load_plan(path: Path) -> DayPlan:
             raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
         if it.request and not MESSAGE_ID.fullmatch(it.request):
             raise ValueError(f"{path}: {it.template} at {it.at}: request {it.request!r} is not a message id")
-    mail = [it for it in plan.items if "to" in {**it.params, **it.content}]
+    mail = [it for it in plan.items if {"to", "sender"} & {**it.params, **it.content}.keys()]
     if mail:
         narrative = path.parent.parent / "world" / "narrative.yaml"
         people = (
@@ -728,7 +761,7 @@ def load_plan(path: Path) -> DayPlan:
             else {}
         )
         for it in mail:
-            if why := _recipient(it, set(people) - {plan.persona}, people):
+            if why := _recipient(it, set(people) - {plan.persona}, people) or _sender(it, set(people) - {plan.persona}):
                 raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
     return plan
 

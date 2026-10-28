@@ -57,6 +57,7 @@ REQUESTABLE = ("file.write", "mail.send", "mail.reply", "calendar.invite")  # ca
 WEEKLY = 3  # requests per report and ISO week, at most
 MAPPED_MAX = 2  # manager mails mapped per persona and night, at most (bounded calls)
 JEV_MIN = 0.6  # Jev's choice must be at least this probable
+READ_LEAD = 5  # minutes: a request mail is read (mail.read) this long before the task it asks for
 SHOWN = 2000  # characters of a mail Jev and the LLM see
 _LINE = re.compile(r"[\x20-\x7e]+")
 _TEXT = re.compile(r"[\x20-\x7e\n]+")
@@ -410,6 +411,25 @@ def candidates(
             continue
         items.append(it)
     return items, notes
+
+
+def read_first(
+    it: PlanItem, inbox: list[mail.Message] | None, templates: dict[str, Template], items: list[PlanItem]
+) -> PlanItem | None:
+    """A mail.read item for request item `it`'s mail, READ_LEAD minutes before it (earlier when that time is taken);
+    None without a mail.read template, or when the mail is not unread in `inbox` (a read can't be shown then)."""
+    kind = next((k for k, t in templates.items() if t.capability == "mail.read"), None)
+    m = next((m for m in inbox or [] if m.msgid == it.request and not m.read), None)
+    if kind is None or m is None:
+        return None
+    taken = {x.at for x in items}
+    t = int(it.at[:2]) * 60 + int(it.at[3:]) - READ_LEAD
+    while f"{t // 60:02d}:{t % 60:02d}" in taken:
+        t -= 1
+    if t < 0:
+        return None
+    return PlanItem(template=kind, at=f"{t // 60:02d}:{t % 60:02d}", params={"sender": m.sender, "subject": m.subject},
+                    context=f"Reads the manager's mail {m.subject!r} before doing what it asks.")  # fmt: skip
 
 
 # Outcome ------------------------------------------------------------------------------

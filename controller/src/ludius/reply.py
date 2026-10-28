@@ -100,6 +100,43 @@ def pick(owner: str, to: str, subject: str, now_ms: int, people: dict[str, str],
     return f"no mail to answer {wanted}" + (f" ({'; '.join(skipped)})" if skipped else "")
 
 
+def to_read(owner: str, sender: str, subject: str, people: dict[str, str], policy: Policy) -> mail.Message | str:
+    """The Inbox mail a mail.read task opens, or why there is none: from a noise colleague (a narrative person with a
+    mailbox, a manager included; not reserved), the only Inbox mail with this subject (it is opened by its subject),
+    not scenario-reserved, and unread now on the server: a mail read before the task can't show the task's read."""
+    if why := _colleague(sender, owner, people, policy):
+        return why
+    same = mail.matching(owner, "inbox", subject)
+    if same is None:
+        return "inbox unreadable on the server"
+    ours = [m for m in same if m.cls == "IPM.Note" and m.sender == sender.strip().lower()]
+    if len(same) != 1 or len(ours) != 1:
+        return f"{len(ours)} mail(s) from {sender}, {len(same)} in all, with subject {subject!r} in the Inbox"
+    m = ours[0]
+    if policy.mail_reserved(m.sender, m.subject, m.body):
+        return "scenario-reserved mail"
+    read = mail.read_state(owner, m.id)
+    if read is None:
+        return "read state unreadable on the server"
+    return "already read at task start: its read flag could not show this task's read" if read else m
+
+
+def prepare_read(task: Task, policy: Policy, narrative: Path) -> tuple[str | None, dict[str, Any]]:
+    """mail.read, before any input: pick the mail (to_read), remember its id for the done check (Task.read_id) and
+    fill sender_name for the goals; (why not, record for the ground-truth log)."""
+    try:
+        people = {p["user"]: p["name"] for p in yaml.safe_load(narrative.read_text(encoding="utf-8"))["people"]
+                  if p.get("user")}  # fmt: skip
+    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:
+        return f"narrative unreadable: {e}", {}
+    m = to_read(task.owner, task.values.get("sender", ""), task.values.get("subject", ""), people, policy)
+    if isinstance(m, str):
+        return m, {}
+    task.read_id = m.id
+    task.values["sender_name"] = people[m.sender.partition("@")[0]]
+    return None, {"mail_id": m.id, "sender": m.sender, "subject": m.subject, "msgid": m.msgid, "read_at_start": False}
+
+
 def hints(
     inbox: list[mail.Message] | None, owner: str, people: dict[str, str], policy: Policy
 ) -> list[tuple[str, str]]:

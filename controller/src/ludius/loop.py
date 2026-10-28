@@ -20,7 +20,7 @@ from ludius.assist import Assist
 from ludius.jev import Decision
 from ludius.options import Option, StepView, build_options, build_state, describe, search_target, view
 from ludius.policy import OVERWRITE_REASON, Policy, alt_f4_safe, overwrite_prompt
-from ludius.reply import Composer
+from ludius.reply import Composer, prepare_read
 from ludius.tasks import (
     RESERVED_RECIPIENT,
     Persona,
@@ -43,6 +43,7 @@ DONE_THRESHOLD = 0.85
 OFF_TRACK_THRESHOLD = 0.8
 NEAR_TIE = 0.05  # probability gap within which equivalent options may be sampled
 BLOCKED_WAIT_S = 1.5  # a step with no input allowed: wait this long, then look again (no Jev call)
+NARRATIVE = requests.ROOT / "world" / "narrative.yaml"  # who the colleagues are (mail.read without a composer)
 
 
 class Agent(Protocol):
@@ -271,6 +272,9 @@ class Runner:
             why, rec = (self.composer.prepare(task, self.persona, self.jev, self.policy) if self.composer
                         else ("no reply composer (LLM) configured", {}))  # fmt: skip
             self.log.write(event="task_content", host_ms=_now(), task=task.template.task, reason=why, **rec)
+        if task.template.capability == "mail.read":  # before any input: the mail it opens, proven unread now
+            why, rec = prepare_read(task, self.policy, self.composer.narrative if self.composer else NARRATIVE)
+            self.log.write(event="task_content", host_ms=_now(), task=task.template.task, reason=why, **rec)
         if task.template.sends_mail and not why:  # by identity: a rewound guest clock makes earlier mail look recent
             task.mail_before = mail_baseline(task)
         if why := why or file_baseline(task, self.policy):  # its file is reserved, exists or is unknown
@@ -368,6 +372,14 @@ class Runner:
                     steps=step - 1,
                 )
                 return "done", step - 1, ""
+            if code_done is False and check_done(sg.done, snap, task, typed_ok, outside=False):
+                # Done on screen, not yet on the server or the guest disk (Outlook syncs a read flag a little later):
+                # input could only undo it. Wait and look again; the step budget still bounds it.
+                self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
+                               reason="done on screen, waiting for the outside check")  # fmt: skip
+                time.sleep(BLOCKED_WAIT_S)
+                snap = self.observe(timeout_ms=10000)
+                continue
             if recipient_reserved(sg, task, self.policy):
                 self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
                                reason=RESERVED_RECIPIENT)  # fmt: skip

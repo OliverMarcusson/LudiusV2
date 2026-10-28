@@ -128,6 +128,8 @@ class Done(Strict):
     mail: MailCheck | None = None
     invite: InviteCheck | None = None
     file: FileCheck | None = None
+    # mail.read: the mail picked at task start (reply.prepare_read: proven unread then) is marked read on the server.
+    read: bool = False
 
 
 class Subgoal(Strict):
@@ -177,13 +179,15 @@ class Subgoal(Strict):
 # Defense in depth: the done check requires the Sent Items copy to name {to} alone (ludius.mail), and srv01 refuses
 # non-local recipients.
 RECIPIENT = "^({to}|{to_name}|{to_name} <{to}>);?$"
-Capability = Literal["mail.send", "mail.reply", "calendar.invite", "file.move", "file.write"]  # file.write: a new file
+# file.write: a new file; mail.read: a colleague's Inbox mail opened, its only effect the read flag (never sends)
+Capability = Literal["mail.send", "mail.reply", "mail.read", "calendar.invite", "file.move", "file.write"]
 SENDS: dict[str, Literal["mail", "meeting"]] = {"mail.send": "mail", "mail.reply": "mail", "calendar.invite": "meeting"}
 # Values a capability's parameters name rather than create (a recipient, the subject a reply answers, a rename's
 # source): they may repeat, so the planner's near-duplicate check skips them.
 REFERS_TO_EXISTING: dict[str, set[str]] = {
     "mail.send": {"to", "to_name"},
     "mail.reply": {"to", "to_name", "subject"},
+    "mail.read": {"sender", "subject"},
     "calendar.invite": {"to", "to_name"},
     "file.move": {"file_name", "folder_name"},
 }
@@ -353,6 +357,17 @@ class Template(Strict):
         return self
 
     @model_validator(mode="after")
+    def _read(self) -> Template:
+        reads = any(sg.done and sg.done.read for sg in self.subgoals.values())
+        if reads != (self.capability == "mail.read") or (reads and not {"sender", "subject"} <= set(self.params)):
+            raise ValueError(f"{self.task}: mail.read needs a read done check and params sender, subject (only it)")
+        typed = any(sg.text not in (None, "launch_query") or sg.search or sg.allow_destructive
+                    for sg in self.subgoals.values())  # fmt: skip
+        if reads and (self.writes or typed):
+            raise ValueError(f"{self.task}: mail.read types only the launch query, no writes or destructive clicks")
+        return self
+
+    @model_validator(mode="after")
     def _writes_declared(self) -> Template:
         """A template that names something it creates must declare where it lands; every write is in a noise folder,
         and every file done check reads a declared write."""
@@ -454,6 +469,7 @@ class Task:
         self.tz = "Europe/Stockholm"  # the persona's time zone (Persona.tz), set by the runner
         self.mail_before: mail.Seen | None = None  # mail present at task start (mail_baseline), set by the runner
         self.files_absent: frozenset[str] | None = None  # file checks' paths proven absent at start (file_baseline)
+        self.read_id = 0  # mail.read: the Inbox message proven unread at start (reply.prepare_read); 0: none
         idx = (
             inst.variant
             if inst.variant is not None
@@ -574,14 +590,15 @@ def pixels_region(snap: obs.Snapshot, window: int, task: Task) -> list[obs.Eleme
     ]  # fmt: skip
 
 
-def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool) -> bool | None:
-    """True/False when the subgoal has a code check, None when it has none (Jev decides)."""
+def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool, outside: bool = True) -> bool | None:
+    """True/False when the subgoal has a code check, None when it has none (Jev decides). `outside=False`: the
+    checks on screen only (None when there are none), so the runner can wait for the server instead of acting."""
     if done is None:
         return None
-    if (done.mail or done.invite or done.file) and not (
+    if (done.mail or done.invite or done.file or done.read) and not (
         done.window or done.foreground or done.element or done.typed or done.pixels
     ):
-        return _outside_ok(done, task)
+        return _outside_ok(done, task) if outside else None
     on_pixels = any(pixels_window(w) for w in snap.windows)
     if done.pixels and not on_pixels and not (done.window or done.foreground or done.element or done.typed):
         return None  # a completion only pixels mode checks: with an accessibility tree, Jev decides as before
@@ -612,13 +629,18 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
 
         if not any(element_matches(e, c, task) for e in snap.elements):
             return False
-    return _outside_ok(done, task)
+    return _outside_ok(done, task) if outside else True
 
 
 def _outside_ok(done: Done, task: Task) -> bool:
     """The checks read outside the UI (range server, guest disk); last, since they cost a remote call."""
     return ((done.mail is None or _mail_ok(done.mail, task)) and (done.invite is None or _invite_ok(done.invite, task))
-            and (done.file is None or _file_ok(done.file, task)))  # fmt: skip
+            and (done.file is None or _file_ok(done.file, task)) and (not done.read or _read_ok(task)))  # fmt: skip
+
+
+def _read_ok(task: Task) -> bool:
+    """mail.read: the mail proven unread at task start (Task.read_id) is marked read on the server now."""
+    return task.read_id > 0 and bool(task.owner) and mail.read_state(task.owner, task.read_id) is True
 
 
 def element_matches(e: obs.Element, c: ElementCheck, task: Task, flags: int = re.I) -> bool:
