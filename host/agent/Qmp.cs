@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -14,7 +15,8 @@ sealed class Qmp(string path)
     public async Task<JsonNode?> Execute(string command, JsonObject? arguments, CancellationToken ct) =>
         (await Run([(command, arguments)], ct))[0];
 
-    public async Task<List<JsonNode?>> Run(IReadOnlyList<(string Command, JsonObject? Arguments)> commands, CancellationToken ct)
+    // passFd: a file descriptor sent along with the first command (SCM_RIGHTS), as getfd expects.
+    public async Task<List<JsonNode?>> Run(IReadOnlyList<(string Command, JsonObject? Arguments)> commands, CancellationToken ct, int passFd = -1)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(Timeout); // a busy socket accepts but never greets: give up rather than queue forever
@@ -30,18 +32,43 @@ sealed class Qmp(string path)
         var results = new List<JsonNode?>();
         foreach (var (command, arguments) in commands)
         {
-            await Send(ns, command, arguments, cts.Token);
+            if (passFd >= 0) { Unix.SendWithFd(s, Message(command, arguments), passFd); passFd = -1; }
+            else await Send(ns, command, arguments, cts.Token);
             results.Add(await Reply(reader, cts.Token));
         }
         return results;
     }
 
-    static async Task Send(Stream s, string command, JsonObject? arguments, CancellationToken ct)
+    // The monitor's console capture (Captures): one end of a new socket pair goes to QEMU as a VNC client (getfd +
+    // add_client, skipauth), so Proxmox's VNC password and config stay untouched; the QMP connection closes right after.
+    // View-only by use, not by QEMU: RfbWriter is what keeps the client from sending input. Linux only (SCM_RIGHTS).
+    public async Task<Stream> VncClient(CancellationToken ct)
+    {
+        const string name = "ludius-monitor"; // a leftover from a failed call is replaced by the next getfd
+        var (ours, theirs) = Unix.Pair();
+        try
+        {
+            await Run([("getfd", new JsonObject { ["fdname"] = name }),
+                ("add_client", new JsonObject { ["protocol"] = "vnc", ["fdname"] = name, ["skipauth"] = true })], ct, theirs);
+            return new NetworkStream(ours, ownsSocket: true);
+        }
+        catch
+        {
+            ours.Dispose();
+            throw;
+        }
+        finally { Unix.Close(theirs); } // QEMU holds its own copy now
+    }
+
+    static byte[] Message(string command, JsonObject? arguments)
     {
         var o = new JsonObject { ["execute"] = command };
         if (arguments is not null) o["arguments"] = arguments.DeepClone();
-        await s.WriteAsync(Encoding.UTF8.GetBytes(o.ToJsonString() + "\n"), ct);
+        return Encoding.UTF8.GetBytes(o.ToJsonString() + "\n");
     }
+
+    static async Task Send(Stream s, string command, JsonObject? arguments, CancellationToken ct) =>
+        await s.WriteAsync(Message(command, arguments), ct);
 
     // Asynchronous events can arrive between a command and its answer: skip them.
     static async Task<JsonNode?> Reply(StreamReader r, CancellationToken ct)
@@ -69,6 +96,55 @@ sealed class Qmp(string path)
         new() { ["type"] = "key", ["data"] = new JsonObject { ["down"] = down, ["key"] = new JsonObject { ["type"] = "qcode", ["data"] = qcode } } };
 
     public static JsonObject Events(params JsonObject[] events) => new() { ["events"] = new JsonArray(events) };
+}
+
+// libc for what .NET sockets lack: socketpair and sendmsg with SCM_RIGHTS (x86-64/arm64 Linux struct layouts).
+static class Unix
+{
+    [StructLayout(LayoutKind.Sequential)]
+    struct IoVec { public nint Base; public nuint Length; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MsgHdr { public nint Name; public uint NameLength; public nint Iov; public nuint IovLength; public nint Control; public nuint ControlLength; public int Flags; }
+
+    [DllImport("libc", SetLastError = true)] static extern int socketpair(int domain, int type, int protocol, int[] fds);
+    [DllImport("libc", SetLastError = true)] static extern nint sendmsg(nint fd, ref MsgHdr msg, int flags);
+    [DllImport("libc", EntryPoint = "close")] static extern int CloseFd(int fd);
+
+    public static (Socket Ours, int Theirs) Pair()
+    {
+        var fds = new int[2];
+        if (socketpair(1 /* AF_UNIX */, 1 | 0x80000 /* SOCK_STREAM | SOCK_CLOEXEC */, 0, fds) != 0)
+            throw new IOException($"socketpair: errno {Marshal.GetLastPInvokeError()}");
+        return (new Socket(new SafeSocketHandle(fds[0], ownsHandle: true)), fds[1]);
+    }
+
+    public static void Close(int fd) => CloseFd(fd);
+
+    public static void SendWithFd(Socket s, byte[] data, int fd)
+    {
+        var pin = GCHandle.Alloc(data, GCHandleType.Pinned);
+        var iov = Marshal.AllocHGlobal(Marshal.SizeOf<IoVec>());
+        var control = Marshal.AllocHGlobal(24); // CMSG_SPACE(sizeof(int))
+        try
+        {
+            Marshal.StructureToPtr(new IoVec { Base = pin.AddrOfPinnedObject(), Length = (nuint)data.Length }, iov, false);
+            Marshal.WriteInt64(control, 0, 20); // cmsg_len = CMSG_LEN(sizeof(int))
+            Marshal.WriteInt32(control, 8, 1); // SOL_SOCKET
+            Marshal.WriteInt32(control, 12, 1); // SCM_RIGHTS
+            Marshal.WriteInt32(control, 16, fd);
+            Marshal.WriteInt32(control, 20, 0);
+            var msg = new MsgHdr { Iov = iov, IovLength = 1, Control = control, ControlLength = 24 };
+            var sent = sendmsg(s.SafeHandle.DangerousGetHandle(), ref msg, 0x4000 /* MSG_NOSIGNAL */);
+            if (sent != data.Length) throw new IOException($"QMP sendmsg: {(sent < 0 ? $"errno {Marshal.GetLastPInvokeError()}" : "short write")}");
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(control);
+            Marshal.FreeHGlobal(iov);
+            pin.Free();
+        }
+    }
 }
 
 // Windows virtual-key codes (what the controller sends, see controller keys.py) to QEMU qcodes, and printable ASCII

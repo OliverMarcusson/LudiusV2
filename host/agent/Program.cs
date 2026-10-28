@@ -143,7 +143,8 @@ static class Monitor
         var admission = Path.GetFullPath(app.Configuration["Monitor:Admission"] ?? "../../runs/admission", app.Environment.ContentRootPath);
         api.MapGet("/admission", () => Results.Json(Admission(admission, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
 
-        // A 12 fps feed per VM: binary messages are JPEG frames, text messages report why there is no frame.
+        // A 15 fps feed per VM: binary messages are JPEG frames, text messages report why there is no frame. A viewer
+        // whose single send takes longer than SlowViewer is disconnected (the page reconnects); others never wait on it.
         app.UseWebSockets();
         api.MapGet("/vms/{name}/stream", async (HttpContext ctx, string name, int? w, FeedHub hub) =>
         {
@@ -156,6 +157,7 @@ static class Monitor
             var ct = ctx.RequestAborted;
             using var feed = hub.Subscribe(name, Math.Clamp(w ?? 640, 160, 1920));
             var closed = ws.ReceiveAsync(new byte[16], ct); // view only: any client message ends the feed
+            using var slow = CancellationTokenSource.CreateLinkedTokenSource(ct);
             try
             {
                 while (true)
@@ -163,8 +165,10 @@ static class Monitor
                     var next = feed.Reader.ReadAsync(ct).AsTask();
                     if (await Task.WhenAny(next, closed) == closed) break;
                     var frame = await next;
-                    if (frame.Jpeg is { } jpeg) await ws.SendAsync(jpeg, WebSocketMessageType.Binary, true, ct);
-                    else await ws.SendAsync(Encoding.UTF8.GetBytes(frame.Error!), WebSocketMessageType.Text, true, ct);
+                    slow.CancelAfter(SlowViewer);
+                    if (frame.Jpeg is { } jpeg) await ws.SendAsync(jpeg, WebSocketMessageType.Binary, true, slow.Token);
+                    else await ws.SendAsync(Encoding.UTF8.GetBytes(frame.Error!), WebSocketMessageType.Text, true, slow.Token);
+                    slow.CancelAfter(Timeout.Infinite);
                 }
                 if (ws.State == WebSocketState.Open) await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, ct);
             }
@@ -172,6 +176,8 @@ static class Monitor
             return Results.Empty;
         });
     }
+
+    static readonly TimeSpan SlowViewer = TimeSpan.FromSeconds(10);
 
     // A WebSocket's Origin: none (not a browser), the agent's own host, or one of the configured public origins exactly.
     public static bool OriginAllowed(string origin, string? host, IReadOnlySet<string> allowed) =>
@@ -276,10 +282,12 @@ static class Monitor
 }
 
 // One capture loop per VM and size, shared by every viewer and stopped with the last one. A tick every
-// 1/12 s starts a capture unless three are already running; frames go out in order, older ones are dropped.
+// 1/15 s starts a capture unless three are already running; frames go out in order, older ones are dropped.
+// Each viewer has a latest-frame slot: a viewer that stops reading only loses frames, nobody waits on it.
+// A backend that returns the same byte[] again (nothing changed on screen, Proxmox) is sent at most once a second.
 sealed class FeedHub(IHypervisor hv)
 {
-    const int Fps = 12;
+    const int Fps = 15;
     const int MaxInFlight = 3;
 
     public readonly record struct Frame(byte[]? Jpeg, string? Error);
@@ -289,7 +297,9 @@ sealed class FeedHub(IHypervisor hv)
         public readonly List<Channel<Frame>> Viewers = [];
         public readonly CancellationTokenSource Stop = new();
         public long Sent;
-        public DateTime QuietUntil; // after an error (VM off): one attempt per second, not twelve
+        public byte[]? Last; // the last frame sent, for an unchanged screen and for viewers that join
+        public DateTime LastAt;
+        public DateTime QuietUntil; // after an error (VM off): one attempt per second, not fifteen
     }
 
     public sealed class Subscription(ChannelReader<Frame> reader, Action leave) : IDisposable
@@ -303,7 +313,7 @@ sealed class FeedHub(IHypervisor hv)
     public Subscription Subscribe(string vm, int width)
     {
         var key = (vm, width);
-        var ch = Channel.CreateBounded<Frame>(new BoundedChannelOptions(2) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
+        var ch = Channel.CreateBounded<Frame>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true });
         lock (feeds)
         {
             if (!feeds.TryGetValue(key, out var feed))
@@ -312,6 +322,7 @@ sealed class FeedHub(IHypervisor hv)
                 _ = Run(vm, width, feed);
             }
             feed.Viewers.Add(ch);
+            if (feed.Last is { } last) ch.Writer.TryWrite(new Frame(last, null));
             return new Subscription(ch.Reader, () =>
             {
                 lock (feeds)
@@ -357,6 +368,9 @@ sealed class FeedHub(IHypervisor hv)
         {
             if (n <= feed.Sent) return; // a slower, older capture finished after a newer one
             feed.Sent = n;
+            var now = DateTime.UtcNow;
+            if (frame.Jpeg is { } jpeg && ReferenceEquals(jpeg, feed.Last) && now - feed.LastAt < TimeSpan.FromSeconds(1)) return;
+            (feed.Last, feed.LastAt) = (frame.Jpeg, now);
             foreach (var v in feed.Viewers) v.Writer.TryWrite(frame);
         }
     }
