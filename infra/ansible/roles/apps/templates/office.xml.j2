@@ -1,0 +1,15 @@
+<Configuration>
+  <Add OfficeClientEdition="64" Channel="{{ office_channel }}">
+    <Product ID="{{ office_product_id }}"{% if office_pidkey %} PIDKEY="{{ office_pidkey }}"{% endif %}>
+      <Language ID="{{ office_language }}" />
+      <ExcludeApp ID="Lync" />
+      <ExcludeApp ID="OneDrive" />
+      <ExcludeApp ID="Groove" />
+    </Product>
+  </Add>
+  <Property Name="AUTOACTIVATE" Value="0" />
+  <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
+  <Property Name="PinIconsToTaskbar" Value="FALSE" />
+  <Updates Enabled="FALSE" />
+  <Display Level="None" AcceptEULA="TRUE" />
+</Configuration>

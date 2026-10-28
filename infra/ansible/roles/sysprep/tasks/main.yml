@@ -1,0 +1,40 @@
+---
+# sysprep, last: stage the clones' answer file and take the build's own access back out of the image. Packer's
+# last provisioner then runs sysprep /generalize /oobe /quit with this file (spec: run by Packer).
+- name: Clones' answer file
+  ansible.windows.win_copy:
+    src: unattend.xml
+    dest: C:\Windows\System32\Sysprep\ludius-unattend.xml
+
+# The answer file's one-time autologon of the build admin leaves its password in Winlogon.
+- name: No build admin autologon or stored password in the image
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon
+    name: "{{ item }}"
+    state: absent
+  loop: [DefaultPassword, AutoLogonCount]
+
+- name: Autologon off
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon
+    name: AutoAdminLogon
+    data: "0"
+    type: string
+
+# The build's WinRM (Basic over HTTP, on the NAT build bridge) back to off. Registry only: the running service keeps
+# serving Packer's sysprep provisioner; from the clones' first boot WinRM is disabled until range-up.yml enables it
+# with the default (Negotiate, encrypted) settings.
+- name: WinRM build settings reverted (take effect at next boot)
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Service
+    name: "{{ item }}"
+    data: 0
+    type: dword
+  loop: [allow_unencrypted, auth_basic]
+
+- name: WinRM disabled from next boot
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\WinRM
+    name: Start
+    data: 4
+    type: dword

@@ -1,0 +1,48 @@
+---
+# hypervisor: virtio-win on Proxmox, nothing on Hyper-V. The answer file already ran virtio-win-guest-tools.exe from
+# the virtio-win ISO (drivers + QEMU guest agent, which Packer and range-up.yml need). Here: make sure the viosock
+# driver is staged even if that installer lacks it (the build VM has no vsock device; a clone with one binds it
+# from the driver store), and register its Winsock provider for AF_VSOCK.
+- name: Virtio-win (Proxmox only)
+  when: hypervisor == 'proxmox'
+  block:
+    - name: Find the virtio-win ISO
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          (Get-PSDrive -PSProvider FileSystem | Where-Object { Test-Path "$($_.Root)viosock\w10\amd64\viosock.inf" } |
+            Select-Object -First 1).Root
+      register: virtio
+
+    - name: Virtio-win ISO present
+      ansible.builtin.assert:
+        that: virtio.output | length == 1 and virtio.output[0]
+        fail_msg: no virtio-win ISO with viosock\w10\amd64 attached to the build VM
+
+    - name: QEMU guest agent running
+      ansible.windows.win_service:
+        name: QEMU-GA
+        start_mode: auto
+        state: started
+
+    - name: Stage the viosock driver
+      ansible.windows.win_command: pnputil /add-driver "{{ virtio.output[0] }}viosock\w10\amd64\viosock.inf" /install
+      register: pnp
+      changed_when: "'Published Name' in pnp.stdout"
+      failed_when: pnp.rc not in [0, 259, 3010] # 259: no matching device (none on the build VM), 3010: reboot
+
+    - name: Viosock Winsock provider
+      when: viosock_install_wsp | bool
+      ansible.windows.win_powershell:
+        script: |
+          param($src)
+          $ErrorActionPreference = 'Stop'
+          $lib = "$src\viosocklib.dll"
+          if (-not (Test-Path $lib)) { throw "no viosocklib.dll in $src" }
+          Copy-Item $lib "$env:WINDIR\System32\viosocklib.dll" -Force
+          if (-not (netsh winsock show catalog | Select-String -Quiet -Pattern 'vsock|virtio' )) {
+            & rundll32.exe "$env:WINDIR\System32\viosocklib.dll,InstallProtocol"
+            $Ansible.Changed = $true
+          } else { $Ansible.Changed = $false }
+        parameters:
+          src: "{{ virtio.output[0] }}viosock\\w10\\amd64"

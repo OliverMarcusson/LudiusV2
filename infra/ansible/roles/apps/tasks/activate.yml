@@ -1,0 +1,17 @@
+---
+# Per clone (range-up.yml): point Office at the KMS host and activate. Without a KMS host nothing happens here:
+# a MAK needs Microsoft's servers, which the range bridge can't reach, so the clone runs on the grace period.
+- name: Activate Office against the range KMS host
+  when: office_kms_host | length > 0
+  ansible.windows.win_powershell:
+    script: |
+      param($kms)
+      $ErrorActionPreference = 'Stop'
+      $ospp = 'C:\Program Files\Microsoft Office\Office16\OSPP.VBS'
+      $h, $p = $kms -split ':', 2
+      cscript //nologo $ospp "/sethst:$h" | Out-Null
+      if ($p) { cscript //nologo $ospp "/setprt:$p" | Out-Null }
+      $out = cscript //nologo $ospp /act
+      if (-not ($out -match 'Product activation successful')) { throw ($out -join "`n") }
+    parameters:
+      kms: "{{ office_kms_host }}"

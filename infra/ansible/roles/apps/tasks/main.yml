@@ -1,0 +1,48 @@
+---
+# apps: Office 2024 through the Office Deployment Tool. Installed, not activated: activation before sysprep is not
+# carried into clones; activate.yml runs per clone (KMS), or the volume grace period covers a short test.
+- name: Office Deployment Tool folder
+  ansible.windows.win_file:
+    path: C:\Windows\Temp\odt
+    state: directory
+
+- name: Office Deployment Tool
+  ansible.windows.win_get_url:
+    url: https://officecdn.microsoft.com/pr/wsus/setup.exe
+    dest: C:\Windows\Temp\odt\setup.exe
+
+# The URL is Microsoft's unversioned ODT, so no pinned hash: require a valid Microsoft Authenticode signature instead.
+- name: Office Deployment Tool is signed by Microsoft
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      $s = Get-AuthenticodeSignature C:\Windows\Temp\odt\setup.exe
+      if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+        throw "setup.exe signature: $($s.Status) $($s.SignerCertificate.Subject)"
+      }
+
+- name: Office configuration
+  ansible.windows.win_template:
+    src: office.xml.j2
+    dest: C:\Windows\Temp\odt\office.xml
+  no_log: true # may hold the MAK
+
+- name: Install Office (downloads about 3 GB from Microsoft's CDN)
+  ansible.windows.win_command: C:\Windows\Temp\odt\setup.exe /configure C:\Windows\Temp\odt\office.xml
+  args:
+    creates: C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE
+
+- name: Remove the deployment files (the configuration may hold the MAK)
+  ansible.windows.win_file:
+    path: C:\Windows\Temp\odt
+    state: absent
+
+- name: No Office first-run EULA or privacy prompts
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: 1
+    type: dword
+  loop:
+    - { path: 'HKLM:\SOFTWARE\Microsoft\Office\16.0\Registration', name: AcceptAllEulas }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Office\16.0\Common\General', name: ShownFirstRunOptin }

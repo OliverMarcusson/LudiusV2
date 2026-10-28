@@ -1,0 +1,7 @@
+---
+exclude_paths:
+  - collections/
+  - build/
+skip_list:
+  - no-handler # reboots and service restarts must happen inline, before the next task depends on them
+  - var-naming[no-role-prefix] # registers are task-local results, not role inputs

@@ -1,0 +1,47 @@
+---
+# Non-secret range settings. Secrets come from vault.yml (see vault.yml.example; gitignored, ansible-vault encrypted).
+
+# --- golden image (golden.yml, applied by Packer) ---
+hypervisor: proxmox # proxmox | hyperv; Packer passes the source name
+build_admin_user: rangeadmin # local admin made by the answer file; survives sysprep, so clones have it too
+build_admin_password: "{{ vault_build_admin_password }}" # same value as Packer's PKR_VAR_admin_password
+windows_updates: true # bake updates into the image (base role)
+office_product_id: ProPlus2024Volume
+office_channel: PerpetualVL2024
+office_language: en-gb
+office_pidkey: "{{ vault_office_pidkey | default('') }}" # MAK; empty = the volume edition's GVLK (KMS or grace period)
+office_kms_host: "{{ vault_office_kms_host | default('') }}" # host[:port] reachable from the range bridge; set per clone
+temurin_msi_url: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_windows_hotspot_25.0.5_8.msi
+temurin_msi_sha256: 503f1c8ce75378b1dfe89485abdbc2cb1588600937cff87e8a63d70ca5873139 # pinned in infra/hyperv/provision-java.ps1
+observer_dir: C:\Program Files\RangeAssist
+observer_exe: "{{ playbook_dir }}/../../out/observer/uiprobe.exe" # signed, uiAccess build (infra/packer/observer-artifacts.ps1)
+observer_ca_cert: "{{ playbook_dir }}/../../secrets/range-root-ca.cer" # the code-signing root, public part only
+observer_args: "" # transport flags, if the vsock observer build needs any
+viosock_install_wsp: true # register viosock's Winsock provider (AF_VSOCK for user-mode sockets)
+
+# --- range (range-up.yml, run on the Proxmox node) ---
+domain: corp.ludius.test
+domain_netbios: CORP
+range_bridge: vmbr1 # no uplink: persona VMs never reach the internet
+range_net: 10.77.0
+build_bridge: vmbr2 # NAT bridge for builds and srv01's apt
+storage: local-lvm # lvmthin: linked clones need thin storage
+template_vmid: 9000 # Packer's vm_id for the golden template
+srv01_vmid: 110
+srv01_ip: "{{ range_net }}.11"
+persona_vmid_base: 120 # persona i (0-based) is VM 121+i, range address .21+i, vsock CID = its VM id
+persona_cores: 4
+persona_memory_mb: 6144
+# Persona accounts: one per controller/data/personas/<user>.yaml; every one must also be a person in the narrative.
+personas: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/../../controller/data/personas/*.yaml') | map('basename') | map('splitext') | map('first') | sort }}"
+narrative_file: "{{ playbook_dir }}/../../runs/world/narrative.yaml" # the planner's company narrative
+people: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).people }}" # name, user: AD users, mailboxes
+range_tls_ca: "{{ playbook_dir }}/build/range-ca.crt" # srv01's grommunio CA, fetched by the srv01 role
+grommunio_login_mailboxes: 5 # community licence cap on log-in mailboxes; raise only with a grommunio licence installed
+debian_image_url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+debian_image_sums: https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS
+
+dc_admin_password: "{{ vault_dc_admin_password }}"
+grommunio_admin_password: "{{ vault_grommunio_admin_password }}"
+# Every AD user and log-in mailbox gets <user><suffix> (today's range: suffix 2026, complexity off).
+user_password_suffix: "{{ vault_user_password_suffix }}"

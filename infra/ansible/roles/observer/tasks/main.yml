@@ -1,0 +1,39 @@
+---
+# observer, machine part (provision.ps1): the range's code-signing root in LocalMachine\Root and the signed uiAccess
+# observer under Program Files (uiAccess needs a secure location and a trusted signature). The logon task is per
+# persona: persona.yml, run by range-up.yml.
+- name: Observer folder
+  ansible.windows.win_file:
+    path: "{{ observer_dir }}"
+    state: directory
+
+- name: Range code-signing root
+  ansible.windows.win_copy:
+    src: "{{ observer_ca_cert }}"
+    dest: C:\Windows\Temp\range-root-ca.cer
+
+- name: Trust the range code-signing root
+  ansible.windows.win_certificate_store:
+    path: C:\Windows\Temp\range-root-ca.cer
+    store_location: LocalMachine
+    store_name: Root
+
+- name: Observer binary
+  ansible.windows.win_copy:
+    src: "{{ observer_exe }}"
+    dest: "{{ observer_dir }}\\uiprobe.exe"
+
+- name: Observer signature valid on the guest
+  ansible.windows.win_powershell:
+    script: |
+      param($exe)
+      $Ansible.Changed = $false
+      $s = Get-AuthenticodeSignature $exe
+      if ($s.Status -ne 'Valid') { throw "observer signature on the guest: $($s.Status) $($s.StatusMessage)" }
+    parameters:
+      exe: "{{ observer_dir }}\\uiprobe.exe"
+
+- name: Remove the copied root
+  ansible.windows.win_file:
+    path: C:\Windows\Temp\range-root-ca.cer
+    state: absent

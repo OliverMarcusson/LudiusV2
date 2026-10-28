@@ -1,0 +1,15 @@
+---
+# Golden Windows 10 image (spec section 7), applied by Packer over WinRM to the freshly installed build VM.
+# Persona-specific roles (domain, ux_noise, the observer's logon task) run per clone in range-up.yml.
+# sysprep only stages the answer file; Packer's last provisioner generalizes.
+- name: Golden image
+  hosts: all
+  gather_facts: false
+  roles:
+    - base
+    - eventlogs
+    - hypervisor
+    - apps
+    - accessibility
+    - observer
+    - sysprep

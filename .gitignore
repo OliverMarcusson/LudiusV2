@@ -12,3 +12,6 @@ infra/hyperv/build/
 TASKS.md
 runs/
 models/
+infra/ansible/collections/
+infra/ansible/build/
+infra/ansible/group_vars/all/vault.yml

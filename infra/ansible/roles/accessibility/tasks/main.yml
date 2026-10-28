@@ -1,0 +1,29 @@
+---
+# accessibility, machine part (provision-java.ps1): Temurin JRE with the Java Access Bridge, JAVA_HOME and the
+# JavaSoft key the observer uses to find WindowsAccessBridge-64.dll. The per-persona .accessibility.properties and
+# keyboard cues are written by ux_noise after the persona's first logon. The repo's fixture apps (Timesheet, Ledger)
+# are test fixtures and stay out of the range image.
+- name: Temurin JRE installer
+  ansible.windows.win_get_url:
+    url: "{{ temurin_msi_url }}"
+    dest: C:\Windows\Temp\temurin.msi
+    checksum: "{{ temurin_msi_sha256 }}"
+    checksum_algorithm: sha256
+
+- name: Temurin JRE with Access Bridge
+  ansible.windows.win_package:
+    path: C:\Windows\Temp\temurin.msi
+    arguments: ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJavaHome,FeatureOracleJavaSoft
+    state: present
+
+- name: Access Bridge DLL under JAVA_HOME
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      $j = [Environment]::GetEnvironmentVariable('JAVA_HOME', 'Machine')
+      if (-not ($j -and (Test-Path "$j\bin\WindowsAccessBridge-64.dll"))) { throw "no Access Bridge under JAVA_HOME=$j" }
+
+- name: Remove the installer
+  ansible.windows.win_file:
+    path: C:\Windows\Temp\temurin.msi
+    state: absent

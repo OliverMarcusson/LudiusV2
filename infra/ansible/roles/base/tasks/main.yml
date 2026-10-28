@@ -1,0 +1,73 @@
+---
+# base: updates baked in, then Windows Update, Defender's scheduled scans and automatic maintenance kept quiet during
+# runs; never sleeps; no first-run or consumer popups over tasks. Mirrors provision.ps1's $roles.
+- name: Bake in updates
+  ansible.windows.win_updates:
+    reboot: true
+    reboot_timeout: 3600
+  when: windows_updates | bool
+
+- name: Never sleep, monitor never off
+  ansible.windows.win_command: powercfg /change {{ item }} 0
+  loop: [standby-timeout-ac, monitor-timeout-ac, hibernate-timeout-ac]
+  changed_when: false
+
+- name: Windows Update paused (policies)
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: 1
+    type: dword
+  loop:
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU', name: NoAutoUpdate }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate', name: DoNotConnectToWindowsUpdateInternetLocations }
+
+- name: Windows Update service off
+  ansible.windows.win_service:
+    name: wuauserv
+    start_mode: disabled
+    state: stopped
+
+# Realtime protection stays on (a range machine looks normal); only scheduled and catch-up scans and the signature
+# schedule are off, by preference and by policy, and Defender's own scheduled tasks are disabled.
+- name: Defender scans never scheduled
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      Set-MpPreference -ScanScheduleDay 8 -RemediationScheduleDay 8 -SignatureScheduleDay 8 `
+        -DisableCatchupFullScan $true -DisableCatchupQuickScan $true
+      Get-ScheduledTask -TaskPath '\Microsoft\Windows\Windows Defender\' | Disable-ScheduledTask | Out-Null
+
+- name: Defender scan schedule by policy
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: dword
+  loop:
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Scan', name: ScheduleDay, data: 8 }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Scan', name: DisableCatchupFullScan, data: 1 }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Scan', name: DisableCatchupQuickScan, data: 1 }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Signature Updates', name: ScheduleDay, data: 8 }
+
+- name: No automatic maintenance (it runs Defender, defrag and update scans in idle time)
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance
+    name: MaintenanceDisabled
+    data: 1
+    type: dword
+
+- name: No first-run tips or consumer content; Edge without first-run, sign-in or default-browser prompts
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: "{{ item.name }}"
+    data: "{{ item.data }}"
+    type: dword
+  loop:
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent', name: DisableWindowsConsumerFeatures, data: 1 }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent', name: DisableSoftLanding, data: 1 }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Edge', name: HideFirstRunExperience, data: 1 }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Edge', name: BrowserSignin, data: 0 }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Edge', name: DefaultBrowserSettingEnabled, data: 0 }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Edge', name: ShowRecommendationsEnabled, data: 0 }
+    - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Edge', name: StartupBoostEnabled, data: 0 }

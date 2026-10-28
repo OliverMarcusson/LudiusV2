@@ -1,0 +1,29 @@
+---
+# The observer's logon task for one persona, as provision.ps1 registers it (same name, triggers and settings).
+- name: Observer logon task
+  ansible.windows.win_powershell:
+    script: |
+      param($dir, $persona, $observerArgs)
+      $ErrorActionPreference = 'Stop'
+      # In the persona's interactive session at logon, never a service; restarted daily (it swaps between requests)
+      # and after a crash or watchdog fault. uiAccess binaries only start through ShellExecute (AppInfo), not the
+      # scheduler's CreateProcess (error 740), so explorer launches it.
+      $a = "`"$dir\uiprobe.exe`""
+      if ($observerArgs) { $a = "$a $observerArgs" }
+      $action = New-ScheduledTaskAction -Execute 'C:\Windows\explorer.exe' -Argument $a
+      # A crash (including the watchdog's FailFast) raises Application Error 1000, which starts it again after 30 s.
+      $crash = Get-CimClass MSFT_TaskEventTrigger root/Microsoft/Windows/TaskScheduler | New-CimInstance -ClientOnly
+      $crash.Enabled = $true
+      $crash.Delay = 'PT30S'
+      $crash.Subscription = '<QueryList><Query Id="0" Path="Application"><Select Path="Application">' +
+          "*[System[Provider[@Name='Application Error'] and EventID=1000]] and *[EventData[Data[1]='uiprobe.exe']]" +
+          '</Select></Query></QueryList>'
+      $triggers = @((New-ScheduledTaskTrigger -AtLogOn -User $persona), (New-ScheduledTaskTrigger -Daily -At 4am), $crash)
+      $principal = New-ScheduledTaskPrincipal -UserId $persona -LogonType Interactive -RunLevel Limited
+      $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0 -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
+          -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+      Register-ScheduledTask -TaskName 'RangeAssist' -Action $action -Trigger $triggers -Principal $principal -Settings $settings -Force | Out-Null
+    parameters:
+      dir: "{{ observer_dir }}"
+      persona: "{{ domain_netbios }}\\{{ persona }}"
+      observerArgs: "{{ observer_args }}"
