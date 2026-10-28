@@ -79,6 +79,7 @@ sealed class FakePve : IPveApi
     public Dictionary<int, string> Args = new() { [101] = "-device vhost-vsock-pci,guest-cid=101", [9000] = "-device vhost-vsock-pci,guest-cid=9000" };
     public JsonArray Snapshots = JsonNode.Parse("""[{"name": "clean"}, {"name": "current"}]""")!.AsArray();
     public string TaskExit = "OK";
+    public Dictionary<int, long> Ctime = []; // a VM created anew under a VMID gets a new ctime
 
     public Task<JsonNode?> Call(string method, string path, IReadOnlyDictionary<string, string>? args, CancellationToken ct)
     {
@@ -88,7 +89,12 @@ sealed class FakePve : IPveApi
         {
             ("get", "/cluster/resources") when args?["type"] == "vm" => Vms.DeepClone(),
             ("get", "/cluster/nextid") => JsonValue.Create("104"),
-            ("get", _) when path.EndsWith("/config") => new JsonObject { ["args"] = Args.GetValueOrDefault(int.Parse(parts[3])) },
+            ("get", _) when path.EndsWith("/config") => new JsonObject
+            {
+                ["args"] = Args.GetValueOrDefault(int.Parse(parts[3])),
+                ["meta"] = $"creation-qemu=9.0.2,ctime={Ctime.GetValueOrDefault(int.Parse(parts[3]), 1700000000)}",
+                ["smbios1"] = $"uuid=0000{int.Parse(parts[3]):x4}-1111-2222-3333-444455556666",
+            },
             ("get", _) when path.EndsWith("/snapshot") => Snapshots.DeepClone(),
             ("get", _) when path.EndsWith("/status/current") => new JsonObject { ["status"] = "running", ["qmpstatus"] = "running" },
             ("get", _) when path.Contains("/tasks/") => new JsonObject { ["status"] = "stopped", ["exitstatus"] = TaskExit },

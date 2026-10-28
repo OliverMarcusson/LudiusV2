@@ -19,20 +19,33 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     {
         public required int Id;
         public required Qmp Qmp;
+        public required string Identity; // see IdentityOf
+        public DateTime CheckedAt;
     }
 
     readonly Dictionary<string, Vm> vms = [];
 
-    // Tests replace the vsock connect.
+    // Tests replace the vsock connect and the clock.
     public Func<uint, CancellationToken, Task<Socket>> ConnectGuest = (cid, ct) => Vsock.Connect(cid, options.VsockPort, ct);
+    public Func<DateTime> Now = () => DateTime.UtcNow;
 
     public string Backend => "proxmox";
     VmHandle IHypervisor.Get(string name) => Get(name);
 
+    // The handle for input, observation, screenshots and file reads. A cached handle is trusted for options.Recheck
+    // (a check per keystroke would cost a pvesh round trip each), then checked again: same VMID still in the range
+    // pool on this node, same name, same identity. Otherwise it is dropped and the call refused: a range VM deleted and
+    // its VMID reused by another VM is never reached through an old handle.
     public Vm Get(string name)
     {
-        lock (vms) if (vms.TryGetValue(name, out var cached)) return cached;
         if (!VmName.Valid(name)) throw new ArgumentException("invalid VM name");
+        Vm? cached;
+        lock (vms) vms.TryGetValue(name, out cached);
+        if (cached is not null)
+        {
+            if (Now() - cached.CheckedAt >= options.Recheck) Recheck(cached);
+            return cached;
+        }
         var id = Find(name, CancellationToken.None).GetAwaiter().GetResult().Id;
         var cfg = Wait(api.Call("get", $"/nodes/{node}/qemu/{id}/config", null, CancellationToken.None));
         var cid = Cid(cfg?["args"]?.GetValue<string>());
@@ -40,6 +53,8 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         {
             Name = name,
             Id = id,
+            Identity = IdentityOf(cfg),
+            CheckedAt = Now(),
             Qmp = new Qmp(Path.Combine(options.RunDir, $"{id}.qmp")),
             Channel = new GuestChannel(ct => cid is { } c ? ConnectGuest(c, ct)
                 : throw new IOException($"{name} has no vsock device (args: -device vhost-vsock-pci,guest-cid=N)")),
@@ -54,9 +69,48 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     static T Wait<T>(Task<T> t) => t.GetAwaiter().GetResult();
     static void Wait(Task t) => t.GetAwaiter().GetResult();
 
+    void Recheck(Vm vm)
+    {
+        try
+        {
+            var now = Wait(List(CancellationToken.None)).Where(v => v.Id == vm.Id).ToList();
+            if (now is not [var v]) throw new KeyNotFoundException($"{vm.Name} (VM {vm.Id}) is gone");
+            if (v.Name != vm.Name || !InRange(v))
+                throw new UnauthorizedAccessException($"VM {vm.Id} is no longer the range VM {vm.Name} (pool {options.Pool})");
+            var cfg = Wait(api.Call("get", $"/nodes/{node}/qemu/{vm.Id}/config", null, CancellationToken.None));
+            if (IdentityOf(cfg) != vm.Identity)
+                throw new UnauthorizedAccessException($"VM {vm.Id} named {vm.Name} is a different VM than before (VMID reused)");
+            vm.CheckedAt = Now();
+        }
+        catch
+        {
+            Forget(vm.Name); // fail closed: the next call resolves from scratch
+            throw;
+        }
+    }
+
+    // What tells two VMs with one VMID apart: Proxmox's creation stamp (meta: creation-qemu=...,ctime=...) and the
+    // SMBIOS UUID, both new for every created or cloned VM and unchanged by snapshots, rollbacks and restarts.
+    public static string IdentityOf(JsonNode? cfg) =>
+        $"{cfg?["meta"]?.GetValue<string>()}|{(cfg?["smbios1"]?.GetValue<string>() is { } s ? SmbiosUuid().Match(s).Value : "")}";
+
+    [GeneratedRegex(@"(?<=\buuid=)[0-9A-Fa-f-]+")]
+    private static partial Regex SmbiosUuid();
+
     public void Forget(string name)
     {
         lock (vms) if (vms.Remove(name, out var vm)) vm.Channel.Dispose();
+    }
+
+    // Every cached handle on this VMID, whatever name it was cached under (delete, clone, a VMID about to be reused).
+    void ForgetId(int id)
+    {
+        lock (vms)
+            foreach (var (name, vm) in vms.Where(kv => kv.Value.Id == id).ToList())
+            {
+                vms.Remove(name);
+                vm.Channel.Dispose();
+            }
     }
 
     [GeneratedRegex(@"vhost-vsock-pci\b[^ ]*\bguest-cid=(\d+)")]
@@ -225,8 +279,8 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
             throw new ArgumentException("checkpoint and restore need a checkpoint name");
         if (op == Op.Delete && (!name.StartsWith("ludius-") || target != name))
             throw new ArgumentException("delete is limited to ludius-* VMs and needs the VM name repeated as confirmation");
-        var vm = await Find(name, ct);
-        if (op != Op.State) Forget(name);
+        var vm = await Find(name, ct); // fresh every call: range pool, name and VMID as they are now
+        if (op != Op.State) { Forget(name); ForgetId(vm.Id); }
         var at = $"/nodes/{node}/qemu/{vm.Id}";
         switch (op)
         {
@@ -252,6 +306,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
             case Op.Delete:
                 if (vm.Status == "running") await Complete(api.Call("create", $"{at}/status/stop", null, ct), ct);
                 await Complete(api.Call("delete", at, new Dictionary<string, string> { ["purge"] = "1", ["destroy-unreferenced-disks"] = "1" }, ct), ct);
+                ForgetId(vm.Id); // also a handle cached while the delete ran
                 return "Deleted";
         }
         return await State(vm.Id, ct);
@@ -267,6 +322,8 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         var args = new Dictionary<string, string>
             { ["newid"] = newId, ["name"] = target, ["full"] = src.Template ? "0" : "1", ["pool"] = options.Pool };
         if (checkpoint != "") args["snapname"] = checkpoint;
+        ForgetId(int.Parse(newId)); // a handle left on a deleted VM with this VMID
+        Forget(target);
         await Complete(api.Call("create", $"/nodes/{node}/qemu/{src.Id}/clone", args, ct), ct);
         var cfg = await api.Call("get", $"/nodes/{node}/qemu/{newId}/config", null, ct);
         await api.Call("set", $"/nodes/{node}/qemu/{newId}/config",
@@ -312,5 +369,6 @@ public sealed record ProxmoxOptions
     public uint VsockPort { get; init; } = 4555; // 0x11cb: the observer's Hyper-V service id is the vsock port template
     public (int W, int H) Screen { get; init; } = (1920, 1080); // fixed in VM config; the observer's report wins
     public int PollMs { get; init; } = 1000;
+    public TimeSpan Recheck { get; init; } = TimeSpan.FromSeconds(5); // a cached VM handle's range check, at most this old
     public string Pool { get; init; } = ""; // the range's Proxmox pool; unset: every VM is refused
 }
