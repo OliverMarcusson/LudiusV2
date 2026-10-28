@@ -7,7 +7,8 @@
 # Basic auth over TLS and ApplicationImpersonation for the service account limited to the narrative's mailboxes, and the range boundary: no send connector,
 # corp.ludius.test the only accepted domain, a transport rule rejecting any recipient outside the organisation, all
 # asserted, plus a probe mail to an outside address through the pickup folder that must fail and never be sent.
-# Tags (range-exchange.yml): the whole role is ex01; mailboxes / mail-boundary rerun only the configuration and checks.
+# Tags (range-exchange.yml): the whole role is ex01; mailboxes / mail-boundary rerun only the configuration. The
+# assertions and the boundary probe are checks.yml, which range-exchange.yml runs on every run.
 # Expects the Exchange ISO in a CD drive (range-exchange.yml) and the prerequisites in exchange_media_dir on the node.
 - name: Join corp.ludius.test as EX01
   microsoft.ad.membership:
@@ -158,9 +159,11 @@
       Get-Mailbox -ResultSize Unlimited -Filter "CustomAttribute1 -eq '$marker'" | Where-Object SamAccountName -notin $people |
         ForEach-Object { Set-Mailbox $_.Identity -CustomAttribute1 $null; $Ansible.Changed = $true }
       $scope = 'Ludius noise mailboxes'
-      if (-not (Get-ManagementScope $scope -ErrorAction SilentlyContinue)) {
-        New-ManagementScope $scope -RecipientRestrictionFilter "CustomAttribute1 -eq '$marker'" | Out-Null
-        $Ansible.Changed = $true
+      $filter = "CustomAttribute1 -eq '$marker'"
+      $sc = Get-ManagementScope $scope -ErrorAction SilentlyContinue
+      if (-not $sc) { New-ManagementScope $scope -RecipientRestrictionFilter $filter | Out-Null; $Ansible.Changed = $true }
+      elseif ($sc.RecipientFilter -ne $filter -or $sc.RecipientRoot) {
+        Set-ManagementScope $scope -RecipientRestrictionFilter $filter -RecipientRoot $null; $Ansible.Changed = $true
       }
       # Any impersonation grant to the service account that is not bound to that scope is removed (and re-made scoped).
       Get-ManagementRoleAssignment -RoleAssignee $svc -Role ApplicationImpersonation -ErrorAction SilentlyContinue |
@@ -188,64 +191,6 @@
       svc: "{{ ews_user }}"
       marker: "{{ ews_scope_marker }}"
   become: true
-
-- name: Range boundary and mailboxes asserted, outside probe rejected and never sent
-  tags: [mailboxes, mail-boundary]
-  ansible.windows.win_powershell:
-    script: |
-      param($domain, $people, $svc, $marker)
-      $ErrorActionPreference = 'Stop'
-      $Ansible.Changed = $false
-      Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
-      if (Get-SendConnector) { throw 'a send connector exists' }
-      $ad = @(Get-AcceptedDomain | ForEach-Object { "$($_.DomainName)" })
-      if ($ad.Count -ne 1 -or $ad[0] -ne $domain) { throw "accepted domains: $($ad -join ', ')" }
-      $r = Get-TransportRule 'Ludius range only'
-      if ($r.State -ne 'Enabled' -or "$($r.SentToScope)" -ne 'NotInOrganization' -or -not $r.RejectMessageReasonText) { throw 'transport rule not as set' }
-      $missing = @($people | Where-Object { -not (Get-Mailbox $_ -ErrorAction SilentlyContinue) })
-      if ($missing) { throw "no mailbox: $($missing -join ', ')" }
-      $grants = @(Get-ManagementRoleAssignment -RoleAssignee $svc -Role ApplicationImpersonation)
-      if ($grants.Count -ne 1 -or "$($grants[0].CustomRecipientWriteScope)" -ne 'Ludius noise mailboxes' -or
-          "$($grants[0].RecipientWriteScope)" -ne 'CustomRecipientScope') { throw 'impersonation not limited to the noise scope' }
-      $marked = @(Get-Mailbox -ResultSize Unlimited -Filter "CustomAttribute1 -eq '$marker'" | ForEach-Object SamAccountName)
-      if (Compare-Object @($marked | Sort-Object) @($people | Sort-Object)) { throw "noise marker on: $($marked -join ', ')" }
-      # A mailbox outside the scope for the node's EWS probe (exists in every organisation, never a persona's).
-      $outside = (Get-Mailbox -RecipientTypeDetails DiscoveryMailbox | Select-Object -First 1).PrimarySmtpAddress.ToString()
-      # Probe: a mail to an outside address, dropped into the pickup folder like any submission.
-      $id = "<probe-$([guid]::NewGuid().ToString('N'))@$domain>"
-      $pickup = (Get-TransportService $env:COMPUTERNAME).PickupDirectoryPath.PathName
-      $eml = "From: postmaster@$domain`r`nTo: probe@example.com`r`nSubject: Ludius range boundary probe`r`nMessage-ID: $id`r`n`r`nprobe`r`n"
-      [IO.File]::WriteAllText((Join-Path $pickup "ludius-probe.eml"), $eml)
-      $deadline = (Get-Date).AddMinutes(5)
-      do {
-        Start-Sleep 10
-        $ev = @(Get-MessageTrackingLog -MessageId $id -Start (Get-Date).AddMinutes(-15) -ErrorAction SilentlyContinue)
-      } until (($ev.EventId -contains 'FAIL') -or (Get-Date) -gt $deadline)
-      if ($ev.EventId -notcontains 'FAIL') { throw "probe not rejected: $($ev.EventId -join ',')" }
-      $why = "$(($ev | Where-Object EventId -eq FAIL).RecipientStatus)"
-      if ($why -notmatch '5\.7\.1' -or $why -notmatch 'Delivery outside') { throw "probe failed for another reason: $why" }
-      if ($ev | Where-Object { $_.EventId -in 'SEND', 'SENDEXTERNAL' }) { throw 'probe was sent' }
-      if (Get-Queue | Where-Object { $_.NextHopDomain -like '*example.com*' -and $_.MessageCount -gt 0 }) { throw 'probe queued' }
-      $Ansible.Result = @{ rejected = "$(($ev | Where-Object EventId -eq FAIL | Select-Object -First 1).RecipientStatus)"; outside = $outside }
-    parameters:
-      domain: "{{ domain }}"
-      people: "{{ people | map(attribute='user') | list }}"
-      svc: "{{ ews_user }}"
-      marker: "{{ ews_scope_marker }}"
-  become: true
-  register: boundary
-
-- name: Boundary probe result
-  tags: [mailboxes, mail-boundary]
-  ansible.builtin.debug:
-    var: boundary.result
-
-- name: Range mail certificate to the control node (clients trust it, the controller verifies EWS with it)
-  tags: [mailboxes, mail-boundary]
-  ansible.builtin.fetch:
-    src: C:\Windows\Temp\range-mail.crt
-    dest: "{{ range_tls_ca }}"
-    flat: true
 
 - name: Exchange done
   tags: [mailboxes, mail-boundary]

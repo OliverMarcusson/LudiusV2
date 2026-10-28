@@ -166,6 +166,16 @@
         apply:
           tags: [ex01]
 
+    # Every run, whatever the tags: the controller's credentials are only published after these.
+    - name: Exchange checks (boundary, scope, service account)
+      tags: [always]
+      when: inventory_hostname == 'ex01' and not hostvars['localhost'].winsrv_failures | default([])
+      ansible.builtin.include_role:
+        name: exchange
+        tasks_from: checks
+        apply:
+          tags: [always]
+
 - name: Servers closed, EWS secret for the controller, verdict
   hosts: localhost
   gather_facts: false
@@ -190,7 +200,7 @@
     # config on stdin, never on a command line); a persona's Inbox answers, a mailbox outside the scope is denied.
     - name: EWS from the node, impersonation limited to the noise scope
       tags: [always]
-      when: hostvars['ex01'].exchange_done | default(false)
+      when: hostvars['ex01'].exchange_checked | default(false)
       ansible.builtin.command:
         argv: [curl, -sS, -K, "-", --cacert, "{{ range_tls_ca }}", -H, "Content-Type: text/xml; charset=utf-8",
                --data-binary, "{{ ews_probe }}", "https://{{ ex01_ip }}/EWS/Exchange.asmx"]
@@ -214,8 +224,9 @@
       failed_when: item.want not in ews_probe_out.stdout or not item.mailbox
       no_log: true # stdin carries the password
 
-    - name: EWS service password for the controller (root only)
+    - name: EWS service password for the controller (root only), only after this run's checks and probe
       tags: [always]
+      when: hostvars['ex01'].exchange_checked | default(false) and ews_probe_out is succeeded
       ansible.builtin.copy:
         dest: "{{ ews_password_file }}"
         content: "{{ ews_password }}\n"
@@ -229,6 +240,7 @@
           - winsrv_failures | default([]) | length == 0
           - hostvars['dc01'].dc01_done | default(false) or not winsrv_dc01_ran
           - hostvars['ex01'].exchange_done | default(false) or not winsrv_ex01_ran
+          - hostvars['ex01'].exchange_checked | default(false)
           - closed_failures | default([]) | length == 0
         fail_msg: >-
           range servers incomplete: {{ winsrv_failures | default([]) }}; dc01 {{ 'done' if hostvars['dc01'].dc01_done | default(false) else 'failed' }},
