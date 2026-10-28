@@ -161,7 +161,7 @@ source "proxmox-iso" "proxmox" {
   os       = "win10"
   machine  = "q35"
   bios     = "ovmf"
-  cpu_type = "host"
+  cpu_type = "x86-64-v3" # portable across rented boxes (AVX2, AES); `host` would tie a restored template to one CPU model
   cores    = 4
   memory   = 6144
   efi_config {
