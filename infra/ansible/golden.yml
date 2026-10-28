@@ -5,17 +5,13 @@
 - name: Golden image
   hosts: all
   gather_facts: false
-  # Packer connects as soon as the first-logon commands have WinRM listening. The first module call of a build was
-  # seen to hang there for good (its PowerShell bootstrap never got its input; the same call later took seconds), and
-  # nothing bounds a module call over WinRM: a short timeout with retries gets past it.
+  # Packer connects as soon as the first-logon commands have WinRM listening, while the fresh guest is still busy. The
+  # first module call is bounded so a stalled WinRM exchange fails the build in minutes, not hours (the stall itself:
+  # Packer's ansible provisioner, WinRM timeouts).
   pre_tasks:
     - name: WinRM answers a module call
       ansible.windows.win_ping:
-      timeout: 120
-      register: ping
-      retries: 5
-      delay: 10
-      until: ping is succeeded
+      timeout: 300
   roles:
     - base
     - eventlogs

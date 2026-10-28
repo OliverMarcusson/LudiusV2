@@ -242,10 +242,12 @@ build {
     user             = var.admin_user
     use_proxy        = false
     ansible_env_vars = ["ANSIBLE_CONFIG=infra/ansible/ansible.cfg"]
+    # WinRM operation/read timeouts stay at pywinrm's defaults (20/30 s): a long-running module is polled in a loop
+    # either way, but Ansible sends the module as stdin before it reads output, and a Send the busy fresh guest stalls
+    # only gives up (and goes on, input delivered) at the operation timeout: 3600 s stalled a build for an hour.
     extra_arguments = [
       "-e", "hypervisor=${source.name}",
       "-e", "ansible_connection=winrm ansible_winrm_transport=basic ansible_winrm_scheme=http ansible_port=5985",
-      "-e", "ansible_winrm_read_timeout_sec=3700 ansible_winrm_operation_timeout_sec=3600",
       "-e", "{\"ansible_password\": \"${build.Password}\"}", # JSON: the password's characters are validated above
     ]
   }
