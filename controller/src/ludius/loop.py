@@ -142,6 +142,16 @@ class Runner:
 
     # Observation and pacing -------------------------------------------------------
 
+    def _shot(self, here: tuple[Any, ...]) -> bytes | None:
+        """The screenshot for a step decision, or None (text only) if the screen moved after the observation `here`
+        or the capture failed: the image is optional, so it never ends the task."""
+        try:
+            shot = self.agent.screenshot()
+            moved = fingerprint(self.agent.observe(wait_settle=False).snapshot) != here
+        except Exception:
+            return None
+        return None if moved else shot
+
     def observe(self, timeout_ms: int = 5000) -> obs.Snapshot:
         self.snap = self.agent.observe(wait_settle=True, timeout_ms=timeout_ms).snapshot
         display = (self.snap.screen_width, self.snap.screen_height, self.snap.dpi)
@@ -439,9 +449,8 @@ class Runner:
             image = image_reason(shot_why, snap, self.image)
             shot_why = None
             try:
-                shot = self.agent.screenshot() if image else None
-                if shot is not None and fingerprint(self.agent.observe(wait_settle=False).snapshot) != here:
-                    image = shot = None  # the screen moved after the observation: its pixels wouldn't match the state
+                shot = self._shot(here) if image else None
+                image = image if shot is not None else None
                 decision = self.jev.decide(state, choices, ask_progress=not recovering, image=shot)
             except JevError as e:  # no usable answer even after retries: abandon the task, don't crash the process
                 self.log.write(event="decision_error", host_ms=_now(), task=task.template.task, subgoal=name,

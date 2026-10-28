@@ -114,6 +114,11 @@ class MovesOnShot(ToggleAgent):
         return b"PNG shot"
 
 
+class FailsOnShot(ToggleAgent):
+    def screenshot(self) -> bytes:
+        raise TimeoutError("deadline exceeded")
+
+
 def test_screenshot_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def reasons(name: str, agent: ToggleAgent) -> list[str | None]:
         jev = SeesImages()
@@ -135,3 +140,4 @@ def test_screenshot_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert reasons("forced", ToggleAgent(grows=True)) == ["forced"] * 12
     # A screenshot taken after the screen moved never goes along with the older state.
     assert reasons("moved", MovesOnShot()) == [None] * 12
+    assert reasons("failed", FailsOnShot()) == [None] * 12  # a failed capture: text only, no crash
