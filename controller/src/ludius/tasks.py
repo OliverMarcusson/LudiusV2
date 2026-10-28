@@ -77,6 +77,7 @@ class MailCheck(Strict):
     subject: str = "{subject}"
     body: str = "{body}"
     above_quote: bool = False  # a reply: the body must come before the quoted original's From:/Sent: header
+    reply_to: str = ""  # a reply: the answered mail's Internet message id (mail.delivered), e.g. "{reply_to}"
 
 
 class InviteCheck(Strict):
@@ -243,6 +244,17 @@ class Template(Strict):
     # What the task creates, profile-relative in a noise folder, as the app writes it (with the extension it adds;
     # ".*" for one it keeps, an Explorer rename). The shared reservation check (file_reserved) resolves these.
     writes: list[str] = Field(default_factory=list[str])
+    # Content written at task time, not plan time (ludius.reply): "reply" picks a real inbox mail and fills to,
+    # to_name, subject, body and reply_to before any input; the mail check must then require the reply link.
+    task_content: Literal["reply"] | None = None
+
+    @model_validator(mode="after")
+    def _task_content(self) -> Template:
+        if self.task_content == "reply":
+            checks = [sg.done.mail for sg in self.subgoals.values() if sg.done and sg.done.mail]
+            if not checks or any(c.reply_to != "{reply_to}" for c in checks) or "body" in self.params:
+                raise ValueError(f"{self.task}: a task-time reply needs mail checks with reply_to and no planned body")
+        return self
 
     @model_validator(mode="after")
     def _writes_declared(self) -> Template:
@@ -547,7 +559,7 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
 def _mail_ok(c: MailCheck, task: Task) -> bool:
     sender = f"{task.owner}@{mail.DOMAIN}" if task.owner else ""
     return mail.delivered(task.fmt(c.mailbox), c.folder, task.fmt(c.subject), task.fmt(c.body), sender,
-                          task.started_ms, c.above_quote, task.mail_before)  # fmt: skip
+                          task.started_ms, c.above_quote, task.mail_before, task.fmt(c.reply_to))  # fmt: skip
 
 
 def local_ms(date: str, hhmm: str, tz: str) -> int:

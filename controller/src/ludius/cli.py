@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 import yaml
 from google.protobuf import json_format
 
-from ludius import admission, artifacts, canary, growth, keys, metrics, planner, revision, timeline, visual
+from ludius import admission, artifacts, canary, growth, keys, mail, metrics, planner, revision, timeline, visual
 from ludius.assist import Assist
 from ludius.clocklease import Lease
 from ludius.day import DayRunner, run_task
@@ -35,6 +35,7 @@ from ludius.llm import DEFAULT_MODEL as PLANNER_MODEL
 from ludius.llm import LlmClient
 from ludius.loop import Clock, GroundTruth, Runner
 from ludius.policy import Policy
+from ludius.reply import Composer
 from ludius.session import Session
 from ludius.tasks import Persona, Task, TaskInstance, Template, load_template, load_yaml
 from ludius.v1 import agent_pb2 as pb
@@ -75,7 +76,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     log = GroundTruth(log_path)
     try:
         runner = Runner(
-            agent, jev, persona, log, clock=args.clock, seed=seed, assist=make_assist(), policy=make_policy()
+            agent,
+            jev,
+            persona,
+            log,
+            clock=args.clock,
+            seed=seed,
+            assist=make_assist(),
+            policy=make_policy(),
+            composer=make_composer(),
         )
         out = run_task(runner, make_session(agent, log), task)
     finally:
@@ -227,7 +236,7 @@ def plan_sources() -> nightly.Sources:
     from ludius import nightly
 
     personas = [load_yaml(Persona, p) for p in sorted((DATA / "personas").glob("*.yaml"))]
-    return nightly.Sources(personas, load_templates(), make_policy())
+    return nightly.Sources(personas, load_templates(), make_policy(), functools.partial(mail.newest, folder="inbox"))
 
 
 def cmd_day(args: argparse.Namespace) -> int:
@@ -313,7 +322,8 @@ def build_day(
 ) -> DayRunner:
     """Shared runner construction for one-shot and lazy long-lived workers."""
     pacing = "compressed" if clock == "time-jump" else clock
-    runner = Runner(agent, jev, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=make_policy())
+    runner = Runner(agent, jev, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=make_policy(),
+                    composer=make_composer())  # fmt: skip
     return DayRunner(
         runner, make_session(agent, log), templates, log, clock, seed, set_clock=functools.partial(set_clock, vm=vm)
     )
@@ -606,6 +616,16 @@ def make_assist() -> Assist | None:
     """Rare LLM help for open-ended subgoals (LUDIUS_ASSIST=0: none); its HTTP client lives as long as the process."""
     key = os.environ.get("OPENROUTER_API_KEY", "") if os.environ.get("LUDIUS_ASSIST") != "0" else ""
     return Assist(LlmClient(key, model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))) if key else None
+
+
+def make_composer() -> Composer | None:
+    """Task-time reply content: one planner-LLM call per reply task, Jev's yes/no check unless LUDIUS_REPLY_JEV=0.
+    Independent of LUDIUS_ASSIST (that switches the in-loop help off, not content)."""
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not key:
+        return None
+    llm = LlmClient(key, model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))
+    return Composer(llm, RUNS / "world" / "narrative.yaml", confirm=os.environ.get("LUDIUS_REPLY_JEV") != "0")
 
 
 def make_session(agent: HostAgent, log: GroundTruth) -> Session:

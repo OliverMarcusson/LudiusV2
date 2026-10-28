@@ -30,6 +30,10 @@ MINUTE_MS = 60_000
 PR_SMTP_ADDRESS, PR_EMAIL_ADDRESS = 0x39FE001F, 0x3003001F  # per recipient (To, Cc and, in Sent Items, Bcc)
 # A meeting's organiser is the recipient row flagged recipOrganizer (MS-OXOCAL); Outlook's appointment has no sender.
 PR_RECIPIENT_FLAGS, RECIP_ORGANIZER = 0x5FFD0003, 0x2
+# A reply: Outlook stores "RE: " as the subject prefix, and grommunio keeps the original's Internet message id as
+# In-Reply-To on both the recipient's and the Sent Items copy (read on reply-r9: 196620 and 1903628).
+PR_SUBJECT_PREFIX, PR_INTERNET_MESSAGE_ID, PR_IN_REPLY_TO_ID = 0x003D001F, 0x1035001F, 0x1042001F
+LISTED = 20  # newest(): this many messages, newest delivery first
 FILETIME_UNIX_MS = 11_644_473_600_000  # 1601-01-01 to 1970-01-01, in ms
 _ASCII = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-"})
 
@@ -47,6 +51,10 @@ class Message:
     end_ms: int = 0
     created_ms: int = 0  # Unix ms, creation time; 0 when missing
     organizer: str = ""  # meetings: SMTP address of the one recipient flagged organiser, lower case; "" otherwise
+    subject: str = ""  # normalised subject (without RE:)
+    prefix: str = ""  # subject prefix as stored, e.g. "RE: "
+    msgid: str = ""  # Internet message id, <...@...>
+    in_reply_to: str = ""  # the Internet message id of the message this one answers
 
 
 @functools.cache
@@ -65,8 +73,19 @@ def messages(user: str, folder: str, subject: str) -> list[Message]:
     return _query(user, folder, subject) or []
 
 
-def _query(user: str, folder: str, subject: str) -> list[Message] | None:
-    """As messages(), but None when the server could not be read."""
+def matching(user: str, folder: str, subject: str) -> list[Message] | None:
+    """As messages(), but None when the server could not be read (unknown, never "no such message")."""
+    return _query(user, folder, subject)
+
+
+def newest(user: str, folder: str) -> list[Message] | None:
+    """The newest LISTED messages of any subject in `user`'s folder, newest delivery first; None when the server
+    could not be read (unknown, never an empty folder)."""
+    return _query(user, folder, None)
+
+
+def _query(user: str, folder: str, subject: str | None) -> list[Message] | None:
+    """As messages() (subject None: as newest()), but None when the server could not be read."""
     if not re.fullmatch(r"[a-z0-9]+", user):
         return None
     db = f"/var/lib/gromox/user/{DOMAIN}/{user}"
@@ -82,9 +101,15 @@ def _query(user: str, folder: str, subject: str) -> list[Message] | None:
     extra = ", ".join([prop.format("coalesce(cast(propval as text), '-')", PR_MESSAGE_CLASS),
                        *(f"coalesce({prop.format('propval', t)}, 0)" for t in (PR_START_DATE, PR_END_DATE,
                                                                                PR_CREATION_TIME))])  # fmt: skip
+    # Free text (subject, its "RE: " prefix, message ids) travels as hex: no space can shift the fields.
+    texts = ", ".join(f"coalesce(nullif(hex(cast({v} as text)), ''), '-')" for v in (
+        "s.propval", *(prop.format("propval", t) for t in (PR_SUBJECT_PREFIX, PR_INTERNET_MESSAGE_ID,
+                                                           PR_IN_REPLY_TO_ID))))  # fmt: skip
+    where = "" if subject is None else f"and cast(s.propval as text)=cast(x'{subject.encode().hex()}' as text)"
+    order = f" order by coalesce(d.propval, 0) desc limit {LISTED}" if subject is None else ""
     # The body is optional (a meeting without text has none): '-' then, and an empty body is read.
     sql = (f"select m.message_id, coalesce(t.propval, 0), coalesce(d.propval, 0), coalesce(f.propval, r.propval, '-'), "
-           f"{extra}, coalesce({org}, '-'), coalesce({rcpt}, '-'),coalesce(cast(b.propval as text), '-') "
+           f"{extra}, coalesce({org}, '-'), coalesce({rcpt}, '-'), {texts}, coalesce(cast(b.propval as text), '-') "
            f"from messages m join message_properties s on s.message_id=m.message_id "
            f"and s.proptag={PR_NORMALIZED_SUBJECT} left join message_properties b on b.message_id=m.message_id "
            f"and b.proptag={PR_BODY} left join message_properties d on d.message_id=m.message_id "
@@ -92,19 +117,22 @@ def _query(user: str, folder: str, subject: str) -> list[Message] | None:
            f"and t.proptag={PR_CLIENT_SUBMIT_TIME} left join message_properties f on f.message_id=m.message_id "
            f"and f.proptag={PR_SENDER_SMTP} left join message_properties r on r.message_id=m.message_id "
            f"and r.proptag={PR_SENT_REPRESENTING_SMTP} where m.parent_fid={FOLDERS[folder]} "
-           f"and m.is_associated=0 and cast(s.propval as text)=cast(x'{subject.encode().hex()}' as text)")  # fmt: skip
+           f"and m.is_associated=0 {where}{order}")  # fmt: skip
     # pipefail: a locked or failing database must fail the query, never read as "no messages" (the baseline).
+    fields = "i t d s k a e n o r h p x y"
     remote = (f"set -o pipefail; sudo sqlite3 -readonly -separator ' ' {db}/exmdb/exchange.sqlite3 \"{sql}\" | "
-              f"while read i t d s k a e n o r c; do printf '%s %s %s %s %s %s %s %s %s %s\\n' \"$i\" \"$t\" \"$d\" "
-              f"\"$s\" \"$k\" \"$a\" \"$e\" \"$n\" \"$o\" \"$r\"; "
+              f"while read {fields} c; do printf '{' '.join(['%s'] * 14)}\\n' "
+              + " ".join(f'\"${v}\"' for v in fields.split()) + "; "
               f"if [ \"$c\" != - ]; then sudo zstdcat -qf {db}/cid/$c; fi; "
               f"printf '\\036'; done")  # fmt: skip
     try:
         host = _host()
         if not host:
             return None
+        # The host key is pinned by name, not by the address, which changes across host reboots.
         cmd = ["ssh", "-i", str(SRV / "id_ed25519"), "-o", f"UserKnownHostsFile={SRV / 'known_hosts'}",
-               "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", f"ludius@{host}", remote]  # fmt: skip
+               "-o", "HostKeyAlias=ludius-srv01", "-o", "BatchMode=yes",
+               "-o", "ConnectTimeout=10", f"ludius@{host}", remote]  # fmt: skip
         out = subprocess.run(cmd, capture_output=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
@@ -113,15 +141,39 @@ def _query(user: str, folder: str, subject: str) -> list[Message] | None:
     found: list[Message] = []
     for rec in out.stdout.decode("utf-8", "replace").split("\x1e"):
         head, _, body = rec.lstrip("\r\n").partition("\n")
-        i, t, d, sender, cls, a, e, n, org, rcpt = (head.split(" ") + [""] * 9)[:10]
+        i, t, d, sender, cls, a, e, n, org, rcpt, *hexes = (head.split(" ") + [""] * 13)[:14]
+        subj, prefix, msgid, irt = (_unhex(x) for x in hexes)
         if all(x.isdigit() for x in (i, t, d, a, e, n)):
             to = tuple(sorted(x.strip().lower() for x in rcpt.split(",") if rcpt.strip() not in ("", "-")))
             ms = [int(x) // 10_000 - FILETIME_UNIX_MS if int(x) else 0 for x in (t, d, a, e, n)]
             org = "" if org.strip() in ("", "-") or "," in org else org.strip().lower()  # one organiser, or none
             found.append(
-                Message(sender.strip().lower(), ms[0], ms[1], body, to, int(i), cls.strip(), ms[2], ms[3], ms[4], org)
+                Message(
+                    sender.strip().lower(),
+                    ms[0],
+                    ms[1],
+                    body,
+                    to,
+                    int(i),
+                    cls.strip(),
+                    ms[2],
+                    ms[3],
+                    ms[4],
+                    org,
+                    subj,
+                    prefix,
+                    msgid.strip(),
+                    irt.strip(),
+                )  # fmt: skip
             )
     return found
+
+
+def _unhex(x: str) -> str:
+    try:
+        return "" if x.strip() in ("", "-") else bytes.fromhex(x.strip()).decode("utf-8", "replace")
+    except ValueError:
+        return ""
 
 
 def letters(s: str) -> str:
@@ -159,6 +211,7 @@ def delivered(
     since_ms: int,
     above_quote: bool = False,
     before: Seen | None = frozenset(),
+    reply_to: str = "",
 ) -> bool:
     """A message from `sender` with exactly this subject, delivered at or after `since_ms` (Unix ms) and whose
     body contains `body`, is in the mailbox's folder; and every such copy in the sender's Sent Items went to
@@ -166,7 +219,8 @@ def delivered(
     letters or digits never matches. srv01's only outgoing path (gromox LDA) refuses non-local recipients.
     `above_quote`: only the text before the quoted original's header counts (a reply written above the quote).
     `before`: messages present at task start (present()) never count: the guest clock can be rewound (time-jump
-    replay), so a mail from an earlier playback can look recent. None (unknown) never passes."""
+    replay), so a mail from an earlier playback can look recent. None (unknown) never passes.
+    `reply_to`: an Internet message id; both copies must answer that message (In-Reply-To) with an "RE:" prefix."""
     address = address.strip().lower()
     user, _, domain = address.partition("@")
     me, _, my_domain = sender.strip().lower().partition("@")
@@ -177,8 +231,13 @@ def delivered(
 
     def ours(m: Message, u: str, f: str) -> bool:
         text = QUOTE_HEADER.split(m.body, maxsplit=1)[0] if above_quote else m.body
+        answers = not reply_to or (m.in_reply_to == reply_to and m.prefix.strip().upper() == "RE:")
         return (
-            (u, f, m.id) not in seen and m.sender == sender.lower() and _recent(m, since_ms) and want in letters(text)
+            (u, f, m.id) not in seen
+            and m.sender == sender.lower()
+            and _recent(m, since_ms)
+            and want in letters(text)
+            and answers
         )
 
     if not any(ours(m, user, folder) for m in messages(user, folder, subject)):

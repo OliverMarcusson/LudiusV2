@@ -20,6 +20,7 @@ from ludius.assist import Assist
 from ludius.jev import Decision
 from ludius.options import Option, StepView, build_options, build_state, describe, search_target, view
 from ludius.policy import OVERWRITE_REASON, Policy, alt_f4_safe, overwrite_prompt
+from ludius.reply import Composer
 from ludius.tasks import (
     RESERVED_RECIPIENT,
     Persona,
@@ -103,8 +104,10 @@ class Runner:
         policy: Policy | None = None,
         seed: int | None = None,
         assist: Assist | None = None,
+        composer: Composer | None = None,
     ) -> None:
         self.agent = agent
+        self.composer = composer  # task-time reply content (one LLM call per reply task); None: such tasks abandon
         self.assist = assist  # rare LLM help for open-ended subgoals; None disables it
         self.jev = jev
         self.persona = persona
@@ -253,8 +256,6 @@ class Runner:
         done: list[str] = []
         task.owner, task.tz = self.persona.user, self.persona.tz
         task.started_ms = self.observe().guest_time_ms or int(time.time() * 1000)  # the guest's clock, like the range's
-        if task.template.sends_mail:  # by identity: a rewound guest clock makes earlier mail look recent
-            task.mail_before = mail_baseline(task)
         self.log.write(
             event="task_start",
             host_ms=_now(),
@@ -264,7 +265,14 @@ class Runner:
             variant=task.variant,
             subgoals=task.subgoal_names,
         )
-        if why := file_baseline(task, self.policy):  # before any input: its file is reserved, exists or is unknown
+        why = None
+        if task.template.task_content == "reply":  # before any input: the mail it answers and the text it types
+            why, rec = (self.composer.prepare(task, self.persona, self.jev, self.policy) if self.composer
+                        else ("no reply composer (LLM) configured", {}))  # fmt: skip
+            self.log.write(event="task_content", host_ms=_now(), task=task.template.task, reason=why, **rec)
+        if task.template.sends_mail and not why:  # by identity: a rewound guest clock makes earlier mail look recent
+            task.mail_before = mail_baseline(task)
+        if why := why or file_baseline(task, self.policy):  # its file is reserved, exists or is unknown
             self.log.write(event="blocked", host_ms=_now(), task=task.template.task, reason=why)
             self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status="abandoned",
                            reason=f"start: {why}", steps=0)  # fmt: skip

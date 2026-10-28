@@ -106,7 +106,7 @@ def test_done_is_read_on_the_server_whatever_the_screen(monkeypatch: pytest.Monk
     assert check_done(done, obs.Snapshot(), task, typed_ok=False) is True
     assert calls == [("mvellinga@corp.ludius.test", "inbox", "lund accruals q4 status",
                       "hi marcus\nlund accruals for q4 are booked", "aberg@corp.ludius.test", 1_000,
-                      False, frozenset())]  # fmt: skip
+                      False, frozenset(), "")]  # fmt: skip
     assert check_done(done, obs.Snapshot(), task, typed_ok=True) is False
 
 

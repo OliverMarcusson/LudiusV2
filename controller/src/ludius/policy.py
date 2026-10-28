@@ -71,6 +71,7 @@ class Scenario(Strict):
 
     reserved: list[ReservedPath] = []
     mailboxes: list[str] = []  # addresses or globs noise must not write to
+    messages: list[str] = []  # subjects (globs, without RE:) of scenario mails noise must not open or answer
 
 
 def _glob(g: str) -> str:
@@ -86,6 +87,7 @@ class Policy:
     reserved_names: list[str] = field(default_factory=list[str])  # regexes an element's whole name must not match
     reserved_stems: list[str] = field(default_factory=list[str])  # reserved paths without their extension
     reserved_name_stems: list[str] = field(default_factory=list[str])  # reserved leaf names without their extension
+    reserved_subjects: list[str] = field(default_factory=list[str])  # regexes a scenario mail's whole subject matches
 
     @classmethod
     def load(cls, path: Path) -> Policy:
@@ -108,7 +110,9 @@ class Policy:
         for m in s.mailboxes:
             paths.append(_glob(m.strip()))
             names.append(_glob(m.strip()))
-        return cls(reserved_paths=paths, reserved_names=names, reserved_stems=stems, reserved_name_stems=name_stems)
+        subjects = [_glob(m.strip()) for m in s.messages if m.strip()]
+        return cls(reserved_paths=paths, reserved_names=names, reserved_stems=stems, reserved_name_stems=name_stems,
+                   reserved_subjects=subjects)  # fmt: skip
 
     @classmethod
     def from_env(cls) -> Policy:
@@ -131,6 +135,12 @@ class Policy:
 
     def reserved(self, text: str) -> bool:
         return any(re.search(p, text, re.I) for p in self.reserved_paths)
+
+    def mail_reserved(self, sender: str, subject: str, body: str) -> bool:
+        """A mail noise must not open or answer: a reserved sender, subject, or path or mailbox named in it."""
+        return any(self.reserved(x) for x in (sender, subject, body)) or any(
+            re.fullmatch(p, subject.strip(), re.I) for p in self.reserved_subjects
+        )
 
     def reserved_element(self, e: obs.Element) -> bool:
         return any(re.fullmatch(p, e.name.strip(), re.I) for p in self.reserved_names) or self.reserved(e.value)

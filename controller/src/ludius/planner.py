@@ -171,11 +171,13 @@ def plan_day(
     followups: dict[str, str] | None = None,
     existing: Iterable[str] = (),
     mail_threads: dict[str, tuple[str, str]] | None = None,
+    inbox: set[tuple[str, str]] | None = None,
 ) -> tuple[DayPlan, list[str]]:
     """Draft, validate, ask once to replace rejected items, drop what still fails. Returns the plan and rejects.
 
     `followups` (id -> what) are open tasks colleagues handed over; each must be scheduled with its id.
-    `mail_threads` (follow-up id -> sender, subject) are the mail ones, the only threads a reply may answer.
+    `mail_threads` (follow-up id -> sender, subject) are the mail ones; `inbox` (sender account, subject) the mails
+    read in the persona's Inbox on the server (listed in `world`): the only mails a reply may answer.
     `existing` are files and folders already on the persona's profile (names or paths): no item may create or
     rename to one of them, and an item that still does after the one repair is dropped, never run.
     """
@@ -213,7 +215,8 @@ def plan_day(
             f" Colleagues with accounts: {', '.join(sorted(colleagues))}. When an item produces something one of "
             "them should act on (a note or folder for them, a lookup they asked for), set handoff to their account. "
             "Pick up threads colleagues handed to this persona. Mail (outlook_*) goes to one colleague: to is "
-            f"<account>@{MAIL_DOMAIN} and handoff is that account; reply only to a due follow-up's mail."
+            f"<account>@{MAIL_DOMAIN} and handoff is that account; reply only to a due follow-up's mail or a mail "
+            "listed under Inbox on the mail server (to its sender, with its subject exactly)."
             if colleagues
             else ""
         )
@@ -234,7 +237,7 @@ def plan_day(
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
     fill_recipient_names(draft.items, people)
     rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                       mail_threads, people, persona.user, date.isoformat())  # fmt: skip
+                       mail_threads, people, persona.user, date.isoformat(), inbox)  # fmt: skip
     missing = sorted(set(followups) - {it.followup for it in draft.items})
     if rejects or missing:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
@@ -244,7 +247,7 @@ def plan_day(
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
         fill_recipient_names(draft.items, people)
         rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                           mail_threads, people, persona.user, date.isoformat())  # fmt: skip
+                           mail_threads, people, persona.user, date.isoformat(), inbox)  # fmt: skip
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     missing = sorted(set(followups) - {it.followup for it in items})
@@ -274,9 +277,12 @@ def validate(
     people: dict[str, str] | None = None,
     user: str = "",
     day: str = "",
+    inbox: set[tuple[str, str]] | None = None,
 ) -> list[tuple[int, str]]:
     """Rejected items with the reason. A reply must answer a mail follow-up in `mail_threads` from its `to`
-    colleague with its subject; without mail threads no reply is valid. A mail's to_name must be exactly the
+    colleague with its subject, or a mail in `inbox` (sender account, subject; an empty subject: any mail from that
+    sender); otherwise no reply is valid. The reply's text is written at task time (ludius.reply). A mail's
+    to_name must be exactly the
     narrative name (`people`, account -> name) of its `to` colleague. A meeting's date follows the plan's `day`."""
     rejects: list[tuple[int, str]] = []
     seen = list(history)
@@ -288,7 +294,7 @@ def validate(
         if not why:
             why = _meeting_day(it, day)
         if not why and it.template == REPLY:
-            why = _reply_thread(it, mail_threads or {})
+            why = _reply_thread(it, mail_threads or {}, inbox or set[tuple[str, str]]())
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
         if not why and it.followup and it.followup not in (followups or set[str]()):
@@ -368,13 +374,16 @@ def _meeting_day(it: PlanItem, day: str) -> str | None:
     return None
 
 
-def _reply_thread(it: PlanItem, threads: dict[str, tuple[str, str]]) -> str | None:
+def _reply_thread(it: PlanItem, threads: dict[str, tuple[str, str]], inbox: set[tuple[str, str]]) -> str | None:
     values = {**it.params, **it.content}
     sender = values.get("to", "").strip().lower().partition("@")[0]
+    subject = values.get("subject", "").strip()
+    if not it.followup and ((sender, subject) in inbox or (not subject and any(s == sender for s, _ in inbox))):
+        return None
     thread = threads.get(it.followup)
     if thread is None:
-        return "a reply answers a colleague's mail: set followup to that mail's open follow-up"
-    if thread != (sender, values.get("subject", "").strip()):
+        return "a reply answers a colleague's mail: set followup to that mail's open follow-up, or a listed inbox mail"
+    if thread != (sender, subject):
         return f"followup {it.followup!r} is {thread[0]!r}'s mail {thread[1]!r}: reply to that, with that subject"
     return None
 

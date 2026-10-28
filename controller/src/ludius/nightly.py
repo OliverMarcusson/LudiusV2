@@ -41,7 +41,7 @@ from temporalio.exceptions import ApplicationError
 from temporalio.worker import Worker
 
 with workflow.unsafe.imports_passed_through():
-    from ludius import durable, planner, revision, world_state
+    from ludius import durable, mail, planner, reply, revision, world_state
     from ludius.llm import LlmClient
     from ludius.planner import DayPlan, World
     from ludius.policy import Policy
@@ -85,6 +85,7 @@ class Sources(NamedTuple):
     personas: list[Persona]
     templates: dict[str, Template]
     policy: Policy
+    inbox: Callable[[str], list[mail.Message] | None] = lambda _: []  # a persona's Inbox on the range server
 
 
 class Generated(NamedTuple):
@@ -136,12 +137,16 @@ def generate_day(
     state = world_state.build(world, auto.narrative, src.personas, date)
     world_state.save(state, world)
     summary = world.summary(persona.user, date)
-    context = "\n".join(x for x in (summary, world_state.brief(state, persona.user, date)) if x)
+    people = {p.user: p.name for p in auto.narrative.people if p.user}
+    inbox = reply.hints(src.inbox(persona.user), persona.user, people, src.policy)
+    listed = "\n".join(f"- from {u}@{mail.DOMAIN}: {s}" for u, s in inbox)
+    listed = f"Inbox on the mail server (newest first; a reply answers one of these):\n{listed}" if inbox else ""
+    context = "\n".join(x for x in (summary, world_state.brief(state, persona.user, date), listed) if x)
     plan, rejects = planner.plan_day(
         llm, auto.narrative, persona, date, src.templates, context, world.history(persona.user),
         policy=src.policy, scenario=scenario, existing=world_state.existing_files(world, persona.user),
         followups={f.id: f.about for f in world_state.due(state, persona.user, date)},
-        mail_threads=world_state.mail_threads(state, persona.user),
+        mail_threads=world_state.mail_threads(state, persona.user), inbox=set(inbox),
     )  # fmt: skip
     return Generated(plan, rejects, auto)
 
@@ -158,10 +163,12 @@ def check_existing(world: World, persona: Persona, date: dt.date, src: Sources) 
     narrative = world.narrative()
     colleagues = {p.user for p in narrative.people if p.user and p.user != persona.user}
     threads = world_state.mail_threads(world_state.build(world, narrative, src.personas, date), persona.user)
+    people = {p.user: p.name for p in narrative.people if p.user}
+    inbox = set(reply.hints(src.inbox(persona.user), persona.user, people, src.policy))
     rejects = planner.validate(
         plan.items, planner.role_templates(src.templates, persona), [], src.policy, colleagues,
-        followups={i.followup for i in plan.items if i.followup}, mail_threads=threads,
-        people={p.user: p.name for p in narrative.people if p.user}, user=persona.user,
+        followups={i.followup for i in plan.items if i.followup}, mail_threads=threads, inbox=inbox,
+        people=people, user=persona.user,
     )  # fmt: skip  # no content history: this plan's own content is already in it
     if rejects:
         raise PlanConflict(f"{path} fails validation: " + "; ".join(f"item {i}: {why}" for i, why in rejects))

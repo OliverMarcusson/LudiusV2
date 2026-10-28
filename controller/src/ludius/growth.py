@@ -64,6 +64,9 @@ def propose(
     raise AssertionError("unreachable")
 
 
+TASK_CONTENT_KEYS = {"body", "reply_to"}  # what ludius.reply fills at task time
+
+
 def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Template]) -> list[str]:
     problems: list[str] = []
     if not _NAME.match(t.task):
@@ -82,7 +85,10 @@ def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Templa
         problems.append(f"processes outside the catalog: {bad}")
     keys = set(t.params) | set(t.defaults)
     keys |= {f"{k}_{d}" for k in keys for d in ("typo", "enter", "dmy")}  # variants derived in Task
-    if missing := [p for p in t.params if not t.example.get(p)]:
+    if t.task_content:  # content written at task time (an LLM call per task): hand-written templates only
+        problems.append("task_content not permitted for proposals")
+        keys |= TASK_CONTENT_KEYS
+    if missing := [p for p in t.params if not t.example.get(p) and p not in t.defaults]:
         problems.append(f"example lacks {missing}")
     open_ended = 0
     for name, sg in t.subgoals.items():

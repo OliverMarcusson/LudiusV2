@@ -33,18 +33,21 @@ class LlmClient:
         )
         self.cost = 0.0
 
-    def json[M: BaseModel](self, cls: type[M], system: str, user: str, temperature: float = 0.9) -> M:
-        """One JSON answer validated as `cls`; a validation error goes back to the model once."""
+    def json[M: BaseModel](
+        self, cls: type[M], system: str, user: str, temperature: float = 0.9, attempts: int = 2
+    ) -> M:
+        """One JSON answer validated as `cls`; a validation error goes back to the model once (attempts=1: never,
+        exactly one request)."""
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system + "\nAnswer with one JSON object only, no prose, no code fence."},
             {"role": "user", "content": user},
         ]
-        for attempt in range(2):
+        for attempt in range(attempts):
             text = self._complete(messages, temperature)
             try:
                 return cls.model_validate(json.loads(_FENCE.sub("", text.strip())))
             except (json.JSONDecodeError, ValidationError) as e:
-                if attempt:
+                if attempt == attempts - 1:
                     raise LlmError(f"invalid {cls.__name__}: {e}") from e
                 messages += [
                     {"role": "assistant", "content": text},
