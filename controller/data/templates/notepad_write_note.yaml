@@ -16,7 +16,8 @@ variants:
   - [open_from_start, write_body, save_menu, name_file, confirm_save, close_app]
   # Mistake: a stray key at the end of the file name, removed with Backspace before saving.
   - [open_from_run, write_body, save_shortcut, name_file_typo, fix_file_name, confirm_save, close_app]
-weights: [1, 1, 1, 0.5]
+# Run dialog (Win+R) variants are rare (about 5%): few users launch apps that way; it stays in as a lookalike.
+weights: [1, 0.05, 1, 0.025]
 budget_steps: 40
 budget_minutes: 8
 on_abandon: close_without_saving

@@ -17,6 +17,8 @@ example: {file_name: admission test sheet, rows: "item\tcount\npens\t12\npads\t3
 variants:
   - [open_from_start, new_blank_enter, write_rows, save_as, name_file, confirm_save, close_app]
   - [open_from_run, new_blank_click, write_rows, save_as, name_file, confirm_save, close_app]
+# Run dialog (Win+R) variants are rare (about 5%): few users launch apps that way; it stays in as a lookalike.
+weights: [1, 0.05]
 budget_steps: 40
 budget_minutes: 8
 on_abandon: close_without_saving

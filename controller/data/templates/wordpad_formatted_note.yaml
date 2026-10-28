@@ -34,6 +34,8 @@ variants:
   - name_file
   - confirm_save
   - close_app
+# Run dialog (Win+R) variants are rare (about 5%): few users launch apps that way; it stays in as a lookalike.
+weights: [1, 0.05, 1, 0.05]
 subgoals:
   open_from_start:
     goal: Open WordPad by searching for it in the Start menu

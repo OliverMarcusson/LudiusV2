@@ -14,6 +14,8 @@ variants:
   - [open_from_run, add_caption, save_menu, open_pictures, name_file, confirm_save, close_app]
   - [open_from_start, add_caption, save_menu, open_pictures, name_file, confirm_save, close_app]
   - [open_from_run, add_caption, save_shortcut, open_pictures, name_file, confirm_save, close_app]
+# Run dialog (Win+R) variants are rare (about 5%): few users launch apps that way; it stays in as a lookalike.
+weights: [1, 0.05, 1, 0.05]
 budget_steps: 40
 budget_minutes: 8
 on_abandon: close_without_saving

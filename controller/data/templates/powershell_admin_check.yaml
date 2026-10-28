@@ -18,6 +18,8 @@ variants:
   - [open_from_start, check_services, check_disk, exit_shell]
   - [open_from_run, check_admins, check_disk, exit_shell]
   - [open_from_start, check_admins, check_services, close_window]
+# Run dialog (Win+R) variants are rare (about 5%): few users launch apps that way; it stays in as a lookalike.
+weights: [1, 0.1, 1]
 budget_steps: 30
 budget_minutes: 6
 subgoals:
