@@ -37,6 +37,7 @@ from ludius.tasks import (
     Persona,
     Subgoal,
     Task,
+    added_baseline,
     check_done,
     declared_commits,
     file_baseline,
@@ -378,6 +379,7 @@ class Runner:
         # it was tried from, for the rest of the subgoal.
         dead: dict[tuple[Any, ...], set[tuple[str, str]]] = {}
         snap = self.observe()
+        added_baseline(sg.done, snap, task)  # an added check counts only items new since now
         seen = {fingerprint(snap)}
         guarded = False  # the last input passed this subgoal's require/forbid checks (send_confirmation)
         shot_why: str | None = None  # why the next decision gets the screenshot (image_reason)

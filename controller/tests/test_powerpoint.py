@@ -13,7 +13,7 @@ import pytest
 from ludius import cli, guestfile, tasks
 from ludius.planner import PlanItem, validate
 from ludius.policy import Policy
-from ludius.tasks import Task, TaskInstance, check_done, element_matches, file_baseline
+from ludius.tasks import Task, TaskInstance, Template, added_baseline, check_done, element_matches, file_baseline
 from ludius.v1 import observation_pb2 as obs
 
 DECK = {"title": "q4 close status", "slide_title": "open points", "bullets": "accruals by friday\nvat return filed",
@@ -132,24 +132,70 @@ def test_one_bullet_slide_skips_the_second(task: tuple[Task, dict[str, Any]]) ->
     assert check_done(tk.template.subgoals["confirm_save"].done, saved_snap(), tk, False) is True
 
 
-def test_slide_checks_on_screen(task: tuple[Task, dict[str, Any]]) -> None:
-    """Thumbnails are named "Slide <title>" ("Slide" while untitled); the text box counts only with the focus."""
-    tk, _ = task
+def deck_snap(*thumbs: tuple[str, bool]) -> obs.Snapshot:
+    """PowerPoint with these thumbnails (name, selected), top to bottom, and the slide's text box."""
     s = obs.Snapshot()
     s.windows.add(process_name="POWERPNT.EXE", title="Presentation1 - PowerPoint", kind=obs.Window.FOREGROUND)
-    s.elements.add(id=1, role="list item", name="Slide Q4 close status", window=0)
-    box = s.elements.add(id=2, role="image", name="Content Placeholder", window=0)
+    s.elements.add(id=99, role="image", name="Content Placeholder", window=0)
+    for i, (name, selected) in enumerate(thumbs, start=1):
+        e = s.elements.add(id=i, role="list item", name=name, window=0, selected=selected)
+        e.bounds.y, e.bounds.height = 200 + 150 * i, 130
+    return s
+
+
+def test_slide_checks_on_screen(task: tuple[Task, dict[str, Any]]) -> None:
+    """Thumbnails are named "Slide <title>" ("Slide" while untitled). A new slide counts only when the subgoal added
+    it; the title and bullet checks then read that slide, selected; the text box counts only with the focus."""
+    tk, _ = task
     sgs = tk.template.subgoals
-    assert check_done(sgs["new_slide"].done, s, tk, False) is False
-    stale = s.elements.add(id=3, role="list item", name="Slide", window=0)
-    assert check_done(sgs["new_slide"].done, s, tk, False) is False  # run1: an untitled slide that isn't the new one
-    stale.selected = True
-    assert check_done(sgs["new_slide"].done, s, tk, False) is True
-    assert check_done(sgs["focus_bullets"].done, s, tk, False) is False
-    box.focused = True
-    assert check_done(sgs["focus_bullets"].done, s, tk, False) is True
-    s.elements[2].name = "Slide Open points"
-    assert check_done(sgs["write_slide_title"].done, s, tk, True) is True
-    assert check_done(sgs["write_slide_title"].done, s, tk, False) is False  # nothing typed yet
+    before = deck_snap(("Slide Q4 close status", True))
+    added_baseline(sgs["new_slide"].done, before, tk)
+    assert check_done(sgs["new_slide"].done, before, tk, False) is False
+    after = deck_snap(("Slide Q4 close status", False), ("Slide", True))
+    assert check_done(sgs["new_slide"].done, after, tk, False) is True and tk.marks["slide"][1] == 1
+    assert check_done(sgs["focus_bullets"].done, after, tk, False) is False
+    after.elements[0].focused = True
+    assert check_done(sgs["focus_bullets"].done, after, tk, False) is True
+    titled = deck_snap(("Slide Q4 close status", False), ("Slide Open points", True))
+    assert check_done(sgs["write_slide_title"].done, titled, tk, True) is True
+    assert check_done(sgs["write_slide_title"].done, titled, tk, False) is False  # nothing typed yet
+    assert check_done(sgs["write_bullets"].done, titled, tk, True) is True
     sg = tk.subgoal("write_slide_title")
     assert any(element_matches(obs.Element(name="New Slide"), c, tk) for c in sg.avoid)  # run1: added a stray slide
+    thumb = obs.Element(role="list item", name="Slide")  # run3: a click moved the focus to the thumbnails
+    assert all(any(element_matches(thumb, c, tk) for c in tk.subgoal(n).avoid) for n in tk.subgoal_names[2:11])
+
+
+def test_no_new_slide_is_not_done(task: tuple[Task, dict[str, Any]]) -> None:
+    """Sol repro 1: a stale blank slide is selected when new_slide2 starts and nothing is added: not done."""
+    tk, _ = task
+    sg = tk.template.subgoals["new_slide2"]
+    stale = deck_snap(("Slide Q4 close status", False), ("Slide", True))
+    added_baseline(sg.done, stale, tk)
+    assert check_done(sg.done, stale, tk, False) is False
+    assert check_done(sg.done, deck_snap(("Slide Q4 close status", False), ("Slide", True)), tk, False) is False
+    tk.added_base = None  # no baseline taken: unknown, never done
+    assert check_done(sg.done, deck_snap(("Slide Q4 close status", False), ("Slide", False), ("Slide", True)), tk,
+                      False) is False  # fmt: skip
+
+
+def test_text_on_another_slide_is_not_done(task: tuple[Task, dict[str, Any]]) -> None:
+    """Sol repro 2: an older, unselected thumbnail carries the planned title while the new slide (marked) does not,
+    or the new slide carries it but another slide is the one being edited: not done."""
+    tk, _ = task
+    sgs = tk.template.subgoals
+    added_baseline(sgs["new_slide"].done, deck_snap(("Slide Q4 close status", False), ("Slide Open points", True)), tk)
+    new = deck_snap(("Slide Q4 close status", False), ("Slide Open points", False), ("Slide", True))
+    assert check_done(sgs["new_slide"].done, new, tk, False) is True and tk.marks["slide"][1] == 2
+    for wrong in (deck_snap(("Slide Q4 close status", False), ("Slide Open points", False), ("Slide", True)),
+                  deck_snap(("Slide Q4 close status", False), ("Slide Open points", True), ("Slide", False)),
+                  deck_snap(("Slide Q4 close status", True), ("Slide Open points", False),
+                            ("Slide Open points", False))):  # fmt: skip
+        assert check_done(sgs["write_bullets"].done, wrong, tk, True) is False
+        assert check_done(sgs["write_slide_title"].done, wrong, tk, True) is False
+    right = deck_snap(("Slide Q4 close status", False), ("Slide Open points", False), ("Slide Open points", True))
+    assert check_done(sgs["write_slide_title"].done, right, tk, True) is True
+    with pytest.raises(ValueError, match="no added check marks"):
+        t = tk.template.model_dump()
+        t["subgoals"]["new_slide"]["done"]["added"]["mark"] = "other"
+        Template.model_validate(t)

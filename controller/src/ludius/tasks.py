@@ -38,6 +38,21 @@ class ElementCheck(Strict):
     value: str | None = None  # regex
     focused: bool | None = None  # has the keyboard focus (PowerPoint's text box after Ctrl+Enter)
     selected: bool | None = None  # is selected (PowerPoint's thumbnail of the slide being edited)
+    # Only the item an `added` check recorded under this mark (its position, top to bottom, among that check's
+    # items): an older item carrying the same name never counts. An unknown mark matches nothing.
+    at: str | None = None
+
+
+class AddedCheck(Strict):
+    """An item was added during this subgoal: more elements match `items` than when the subgoal started (the
+    runner's baseline, added_baseline), and exactly one of them is selected and matches `new`, e.g. the new untitled
+    slide's thumbnail. Its position among the items is recorded as `mark` for later checks (ElementCheck.at).
+    ponytail: positions are top-to-bottom among on-screen items; a list scrolled past its first items shifts them
+    (fails closed: the marked item no longer matches). Mark by a stable item identity if lists grow long."""
+
+    items: ElementCheck
+    new: ElementCheck
+    mark: str
 
 
 class PixelsCheck(Strict):
@@ -134,6 +149,7 @@ class Done(Strict):
     window: WindowCheck | None = None
     foreground: WindowCheck | None = None
     element: ElementCheck | None = None
+    added: AddedCheck | None = None
     typed: bool = False
     pixels: PixelsCheck | None = None
     mail: MailCheck | None = None
@@ -403,6 +419,12 @@ class Template(Strict):
             ext = SAVE_EXTENSIONS.get(self.app)
             if ext and "{file_name}" in w and not w.lower().endswith(ext):
                 raise ValueError(f"{self.task}: {self.app} saves {ext}, so write {w!r} must end with it")
+        marks = {sg.done.added.mark for sg in self.subgoals.values() if sg.done and sg.done.added}
+        for name, sg in self.subgoals.items():
+            if sg.done and sg.done.element and sg.done.element.at not in (None, *marks):
+                raise ValueError(
+                    f"{self.task}: {name} checks the item at {sg.done.element.at!r}, which no added check marks"
+                )
         for sg in self.subgoals.values():
             if sg.done and sg.done.file and sg.done.file.path not in self.writes:
                 raise ValueError(f"{self.task}: file check {sg.done.file.path!r} is not a declared write")
@@ -492,6 +514,8 @@ class Task:
         self.mail_before: mail.Seen | None = None  # mail present at task start (mail_baseline), set by the runner
         self.files_absent: frozenset[str] | None = None  # file checks' paths proven absent at start (file_baseline)
         self.read_id = 0  # mail.read: the Inbox message proven unread at start (reply.prepare_read); 0: none
+        self.added_base: int | None = None  # items matching the current subgoal's added check at its start
+        self.marks: dict[str, tuple[ElementCheck, int]] = {}  # AddedCheck.mark -> (its items, the new one's position)
         idx = (
             inst.variant
             if inst.variant is not None
@@ -620,11 +644,15 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
     if done is None:
         return None
     if (done.mail or done.invite or done.file or done.read) and not (
-        done.window or done.foreground or done.element or done.typed or done.pixels
+        done.window or done.foreground or done.element or done.added or done.typed or done.pixels
     ):
         return _outside_ok(done, task) if outside else None
     on_pixels = any(pixels_window(w) for w in snap.windows)
-    if done.pixels and not on_pixels and not (done.window or done.foreground or done.element or done.typed):
+    if (
+        done.pixels
+        and not on_pixels
+        and not (done.window or done.foreground or done.element or done.added or done.typed)
+    ):
         return None  # a completion only pixels mode checks: with an accessibility tree, Jev decides as before
     if done.typed and not typed_ok:
         return False
@@ -650,10 +678,41 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
             return False
     if done.element:
         c = done.element
-
-        if not any(element_matches(e, c, task) for e in snap.elements):
+        candidates = snap.elements if c.at is None else _marked(c.at, snap, task)
+        if not any(element_matches(e, c, task) for e in candidates):
             return False
+    if done.added and not _added_ok(done.added, snap, task):
+        return False
     return _outside_ok(done, task) if outside else True
+
+
+def _items(c: ElementCheck, snap: obs.Snapshot, task: Task) -> list[obs.Element]:
+    """Elements matching `c`, top to bottom (then left to right): their order on screen, not in the snapshot."""
+    return sorted((e for e in snap.elements if element_matches(e, c, task)), key=lambda e: (e.bounds.y, e.bounds.x))
+
+
+def added_baseline(done: Done | None, snap: obs.Snapshot, task: Task) -> None:
+    """At a subgoal's start (the runner): how many items its added check sees, so only a new one counts."""
+    task.added_base = len(_items(done.added.items, snap, task)) if done and done.added else None
+
+
+def _added_ok(c: AddedCheck, snap: obs.Snapshot, task: Task) -> bool:
+    items = _items(c.items, snap, task)
+    picked = [i for i, e in enumerate(items) if e.selected]
+    if task.added_base is None or len(items) <= task.added_base or len(picked) != 1:
+        return False
+    if not element_matches(items[picked[0]], c.new, task):
+        return False
+    task.marks[c.mark] = (c.items, picked[0])
+    return True
+
+
+def _marked(mark: str, snap: obs.Snapshot, task: Task) -> list[obs.Element]:
+    if mark not in task.marks:
+        return []
+    items, at = task.marks[mark]
+    found = _items(items, snap, task)
+    return found[at : at + 1]
 
 
 def _outside_ok(done: Done, task: Task) -> bool:

@@ -41,57 +41,59 @@ subgoals:
     goal: "Type the presentation's title at the keyboard focus: on the new blank first slide, typing goes into its title"
     text: title
     unreadable_ok: true  # placeholders have no UIA value; the thumbnail name and the file check decide
-    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}]
+    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
     done: {typed: true, element: {role: list item, name: '^Slide {title}$'}}
   new_slide:
     goal: "Add a new slide after the title slide with Ctrl+M"
     keys: [Ctrl+M]
     # Never the ribbon's New Slide (any subgoal): its menu offers other layouts, and a click on it in a typing
-    # subgoal added a second untitled slide (run1). Done: the selected slide is a new, untitled one.
-    avoid: [{name: '^New Slide$'}]
-    done: {element: {role: list item, name: '^Slide$', selected: true}}
+    # subgoal added a second untitled slide (run1). Never a thumbnail either: a click moves the keyboard focus to the
+    # thumbnail pane, where typing lands nowhere and Enter adds a slide (run3). Done: one more thumbnail than at the subgoal's start, the selected
+    # one untitled; its position is marked, so the title and bullet checks read that slide and no older one.
+    avoid: [{name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
+    done: {added: {items: {role: list item, name: '^Slide( |$)'}, new: {name: '^Slide$'}, mark: slide}}
   write_slide_title:
     goal: "Type the new slide's title at the keyboard focus (typing goes into the new slide's title)"
     text: slide_title
     unreadable_ok: true
-    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}]
-    done: {typed: true, element: {role: list item, name: '^Slide {slide_title}$'}}
+    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
+    done: {typed: true, element: {role: list item, name: '^Slide {slide_title}$', selected: true, at: slide}}
   focus_bullets:
     goal: "Move from the slide's title into its text box (Content Placeholder) with Ctrl+Enter"
     keys: [Ctrl+Enter]
-    avoid: [{name: '^New Slide$'}]
+    avoid: [{name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
     done: {element: {name: '^Content Placeholder$', focused: true}}
   write_bullets:
     goal: "The slide's text box has the focus: type the bullet points at the keyboard focus (one line per bullet)"
     text: bullets
     unreadable_ok: true
-    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}]
-    # Bullets typed into the title would rename the slide: its thumbnail still names only the planned title.
-    done: {typed: true, element: {role: list item, name: '^Slide {slide_title}$'}}
+    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
+    # Bullets typed into the title would rename the slide: the new slide's thumbnail still names only its title.
+    done: {typed: true, element: {role: list item, name: '^Slide {slide_title}$', selected: true, at: slide}}
   new_slide2:
     goal: "Add another new slide with Ctrl+M"
     needs: slide2_title
     keys: [Ctrl+M]
-    avoid: [{name: '^New Slide$'}]
-    done: {element: {role: list item, name: '^Slide$', selected: true}}
+    avoid: [{name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
+    done: {added: {items: {role: list item, name: '^Slide( |$)'}, new: {name: '^Slide$'}, mark: slide2}}
   write_slide2_title:
     goal: "Type the new slide's title at the keyboard focus (typing goes into the new slide's title)"
     text: slide2_title
     unreadable_ok: true
-    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}]
-    done: {typed: true, element: {role: list item, name: '^Slide {slide2_title}$'}}
+    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
+    done: {typed: true, element: {role: list item, name: '^Slide {slide2_title}$', selected: true, at: slide2}}
   focus_bullets2:
     goal: "Move from the slide's title into its text box (Content Placeholder) with Ctrl+Enter"
     needs: bullets2
     keys: [Ctrl+Enter]
-    avoid: [{name: '^New Slide$'}]
+    avoid: [{name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
     done: {element: {name: '^Content Placeholder$', focused: true}}
   write_bullets2:
     goal: "The slide's text box has the focus: type the bullet points at the keyboard focus (one line per bullet)"
     text: bullets2
     unreadable_ok: true
-    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}]
-    done: {typed: true, element: {role: list item, name: '^Slide {slide2_title}$'}}
+    avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
+    done: {typed: true, element: {role: list item, name: '^Slide {slide2_title}$', selected: true, at: slide2}}
   save_as:
     goal: "Open the Save As dialog with F12"
     keys: [F12]
