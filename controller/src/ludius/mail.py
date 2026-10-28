@@ -8,8 +8,10 @@ stored plain-text bodies (zstd, or plain). Fails closed: no server, no key or an
 from __future__ import annotations
 
 import functools
+import json
 import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -295,3 +297,41 @@ def invited(
         and m.created_ms // MINUTE_MS >= since_ms // MINUTE_MS
         for m in messages(me, "calendar", subject)
     )
+
+
+def deliver(sender: str, sender_name: str, to: str, to_name: str, subject: str, body: str, msgid: str) -> bool:
+    """Send one plain-text mail server-side, as `sender` (a range mailbox without a VM: a manager), through srv01's
+    local LDA ([::1]:25, which refuses any recipient outside DOMAIN), with our own Message-ID so a retry can tell it
+    was delivered. Idempotent: True at once when `to`'s Inbox already holds `msgid`. Irreversible once True; False
+    (nothing known to be sent) on any refusal or error. Both addresses must be DOMAIN accounts."""
+    addrs = [a.strip().lower() for a in (sender, to)]
+    if any(not re.fullmatch(rf"[a-z0-9]+@{re.escape(DOMAIN)}", a) for a in addrs) or addrs[0] == addrs[1]:
+        return False
+    have = matching(addrs[1].partition("@")[0], "inbox", subject)
+    if have is None:
+        return False
+    if any(m.msgid == msgid for m in have):
+        return True
+    # the values travel as one JSON line on stdin, never on a command line or as code
+
+    script = (
+        "import json, smtplib, sys\nfrom email.message import EmailMessage\nfrom email.utils import formatdate\n"
+        "v = json.loads(sys.stdin.readline())\nm = EmailMessage()\n"
+        "m['From'] = f\"{v['sender_name']} <{v['sender']}>\"\nm['To'] = f\"{v['to_name']} <{v['to']}>\"\n"
+        "m['Subject'] = v['subject']\nm['Date'] = formatdate(localtime=True)\nm['Message-ID'] = v['msgid']\n"
+        "m.set_content(v['body'])\nwith smtplib.SMTP('::1', 25, timeout=20) as s:\n"
+        "    s.send_message(m, from_addr=v['sender'], to_addrs=[v['to']])\nprint('sent')\n"
+    )
+    payload = json.dumps(dict(sender=addrs[0], sender_name=sender_name, to=addrs[1], to_name=to_name,
+                              subject=subject, body=body, msgid=msgid))  # fmt: skip
+    try:
+        host = _host()
+        if not host:
+            return False
+        cmd = ["ssh", "-i", str(SRV / "id_ed25519"), "-o", f"UserKnownHostsFile={SRV / 'known_hosts'}",
+               "-o", "HostKeyAlias=ludius-srv01", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+               f"ludius@{host}", "python3 -c " + shlex.quote(script)]  # fmt: skip
+        out = subprocess.run(cmd, input=payload + "\n", capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0 and out.stdout.strip() == "sent"

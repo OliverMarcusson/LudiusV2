@@ -7,6 +7,7 @@
 # Blank workbook tile vs a click on it). Save is F12: Ctrl+S on a new workbook opens the Backstage first.
 task: excel_new_workbook
 app: excel
+capability: file.write  # creates one new file (writes); manager requests may ask for it
 processes: [excel.exe]
 writes: ['Documents\{file_name}.xlsx']
 params: [file_name, rows]

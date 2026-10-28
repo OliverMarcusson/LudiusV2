@@ -3,6 +3,7 @@
 # UserAssist and RunMRU artifacts) and UI path (Ctrl+S vs File menu).
 task: notepad_write_note
 app: notepad
+capability: file.write  # creates one new file (writes); manager requests may ask for it
 processes: [notepad.exe]
 writes: ['Documents\{file_name}.txt']
 params: [file_name, body]

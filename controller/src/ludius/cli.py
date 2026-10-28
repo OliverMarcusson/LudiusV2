@@ -236,7 +236,9 @@ def plan_sources() -> nightly.Sources:
     from ludius import nightly
 
     personas = [load_yaml(Persona, p) for p in sorted((DATA / "personas").glob("*.yaml"))]
-    return nightly.Sources(personas, load_templates(), make_policy(), functools.partial(mail.newest, folder="inbox"))
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    return nightly.Sources(personas, load_templates(), make_policy(), functools.partial(mail.newest, folder="inbox"),
+                           (lambda: JevClient(key)) if key else None)  # fmt: skip
 
 
 def cmd_day(args: argparse.Namespace) -> int:

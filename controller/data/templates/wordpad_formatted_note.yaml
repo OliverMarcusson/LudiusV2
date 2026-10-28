@@ -1,5 +1,6 @@
 task: wordpad_formatted_note
 app: wordpad
+capability: file.write  # creates one new file (writes); manager requests may ask for it
 processes:
 - wordpad.exe
 writes:

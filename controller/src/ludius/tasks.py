@@ -177,7 +177,7 @@ class Subgoal(Strict):
 # Defense in depth: the done check requires the Sent Items copy to name {to} alone (ludius.mail), and srv01 refuses
 # non-local recipients.
 RECIPIENT = "^({to}|{to_name}|{to_name} <{to}>);?$"
-Capability = Literal["mail.send", "mail.reply", "calendar.invite", "file.move"]
+Capability = Literal["mail.send", "mail.reply", "calendar.invite", "file.move", "file.write"]  # file.write: a new file
 SENDS: dict[str, Literal["mail", "meeting"]] = {"mail.send": "mail", "mail.reply": "mail", "calendar.invite": "meeting"}
 # Values a capability's parameters name rather than create (a recipient, the subject a reply answers, a rename's
 # source): they may repeat, so the planner's near-duplicate check skips them.
@@ -435,6 +435,7 @@ class TaskInstance(Strict):
     content: dict[str, str] = Field(default_factory=dict[str, str])
     variant: int | None = None
     context: str = ""  # one line of narrative for Jev: why the persona is doing this
+    request: str = ""  # Internet message id of the manager's mail this task does (ludius.requests)
 
 
 class Task:
@@ -746,10 +747,10 @@ def file_baseline(task: Task, policy: Any) -> str | None:
         if file_reserved(task.owner, rel, policy):
             return f"{rel}: scenario-reserved file"
     absent: set[str] = set()
-    for sg in task.template.subgoals.values():
-        if not (sg.done and sg.done.file):
-            continue
-        rel = task.fmt(sg.done.file.path)
+    checked = [task.fmt(sg.done.file.path) for sg in task.template.subgoals.values() if sg.done and sg.done.file]
+    if task.inst.request:  # the request check (ludius.requests) reads what the task writes: new, never pre-existing
+        checked += [w for w in write_paths(task) if not w.endswith(".*")]
+    for rel in dict.fromkeys(checked):
         f = guestfile.read(task.owner, rel)
         if f is None:
             return f"{rel}: unreadable on the guest"

@@ -19,7 +19,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -40,8 +40,11 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ApplicationError
 from temporalio.worker import Worker
 
+if TYPE_CHECKING:
+    from ludius.loop import Decider
+
 with workflow.unsafe.imports_passed_through():
-    from ludius import durable, mail, planner, reply, revision, world_state
+    from ludius import durable, mail, planner, reply, requests, revision, world_state
     from ludius.llm import LlmClient
     from ludius.planner import DayPlan, World
     from ludius.policy import Policy
@@ -86,6 +89,7 @@ class Sources(NamedTuple):
     templates: dict[str, Template]
     policy: Policy
     inbox: Callable[[str], list[mail.Message] | None] = lambda _: []  # a persona's Inbox on the range server
+    jev: Callable[[], Decider] | None = None  # maps manager requests to task types (ludius.requests); None: not mapped
 
 
 class Generated(NamedTuple):
@@ -132,22 +136,70 @@ def generate_day(
     date: dt.date,
     scenario: planner.Scenario | None = None,
 ) -> Generated:
-    """`ludius plan day`: due weekly revision first (raises RevisionBusy), world state, then the validated plan."""
+    """`ludius plan day`: due weekly revision first (raises RevisionBusy), world state, the manager's requests (sent
+    server-side, ludius.requests), then the validated plan with the persona's new requests mapped into it."""
     auto = revision.revise_if_due(llm, world, src.personas, date)
     state = world_state.build(world, auto.narrative, src.personas, date)
     world_state.save(state, world)
     summary = world.summary(persona.user, date)
     people = {p.user: p.name for p in auto.narrative.people if p.user}
-    inbox = reply.hints(src.inbox(persona.user), persona.user, people, src.policy)
-    listed = "\n".join(f"- from {u}@{mail.DOMAIN}: {s}" for u, s in inbox)
-    listed = f"Inbox on the mail server (newest first; a reply answers one of these):\n{listed}" if inbox else ""
-    context = "\n".join(x for x in (summary, world_state.brief(state, persona.user, date), listed) if x)
+    notes: list[str] = []
+    mapped: list[planner.PlanItem] = []
+    boss = requests.manager_of(auto.narrative, persona.user, src.personas)
+    if isinstance(boss, str):
+        notes.append(f"requests: {boss}")
+    else:
+        reports = [p.user for p in src.personas if p.user == persona.user or requests.manager_of(
+            auto.narrative, p.user, src.personas) == boss]  # fmt: skip
+        day = requests.ensure(
+            llm, world, auto.narrative, {u: world_state.brief(state, u, date) for u in reports}, src.personas,
+            src.templates, src.policy, date, boss, {u: src.inbox(u) for u in reports},
+            {u: world_state.existing_files(world, u) for u in reports},
+        )  # fmt: skip
+        notes += [f"requests by {boss.user}: {r}" for r in day.rejects]
+        notes += [f"requests by {boss.user}: {r.status} to {r.to} {r.subject!r}" for r in day.requests]
+    inbox_mails = src.inbox(persona.user)
+    if not isinstance(boss, str) and src.jev is not None:
+        jev = src.jev()
+        try:
+            mails = requests.pending(world, persona.user, boss, inbox_mails, src.policy, date)
+            mapped, more = requests.candidates(llm, jev, world, persona, boss, mails,
+                                               planner.role_templates(src.templates, persona), date)  # fmt: skip
+            notes += more
+        finally:
+            getattr(jev, "close", lambda: None)()
+    asked = {m.subject for m in inbox_mails or [] if m.msgid in {it.request for it in mapped}}
+    inbox = reply.hints(inbox_mails, persona.user, people, src.policy)
+    listed = "\n".join(f"- from {u}@{mail.DOMAIN}: {s}" for u, s in inbox if s not in asked)
+    listed = f"Inbox on the mail server (newest first; a reply answers one of these):\n{listed}" if listed else ""
+    planned = "\n".join(f"- {it.at} {it.template}: {it.context}" for it in mapped)
+    planned = f"Already planned from the manager's requests (keep these times free, do not plan them again):\n{planned}"
+    context = "\n".join(x for x in (summary, world_state.brief(state, persona.user, date), listed,
+                                    planned if mapped else "") if x)  # fmt: skip
+    followups = {f.id: f.about for f in world_state.due(state, persona.user, date)}
+    threads = world_state.mail_threads(state, persona.user)
+    existing = world_state.existing_files(world, persona.user)
     plan, rejects = planner.plan_day(
         llm, auto.narrative, persona, date, src.templates, context, world.history(persona.user),
-        policy=src.policy, scenario=scenario, existing=world_state.existing_files(world, persona.user),
-        followups={f.id: f.about for f in world_state.due(state, persona.user, date)},
-        mail_threads=world_state.mail_threads(state, persona.user), inbox=set(inbox),
+        policy=src.policy, scenario=scenario, existing=existing, followups=followups,
+        mail_threads=threads, inbox=set(inbox),
     )  # fmt: skip
+    colleagues = {p.user for p in auto.narrative.people if p.user and p.user != persona.user}
+    for it in mapped:  # the same validation as the planner's own items, after them
+        while it.at in {x.at for x in plan.items}:
+            it.at = f"{(int(it.at[:2]) * 60 + int(it.at[3:]) + 1) // 60 % 24:02d}:{(int(it.at[3:]) + 1) % 60:02d}"
+        planner.fill_recipient_names([it], people)
+        why = dict(planner.validate(
+            [*plan.items, it], planner.role_templates(src.templates, persona), world.history(persona.user),
+            src.policy, colleagues, None, set(followups), existing, threads, people, persona.user, date.isoformat(),
+            set(inbox),
+        )).get(len(plan.items))  # fmt: skip
+        if why:
+            requests.remember(world.root, persona.user, it.request, f"rejected: {why}")
+            rejects.append(f"request {it.template} at {it.at}: {why}")
+        else:
+            plan.items = sorted([*plan.items, it], key=lambda x: x.at)
+    rejects += notes
     return Generated(plan, rejects, auto)
 
 

@@ -60,6 +60,7 @@ class Person(Strict):
     role: str
     department: str
     user: str = ""  # Windows account when this person is a persona
+    manager: str = ""  # account of the person this one reports to (the org chart); "" for the top
 
 
 class Event(Strict):
@@ -138,6 +139,7 @@ PLAN_SYSTEM = (
 
 
 DERIVED = {"to_name"}  # filled in code from the narrative (fill_recipient_names), never written by the LLM
+MESSAGE_ID = re.compile(r"<[!-;=?-~]{1,200}@[!-;=?-~]{1,100}>")  # an Internet message id, as a request names
 _NOT_A_NAME = re.compile(r"[;,<>@]")  # a display name holding a second recipient or an address
 
 
@@ -153,7 +155,9 @@ def make_narrative(llm: LlmClient, personas: list[Persona], start: dt.date) -> N
     user = (
         f"Range start date: {start.isoformat()}.\nThese employees are personas and must appear in people with their "
         f"account as user:\n{who}\n\nReturn JSON with keys company, city, summary (3-5 sentences), people "
-        "(8-15 entries: name, role, department, user), projects (3-6 short strings) and events (6-12 entries: "
+        "(8-15 entries: name, role, department, user (a short lower-case account for everyone), manager (the user of "
+        "the person they report to; empty only for the head of the company; every employee listed above reports to "
+        "someone who is not one of them)), projects (3-6 short strings) and events (6-12 entries: "
         "date YYYY-MM-DD within four weeks of the start, what). Include the routine (month-end close, team "
         "meetings) and a few one-offs (an office move, a supplier change, a system migration)."
     )
@@ -709,6 +713,8 @@ def load_plan(path: Path) -> DayPlan:
         if it.template in templates and (why := item_problem(it, templates, policy, plan.persona)
                                          or _meeting_day(it, plan.date)):  # fmt: skip
             raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
+        if it.request and not MESSAGE_ID.fullmatch(it.request):
+            raise ValueError(f"{path}: {it.template} at {it.at}: request {it.request!r} is not a message id")
     mail = [it for it in plan.items if "to" in {**it.params, **it.content}]
     if mail:
         narrative = path.parent.parent / "world" / "narrative.yaml"

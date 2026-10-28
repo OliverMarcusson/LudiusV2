@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from ludius import keys
+from ludius import keys, requests
 from ludius.assist import Assist
 from ludius.jev import Decision
 from ludius.options import Option, StepView, build_options, build_state, describe, search_target, view
@@ -308,8 +308,14 @@ class Runner:
                 paused = time.monotonic()
                 between()
                 t0 += time.monotonic() - paused  # an interruption does not use this task's time budget
+        reason = ""
+        if task.inst.request:  # a manager's request: done is the template's check; also, does it match the request?
+            ok, reason = requests.fulfilled(task)
+            self.log.write(event="request_check", host_ms=_now(), task=task.template.task,
+                           request=task.inst.request, fulfilled=ok, reason=reason)  # fmt: skip
+            reason = f"request: {reason}"
         self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status="done", steps=steps)
-        return Outcome("done", steps, "", done)
+        return Outcome("done", steps, reason, done)
 
     def _assisted(self, task: Task, name: str, sg: Subgoal, t0: float, steps: int) -> int:
         assert self.assist is not None
