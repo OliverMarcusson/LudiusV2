@@ -194,6 +194,14 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
 APPS = Path(__file__).resolve().parents[2] / "data" / "apps"
 # Buttons that commit something: no discard or leave word in a profile may name one (abandon clicks those).
 COMMITS = ["send", "send anyway", "save", "yes", "ok", "replace", "delete"]
+# The text a launching subgoal types: only ever into the shell's Start search box (options.launch_target).
+LAUNCH_TEXT = "launch_query"
+
+
+def declared_commits(task: Task, sg: Subgoal) -> list[str]:
+    """Names (regex) of committing or destructive controls the subgoal may activate by key, as declared: its own
+    allow_destructive, and Save when the template declares the files it writes. Empty: it declares no such effect."""
+    return [*sg.allow_destructive, *(["Save"] if task.template.writes else [])]
 
 
 class Confirm(Strict):
@@ -361,7 +369,7 @@ class Template(Strict):
         reads = any(sg.done and sg.done.read for sg in self.subgoals.values())
         if reads != (self.capability == "mail.read") or (reads and not {"sender", "subject"} <= set(self.params)):
             raise ValueError(f"{self.task}: mail.read needs a read done check and params sender, subject (only it)")
-        typed = any(sg.text not in (None, "launch_query") or sg.search or sg.allow_destructive
+        typed = any(sg.text not in (None, LAUNCH_TEXT) or sg.search or sg.copy_text or sg.allow_destructive
                     for sg in self.subgoals.values())  # fmt: skip
         if reads and (self.writes or typed):
             raise ValueError(f"{self.task}: mail.read types only the launch query, no writes or destructive clicks")

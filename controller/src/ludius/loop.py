@@ -18,15 +18,26 @@ from typing import Any, Literal, Protocol
 from ludius import keys, requests
 from ludius.assist import Assist
 from ludius.jev import Decision
-from ludius.options import Option, StepView, build_options, build_state, describe, search_target, view
+from ludius.options import (
+    Option,
+    StepView,
+    build_options,
+    build_state,
+    describe,
+    launch_target,
+    search_target,
+    view,
+)
 from ludius.policy import OVERWRITE_REASON, Policy, alt_f4_safe, overwrite_prompt
 from ludius.reply import Composer, prepare_read
 from ludius.tasks import (
+    LAUNCH_TEXT,
     RESERVED_RECIPIENT,
     Persona,
     Subgoal,
     Task,
     check_done,
+    declared_commits,
     file_baseline,
     mail_baseline,
     pixels_window,
@@ -43,6 +54,7 @@ DONE_THRESHOLD = 0.85
 OFF_TRACK_THRESHOLD = 0.8
 NEAR_TIE = 0.05  # probability gap within which equivalent options may be sampled
 BLOCKED_WAIT_S = 1.5  # a step with no input allowed: wait this long, then look again (no Jev call)
+LAUNCH_REASON = "the launch query goes into the Start search box only"
 NARRATIVE = requests.ROOT / "world" / "narrative.yaml"  # who the colleagues are (mail.read without a composer)
 
 
@@ -239,6 +251,8 @@ class Runner:
             focus = next((e for e in fresh.elements if e.focused), None)
             if focus is not None and (focus.key not in allowed or self.policy.text_allowed(text, focus)):
                 return "the keyboard focus is not a field this task may type into", None
+            if sg.text == LAUNCH_TEXT and not launch_target(focus, fresh):
+                return LAUNCH_REASON, None
             return None, None
         target = allowed.get(o.element.key)
         if target is None or (target.role, target.name) != (o.element.role, o.element.name):
@@ -247,6 +261,8 @@ class Runner:
             return r, None
         if not sg.text and not sg.copy_text and not search_target(target, fresh, task):
             return "template text goes into an edit field of the task's foreground app only", None
+        if sg.text == LAUNCH_TEXT and not launch_target(target, fresh):
+            return LAUNCH_REASON, None
         return None, target
 
     # The loop ---------------------------------------------------------------------
@@ -511,9 +527,12 @@ class Runner:
                 return OVERWRITE_REASON
             if not sg.text and not sg.copy_text and not search_target(o.element, self.snap, task):
                 return "template text goes into an edit field of the task's foreground app only"
+            focus = next((e for e in self.snap.elements if e.focused), None)
+            if sg.text == LAUNCH_TEXT and not launch_target(o.element or focus, self.snap):
+                return LAUNCH_REASON
             return self.policy.text_allowed(o.literal or task.values[o.content], o.element)
         if o.kind == "key":
-            return self.policy.key_allowed(o.keys, self.snap)
+            return self.policy.key_allowed(o.keys, self.snap, declared_commits(task, sg))
         return None
 
     def _recovery_options(self, v: StepView) -> list[Option]:

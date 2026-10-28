@@ -206,3 +206,84 @@ def test_a_request_mail_is_read_before_its_task() -> None:
     assert requests.read_first(req, [msg(8)], ts, [req]) is None  # not the request's mail
     no_read = {k: t for k, t in ts.items() if t.capability != "mail.read"}
     assert requests.read_first(req, [msg(7)], no_read, [req]) is None
+
+
+# Sol blockers on f211516 (shared layer: options, policy, runner) --------------------------------------------------
+
+
+def outlook(*els: obs.Element, process: str = "OUTLOOK.EXE", title: str = "Inbox - aberg - Outlook") -> obs.Snapshot:
+    fg = obs.Window(kind=obs.Window.FOREGROUND, process_name=process, title=title)
+    return obs.Snapshot(windows=[fg], elements=list(els))
+
+
+def el(i: int, role: str, name: str, **kw: Any) -> obs.Element:
+    box = obs.Rect(x=10, y=10 * i, width=50, height=9)
+    return obs.Element(id=i, key=f"k{i}", role=role, name=name, enabled=True, bounds=box, window=0, **kw)
+
+
+def keys_offered(snap: obs.Snapshot, task: Task, subgoal: str, policy: Policy) -> set[str]:
+    from ludius.options import build_options, view
+
+    sg = task.subgoal(subgoal)
+    return {o.keys for o in build_options(view(snap, task, sg, policy), task, sg, policy) if o.kind == "key"}
+
+
+def post_check(snap: obs.Snapshot, task: Task, subgoal: str, o: Any, tmp_path: Path) -> str | None:
+    r = Runner(None, None, ANNA, GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    r.snap = snap
+    return r._post_check(o, task.subgoal(subgoal), task)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize("name", ["Send", "Delete", "&Save"])
+def test_enter_never_presses_a_focused_committing_control(name: str, tmp_path: Path) -> None:
+    from ludius.options import Option
+
+    task = read_task()
+    snap = outlook(el(1, "button", name, focused=True), el(2, "data item", f"From Marcus Vellinga, Subject {SUBJECT}"))
+    assert not {"Enter", "Space"} & keys_offered(snap, task, "open_message", Policy())
+    assert "commits or destroys" in str(post_check(snap, task, "open_message", Option("o1", "key", "", keys="Enter"),
+                                                   tmp_path))  # fmt: skip
+    row = outlook(el(2, "data item", f"From Marcus Vellinga, Subject {SUBJECT}", focused=True))
+    assert "Enter" in keys_offered(row, task, "open_message", Policy())  # the mail row: Enter opens it
+    assert "focus is unknown" in str(Policy().key_allowed("Enter", outlook()))  # declares no effect: refused
+    assert Policy().key_allowed("Enter", outlook(), ["Save"]) is None  # a writing task's Save As
+    if name == "Send":  # a subgoal that declares Send may press it, as it may click it
+        assert Policy().key_allowed("Enter", snap, ["Send"]) is None
+
+
+def test_reserved_mail_rows_are_never_offered_or_opened(tmp_path: Path) -> None:
+    scenario = tmp_path / "scenario.yaml"
+    scenario.write_text("messages: [Scenario evidence]\n", encoding="utf-8")
+    policy = Policy.load(scenario)
+    task = read_task()
+    from ludius.options import build_options, view
+
+    for name in ("Scenario evidence", "From Marcus Vellinga, Subject Scenario evidence, Received Wed 28/10"):
+        row = el(1, "data item", name)
+        sg = task.subgoal("open_message")
+        opts = build_options(view(outlook(row), task, sg, policy), task, sg, policy)
+        assert not [o for o in opts if o.element is not None], name  # no click, double-click or typing on it
+        for flag in ("focused", "selected"):
+            snap = outlook(el(1, "data item", name, **{flag: True}))
+            assert policy.key_allowed("Enter", snap) == "scenario-reserved path"
+            assert policy.key_allowed("Space", snap) == "scenario-reserved path"
+
+
+def test_launch_query_goes_into_the_start_search_only(tmp_path: Path) -> None:
+    from ludius.options import Option, build_options, launch_target, view
+
+    task = read_task()
+    sg = task.subgoal("open_outlook")
+    draft = outlook(el(1, "edit", "Subject", focused=True), title="Untitled - Message (HTML)")
+    opts = build_options(view(draft, task, sg, Policy()), task, sg, Policy())
+    assert not [o for o in opts if o.kind == "type"]  # neither into the draft's Subject nor at its focus
+    for o in (Option("o1", "type", "", element=draft.elements[0], content="launch_query"),
+              Option("o2", "type", "", content="launch_query")):  # fmt: skip
+        assert "Start search box only" in str(post_check(draft, task, "open_outlook", o, tmp_path))
+    start = outlook(el(1, "edit", "Search box", focused=True), process="SearchApp.exe", title="Search")
+    assert launch_target(start.elements[0], start)
+    assert [o.kind for o in build_options(view(start, task, sg, Policy()), task, sg, Policy())].count("type") == 2
+    raw = template().model_dump(exclude={"processes"})
+    with pytest.raises(ValueError, match="mail.read"):
+        bad = {**raw, "subgoals": {**raw["subgoals"], "close_outlook": {"goal": "x", "copy_text": True}}}
+        Template.model_validate(bad)

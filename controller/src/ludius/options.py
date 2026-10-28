@@ -8,7 +8,15 @@ from typing import Any
 
 from ludius.jev import MAX_OPTIONS
 from ludius.policy import SHELL_PROCESSES, Policy, alt_f4_safe
-from ludius.tasks import Subgoal, Task, element_matches, pixels_region, pixels_window
+from ludius.tasks import (
+    LAUNCH_TEXT,
+    Subgoal,
+    Task,
+    declared_commits,
+    element_matches,
+    pixels_region,
+    pixels_window,
+)
 from ludius.v1 import observation_pb2 as obs
 
 CLICKABLE = {
@@ -21,6 +29,7 @@ BASE_KEYS = ["Enter", "Esc", "Tab", "Shift+Tab", "Up", "Down", "Left", "Right", 
 MAX_ELEMENT_LINES = 120
 COPY_SOURCES = {"text", "hyperlink", "list item", "data item", "heading", "tree item"}
 MAX_COPY = 12
+LAUNCH_PROCESSES = {"searchapp.exe", "searchui.exe", "startmenuexperiencehost.exe"}  # Start search, not Explorer
 _ASCII = re.compile(r"^[\x20-\x7e]{3,200}$")  # the virtual keyboard types ASCII only
 
 
@@ -140,6 +149,16 @@ def search_target(e: obs.Element | None, snap: obs.Snapshot, task: Task) -> bool
     return w.kind == obs.Window.FOREGROUND and w.process_name.lower() in apps and not pixels_window(w)
 
 
+def launch_target(e: obs.Element | None, snap: obs.Snapshot) -> bool:
+    """Where the launch query (LAUNCH_TEXT) may go: the shell's Start search box, an enabled writable edit of the
+    Start/search process; never an app's field (a draft's Subject in front)."""
+    if e is None or e.role != "edit" or e.read_only or not e.enabled or e.password:
+        return False
+    if not 0 <= e.window < len(snap.windows) or pixels_window(w := snap.windows[e.window]):
+        return False
+    return w.process_name.lower() in LAUNCH_PROCESSES
+
+
 def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[Option]:
     opts: list[Option] = []
 
@@ -167,11 +186,14 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
             and e.enabled
             and policy.text_allowed(content, e) is None
             and (sg.text or search_target(e, v.snapshot, task))
+            and (sg.text != LAUNCH_TEXT or launch_target(e, v.snapshot))
         ):
             text = f"type the text to enter into [{e.id}] {e.role} '{e.name}'"
             add("type", text, element=e, content=sg.text or "", literal=literal)
     elements = len(opts)
-    if sg.text and content is not None and policy.text_allowed(content, None) is None:
+    focused = next((e for e in v.snapshot.elements if e.focused), None)
+    if (sg.text and content is not None and policy.text_allowed(content, None) is None
+            and (sg.text != LAUNCH_TEXT or launch_target(focused, v.snapshot))):  # fmt: skip
         # Where focus already is (Start search, a field without a usable tree).
         add("type", "type the text to enter at the keyboard focus", content=sg.text or "", literal=literal)
     focus = next((e for e in v.allowed if e.focused and e.role in EDITABLE and not e.read_only), None)
@@ -189,7 +211,7 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
     for k in [*BASE_KEYS, *sg.keys]:
         if (k == "Win" and not sg.launch) or (k == "Alt+F4" and not alt_f4_safe(fg)):
             continue
-        if policy.key_allowed(k, v.snapshot):
+        if policy.key_allowed(k, v.snapshot, declared_commits(task, sg)):
             continue
         add("key", f"press {k}", keys=k)
     if any("list continues" in h for e in v.allowed for h in e.hints) or any(e.role == "document" for e in v.allowed):

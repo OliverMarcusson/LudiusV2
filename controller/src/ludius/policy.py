@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from ludius.tasks import Strict, pixels_window, profile
+from ludius.tasks import COMMITS, Strict, pixels_window, profile
 from ludius.v1 import observation_pb2 as obs
 
 # Actions noise must never take, whatever the task says (spec section 5).
@@ -30,7 +30,17 @@ SHELL_PROCESSES = {
 DESKTOP_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd"}
 # Shortcuts that open, rename or delete whatever is selected or focused; navigation and Esc are never in here.
 ACTIVATION_KEYS = {"enter", "space", "ctrl+o", "alt+enter", "ctrl+enter", "shift+enter", "f2", "delete", "shift+delete"}
+# Of those, the keys that press whatever control has the focus (a focused Send or Delete button sends or deletes).
+FOCUS_KEYS = {"enter", "space", "ctrl+enter", "shift+enter", "alt+enter"}
 EDITABLE_ROLES = {"edit", "document", "combo box"}
+
+
+def commits(e: obs.Element) -> bool:
+    """A control that commits or destroys something: a committing name (tasks.COMMITS) or the destructive hint."""
+    name = e.name.replace("&", "").strip()
+    return "destructive" in e.hints or any(re.fullmatch(c, name, re.I) for c in COMMITS)
+
+
 # A replace/overwrite confirmation (Windows' Confirm Save As, Office's "already exists ... replace it?"): its
 # confirming button or Enter would overwrite an existing file, wherever Save As was navigated to. While one is on
 # screen only these may be clicked, only Esc pressed, and the runner abandons the task (loop.Runner._subgoal).
@@ -142,19 +152,25 @@ class Policy:
         )
 
     def reserved_element(self, e: obs.Element) -> bool:
-        return any(re.fullmatch(p, e.name.strip(), re.I) for p in self.reserved_names) or self.reserved(e.value)
+        """A reserved leaf name (whole name), or a reserved path, mailbox or scenario mail subject anywhere in its
+        name or value: a mail list row is named "From ..., Subject ..., Received ...", and opening it reads it."""
+        name = e.name.strip()
+        return (any(re.fullmatch(p, name, re.I) for p in self.reserved_names) or self.reserved(e.value)
+                or self.reserved(name) or any(re.search(p, name, re.I) for p in self.reserved_subjects))  # fmt: skip
 
-    def key_allowed(self, keys: str, snap: obs.Snapshot) -> str | None:
+    def key_allowed(self, keys: str, snap: obs.Snapshot, declared: list[str] | None = None) -> str | None:
         """Keyboard activation acts on the selection or focus, which click filtering never sees.
 
         Refused while a visible reserved element is selected or focused in the window that receives keys (a modal
         dialog, else the foreground window and any open menu), unless a non-reserved text field has the focus.
-        Pixels rows carry no selection or focus, so nothing is claimed about screens read from pixels.
+        A key that presses the focus (FOCUS_KEYS) is refused on a focused committing or destructive control
+        (commits) unless its name matches `declared` (tasks.declared_commits, the clicks' allowlist), and with the
+        focus unknown (none reported, or read from pixels) unless the subgoal declares such an effect at all.
         Any key but Esc is refused while an overwrite confirmation is on screen.
         """
         if overwrite_prompt(snap) and keys.lower() != "esc":
             return OVERWRITE_REASON
-        if not (self.reserved_paths or self.reserved_names) or keys.lower() not in ACTIVATION_KEYS:
+        if keys.lower() not in ACTIVATION_KEYS:
             return None
         owned = any(w.kind == obs.Window.OWNED for w in snap.windows)
         live = {
@@ -162,10 +178,17 @@ class Policy:
             if w.kind == obs.Window.POPUP or w.kind == (obs.Window.OWNED if owned else obs.Window.FOREGROUND)
         }  # fmt: skip
         here = [e for e in snap.elements if e.window in live and e.bounds.width > 0 and e.bounds.height > 0]
-        if any(e.focused and e.role in EDITABLE_ROLES and not self.reserved_element(e) for e in here):
-            return None
-        if any((e.selected or e.focused) and self.reserved_element(e) for e in here):
+        typing = any(e.focused and e.role in EDITABLE_ROLES and not self.reserved_element(e) for e in here)
+        if not typing and any((e.selected or e.focused) and self.reserved_element(e) for e in here):
             return "scenario-reserved path"
+        if keys.lower() in FOCUS_KEYS:
+            declared = declared or []
+            focus = next((e for e in here if e.focused), None)
+            if focus is None and not declared:
+                return "the focus is unknown and the task declares no committing effect"
+            name = focus.name.replace("&", "").strip() if focus else ""
+            if focus is not None and commits(focus) and not any(re.fullmatch(p, name, re.I) for p in declared):
+                return f"the focused {focus.role} {name!r} commits or destroys, not declared"
         return None
 
     def element_allowed(
