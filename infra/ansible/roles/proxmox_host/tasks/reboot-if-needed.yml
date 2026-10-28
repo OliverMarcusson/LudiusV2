@@ -1,0 +1,34 @@
+---
+# Reboot when the running kernel is not the newest installed Proxmox kernel. Over SSH: reboot and wait. Over a local
+# connection the reboot module can't come back, so stop with instructions; the rerun re-detects, so nothing is skipped.
+- name: Running and newest Proxmox kernel
+  ansible.builtin.shell: |
+    set -o pipefail
+    newest=$(find /boot -maxdepth 1 -name 'vmlinuz-*-pve' -printf '%f\n' | sed 's/^vmlinuz-//' | sort -V | tail -1)
+    echo "$(uname -r) ${newest:-none}"
+  args:
+    executable: /bin/bash
+  register: kernels
+  changed_when: false
+
+- name: Kernel state
+  ansible.builtin.set_fact:
+    reboot_needed: "{{ (kernels.stdout.split()[1] != 'none') and (kernels.stdout.split()[0] != kernels.stdout.split()[1]) }}"
+
+- name: Reboot needed on a local connection
+  ansible.builtin.fail:
+    msg: >-
+      running kernel {{ kernels.stdout.split()[0] }}, newest Proxmox kernel {{ kernels.stdout.split()[1] }}: reboot
+      the box (systemctl reboot), then rerun this playbook; it continues from here
+  when: reboot_needed | bool and ansible_connection | default('ssh') == 'local'
+
+- name: Reboot into the newest Proxmox kernel
+  ansible.builtin.reboot:
+    reboot_timeout: 900
+  when: reboot_needed | bool
+
+- name: Running the newest Proxmox kernel after the reboot
+  ansible.builtin.command: uname -r
+  register: running
+  changed_when: false
+  failed_when: reboot_needed | bool and running.stdout != kernels.stdout.split()[1]

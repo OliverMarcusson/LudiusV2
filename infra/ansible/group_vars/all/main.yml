@@ -3,8 +3,8 @@
 
 # --- golden image (golden.yml, applied by Packer) ---
 hypervisor: proxmox # proxmox | hyperv; Packer passes the source name
-build_admin_user: rangeadmin # local admin made by the answer file; survives sysprep, so clones have it too
-build_admin_password: "{{ vault_build_admin_password }}" # same value as Packer's PKR_VAR_admin_password
+# The build admin (Packer's admin_user) is disabled with a random password at the end of the build: clones never use it.
+inactivity_lock_seconds: 900 # machine inactivity limit (base role): the range keeps a realistic lock (spec section 5)
 windows_updates: true # bake updates into the image (base role)
 office_product_id: ProPlus2024Volume
 office_channel: PerpetualVL2024
@@ -16,7 +16,9 @@ temurin_msi_sha256: 503f1c8ce75378b1dfe89485abdbc2cb1588600937cff87e8a63d70ca587
 observer_dir: C:\Program Files\RangeAssist
 observer_exe: "{{ playbook_dir }}/../../out/observer/uiprobe.exe" # signed, uiAccess build (infra/packer/observer-artifacts.ps1)
 observer_ca_cert: "{{ playbook_dir }}/../../secrets/range-root-ca.cer" # the code-signing root, public part only
-observer_args: "" # transport flags, if the vsock observer build needs any
+observer_vsock_family: "" # set if the viosock provider's address family is not 40 (netsh winsock show catalog)
+# Proxmox: the guest channel is vsock; Hyper-V keeps the observer's default (Hyper-V sockets).
+observer_args: "{{ ('--transport vsock' ~ ((' --vsock-family ' ~ observer_vsock_family) if observer_vsock_family else '')) if hypervisor == 'proxmox' else '' }}"
 viosock_install_wsp: true # register viosock's Winsock provider (AF_VSOCK for user-mode sockets)
 
 # --- range (range-up.yml, run on the Proxmox node) ---
@@ -29,11 +31,18 @@ storage: local-lvm # lvmthin: linked clones need thin storage
 template_vmid: 9000 # Packer's vm_id for the golden template
 srv01_vmid: 110
 srv01_ip: "{{ range_net }}.11"
-persona_vmid_base: 120 # persona i (0-based) is VM 121+i, range address .21+i, vsock CID = its VM id
+range_pool: ludius # the host agent's Proxmox:Pool; every VM the playbooks touch must be in it
+srv01_build_mac: "BC:24:11:4C:55:01" # srv01's temporary uplink NIC (provisioning only)
 persona_cores: 4
 persona_memory_mb: 6144
-# Persona accounts: one per controller/data/personas/<user>.yaml; every one must also be a person in the narrative.
-personas: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/../../controller/data/personas/*.yaml') | map('basename') | map('splitext') | map('first') | sort }}"
+display_args: -global VGA.xres=1920 -global VGA.yres=1080 # fixed 1920x1080 with vga std (spec section 4)
+# Persona -> VM id (also its vsock CID) and range address: range_personas in range-vms.yml, never a list position.
+personas: "{{ range_personas | map(attribute='user') | list }}"
+persona_files: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/../../controller/data/personas/*.yaml') | map('basename') | map('splitext') | map('first') | list }}"
+range_admin_user: ludiusbringup # per-range local admin made at a clone's first boot by the guest agent; disabled after bring-up
+range_admin_password: "{{ vault_range_admin_password }}"
+bringup_teardown: true # after bring-up: bring-up account disabled, WinRM stopped and disabled on every clone
+observer_check_cmd: uv run --project {{ playbook_dir }}/../../controller ludius # channel check through the host agent
 narrative_file: "{{ playbook_dir }}/../../runs/world/narrative.yaml" # the planner's company narrative
 people: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).people }}" # name, user: AD users, mailboxes
 range_tls_ca: "{{ playbook_dir }}/build/range-ca.crt" # srv01's grommunio CA, fetched by the srv01 role

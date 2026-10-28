@@ -1,0 +1,90 @@
+---
+# srv01's temporary uplink: a second NIC on the NAT build bridge (fixed MAC), DHCP by a networkd unit matched on that
+# MAC. present: attach and wait for a default route. absent: drop the unit, detach the NIC, then prove it: VM config
+# has only net0 on the range bridge, and the guest has no default route and no IPv4 route off the range subnet.
+- name: Attach the uplink NIC
+  when: uplink == 'present'
+  ansible.builtin.command: qm set {{ srv01_vmid }} --net1 virtio={{ srv01_build_mac }},bridge={{ build_bridge }}
+  delegate_to: localhost
+  become: false
+  changed_when: true
+
+- name: DHCP on the uplink NIC
+  ansible.builtin.copy:
+    dest: /etc/systemd/network/10-ludius-uplink.network
+    content: |
+      [Match]
+      MACAddress={{ srv01_build_mac | lower }}
+
+      [Network]
+      DHCP=ipv4
+    mode: "0644"
+  when: uplink == 'present'
+
+- name: No uplink unit
+  ansible.builtin.file:
+    path: /etc/systemd/network/10-ludius-uplink.network
+    state: absent
+  when: uplink == 'absent'
+
+- name: Reload networkd
+  ansible.builtin.command: networkctl reload
+  changed_when: true
+
+- name: Uplink interface and default route
+  when: uplink == 'present'
+  ansible.builtin.shell: |
+    set -eo pipefail
+    ip -o link | awk -v m="{{ srv01_build_mac | lower }}" 'tolower($0) ~ m {sub(":", "", $2); print $2; exit}'
+    ip -4 route show default | grep -q .
+  args:
+    executable: /bin/bash
+  register: uplink_if
+  retries: 30
+  delay: 5
+  until: uplink_if.rc == 0
+  changed_when: false
+
+- name: Uplink interface for the role (Samba's DNS forwarder)
+  when: uplink == 'present'
+  ansible.builtin.set_fact:
+    srv01_uplink_if: "{{ uplink_if.stdout_lines[0] }}"
+
+- name: Detach the uplink NIC
+  when: uplink == 'absent'
+  ansible.builtin.command: qm set {{ srv01_vmid }} --delete net1
+  delegate_to: localhost
+  become: false
+  register: detach
+  changed_when: detach.rc == 0
+  failed_when: false # absent already; the config check below decides
+
+- name: Srv01 effective NICs
+  when: uplink == 'absent'
+  ansible.builtin.command: pvesh get /nodes/{{ pve_node }}/qemu/{{ srv01_vmid }}/config --current 1 --output-format json
+  delegate_to: localhost
+  become: false
+  register: nics
+  changed_when: false
+
+- name: Only the range NIC is attached
+  when: uplink == 'absent'
+  ansible.builtin.assert:
+    that:
+      - (nics.stdout | from_json).keys() | select('match', '^net[0-9]+$') | list == ['net0']
+      - (nics.stdout | from_json).net0 is search('bridge=' ~ range_bridge ~ '(,|$)')
+    fail_msg: srv01 still has a NIC off the range bridge; detach it (qm set {{ srv01_vmid }} --delete net1)
+
+- name: No default route and no route off the range
+  when: uplink == 'absent'
+  ansible.builtin.shell: |
+    set -o pipefail
+    test -z "$(ip -4 route show default)" && test -z "$(ip -6 route show default)" &&
+      test -z "$(ip -4 route show | grep -v '^{{ range_net | regex_escape }}\.0/24 ')"
+  args:
+    executable: /bin/bash
+  register: routes
+  retries: 12
+  delay: 5
+  until: routes.rc == 0
+  changed_when: false

@@ -1,0 +1,8 @@
+$ErrorActionPreference = 'Stop'
+# After bring-up (run as SYSTEM by the guest agent): the bring-up admin can't log on and WinRM no longer listens.
+# The disabled account and the stopped service stay visible to a trainee (forensic footprint; known infrastructure).
+Disable-LocalUser '{{ range_admin_user }}'
+Stop-Service WinRM -Force
+Set-Service WinRM -StartupType Disabled
+Get-NetFirewallRule -DisplayGroup 'Windows Remote Management' -ErrorAction SilentlyContinue | Disable-NetFirewallRule
+exit 0

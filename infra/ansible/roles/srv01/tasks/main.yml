@@ -4,7 +4,42 @@
 # range time here first; one AD user per narrative person; grommunio (MAPI/HTTP + Autodiscover) with gromox's LDA on
 # IPv6 loopback only and no Postfix, plus an outbound SMTP drop: mail never leaves corp.ludius.test.
 # Expects srv01_ip on the range NIC, people (narrative: user, name) and personas (log-in mailboxes), validated by
-# range-up.yml before any VM is touched.
+# range-up.yml before any VM is touched, and srv01_uplink_if (the temporary uplink, attached by range-up.yml).
+# The guest's hostname is srv01 whatever the VM is called (ludius-srv01): the domain is provisioned under it.
+- name: Domain state
+  ansible.builtin.stat:
+    path: /var/lib/samba/private/sam.ldb
+  register: samdb
+
+- name: Current hostname
+  ansible.builtin.command: hostname
+  register: current_hostname
+  changed_when: false
+
+- name: A provisioned domain was provisioned as srv01
+  ansible.builtin.assert:
+    that: not samdb.stat.exists or current_hostname.stdout == 'srv01'
+    fail_msg: >-
+      the domain on this server was provisioned under hostname {{ current_hostname.stdout }}, not srv01; renaming a
+      Samba DC is not automated: rebuild srv01 (new VM) instead
+
+- name: Hostname srv01
+  ansible.builtin.hostname:
+    name: srv01
+    use: systemd
+
+- name: Hostname resolves to the range address, not loopback
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\S+\s+srv01\.'
+    line: "{{ srv01_ip }} srv01.{{ domain }} srv01"
+
+- name: No loopback alias for the hostname
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s'
+    state: absent
+
 - name: Kerberos default realm preseeded
   ansible.builtin.debconf:
     name: krb5-config
@@ -21,7 +56,7 @@
 - name: Upstream resolver for Samba's forwarder (the uplink's DNS)
   ansible.builtin.shell: |
     set -o pipefail
-    resolvectl dns {{ ansible_default_ipv4.interface }} | awk '{print $NF; exit}'
+    resolvectl dns {{ srv01_uplink_if }} | awk '{print $NF; exit}'
   args:
     executable: /bin/bash
   register: upstream
