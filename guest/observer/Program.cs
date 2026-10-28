@@ -6,7 +6,8 @@ using Ludius.Observer;
 using Ludius.V1;
 
 // Read-only UIA observer for one interactive session. Started at logon by a
-// scheduled task; serves one host connection at a time over a Hyper-V socket.
+// scheduled task; serves one host connection at a time over a Hyper-V socket, or
+// vsock with `--transport vsock` (Proxmox, virtio-win viosock driver).
 // Writes nothing to disk. `--once` prints one settled snapshot as JSON (dev only).
 #if WATCHDOG_TEST
 const string Version = "0.1.0-watchdogtest"; // the hooks in Observe exist only in this build
@@ -68,8 +69,7 @@ if (args.Contains("--once"))
     return 0;
 }
 
-using var listener = new Socket(HyperVEndPoint.Family, SocketType.Stream, HyperVEndPoint.RawProtocol);
-listener.Bind(new HyperVEndPoint(Guid.Empty, service)); // HV_GUID_WILDCARD
+using var listener = Listen();
 listener.Listen(1);
 while (true)
 {
@@ -99,6 +99,7 @@ void Serve(Socket conn)
             switch (req.BodyCase)
             {
                 case ObserverRequest.BodyOneofCase.Snapshot: res.Snapshot = Observe(req.Snapshot); break;
+                case ObserverRequest.BodyOneofCase.ReadFile: res.File = GuestFiles.Read(req.ReadFile, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)); break;
                 case ObserverRequest.BodyOneofCase.Ping:
                     res.Hello = new Hello { Version = Version, User = Environment.UserName, UiAccess = uiAccess, PixelSettle = settle.PixelSettle };
                     break;
@@ -130,6 +131,23 @@ Snapshot Observe(SnapshotRequest r)
     snap.Settled = settled;
     snap.SettleMs = ms;
     return snap;
+}
+
+// Hyper-V socket on the observer's service id, or vsock on the port that id encodes (its first field, as in
+// Hyper-V's VSOCK template 0000xxxx-facb-11e6-bd58-64006a7986d3), from any CID: only the host can connect.
+Socket Listen()
+{
+    if (Arg("--transport") is null or "hyperv")
+    {
+        var hv = new Socket(HyperVEndPoint.Family, SocketType.Stream, HyperVEndPoint.RawProtocol);
+        hv.Bind(new HyperVEndPoint(Guid.Empty, service)); // HV_GUID_WILDCARD
+        return hv;
+    }
+    if (Arg("--transport") != "vsock") throw new ArgumentException("--transport is hyperv or vsock");
+    var family = (System.Net.Sockets.AddressFamily)int.Parse(Arg("--vsock-family") ?? "40");
+    var vs = new Socket(family, SocketType.Stream, ProtocolType.Unspecified);
+    vs.Bind(new VsockEndPoint(family, VsockEndPoint.AnyCid, BitConverter.ToUInt32(service.ToByteArray(), 0)));
+    return vs;
 }
 
 // Frames: u32 little-endian length, then the protobuf message.
