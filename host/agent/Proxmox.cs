@@ -26,16 +26,26 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     readonly Dictionary<string, Vm> vms = [];
 
     // Under the vms lock: per VMID, the clock value of its last invalidation (delete, clone), and the VMIDs a clone is
-    // still configuring. A lookup records the clock before it resolves and caches its handle only if its VMID was not
+    // still configuring (a count per VMID: each clone removes only its own mark). A lookup records the clock before it resolves and caches its handle only if its VMID was not
     // invalidated since and is not being configured: a lookup that raced a delete or clone never caches a stale handle.
     long clock;
     readonly Dictionary<int, long> invalidated = [];
-    readonly HashSet<int> configuring = [];
+    readonly Dictionary<int, int> configuring = [];
 
-    bool ChangedSince(int id, long seen) => configuring.Contains(id) || invalidated.GetValueOrDefault(id) > seen;
+    bool ChangedSince(int id, long seen) => configuring.ContainsKey(id) || invalidated.GetValueOrDefault(id) > seen;
 
     static IOException Raced(string name, int id) =>
         new($"{name} (VM {id}) was deleted, cloned or reconfigured during the lookup: try again");
+
+    // A VM's vsock CID is its VMID. A clone starts with its source's CID until Clone sets its own; a handle on a VM
+    // with another VM's CID would read that VM's observer, so it is refused (whatever left it so: a failed or
+    // cancelled clone, a hand edit). No CID at all is allowed: the channel then fails at connect.
+    static uint? OwnCid(string name, int id, JsonNode? cfg)
+    {
+        var cid = Cid(cfg?["args"]?.GetValue<string>());
+        return cid is null || cid == (uint)id ? cid
+            : throw new IOException($"{name} (VM {id}) has vsock CID {cid}, not its VMID: refused until its CID is set");
+    }
 
     // Tests replace the vsock connect and the clock.
     public Func<uint, CancellationToken, Task<Socket>> ConnectGuest = (cid, ct) => Vsock.Connect(cid, options.VsockPort, ct);
@@ -69,7 +79,6 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         }
         var id = Find(name, CancellationToken.None).GetAwaiter().GetResult().Id;
         var cfg = Wait(api.Call("get", $"/nodes/{node}/qemu/{id}/config", null, CancellationToken.None));
-        var cid = Cid(cfg?["args"]?.GetValue<string>());
         var vm = new Vm
         {
             Name = name,
@@ -77,12 +86,13 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
             Identity = IdentityOf(cfg),
             CheckedAt = Now(),
             Qmp = new Qmp(Path.Combine(options.RunDir, $"{id}.qmp")),
-            Channel = new GuestChannel(ct => cid is { } c ? ConnectGuest(c, ct)
+            Channel = new GuestChannel(ct => OwnCid(name, id, cfg) is { } c ? ConnectGuest(c, ct)
                 : throw new IOException($"{name} has no vsock device (args: -device vhost-vsock-pci,guest-cid=N)")),
         };
         lock (vms)
         {
             if (ChangedSince(id, seen)) { vm.Channel.Dispose(); throw Raced(name, id); }
+            try { OwnCid(name, id, cfg); } catch { vm.Channel.Dispose(); throw; }
             if (vms.TryGetValue(name, out var raced)) { vm.Channel.Dispose(); return raced; }
             return vms[name] = vm;
         }
@@ -102,6 +112,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
             var cfg = Wait(api.Call("get", $"/nodes/{node}/qemu/{vm.Id}/config", null, CancellationToken.None));
             if (IdentityOf(cfg) != vm.Identity)
                 throw new UnauthorizedAccessException($"VM {vm.Id} named {vm.Name} is a different VM than before (VMID reused)");
+            OwnCid(vm.Name, vm.Id, cfg);
             vm.CheckedAt = Now();
         }
         catch
@@ -350,8 +361,9 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         if (checkpoint != "") args["snapname"] = checkpoint;
         // Until its own vsock CID is set the clone carries its source's: no handle on it is cached or handed out (a
         // lookup refuses), and the VMID is invalidated again once configured, so a lookup that ran meanwhile is refused.
+        // If setting the CID fails or is cancelled, the clone keeps its source's CID and every lookup refuses it (OwnCid).
         var id = int.Parse(newId);
-        lock (vms) configuring.Add(id);
+        lock (vms) configuring[id] = configuring.GetValueOrDefault(id) + 1;
         try
         {
             Invalidate(id); // a handle left on a deleted VM with this VMID
@@ -360,12 +372,14 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
             var cfg = await api.Call("get", $"/nodes/{node}/qemu/{newId}/config", null, ct);
             await api.Call("set", $"/nodes/{node}/qemu/{newId}/config",
                 new Dictionary<string, string> { ["args"] = WithCid(cfg?["args"]?.GetValue<string>(), (uint)id) }, ct);
+            if (Cid((await api.Call("get", $"/nodes/{node}/qemu/{newId}/config", null, ct))?["args"]?.GetValue<string>()) != (uint)id)
+                throw new IOException($"{target} (VM {id}) did not take its vsock CID: refused until it is set");
         }
         finally
         {
             lock (vms)
             {
-                configuring.Remove(id);
+                if (--configuring[id] == 0) configuring.Remove(id);
                 Invalidate(id);
                 Forget(target);
             }

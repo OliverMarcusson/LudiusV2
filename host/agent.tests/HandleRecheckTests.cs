@@ -103,7 +103,7 @@ public class HandleRecheckTests
         readonly TaskCompletionSource reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
         readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         int used;
-        public Task Reached => reached.Task;
+        public Task Reached => reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
         public void Release() => release.TrySetResult();
 
         public async Task Gate(string m, string p)
@@ -196,6 +196,87 @@ public class HandleRecheckTests
         var reads = ConfigReads(pve, 104);
         px.Get("ludius-win10-02");
         Assert.Equal(reads + 1, ConfigReads(pve, 104)); // resolved afresh, with the clone's own CID
+    }
+
+    // A clone created, then setting its CID fails or is cancelled: it keeps its source's CID and stays refused for good,
+    // not only while the clone runs. Its observer channel would reach the source's guest.
+    [Theory]
+    [InlineData("fails")]
+    [InlineData("cancelled")]
+    public async Task A_clone_left_with_its_source_cid_is_refused(string how)
+    {
+        var (px, pve, qmp, clock) = Make();
+        using var _q = qmp;
+        using var cts = new CancellationTokenSource();
+        pve.Gate = (m, p) =>
+        {
+            if (m == "create" && p == "/nodes/pve1/qemu/9000/clone") lock (pve.Calls) pve.Vms.Add(Clone104());
+            if (m != "set") return Task.CompletedTask;
+            if (how == "fails") throw new IOException("pvesh: 500 config locked");
+            cts.Cancel();
+            throw new OperationCanceledException(cts.Token);
+        };
+        pve.Args[104] = pve.Args[9000];
+        await Assert.ThrowsAnyAsync<Exception>(() => px.Lifecycle("ludius-golden", Op.Clone, "", "ludius-win10-02", cts.Token));
+        pve.Gate = null;
+
+        var connects = 0;
+        px.ConnectGuest = (c, ct) => { connects++; throw new IOException("no guest in this test"); };
+        foreach (var _ in new[] { 1, 2 })
+        {
+            var e = Assert.Throws<IOException>(() => px.Get("ludius-win10-02"));
+            Assert.Contains("vsock CID 9000, not its VMID", e.Message);
+            clock.Now += TimeSpan.FromSeconds(6);
+        }
+        Assert.Equal(0, connects);
+
+        pve.Args[104] = "-device vhost-vsock-pci,guest-cid=104"; // fixed by hand: usable again
+        Assert.Equal(104, px.Get("ludius-win10-02").Id);
+    }
+
+    [Fact]
+    public async Task A_clone_whose_cid_did_not_take_reports_failure()
+    {
+        var (px, pve, qmp, _) = Make();
+        using var _q = qmp;
+        pve.Gate = (m, p) =>
+        {
+            if (m == "create" && p == "/nodes/pve1/qemu/9000/clone") lock (pve.Calls) pve.Vms.Add(Clone104());
+            return Task.CompletedTask;
+        };
+        pve.Args[104] = pve.Args[9000];
+        pve.IgnoreSet = true; // the CID write is accepted but does not take
+        var e = await Assert.ThrowsAsync<IOException>(() => px.Lifecycle("ludius-golden", Op.Clone, "", "ludius-win10-02", CancellationToken.None));
+        Assert.Contains("did not take its vsock CID", e.Message);
+        Assert.Throws<IOException>(() => px.Get("ludius-win10-02"));
+    }
+
+    // Two clones picked VMID 104 at once (Proxmox lets only one create it): the one that fails must not clear the mark
+    // of the one still configuring.
+    [Fact]
+    public async Task One_clone_does_not_clear_another_clones_mark()
+    {
+        var (px, pve, qmp, _) = Make();
+        using var _q = qmp;
+        var readBack = new Hold("get", "/nodes/pve1/qemu/104/config");
+        var sets = 0;
+        pve.Gate = async (m, p) =>
+        {
+            if (m == "create" && p == "/nodes/pve1/qemu/9000/clone") lock (pve.Calls) pve.Vms.Add(Clone104());
+            if (m == "create" && p == "/nodes/pve1/qemu/101/clone") throw new IOException("pvesh: VM 104 already exists");
+            if (m == "set") Interlocked.Increment(ref sets);
+            if (Volatile.Read(ref sets) == 1) await readBack.Gate(m, p); // the first clone, its CID set, reading it back
+        };
+        pve.Args[104] = pve.Args[9000];
+        var first = px.Lifecycle("ludius-golden", Op.Clone, "", "ludius-win10-02", CancellationToken.None);
+        await readBack.Reached;
+        await Assert.ThrowsAsync<IOException>(() => px.Lifecycle("ludius-win10-01", Op.Clone, "clean", "ludius-win10-03", CancellationToken.None));
+
+        var e = Assert.Throws<IOException>(() => px.Get("ludius-win10-02")); // its own CID already, but still marked
+        Assert.Contains("during the lookup", e.Message);
+        readBack.Release();
+        await first;
+        Assert.Equal(104, px.Get("ludius-win10-02").Id);
     }
 
     [Fact]
