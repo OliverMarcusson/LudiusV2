@@ -537,7 +537,7 @@ async def _range_schedules(args: argparse.Namespace, users: list[str], today: dt
     if not args.today:
         return
     world, src = planner.World(RUNS), plan_sources()
-    llm = functools.partial(LlmClient, os.environ.get("OPENROUTER_API_KEY", ""), model=PLANNER_MODEL)
+    llm = functools.partial(LlmClient, os.environ.get("OPENROUTER_API_KEY", ""), model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))
     for u in users:
         persona = next(p for p in src.personas if p.user == u)
         calls.persona = u
@@ -854,7 +854,7 @@ def main(argv: list[str] | None = None) -> int:
     pl.add_argument("--persona", help="persona YAML (day plans)")
     pl.add_argument("--date", help="YYYY-MM-DD (default today)")
     pl.add_argument("--scenario", help="scenario window for look-alike work, e.g. 2026-10-28T13:00-14:00:powershell")
-    pl.add_argument("--model", default=PLANNER_MODEL)
+    pl.add_argument("--model", default=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))
     pl.set_defaults(fn=cmd_plan)
 
     d = sub.add_parser("day", help="play a day plan on its logical timeline")
@@ -891,7 +891,7 @@ def main(argv: list[str] | None = None) -> int:
 
     pw = sub.add_parser("plan-worker", help="explicit Temporal nightly planning worker (host only, LLM calls)")
     pw.add_argument("--temporal", required=True, metavar="HOST:PORT")
-    pw.add_argument("--model", default=PLANNER_MODEL)
+    pw.add_argument("--model", default=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))
     pw.set_defaults(fn=cmd_plan_worker)
 
     rg = sub.add_parser("range", help="multi-persona run: start and supervise every persona's worker, or summarize")
