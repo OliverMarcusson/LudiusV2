@@ -174,7 +174,50 @@ export function usePolled<T>(url: string, parse: (data: unknown) => T, intervalM
   return state
 }
 
+// One line per persona from the controller's summariser (runs/monitor-summaries.json), keyed by VM name.
+// ok/pending/stale: what the persona is doing (stale: the last request failed, the text is older); paused: the
+// summaries' daily cap is spent; idle/unknown: no task running, or the record can't tell.
+export type SummaryState = "ok" | "pending" | "stale" | "paused" | "idle" | "unknown"
+
+export interface Summary {
+  state: SummaryState
+  text: string
+  at: Date | null // when the text was written
+  model: string | null // the model that wrote it (the routed one, for a router)
+}
+
+export interface Summaries {
+  updated: Date | null // the summariser's last pass; null when it never ran
+  byVm: Record<string, Summary>
+}
+
+const MODEL = /^[A-Za-z0-9_.:+/-]{1,96}$/
+const SUMMARY_STATES: readonly string[] = ["ok", "pending", "stale", "paused", "idle", "unknown"]
+
+const date = (v: unknown) => {
+  const d = typeof v === "string" ? new Date(v) : null
+  return d && !Number.isNaN(d.getTime()) ? d : null
+}
+
+export function parseSummaries(data: unknown): Summaries {
+  const r = record(data, "summary data")
+  const byVm: Record<string, Summary> = {}
+  for (const v of Object.values(record(r.personas ?? {}, "summary data"))) {
+    const p = record(v, "summary data")
+    if (typeof p.vm !== "string" || typeof p.state !== "string" || !SUMMARY_STATES.includes(p.state)) continue
+    if (typeof p.text !== "string") continue
+    byVm[p.vm] = {
+      state: p.state as SummaryState,
+      text: p.text.slice(0, 240),
+      at: date(p.at),
+      model: typeof p.model === "string" && MODEL.test(p.model) ? p.model : null,
+    }
+  }
+  return { updated: date(r.updated), byVm }
+}
+
 export const useCalls = () => usePolled("/api/calls", parseCalls)
+export const useSummaries = () => usePolled("/api/summaries", parseSummaries, 5000)
 export const useAdmission = () => usePolled("/api/admission", parseAdmission)
 
 export interface Stream {

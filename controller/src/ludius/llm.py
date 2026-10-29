@@ -63,16 +63,22 @@ class LlmClient:
             "usage": {"include": True},
         }
         calls.count("llm")
+        data = self.post(body)
+        try:
+            return str(data["choices"][0]["message"]["content"])
+        except (KeyError, IndexError, TypeError) as e:
+            raise LlmError(f"unexpected response: {str(data)[:300]}") from e
+
+    def post(self, body: dict[str, Any]) -> dict[str, Any]:
+        """One chat completion as sent, counted nowhere (callers count it: calls.count, or a budget of their own);
+        the whole response, its cost added to self.cost."""
         r = self._http.post(ENDPOINT, json=body)
         if r.status_code != 200:
             raise LlmError(f"OpenRouter {r.status_code}: {r.text[:300]}")
         data: dict[str, Any] = r.json()
         usage: dict[str, Any] = data.get("usage") or {}
         self.cost += float(usage.get("cost") or 0)
-        try:
-            return str(data["choices"][0]["message"]["content"])
-        except (KeyError, IndexError, TypeError) as e:
-            raise LlmError(f"unexpected response: {str(data)[:300]}") from e
+        return data
 
     def close(self) -> None:
         self._http.close()

@@ -140,6 +140,26 @@ static class Monitor
             catch (DirectoryNotFoundException) { return Results.Json(new { decision = 0, llm = 0 }); }
         });
 
+        // Per-persona activity lines the controller's summariser writes (`ludius range summaries`), beside the counters
+        // by default. Served as written once it parses as a JSON object; the page shows its text as text only.
+        var summaries = Path.GetFullPath(app.Configuration["Monitor:Summaries"]
+            ?? Path.Combine(Path.GetDirectoryName(calls)!, "monitor-summaries.json"), app.Environment.ContentRootPath);
+        api.MapGet("/summaries", () =>
+        {
+            try
+            {
+                using var f = new FileStream(summaries, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                return System.Text.Json.Nodes.JsonNode.Parse(new StreamReader(f).ReadToEnd()) is System.Text.Json.Nodes.JsonObject o
+                    ? Results.Text(o.ToJsonString(), "application/json")
+                    : Results.Problem("summaries file is not a JSON object", statusCode: 502);
+            }
+            catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
+            {
+                return Results.Json(new { updated = (string?)null, personas = new { } });
+            }
+            catch (JsonException) { return Results.Problem("summaries file is not JSON", statusCode: 502); }
+        });
+
         var admission = Path.GetFullPath(app.Configuration["Monitor:Admission"] ?? "../../runs/admission", app.Environment.ContentRootPath);
         api.MapGet("/admission", () => Results.Json(Admission(admission, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
 

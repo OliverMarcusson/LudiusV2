@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { STALE_MS, age, frameWidth, useStream, type Vm } from "@/lib/feeds"
+import { STALE_MS, age, frameWidth, useStream, type Summary, type Vm } from "@/lib/feeds"
 
 type Health = "live" | "stale" | "lost" | "idle"
 
@@ -33,12 +33,16 @@ export function Feed({
   paused,
   maxWidth,
   large = false,
+  summary,
+  summaryNote = null,
 }: {
   vm: Vm
   now: number
   paused: boolean
   maxWidth: number
   large?: boolean
+  summary?: Summary
+  summaryNote?: string | null // why the line may be out of date: summariser stopped, agent not answering
 }) {
   const box = useRef<HTMLDivElement>(null)
   const [cssWidth, setCssWidth] = useState(0)
@@ -171,7 +175,35 @@ export function Feed({
           </span>
         </span>
       </figcaption>
+      <Activity summary={summary} note={summaryNote} large={large} />
     </figure>
+  )
+}
+
+const hhmm = (d: Date) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+
+// What the persona is doing, in one line from the controller's summariser. Only "ok" text reads as current;
+// anything older or uncertain says so in the line itself.
+function Activity({ summary, note, large }: { summary?: Summary; note: string | null; large: boolean }) {
+  const s = summary
+  const marker =
+    note ??
+    (s?.state === "stale"
+      ? "stale: last update failed"
+      : s?.state === "pending"
+        ? "from the log, summary pending"
+        : null)
+  return (
+    <p
+      className={cn("text-muted-foreground", large ? "text-sm" : "text-xs")}
+      title={s?.model ? `Written by ${s.model}${s.at ? ` at ${s.at.toLocaleString()}` : ""}` : undefined}
+    >
+      <span className={cn(s?.state === "ok" && !note && "text-foreground", s?.state === "paused" && "text-stale")}>
+        {s ? s.text : "no activity summary"}
+      </span>
+      {s?.at && s.state !== "idle" && s.state !== "unknown" && <span className="tabular-nums"> · {hhmm(s.at)}</span>}
+      {marker && <span className="text-stale"> · {marker}</span>}
+    </p>
   )
 }
 

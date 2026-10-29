@@ -4,7 +4,17 @@ import { ArrowLeft, Pause, Play } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Feed } from "@/components/feed"
-import { type Admission, type Calls, type Polled, useAdmission, useCalls, useNow, useVms } from "@/lib/feeds"
+import {
+  type Admission,
+  type Calls,
+  type Polled,
+  type Summaries,
+  useAdmission,
+  useCalls,
+  useNow,
+  useSummaries,
+  useVms,
+} from "@/lib/feeds"
 import { cn } from "@/lib/utils"
 
 const COLUMNS = ["1", "2", "3", "4"] as const
@@ -147,11 +157,25 @@ function AdmissionProgress({ state, now }: { state: Polled<Admission>; now: numb
   )
 }
 
+const SUMMARIES_QUIET_MS = 60_000 // the summariser writes every 5 s; a minute without means it stopped
+
+// Why every activity line may be out of date, or null when the summaries are current.
+function summaryNote(state: Polled<Summaries>, now: number): string | null {
+  if (state.status === "unavailable") return "summaries unavailable"
+  if (state.status === "stale") return "agent not answering"
+  const updated = state.data?.updated
+  if (state.status === "ok" && !updated) return "summariser not running"
+  if (updated && now - updated.getTime() > SUMMARIES_QUIET_MS) return `summariser stopped ${ago(now - updated.getTime())} ago`
+  return null
+}
+
 export default function App() {
   const { vms, error, loaded } = useVms()
   const now = useNow()
   const calls = useCalls()
   const admission = useAdmission()
+  const summaries = useSummaries()
+  const note = summaryNote(summaries, now)
   const [paused, setPaused] = useState(false)
   const [columns, setColumns] = useState(() => localStorage.getItem("monitor.columns") ?? "3")
   const [focused, setFocused] = useFocused()
@@ -227,7 +251,15 @@ export default function App() {
           </div>
           {focusVm ? (
             <div className="mx-auto w-full max-w-[min(100%,calc((100svh-12rem)*16/9))]">
-              <Feed vm={focusVm} now={now} paused={paused} maxWidth={1280} large />
+              <Feed
+                vm={focusVm}
+                now={now}
+                paused={paused}
+                maxWidth={1280}
+                large
+                summary={summaries.data?.byVm[focusVm.name]}
+                summaryNote={note}
+              />
             </div>
           ) : (
             loaded && <p className="text-sm text-muted-foreground">VM {focused} is not running or is unavailable.</p>
@@ -246,7 +278,14 @@ export default function App() {
                   aria-label={`Open ${vm.name}`}
                   className="group block rounded-lg outline-offset-4 focus-visible:outline-2 focus-visible:outline-ring"
                 >
-                  <Feed vm={vm} now={now} paused={paused} maxWidth={960} />
+                  <Feed
+                    vm={vm}
+                    now={now}
+                    paused={paused}
+                    maxWidth={960}
+                    summary={summaries.data?.byVm[vm.name]}
+                    summaryNote={note}
+                  />
                 </a>
               </li>
             ))}

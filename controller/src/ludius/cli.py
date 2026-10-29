@@ -494,6 +494,8 @@ def cmd_range(args: argparse.Namespace) -> int:
     today = dt.datetime.now(ZoneInfo(args.timezone)).date()
     if args.what == "unwarp":
         return _range_unwarp()
+    if args.what == "summaries":
+        return _range_summaries(users)
     if args.what == "status":
         print(rangerun.summary(planner.World(RUNS), users, today, RUNS / "range", dict(os.environ)))
         return 0
@@ -519,6 +521,29 @@ def cmd_range(args: argparse.Namespace) -> int:
         pass
     finally:
         sup.stop()
+    return 0
+
+
+def _range_summaries(users: list[str]) -> int:
+    """The monitor's activity lines (ludius.summaries), every 5 s until stopped; its own budget, not the run's."""
+    import signal
+
+    from ludius import summaries
+
+    def term(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, term)
+    llm = LlmClient(os.environ.get("OPENROUTER_API_KEY", ""), model=summaries.MODEL, timeout=90)
+    s = summaries.Summariser(users, planner.World(RUNS).root / "days", llm)
+    try:
+        while True:
+            s.step()
+            time.sleep(5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        llm.close()
     return 0
 
 
@@ -1072,8 +1097,9 @@ def main(argv: list[str] | None = None) -> int:
     rg = sub.add_parser("range", help="multi-persona run: start and supervise every persona's worker, or summarize")
     rg.add_argument(
         "what",
-        choices=["up", "status", "warp", "unwarp"],
-        help="warp: time-jump test over --days simulated weekdays (Proxmox); unwarp: clocks to real time",
+        choices=["up", "status", "warp", "unwarp", "summaries"],
+        help="warp: time-jump test over --days simulated weekdays (Proxmox); unwarp: clocks to real time; "
+        "summaries: keep the monitor's per-persona activity lines current (ludius.summaries)",
     )
     rg.add_argument("--start", help="warp: first simulated date YYYY-MM-DD (after today)")
     rg.add_argument("--days", type=int, default=3, help="warp: simulated weekdays to play")
