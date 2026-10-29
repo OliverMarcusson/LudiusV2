@@ -48,9 +48,13 @@ def qm_exec(vmid: int, script: str) -> str:
 
 
 # Epoch milliseconds in and out: no agreement on time zones needed. The guest prints its UTC after setting. The time
-# PowerShell took to start (seconds on a busy persona) is added, so a member lands on the DC's instant.
-_SET = ("Set-Date ([DateTimeOffset]::FromUnixTimeMilliseconds({ms}).LocalDateTime + ((Get-Date) - "
-        "[Diagnostics.Process]::GetCurrentProcess().StartTime)) | Out-Null; ")  # fmt: skip
+# PowerShell took to start (seconds on a busy persona) is added, so a member lands on the DC's instant. It is measured
+# on the guest's wall clock, so a set from an earlier call still running in the guest (qm gave up waiting, the guest
+# process did not) can make it days long or negative: outside 0-30 s it counts as 0 (live: a reset landed a VM 4.3
+# days in the past).
+_SET = ("$e = (Get-Date) - [Diagnostics.Process]::GetCurrentProcess().StartTime; "
+        "if ($e.TotalSeconds -lt 0 -or $e.TotalSeconds -gt 30) {{ $e = [TimeSpan]::Zero }}; "
+        "Set-Date ([DateTimeOffset]::FromUnixTimeMilliseconds({ms}).LocalDateTime + $e) | Out-Null; ")  # fmt: skip
 _NOW = "[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()"
 
 
