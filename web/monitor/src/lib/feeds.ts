@@ -194,6 +194,37 @@ const HEALTH: readonly string[] = ["ok", "warn", "fail"]
 export interface Summaries {
   updated: Date | null // the summariser's last pass; null when it never ran
   byVm: Record<string, Summary>
+  interactions: Interaction[] // the newest verified persona-to-persona effects, oldest first
+}
+
+// A verified effect between two range personas (ludius.interactions): never from a plan.
+export interface Interaction {
+  id: string
+  from: string // persona user names
+  to: string
+  kind: "mail" | "reply" | "invite" | "request" | "request_done"
+  label: string
+  logical: string | null
+}
+
+const KINDS: readonly string[] = ["mail", "reply", "invite", "request", "request_done"]
+
+function parseInteractions(v: unknown): Interaction[] {
+  if (!Array.isArray(v)) return []
+  return v.flatMap((x) => {
+    const i = (x ?? {}) as Record<string, unknown>
+    const p = i.personas
+    if (typeof i.id !== "string" || !Array.isArray(p) || typeof p[0] !== "string" || typeof p[1] !== "string") return []
+    if (typeof i.kind !== "string" || !KINDS.includes(i.kind)) return []
+    return [{
+      id: i.id,
+      from: p[0],
+      to: p[1],
+      kind: i.kind as Interaction["kind"],
+      label: typeof i.label === "string" ? i.label.slice(0, 120) : "",
+      logical: typeof i.logical === "string" ? i.logical : null,
+    }]
+  })
 }
 
 const MODEL = /^[A-Za-z0-9_.:+/-]{1,96}$/
@@ -220,7 +251,7 @@ export function parseSummaries(data: unknown): Summaries {
       reason: typeof p.reason === "string" ? p.reason.slice(0, 240) : "",
     }
   }
-  return { updated: date(r.updated), byVm }
+  return { updated: date(r.updated), byVm, interactions: parseInteractions(r.interactions) }
 }
 
 export const useCalls = () => usePolled("/api/calls", parseCalls)

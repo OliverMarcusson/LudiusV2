@@ -32,14 +32,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from ludius import calls, health
+from ludius import calls, health, interactions
 from ludius.llm import LlmClient
-from ludius.rangerun import vm_of
+from ludius.rangerun import personas, vm_of
 
 MODEL = os.environ.get("LUDIUS_SUMMARY_MODEL", "openrouter/auto-beta")
 OUT = calls.PATH.parent / "monitor-summaries.json"
 COUNTER = calls.PATH.parent / "summary-calls.json"
-ALERTS = calls.PATH.parent / "monitor-alerts.jsonl"
 MIN_GAP_S = 120.0
 QUIET_MS = 10 * 60_000  # a running task that logs nothing this long: the worker may be gone, so "unknown"
 TAIL = 512 << 10  # bytes read from the end of a day log
@@ -280,13 +279,21 @@ class Summariser:
     cap: int = field(default_factory=lambda: int(os.environ.get("LUDIUS_SUMMARY_CAP", "2000")))
     out: Path = OUT
     counter: Path = COUNTER
-    alerts: Path = ALERTS
+    alerts: Path | None = None  # runs/monitor-alerts.jsonl, default beside `out`
+    tracker: interactions.Tracker | None = None  # runs/monitor-interactions.jsonl beside `out`; all range personas
     supervisor: Path | None = None  # runs/range/supervisor.jsonl, default beside days/
     rules: health.Rules = field(default_factory=health.Rules)
     lines: dict[str, Line] = field(default_factory=dict[str, Line])
     verdicts: dict[str, health.Verdict] = field(default_factory=dict[str, health.Verdict])
     _seeded: bool = False
+
     _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def __post_init__(self) -> None:
+        self.alerts = self.alerts or self.out.parent / "monitor-alerts.jsonl"
+        self.tracker = self.tracker or interactions.Tracker(
+            self.days, personas(), self.out.parent / "monitor-interactions.jsonl"
+        )
 
     def step(self, mono: float | None = None) -> None:
         mono = time.monotonic() if mono is None else mono
@@ -328,11 +335,15 @@ class Summariser:
                         act.brief, _iso(now), None)  # fmt: skip
                     line.key, line.task = (old.key if old and same else ""), act.task
                 self.lines[u] = line
+        assert self.tracker is not None
+        for i in self.tracker.step():
+            print(json.dumps({"interaction": asdict(i)}), flush=True)
         self.write(now, today)
 
     def check(self, user: str, now: dt.datetime, now_ms: int) -> None:
         """The persona's health by rule; a change into or out of warn/fail is one journal line and one alert."""
         if not self._seeded:  # a restart carries on from the last alerts, so it neither repeats nor loses one
+            assert self.alerts is not None
             self.verdicts = seed(self.alerts, self.users) | self.verdicts
             self._seeded = True
         supervisor = self.supervisor or self.days.parent / "range" / "supervisor.jsonl"
@@ -360,6 +371,7 @@ class Summariser:
         alert = {"persona": user, "health": v.health, "reason": v.reason or "recovered", "rules": list(v.rules),
                  "host": _iso(now), "logical": v.logical}  # fmt: skip
         print(json.dumps({"alert": alert}), flush=True)
+        assert self.alerts is not None
         self.alerts.parent.mkdir(parents=True, exist_ok=True)
         with self.alerts.open("a", encoding="utf-8") as f:
             f.write(json.dumps(alert) + "\n")
@@ -395,6 +407,7 @@ class Summariser:
             "cap": self.cap,
             "used": (counter(self.counter, today) or {}).get("calls"),
             "paused": any(line.state == "paused" for line in self.lines.values()),
+            "interactions": [asdict(i) for i in self.tracker.recent] if self.tracker else [],
             "personas": {
                 u: {
                     "vm": vm_of(u),

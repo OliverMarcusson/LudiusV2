@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react"
 import { ArrowLeft, Pause, Play } from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import { Toaster } from "@/components/ui/sonner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Feed } from "@/components/feed"
 import {
   type Admission,
   type Calls,
+  type Interaction,
   type Polled,
   type Summaries,
   useAdmission,
@@ -157,6 +160,40 @@ function AdmissionProgress({ state, now }: { state: Polled<Admission>; now: numb
   )
 }
 
+const HIGHLIGHT_MS = 10_000
+const KIND_LABEL: Record<Interaction["kind"], string> = {
+  mail: "mailed",
+  reply: "replied to",
+  invite: "invited",
+  request: "asked",
+  request_done: "delivered a request for",
+}
+
+// Interactions that appear after the page loaded: a toast each, and both personas' tiles highlighted for a while.
+// The first answer only sets the baseline, so a reload doesn't replay old ones.
+function useInteractionAlerts(list: Interaction[] | undefined, now: number): Set<string> {
+  const [seen, setSeen] = useState<Set<string> | null>(null)
+  const [lit, setLit] = useState<Record<string, number>>({})
+  useEffect(() => {
+    if (!list) return
+    if (seen === null) return setSeen(new Set(list.map((i) => i.id)))
+    const fresh = list.filter((i) => !seen.has(i.id))
+    if (!fresh.length) return
+    setSeen(new Set([...seen, ...fresh.map((i) => i.id)]))
+    const until = Date.now() + HIGHLIGHT_MS
+    setLit((l) => ({ ...l, ...Object.fromEntries(fresh.flatMap((i) => [[vmOf(i.from), until], [vmOf(i.to), until]])) }))
+    for (const i of fresh) {
+      toast(`${i.from} ${KIND_LABEL[i.kind]} ${i.to}`, {
+        description: [i.label, i.logical && `at ${i.logical.replace("T", " ")}`].filter(Boolean).join(" · "),
+        duration: HIGHLIGHT_MS,
+      })
+    }
+  }, [list, seen])
+  return new Set(Object.keys(lit).filter((vm) => lit[vm] > now))
+}
+
+const vmOf = (user: string) => `ludius-${user}` // rangerun.vm_of
+
 const SUMMARIES_QUIET_MS = 60_000 // the summariser writes every 5 s; a minute without means it stopped
 
 // Why every activity line may be out of date, or null when the summaries are current.
@@ -176,6 +213,7 @@ export default function App() {
   const admission = useAdmission()
   const summaries = useSummaries()
   const note = summaryNote(summaries, now)
+  const lit = useInteractionAlerts(summaries.data?.interactions, now)
   const [paused, setPaused] = useState(false)
   const [columns, setColumns] = useState(() => localStorage.getItem("monitor.columns") ?? "3")
   const [focused, setFocused] = useFocused()
@@ -276,7 +314,10 @@ export default function App() {
                 <a
                   href={`#/vm/${encodeURIComponent(vm.name)}`}
                   aria-label={`Open ${vm.name}`}
-                  className="group block rounded-lg outline-offset-4 focus-visible:outline-2 focus-visible:outline-ring"
+                  className={cn(
+                    "group block rounded-lg outline-offset-4 focus-visible:outline-2 focus-visible:outline-ring",
+                    lit.has(vm.name) && "outline-2 outline-live",
+                  )}
                 >
                   <Feed
                     vm={vm}
@@ -292,6 +333,7 @@ export default function App() {
           </ul>
         </main>
       )}
+      <Toaster position="bottom-right" />
     </div>
   )
 }
