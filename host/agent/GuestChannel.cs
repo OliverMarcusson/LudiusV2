@@ -11,7 +11,7 @@ sealed class GuestChannel(Func<CancellationToken, Task<Socket>> connect) : IDisp
 {
     readonly SemaphoreSlim gate = new(1, 1);
     Socket? socket;
-    NetworkStream? stream;
+    SocketStream? stream;
     ulong nextId;
 
     public Hello? Hello { get; private set; }
@@ -55,7 +55,7 @@ sealed class GuestChannel(Func<CancellationToken, Task<Socket>> connect) : IDisp
         var s = await connect(cts.Token);
         try
         {
-            var ns = new NetworkStream(s, ownsSocket: true);
+            var ns = new SocketStream(s);
             var hello = ObserverResponse.Parser.ParseFrom(await ReadFrame(ns, cts.Token));
             Hello = hello.Hello ?? throw new IOException("observer did not say hello");
             socket = s;
@@ -81,6 +81,29 @@ sealed class GuestChannel(Func<CancellationToken, Task<Socket>> connect) : IDisp
         BinaryPrimitives.WriteUInt32LittleEndian(frame, (uint)body.Length);
         body.CopyTo(frame, 4);
         await s.WriteAsync(frame, ct);
+    }
+
+    // NetworkStream refuses a socket whose Connected is false, which is every vsock socket adopted from a libc fd
+    // (.NET can't read back an AF_VSOCK peer address); Receive and Send work on it, so the channel uses them directly.
+    sealed class SocketStream(Socket s) : Stream
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) => s.ReceiveAsync(buffer, SocketFlags.None, ct);
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
+        {
+            while (!buffer.IsEmpty) buffer = buffer[await s.SendAsync(buffer, SocketFlags.None, ct)..];
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => s.Receive(buffer, offset, count, SocketFlags.None);
+        public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+        public override void Flush() { }
+        public override bool CanRead => true;
+        public override bool CanWrite => true;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
 
     static async Task<byte[]> ReadFrame(Stream s, CancellationToken ct)
