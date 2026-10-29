@@ -48,7 +48,7 @@ async def _reservation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: 
     resets: list[str] = []  # the one mocked seam
     fail_reset = False
 
-    def mocked_reset(at: dt.datetime | None, *, vm: str | None = None) -> None:
+    def mocked_reset(at: dt.datetime | None, *, vm: str | None = None, agent: str | None = None) -> None:
         assert at is None and vm == VM, "only an explicit reset may ever run"
         resets.append("mocked reset")
         if fail_reset:
