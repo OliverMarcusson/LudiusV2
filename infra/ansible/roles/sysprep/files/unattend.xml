@@ -7,7 +7,8 @@
       <ComputerName>*</ComputerName>
       <TimeZone>W. Europe Standard Time</TimeZone>
     </component>
-    <!-- The image build's WinRM settings (Basic over unencrypted HTTP) back off, before WinRM can start. -->
+    <!-- The image build's WinRM settings (Basic over unencrypted HTTP) back off, before WinRM can start; the build's
+         one-shot sysprep task goes. -->
     <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
       <RunSynchronous>
         <RunSynchronousCommand wcm:action="add">
@@ -17,6 +18,10 @@
         <RunSynchronousCommand wcm:action="add">
           <Order>2</Order>
           <Path>reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Service /v auth_basic /t REG_DWORD /d 0 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>schtasks /delete /tn ludius-sysprep /f</Path>
         </RunSynchronousCommand>
       </RunSynchronous>
     </component>

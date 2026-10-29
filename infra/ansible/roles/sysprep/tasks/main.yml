@@ -1,6 +1,6 @@
 ---
 # sysprep, last: stage the clones' answer file and take the build's own access back out of the image. Packer's
-# last provisioner then runs sysprep /generalize /oobe /quit with this file (spec: run by Packer).
+# last provisioner then runs sysprep /generalize /oobe /shutdown with this file (spec: run by Packer).
 - name: Clones' answer file
   ansible.windows.win_copy:
     src: unattend.xml

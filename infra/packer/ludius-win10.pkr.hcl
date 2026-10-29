@@ -350,20 +350,20 @@ build {
     ]
   }
 
-  # Last (spec: sysprep run by Packer): generalize with the clones' answer file the sysprep role staged, and /quit;
-  # then the build admin gets a random password nobody knows and is disabled, so the image carries no usable build
-  # credential (clones get a per-range admin from range-up.yml). Proxmox's builder then shuts the VM down through its
-  # API and converts it to the template; on Hyper-V the guest shuts itself down (disable_shutdown above).
+  # Last (spec: sysprep run by Packer): the build admin gets a random password nobody knows and is disabled, so the
+  # image carries no usable build credential (clones get a per-range admin from range-up.yml); then sysprep
+  # generalizes with the clones' answer file the sysprep role staged and shuts the guest down. Sysprep runs as a
+  # SYSTEM scheduled task, not in this WinRM shell: generalize removes the NIC, WinRM then tears the shell down and
+  # took a child sysprep with it, half generalized (IMAGE_STATE_UNDEPLOYABLE). The answer file deletes the task on
+  # the clones' first boot. skip_clean: nothing may come back over WinRM after this script.
   provisioner "powershell" {
+    skip_clean = true
     # Windows PowerShell 5.1: RNGCryptoServiceProvider.GetBytes (RandomNumberGenerator.Fill is .NET Core only). Any
     # error, an all-zero buffer, or a read-back that isn't "disabled, password changed" exits non-zero: the build fails.
     inline = [
       "$ErrorActionPreference = 'Stop'",
       "try {",
       "  $s = 'C:\\Windows\\System32\\Sysprep'",
-      "  $a = '/generalize', '/oobe', '/quit', '/quiet', \"/unattend:$s\\ludius-unattend.xml\"",
-      "  $p = Start-Process \"$s\\sysprep.exe\" -ArgumentList $a -Wait -PassThru",
-      "  if ($p.ExitCode) { throw \"sysprep exit $($p.ExitCode); see $s\\Panther\\setupact.log\" }",
       "  $before = (Get-LocalUser '${var.admin_user}').PasswordLastSet",
       "  $b = New-Object byte[] 32",
       "  $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider",
@@ -374,9 +374,19 @@ build {
       "  $u = Get-LocalUser '${var.admin_user}'",
       "  if ($u.Enabled) { throw 'build admin is still enabled' }",
       "  if (-not ($u.PasswordLastSet -gt $before)) { throw \"build admin password not changed (last set $($u.PasswordLastSet))\" }",
+      "  $act = New-ScheduledTaskAction -Execute \"$s\\sysprep.exe\" -Argument \"/generalize /oobe /shutdown /quiet /unattend:$s\\ludius-unattend.xml\"",
+      "  $trg = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(30)",
+      "  Register-ScheduledTask ludius-sysprep -Action $act -Trigger $trg -User 'NT AUTHORITY\\SYSTEM' -RunLevel Highest -Force | Out-Null",
       "} catch { Write-Error $_ -ErrorAction Continue; exit 1 }",
-      "if ('${source.type}' -eq 'hyperv-iso') { shutdown /s /t 20 /d p:4:1 /c Packer }",
     ]
+  }
+
+  # Proxmox: wait for sysprep's shutdown (on the node, as the README runs Packer); a sysprep error leaves the guest up
+  # and fails the build here. The builder's own shutdown of the stopped VM is then a no-op before the conversion.
+  # Hyper-V waits for the guest's shutdown itself (disable_shutdown above).
+  provisioner "shell-local" {
+    only   = ["proxmox-clone.golden"]
+    inline = ["for i in $(seq 360); do qm status ${var.template_vmid} | grep -q stopped && exit 0; sleep 5; done; echo 'sysprep did not shut the VM down within 30 min' >&2; exit 1"]
   }
 
   # Hyper-V only: fixed 1920x1080 display in VM config (spec section 4), no automatic checkpoints, Guest Service
