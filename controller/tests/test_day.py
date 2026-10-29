@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
+from ludius import react
 from ludius.cli import load_templates
 from ludius.day import BreakUnlockFailed, DayRunner, slots
 from ludius.loop import GroundTruth, Outcome
 from ludius.planner import DayPlan, PlanItem
-from ludius.tasks import Task
+from ludius.policy import Policy
+from ludius.react import Post, Reactor
+from ludius.tasks import Persona, Task
 from ludius.v1 import observation_pb2 as obs
 
 
@@ -36,15 +42,17 @@ class Agent:
 class FakeRunner:
     def __init__(self, log: GroundTruth, calls: list[str]) -> None:
         self.log, self.calls, self.agent = log, calls, Agent(calls)
+        self.fail: set[str] = set()
 
     def observe(self) -> obs.Snapshot:
         return obs.Snapshot()
 
     def run(self, task: Task, between: Any = None) -> Outcome:
-        self.calls.append(f"run {task.inst.params['file_name']}")
+        name = task.inst.params.get("file_name", task.template.task)
+        self.calls.append(f"run {name}")
         if between:
             between()
-        return Outcome("done", 1)
+        return Outcome("failed" if name in self.fail else "done", 1)
 
 
 class FakeSession:
@@ -170,3 +178,65 @@ def test_denied_escalation_abandons_the_task_and_the_day_goes_on(tmp_path: Path)
     assert [r.status for r in day.run(plan)] == ["abandoned", "abandoned"]
     assert not [c for c in calls if c.startswith("run")]  # nothing acted on the unclean desktop
     assert (tmp_path / "day.jsonl").read_text(encoding="utf-8").count("escalation denied") == 2
+
+
+class ReactionLlm:
+    def __init__(self, items: list[dict[str, Any]]) -> None:
+        self.items, self.prompts, self.cost = items, list[str](), 0.0
+
+    def json(self, cls: type[Any], system: str, user: str, temperature: float = 0.9, attempts: int = 2) -> Any:
+        assert attempts == 1  # one call per reaction
+        self.prompts.append(user)
+        return cls.model_validate({"items": self.items})
+
+
+@pytest.mark.parametrize("fail", ["", "erp roles", "read"])
+def test_chat_notification_reads_then_reacts_outside_the_plan(tmp_path: Path, fail: str) -> None:
+    """New DMs before a slot: read them (confirmed on the server), then the reaction from their real text, in order,
+    stopping at the first failure; none of it is a plan result or an item_end."""
+    narrative = tmp_path / "narrative.yaml"
+    narrative.write_text(yaml.safe_dump({"people": [{"user": "aberg", "name": "Anna Berg"},
+                                                    {"user": "lnord", "name": "Lars Nord"}]}))  # fmt: skip
+    post = Post("p1", "lnord", "could you put the erp roles in a note and ping me")
+    polls = [[post], [] if fail != "read" else [post]]
+    llm = ReactionLlm([
+        {"template": "notepad_write_note", "params": {"file_name": "erp roles", "body": "finance needs ap and ar"}},
+        {"template": "chat_direct_message",
+         "params": {"to": "lnord@ludius.internal", "message": "done, see erp roles"}},
+    ])  # fmt: skip
+    calls: list[str] = []
+    log = GroundTruth(tmp_path / "day.jsonl")
+    runner = FakeRunner(log, calls)
+    runner.fail = {fail} - {"read"}
+    reactor = Reactor(Persona(name="Anna Berg", user="aberg"), load_templates(), Policy(), llm, narrative, log,  # type: ignore[arg-type]
+                      poll=lambda user: polls.pop(0) if polls else [])  # fmt: skip
+    day = DayRunner(runner, FakeSession(calls), load_templates(), log, "compressed", 0, reactor=reactor)  # type: ignore[arg-type]
+    results = day.slot(dt.date(2026, 11, 2), note("10:00"), [])
+    expected = {
+        "": ["run chat_read_messages", "run erp roles", "run chat_direct_message", "run note 1000"],
+        "erp roles": ["run chat_read_messages", "run erp roles", "run note 1000"],
+        "read": ["run chat_read_messages", "run note 1000"],
+    }[fail]
+    assert [c for c in calls if c.startswith("run")] == expected
+    assert (fail != "read") == any("could you put the erp roles in a note" in p for p in llm.prompts)
+    assert [r.item.at for r in results] == ["10:00"]
+    events = [json.loads(x) for x in (tmp_path / "day.jsonl").read_text().splitlines()]
+    assert [e["template"] for e in events if e["event"] == "item_end"] == ["notepad_write_note"]
+    # A recipient in content (it wins over params) must be the sender too: a DM to another colleague is refused.
+    llm.items = [{"template": "chat_direct_message", "params": {"message": "hi"},
+                  "content": {"to": "mvellinga@ludius.internal", "to_name": "Marcus Vellinga"}}]  # fmt: skip
+    people = {"aberg": "Anna Berg", "lnord": "Lars Nord", "mvellinga": "Marcus Vellinga"}
+    assert reactor.plan("lnord", people, [post], "10:05", "2026-11-02") == []
+    plan = [json.loads(x) for x in (tmp_path / "day.jsonl").read_text().splitlines()][-1]
+    assert plan["event"] == "reaction_plan"
+    assert plan["rejects"] == ["chat_direct_message: to must be lnord@ludius.internal"]
+    log.close()
+
+
+def test_unread_reads_mattermost_and_unreadable_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    out = b'[{"id": "p1", "sender": "lnord", "createat": 1, "message": "hi"}]\n'
+    monkeypatch.setattr(react, "_ssh", lambda remote, stdin: subprocess.CompletedProcess([], 0, out, b""))
+    assert react.unread("aberg") == [Post("p1", "lnord", "hi")]
+    monkeypatch.setattr(react, "_ssh", lambda remote, stdin: None)
+    assert react.unread("aberg") is None
+    assert react.unread("x; rm") is None

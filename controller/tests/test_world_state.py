@@ -79,7 +79,8 @@ def test_unknown_followup_id_is_rejected() -> None:
     assert plan.items == [] and "not an open follow-up" in rejects[0]
 
 
-def test_chat_request_becomes_followup_settled_by_the_work_not_the_read(tmp_path: Path) -> None:
+def test_chat_request_is_no_followup(tmp_path: Path) -> None:
+    """The colleague learns a chat request by reading it the same day (ludius.react), never from the sender's plan."""
     world = World(tmp_path)
     world.save_narrative(NARRATIVE)
     ask = PlanItem(at="09:00", template="chat_direct_message", handoff="lnord",
@@ -87,12 +88,4 @@ def test_chat_request_becomes_followup_settled_by_the_work_not_the_read(tmp_path
                            "message": "could you list the erp roles finance needs by friday"},
                    context="Asks Lars for the ERP roles.")  # fmt: skip
     _day(world, "aberg", MON, [ask], done=["09:00"])
-    [f] = world_state.due(world_state.build(world, NARRATIVE, [ANNA, LARS], TUE), "lnord", TUE)
-    assert "chat message 'could you list the erp roles finance needs by friday'" in f.about and not f.subject
-
-    read = {"at": "08:30", "template": "chat_read_messages", "followup": f.id,
-            "params": {"to": "aberg@ludius.internal", "to_name": "Anna Berg"}}  # fmt: skip
-    llm = ScriptedLlm({"items": [read]}, {"items": [read]})
-    plan, rejects = plan_day(llm, NARRATIVE, LARS, TUE, load_templates(), "", [],  # type: ignore[arg-type]
-                             followups={f.id: f.about})  # fmt: skip
-    assert plan.items == [] and "does not settle a follow-up" in rejects[0]
+    assert world_state.due(world_state.build(world, NARRATIVE, [ANNA, LARS], TUE), "lnord", TUE) == []

@@ -86,6 +86,7 @@ class GroundTruth:
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path
         self._f = path.open("a", encoding="utf-8")
 
     def write(self, **rec: Any) -> None:

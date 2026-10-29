@@ -14,12 +14,16 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ludius import keys
 from ludius.loop import Clock, GroundTruth, Outcome, Runner
 from ludius.planner import BREAK, DayPlan, PlanItem
 from ludius.session import EscalationDenied, Session
 from ludius.tasks import Task, Template
+
+if TYPE_CHECKING:
+    from ludius.react import Reactor
 
 
 def run_task(
@@ -89,6 +93,7 @@ class DayRunner:
         sleep: Callable[[float], None] = time.sleep,
         now: Callable[[], dt.datetime] = dt.datetime.now,
         set_clock: Callable[[dt.datetime | None], None] | None = None,  # None resets to host time
+        reactor: Reactor | None = None,  # same-day chat notifications (ludius.react)
     ) -> None:
         self.runner = runner
         self.session = session
@@ -100,6 +105,7 @@ class DayRunner:
         self.now = now
         self.set_clock = set_clock
         self.results: list[ItemResult] = []
+        self.reactor = reactor
 
     def run(self, plan: DayPlan) -> list[ItemResult]:
         day = dt.date.fromisoformat(plan.date)
@@ -133,6 +139,8 @@ class DayRunner:
         first = len(self.results)
         if item.template != BREAK:  # a break sets its own clock, at both ends
             self._jump(day, jump_at or item.at)
+            if self.reactor:  # new chat messages first, as a notification would have it
+                self.reactor.react(day.isoformat(), item.at, lambda it: self._reaction(day, it))
         self._item(item, day, interrupts)
         for late in interrupts:
             self._item(late, day, [])
@@ -158,6 +166,16 @@ class DayRunner:
 
         status = run_task(self.runner, self.session, task, between, hygiene=not nested).status
         self._ended(day, item, status)
+
+    def _reaction(self, day: dt.date, item: PlanItem) -> str:
+        """One reaction item: logged as reaction_*, never item_end, and not in the day's results (not a plan item)."""
+        logical = f"{day.isoformat()}T{item.at}"
+        self.log.write(event="reaction_start", host_ms=_now(), logical=logical, template=item.template,
+                       context=item.context, params=item.params)  # fmt: skip
+        status = run_task(self.runner, self.session, Task(self.templates[item.template], item, self.rng)).status
+        self.log.write(event="reaction_end", host_ms=_now(), logical=logical, template=item.template,
+                       params=item.params, status=status)  # fmt: skip
+        return status
 
     def _started(self, day: dt.date, item: PlanItem) -> None:
         self.log.write(event="item_start", host_ms=_now(), logical=f"{day.isoformat()}T{item.at}", at=item.at,

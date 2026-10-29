@@ -255,10 +255,10 @@ def plan_day(
         )
         + (
             f" Team chat: now and then one line of small talk ({chats['chat.post']} in Coffee Corner or Off-Topic, "
-            f"or {chats['chat.dm']} to a colleague, no handoff). To ask a colleague for something concrete the persona "
-            f"needs (a file, a figure, a lookup), {chats['chat.dm']} saying what and by when, with handoff their "
-            f"account. A follow-up that came as a chat message: first {chats['chat.read']} with its sender, then the "
-            "asked work with followup set; a short chat thanks or done-note to them may follow."
+            f"or {chats['chat.dm']} to a colleague). To ask a colleague for something concrete the persona needs (a "
+            f"note, a file, a mail with a figure), {chats['chat.dm']} saying what, no handoff: they see it in the "
+            f"chat and answer there the same day. Chat messages to this persona are answered as they come in, not "
+            f"planned; {chats['chat.read']} only to look up an older conversation."
             if colleagues and len(chats) == 3
             else ""
         )

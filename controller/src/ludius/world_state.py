@@ -10,8 +10,8 @@ counts) and written to runs/world/state.yaml as the readable record.
   until a plan item that names it (PlanItem.followup) is logged done; the planner must schedule open ones.
 - calendar: the narrative's dated events, per persona mentioned by name.
 
-A chat direct message handed off (chat.dm) is a request: its text is the follow-up, done by the colleague's item
-naming it. This is planning data; calendar and sharing UIs are not driven from it.
+A chat direct message is never a follow-up: the colleague learns it by reading it the same day (ludius.react), not
+from the sender's plan. This is planning data; calendar and sharing UIs are not driven from it.
 """
 
 from __future__ import annotations
@@ -106,15 +106,13 @@ def build(world: World, narrative: Narrative, personas: list[Persona], before: d
                     pass  # parameters the plan did not fill: no document recorded
             if it.followup:
                 finished.setdefault(it.followup, date)
-            if it.handoff:
+            t = templates.get(it.template)
+            if it.handoff and not (t and t.capability == "chat.dm"):
                 fid = f"{date}-{user}-{it.at.replace(':', '')}"
                 about = it.context or it.template
-                t = templates.get(it.template)
                 subject = it.params.get("subject", "") if t and t.capability == "mail.send" else ""
                 if subject:
                     about = f"mail {subject!r}: {about}"  # the subject a reply must use
-                elif t and t.capability == "chat.dm":
-                    about = f"chat message {it.params.get('message', '')!r}: {about}"  # what the colleague asked
                 state.messages.append(Message(id=fid, date=date, sender=user, to=it.handoff,
                                               subject=subject or about[:80],
                                               body=about + (f" See {doc}." if doc else "")))  # fmt: skip

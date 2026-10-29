@@ -37,6 +37,7 @@ from ludius.llm import DEFAULT_MODEL as PLANNER_MODEL
 from ludius.llm import LlmClient
 from ludius.loop import Clock, GroundTruth, Runner
 from ludius.policy import Policy
+from ludius.react import Reactor
 from ludius.reply import Composer
 from ludius.session import Session
 from ludius.tasks import Persona, Task, TaskInstance, Template, load_template, load_yaml
@@ -354,7 +355,8 @@ def build_day(
     if clock == "time-jump":
         require_hyperv_clock(agent.address, vm)
     pacing = "compressed" if clock == "time-jump" else clock
-    runner = Runner(agent, decider, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=make_policy(),
+    policy = make_policy()
+    runner = Runner(agent, decider, persona, log, clock=pacing, seed=seed, assist=make_assist(), policy=policy,
                     composer=make_composer())  # fmt: skip
     return DayRunner(
         runner,
@@ -364,6 +366,7 @@ def build_day(
         clock,
         seed,
         set_clock=functools.partial(set_clock, vm=vm, agent=agent.address),
+        reactor=make_reactor(persona, templates, policy, log),
     )
 
 
@@ -1033,6 +1036,18 @@ def make_composer() -> Composer | None:
         return None
     llm = LlmClient(key, model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))
     return Composer(llm, RUNS / "world" / "narrative.yaml")
+
+
+def make_reactor(persona: Persona, templates: dict[str, Template], policy: Policy, log: GroundTruth) -> Reactor | None:
+    """Same-day chat reactions (ludius.react): on when the planner LLM and chat01 (LUDIUS_CHAT_HOST) are configured."""
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not key or not os.environ.get("LUDIUS_CHAT_HOST"):
+        return None
+    from ludius import world_state
+
+    llm = LlmClient(key, model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))
+    return Reactor(persona, templates, policy, llm, RUNS / "world" / "narrative.yaml", log,
+                   existing=lambda: world_state.existing_files(planner.World(RUNS), persona.user))  # fmt: skip
 
 
 def make_session(agent: HostAgent, log: GroundTruth) -> Session:
