@@ -6,9 +6,9 @@ A deployment caps spend with LUDIUS_CAP_DECISION / LUDIUS_CAP_LLM: absolute ceil
 holds across every controller process and restart (set them to the current total plus the budget).
 
 Per persona (multi-persona runs, `ludius range`): a request made for a persona (`persona`, from LUDIUS_PERSONA in a
-persona's worker, set per activity by the plan worker) is also counted in runs/calls/<persona>.json per local day, and
-LUDIUS_CAP_PERSONA_DECISION / LUDIUS_CAP_PERSONA_LLM cap each persona's day, so one runaway persona stops itself, not
-the others, and starts again the next day.
+persona's worker; for_persona, per thread, in the plan worker) is also counted in runs/calls/<persona>.json per local
+day, and LUDIUS_CAP_PERSONA_DECISION / LUDIUS_CAP_PERSONA_LLM cap each persona's day, so one runaway persona stops
+itself, not the others, and starts again the next day.
 """
 
 from __future__ import annotations
@@ -16,12 +16,27 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import threading
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
 
 PATH = Path(__file__).resolve().parents[3] / "runs" / "openrouter-calls.json"
 persona: str | None = os.environ.get("LUDIUS_PERSONA") or None  # whose daily budget a request also counts against
+_local = threading.local()  # for_persona: the plan worker plans several personas at once, one per thread
+
+
+@contextmanager
+def for_persona(user: str) -> Generator[None]:
+    """Requests from this thread count against `user`'s budget (over `persona`) until the block ends."""
+    _local.persona = user
+    try:
+        yield
+    finally:
+        _local.persona = None
+
 
 Kind = Literal["decision", "llm"]
 
@@ -45,7 +60,7 @@ def count(kind: Kind) -> None:
     """Add one request of `kind`, called before sending it. Uncapped it never raises: a monitor counter must not
     break a run. Capped, it raises CapReached at the ceiling, and fails closed when the counter is unusable."""
     cap = os.environ.get(f"LUDIUS_CAP_{kind.upper()}")
-    who = persona
+    who = getattr(_local, "persona", None) or persona
     mine = os.environ.get(f"LUDIUS_CAP_PERSONA_{kind.upper()}") if who else None
     try:
         PATH.parent.mkdir(parents=True, exist_ok=True)

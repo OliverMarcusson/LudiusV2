@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import datetime as dt
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,7 +16,7 @@ from temporalio.common import SearchAttributeKey, SearchAttributePair, TypedSear
 from temporalio.exceptions import ApplicationError
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
-from ludius import cli, durable, nightly
+from ludius import calls, cli, durable, nightly
 from ludius.planner import DayPlan, Narrative, Person, World
 
 DAY = dt.date(2026, 10, 28)
@@ -109,6 +110,34 @@ ITEMS = [{**ITEM, "params": {"search_query": QUERIES[0]}},
 PLAN = DayPlan.model_validate({"persona": "aberg", "date": DAY.isoformat(), "items": ITEMS})
 
 
+def test_personas_plan_in_parallel_and_each_pays_for_its_own_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world, _, src = _setup(tmp_path)
+    monkeypatch.setattr(calls, "PATH", tmp_path / "openrouter-calls.json")
+    both = threading.Barrier(2, timeout=10)  # broken unless both planner calls are in flight at once
+
+    class Parallel(ScriptedLlm):
+        def json(self, cls: type[Any], system: str, user: str, temperature: float = 0.9) -> Any:
+            calls.count("llm")
+            both.wait()
+            return super().json(cls, system, user, temperature)
+
+    acts = nightly.PlanActivities(tmp_path, lambda: src, lambda: Parallel({"items": ITEMS}))  # type: ignore[arg-type, return-value]
+    at = dt.datetime(2026, 10, 27, 21, 0, tzinfo=dt.UTC)  # plans DAY
+    out: dict[str, nightly.Planned] = {}
+    threads = [threading.Thread(target=lambda u=p.user: out.update({u: acts.plan(nightly.PlanFire(
+        persona=u, tz="Europe/Stockholm", occurrence=at))})) for p in src.personas
+        if p.user in ("aberg", "lnord")]  # fmt: skip
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(15)
+    assert {u: o.generated for u, o in out.items()} == {"aberg": True, "lnord": True}
+    assert all(calls.persona_day(u, dt.datetime.now().date())["llm"] == 1 for u in out)
+    assert calls.persona is None
+
+
 def test_crash_after_publish_before_history_append_is_repaired_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -195,6 +224,7 @@ def test_activity_rejects_unknown_persona_and_waits_on_a_busy_planner(tmp_path: 
         with pytest.raises(ApplicationError) as e:
             acts.plan(nightly.PlanFire(persona=persona, tz="Europe/Stockholm", occurrence=at))
         assert e.value.non_retryable
+    acts = nightly.PlanActivities(tmp_path, cli.plan_sources, ScriptedLlm)  # made, never asked: the shared steps wait
     with durable.desk_lock(tmp_path / "locks" / "nightly.lock"), pytest.raises(RuntimeError, match="retrying"):
         acts.plan(nightly.PlanFire(persona="aberg", tz="Europe/Stockholm", occurrence=at))
     assert activity._Definition.must_from_callable(acts.plan).name == "nightly_plan"  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]

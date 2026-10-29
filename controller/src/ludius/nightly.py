@@ -15,9 +15,10 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import re
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
+from contextlib import AbstractContextManager, closing, contextmanager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from zoneinfo import ZoneInfo
@@ -64,6 +65,7 @@ NIGHTLY_PLAN = "NightlyPlan"
 TASK_QUEUE = "ludius-plan"  # host-side: no desktop, so one queue serves every persona's planning schedule
 CATCHUP = dt.timedelta(hours=8)  # a late night fire still plans the right day (from its occurrence) before morning
 TIMEOUT = dt.timedelta(minutes=30)  # weekly revision plus up to two planner calls
+PARALLEL = 8  # plans at once: one per range persona; the shared steps of each still run one at a time
 
 
 class NightlyInput(BaseModel):
@@ -146,29 +148,33 @@ def generate_day(
     src: Sources,
     date: dt.date,
     scenario: planner.Scenario | None = None,
+    shared: AbstractContextManager[object] | None = None,
 ) -> Generated:
     """`ludius plan day`: due weekly revision first (raises RevisionBusy), world state, the manager's requests (sent
     server-side, ludius.requests), then the validated plan with the persona's new requests mapped into it."""
-    auto = revision.revise_if_due(llm, world, src.personas, date)
-    state = world_state.build(world, auto.narrative, src.personas, date)
-    world_state.save(state, world)
-    summary = world.summary(persona.user, date)
-    people = {p.user: p.name for p in auto.narrative.people if p.user}
-    notes: list[str] = []
-    mapped: list[planner.PlanItem] = []
-    boss = requests.manager_of(auto.narrative, persona.user, src.personas)
-    if isinstance(boss, str):
-        notes.append(f"requests: {boss}")
-    else:
-        reports = [p.user for p in src.personas if p.user == persona.user or requests.manager_of(
-            auto.narrative, p.user, src.personas) == boss]  # fmt: skip
-        day = requests.ensure(
-            llm, world, auto.narrative, {u: world_state.brief(state, u, date) for u in reports}, src.personas,
-            src.templates, src.policy, date, boss, {u: src.inbox(u) for u in reports},
-            {u: world_state.existing_files(world, u) for u in reports},
-        )  # fmt: skip
-        notes += [f"requests by {boss.user}: {r}" for r in day.rejects]
-        notes += [f"requests by {boss.user}: {r.status} to {r.to} {r.subject!r}" for r in day.requests]
+    # Shared across personas (narrative revision, world state, the manager's requests, which send mail): one
+    # planner at a time. The rest reads only this persona's files and runs in parallel with the others.
+    with shared or nullcontext():
+        auto = revision.revise_if_due(llm, world, src.personas, date)
+        state = world_state.build(world, auto.narrative, src.personas, date)
+        world_state.save(state, world)
+        summary = world.summary(persona.user, date)
+        people = {p.user: p.name for p in auto.narrative.people if p.user}
+        notes: list[str] = []
+        mapped: list[planner.PlanItem] = []
+        boss = requests.manager_of(auto.narrative, persona.user, src.personas)
+        if isinstance(boss, str):
+            notes.append(f"requests: {boss}")
+        else:
+            reports = [p.user for p in src.personas if p.user == persona.user or requests.manager_of(
+                auto.narrative, p.user, src.personas) == boss]  # fmt: skip
+            day = requests.ensure(
+                llm, world, auto.narrative, {u: world_state.brief(state, u, date) for u in reports}, src.personas,
+                src.templates, src.policy, date, boss, {u: src.inbox(u) for u in reports},
+                {u: world_state.existing_files(world, u) for u in reports},
+            )  # fmt: skip
+            notes += [f"requests by {boss.user}: {r}" for r in day.rejects]
+            notes += [f"requests by {boss.user}: {r.status} to {r.to} {r.subject!r}" for r in day.requests]
     inbox_mails = src.inbox(persona.user)
     if not isinstance(boss, str) and src.decider is not None:
         decider = src.decider()
@@ -267,7 +273,14 @@ def check_existing(world: World, persona: Persona, date: dt.date, src: Sources) 
     return plan
 
 
-def ensure_day(llm: Callable[[], LlmClient], world: World, persona: Persona, src: Sources, date: dt.date) -> Planned:
+def ensure_day(
+    llm: Callable[[], LlmClient],
+    world: World,
+    persona: Persona,
+    src: Sources,
+    date: dt.date,
+    shared: AbstractContextManager[object] | None = None,
+) -> Planned:
     """Keep a valid existing plan (no model call, history repaired), refuse an invalid one, else create one."""
     path = world.plan_path(persona.user, date.isoformat())
     if path.exists():
@@ -278,7 +291,7 @@ def ensure_day(llm: Callable[[], LlmClient], world: World, persona: Persona, src
             raise PlanConflict(f"cannot restore the content history of {path}: {e}") from e
         return Planned(persona=persona.user, date=plan.date, path=str(path), generated=False, items=len(plan.items))
     with closing(llm()) as client:
-        g = generate_day(client, world, persona, src, date)
+        g = generate_day(client, world, persona, src, date, shared=shared)
     # A plan written meanwhile (a manual `ludius plan day`) wins: FileExistsError, and the retry keeps it.
     # A crash between this write and the history append is repaired by the retry's existing-plan path.
     # ponytail: manual `ludius plan day` takes no nightly lock and appends unconditionally; the journal lock keeps
@@ -310,6 +323,7 @@ class NightlyPlan:
 class PlanActivities:
     def __init__(self, runs: Path, load: Callable[[], Sources], llm: Callable[[], LlmClient]) -> None:
         self.world, self.load, self.llm = World(runs), load, llm
+        self._lock = threading.Lock()
 
     @activity.defn(name="nightly_plan")
     def plan(self, fire: PlanFire) -> Planned:
@@ -322,29 +336,31 @@ class PlanActivities:
                 raise ValueError(f"no persona {fire.persona}")
         except (ValueError, KeyError) as e:  # bad input or setup does not get better by retrying
             raise ApplicationError(str(e), non_retryable=True) from e
-        # Host-side lock: one planner at a time over shared world state, history and plans (no desktop involved).
-        calls.persona = fire.persona  # this persona's daily budget pays for its plan (one activity at a time)
         try:
-            with durable.desk_lock(self.world.root / "locks" / "nightly.lock"):
-                return ensure_day(self.llm, self.world, persona, src, date)
+            with calls.for_persona(fire.persona):  # this persona's daily budget pays for its plan (per thread)
+                return ensure_day(self.llm, self.world, persona, src, date, shared=self._shared())
         except durable.DeskBusy as e:
             raise RuntimeError("another nightly planner is running; retrying") from e
         except (PlanConflict, calls.CapReached) as e:
             raise ApplicationError(str(e), non_retryable=True) from e
-        finally:
-            calls.persona = None
+
+    @contextmanager
+    def _shared(self) -> Generator[None]:
+        """The shared steps of a plan: one planner thread at a time (waits), and one plan worker process (DeskBusy)."""
+        with self._lock, durable.desk_lock(self.world.root / "locks" / "nightly.lock"):
+            yield
 
 
 async def serve(client: Client, runs: Path, load: Callable[[], Sources], llm: Callable[[], LlmClient]) -> None:
     """Poll only while explicitly running. Generates plans; never starts a desktop, VM or day."""
     acts = PlanActivities(runs, load, llm)
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
         async with Worker(
             client,
             task_queue=TASK_QUEUE,
             workflows=[NightlyPlan],
             activities=[acts.plan],
             activity_executor=pool,
-            max_concurrent_activities=1,
+            max_concurrent_activities=PARALLEL,
         ):
             await asyncio.Event().wait()
