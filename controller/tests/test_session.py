@@ -88,3 +88,49 @@ def test_worker_window_with_a_readable_tree_is_still_a_popup(tmp_path: Path) -> 
     agent = EscOnly([snap])
     assert not Session(agent, GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize(rounds=2)  # pyright: ignore[reportArgumentType]
     assert agent.chords == [keys.chord("Esc")] * 2
+
+
+def test_minimized_edge_is_brought_forward_by_its_taskbar_button(tmp_path: Path) -> None:
+    """Live 2026-10-29 (dkoster): Edge minimized behind the desktop; its title has a zero-width space, its taskbar
+    button none. Alt+Tab never restored it, so normalize failed 12 rounds without closing anything."""
+    edge = clean_desktop()
+    edge.apps.append(
+        obs.Window(
+            title="Harbourline intranet - Microsoft\u200b Edge",
+            process_name="msedge.exe",
+            bounds=obs.Rect(x=-32000, y=-32000, width=160, height=28),
+        )
+    )  # minimized
+    edge.elements.append(obs.Element(id=79, role="button", name="Microsoft Edge – 1 running window", window=2,
+                                     bounds=obs.Rect(x=500, y=1040, width=48, height=40)))  # fmt: skip
+    clicks: list[str] = []
+
+    class ClickOnly(ObserveOnly):
+        def move(self, x: int, y: int, ms: int) -> int:
+            clicks.append(f"move {x},{y}")
+            return 0
+
+        def click(self) -> int:
+            clicks.append("click")
+            return 0
+
+    agent = ClickOnly([edge, edge, clean_desktop()])
+    assert Session(agent, GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize()  # pyright: ignore[reportArgumentType]
+    assert clicks == ["move 524,1060", "click"]
+    # Live (aberg): focus on the taskbar's chevron, the tree only that button: a desktop click comes first.
+    tray = obs.Snapshot(screen_width=1920, screen_height=1080, apps=edge.apps,
+                        windows=[_win(obs.Window.FOREGROUND, "Shell_TrayWnd", 0, 1040, 1920, 40),
+                                 _win(obs.Window.SHELL, "Progman", 0, 0, 1920, 1080)],
+                        elements=[obs.Element(id=15, role="button", name="Notification Chevron")])  # fmt: skip
+    clicks.clear()
+    agent = ClickOnly([tray, tray, edge, edge, clean_desktop()])
+    assert Session(agent, GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize()  # pyright: ignore[reportArgumentType]
+    assert clicks == ["move 1440,360", "click", "move 524,1060", "click"]
+    # Any other window under the point (a maximized app), or one of unknown bounds: no blind click, Alt+Tab.
+    for bounds in (obs.Rect(width=1920, height=1040), obs.Rect()):
+        tray.apps.append(obs.Window(title="Outlook", process_name="olk.exe", bounds=bounds))
+        clicks.clear()
+        with pytest.raises(BaseException, match="chord"):
+            Session(ClickOnly([tray]), GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize(rounds=1)  # pyright: ignore[reportArgumentType]
+        assert clicks == []
+        tray.apps.pop()

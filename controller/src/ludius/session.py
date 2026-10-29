@@ -141,11 +141,30 @@ class Session:
                 closed.append(f"{fg.title} ({fg.process_name})")
                 self.agent.chord(keys.chord("Alt+F4"))
             elif strays:
-                # Bring the next stray forward through its taskbar button, else Alt+Tab.
-                btn = next((e for e in snap.elements if e.role == "button" and strays[0].title and
-                            strays[0].title.split(" - ")[-1].lower() in e.name.lower()), None)  # fmt: skip
+                # Bring the next stray forward through its taskbar button, else Alt+Tab (which does not restore
+                # a minimized Edge). Edge's title says "Microsoft\u200b Edge", its button "Microsoft Edge".
+                app = strays[0].title.split(" - ")[-1].replace("\u200b", "").lower()
+                btn = next((e for e in snap.elements if e.role == "button" and app and
+                            app in e.name.replace("\u200b", "").lower()), None)  # fmt: skip
+                x, y = snap.screen_width * 3 // 4, snap.screen_height // 3
                 if btn is not None:
                     self._click(btn)
+                elif (
+                    fg is not None
+                    and fg.class_name == "Shell_TrayWnd"
+                    and all(  # every window's geometry known, none but the desktop under the point
+                        w.bounds.width > 0
+                        and w.bounds.height > 0
+                        and (w.class_name in ("Progman", "WorkerW") or not _contains(w.bounds, x, y))
+                        for w in [*snap.windows, *snap.apps]
+                    )
+                ):
+                    # Focus on the taskbar itself (live: its tray chevron) leaves only the focused button in the
+                    # tree, and neither Esc nor Alt+Tab moves it: a click on the bare desktop does. Only where no
+                    # window but the desktop is under the point (a minimized app sits at -32000); bounds unknown
+                    # anywhere: no click.
+                    self.agent.move(x, y, 120)
+                    self.agent.click()
                 else:
                     self.agent.chord(keys.chord("Alt+Tab"))
             else:
@@ -223,6 +242,10 @@ def _inert_shell_popup(snap: obs.Snapshot, i: int) -> bool:
         and w.no_tree
         and not any(e.window == i for e in snap.elements)
     )
+
+
+def _contains(b: obs.Rect, x: int, y: int) -> bool:
+    return b.x <= x < b.x + b.width and b.y <= y < b.y + b.height
 
 
 def _explorer_window(w: obs.Window) -> bool:
