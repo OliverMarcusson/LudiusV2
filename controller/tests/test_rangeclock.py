@@ -82,7 +82,7 @@ def test_unwarp_exits_nonzero_when_reset_fails(monkeypatch: pytest.MonkeyPatch) 
     def down(vmid: int, script: str) -> str:
         raise RuntimeError("guest agent not running")
 
-    monkeypatch.setattr(cli, "_range_clock", lambda: RangeClock(110, [111], down, time.time))
+    monkeypatch.setattr(cli, "_range_clock", lambda strict=True: RangeClock(110, [111], down, time.time))
     assert cli._range_unwarp() == 3  # pyright: ignore[reportPrivateUsage]
 
 
@@ -113,6 +113,8 @@ def test_range_clock_refuses_before_touching_any_vm(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(rangeclock, "resources", lambda: RES)
     with pytest.raises(ValueError, match="not range VMs"):
         cli._range_clock()  # pyright: ignore[reportPrivateUsage]
+    # unwarp: no all-or-nothing refusal up front; reset checks each VM and resets every one that passes
+    assert cli._range_clock(strict=False).dc == 110  # pyright: ignore[reportPrivateUsage]
 
 
 def test_set_and_reset_recheck_the_range() -> None:
@@ -144,7 +146,7 @@ def test_warp_exits_3_when_reset_fails_after_the_warp_failed(
             raise RuntimeError("VM 110: guest agent not running")
 
     monkeypatch.setattr(cli, "RUNS", tmp_path)
-    monkeypatch.setattr(cli, "_range_clock", lambda: Broken(110, [111]))
+    monkeypatch.setattr(cli, "_range_clock", lambda strict=True: Broken(110, [111]))
 
     def lease(vm: str | None = None) -> Lease:
         return Lease(tmp_path / f"clock-{vm}.json", vm or "range", renew_s=3600)

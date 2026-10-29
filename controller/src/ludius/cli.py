@@ -522,8 +522,9 @@ def cmd_range(args: argparse.Namespace) -> int:
     return 0
 
 
-def _range_clock() -> rangeclock.RangeClock:
-    """dc01 first, then ex01 and every persona VM in range-vms.yml (all of them: one DC, one clock)."""
+def _range_clock(*, strict: bool = True) -> rangeclock.RangeClock:
+    """dc01 first, then ex01 and every persona VM in range-vms.yml (all of them: one DC, one clock). strict=False
+    (unwarp) skips the up-front all-or-nothing check: reset checks each VM itself and resets every one that passes."""
     from ludius import rangeclock, rangerun
 
     if os.environ.get("LUDIUS_MAIL_BACKEND") != "exchange":
@@ -533,7 +534,8 @@ def _range_clock() -> rangeclock.RangeClock:
     names = {dc: "ludius-dc01", ex: "ludius-ex01"} | {v: rangerun.vm_of(u) for u, v in rangerun.vmids().items()}
     # Root `qm` acts on whatever VMID it is given: every one must be a range VM before any clock is touched, checked
     # here and again (a fresh pvesh read) before every set and reset.
-    rangeclock.confine(names, rangeclock.resources(), socket.gethostname())
+    if strict:
+        rangeclock.confine(names, rangeclock.resources(), socket.gethostname())
     return rangeclock.RangeClock(
         dc,
         [v for v in names if v != dc],
@@ -544,7 +546,7 @@ def _range_clock() -> rangeclock.RangeClock:
 def _range_unwarp() -> int:
     """Every range VM back on real time, then the range lease dropped (recovery after a failed warp reset)."""
     try:
-        got = _range_clock().reset()
+        got = _range_clock(strict=False).reset()
     except Exception as e:  # noqa: BLE001  every VM was tried; say which failed, keep the lease
         print(f"unwarp FAILED, range clocks may still be jumped: {e}", file=sys.stderr)
         return 3
