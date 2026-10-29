@@ -114,6 +114,56 @@ public class HandleRecheckTests
         Assert.Throws<UnauthorizedAccessException>(() => px.Get("ludius-win10-01"));
     }
 
+    // Proxmox reads a [PENDING] header case-insensitively and with trailing blanks: the pending changes (here the
+    // CID) must not be missed, so that config is rechecked through pvesh.
+    [Theory]
+    [InlineData("[pending]")]
+    [InlineData("[PENDING] ")]
+    [InlineData("[Pending]\t\r")]
+    public void Every_pending_header_spelling_goes_to_pvesh(string header)
+    {
+        var (px, pve, qmp, clock) = Make();
+        using var _q = qmp;
+        var vm = px.Get("ludius-win10-01");
+        pve.ConfTail[101] = $"\n{header}\nargs: -device vhost-vsock-pci,guest-cid=999\n";
+        clock.Now += TimeSpan.FromSeconds(6);
+        var reads = ConfigReads(pve, 101);
+        Assert.Same(vm, px.Get("ludius-win10-01"));
+        Assert.Equal(reads + 1, ConfigReads(pve, 101));
+    }
+
+    // A header Proxmox would skip (malformed, unknown) and a key repeated in the current section are refused.
+    [Theory]
+    [InlineData("\n[bad header]\nmemory: 1\n")]
+    [InlineData("\n[1snap]\n")]
+    [InlineData("\n[special:other]\n")]
+    [InlineData("\n[clean\n")]
+    [InlineData("name: ludius-win10-01\n")]
+    public void A_config_pvesh_would_read_differently_is_refused(string tail)
+    {
+        var (px, pve, qmp, clock) = Make();
+        using var _q = qmp;
+        px.Get("ludius-win10-01");
+        pve.ConfTail[101] = tail;
+        clock.Now += TimeSpan.FromSeconds(6);
+        Assert.Throws<IOException>(() => px.Get("ludius-win10-01"));
+        Assert.Throws<IOException>(() => px.ListVms());
+    }
+
+    // Proxmox keeps a VMID's first pool membership only: a range VM also in another pool, or listed twice, is refused.
+    [Theory]
+    [InlineData("pool:other::200,101::\n")]
+    [InlineData("pool:ludius::101::\n")] // the range pool defined again, 101 in it twice
+    public void A_vmid_with_conflicting_pool_memberships_is_refused(string tail)
+    {
+        var (px, pve, qmp, clock) = Make();
+        using var _q = qmp;
+        px.Get("ludius-win10-01");
+        pve.UserCfgTail = tail;
+        clock.Now += TimeSpan.FromSeconds(6);
+        Assert.Throws<IOException>(() => px.Get("ludius-win10-01"));
+    }
+
     [Fact]
     public void A_vmid_reused_by_another_vm_is_refused()
     {

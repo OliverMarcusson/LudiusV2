@@ -236,44 +236,61 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     bool Local(JsonObject ids, int id) =>
         ids[$"{id}"] is JsonObject e && e["node"]?.GetValue<string>() == node && e["type"]?.GetValue<string>() == "qemu";
 
-    // pool:<id>:<comment>:<vmids>:<storages>: (the comment is escaped, no ':' in it). Unset Pool: no member.
+    // pool:<id>:<comment>:<vmids>:<storages>: (the comment is escaped, no ':' in it). Unset Pool: no member. Proxmox
+    // keeps a VMID's first membership only, so one of ours listed twice or also in another pool is refused, not guessed.
     HashSet<int> PoolMembers()
     {
         if (options.Pool == "") return [];
-        var lines = (api.Read("user.cfg") ?? throw new IOException("no /etc/pve/user.cfg")).Split('\n')
-            .Select(l => l.TrimEnd('\r')).Where(l => l.StartsWith($"pool:{options.Pool}:")).ToList();
-        if (lines is []) return [];
-        if (lines is not [var line] || line.Split(':') is not { Length: >= 5 } f)
-            throw new IOException($"/etc/pve/user.cfg: pool {options.Pool} is not one well-formed line");
-        return f[3].Split(',', StringSplitOptions.RemoveEmptyEntries)
-            .Select(v => int.Parse(v, NumberStyles.None, CultureInfo.InvariantCulture)).ToHashSet();
+        var pools = (api.Read("user.cfg") ?? throw new IOException("no /etc/pve/user.cfg")).Split('\n')
+            .Select(l => l.TrimEnd('\r')).Where(l => l.StartsWith("pool:"))
+            .Select(l => l.Split(':') is { Length: >= 5 } f ? (Pool: f[1], Ids: f[3].Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(v => int.Parse(v, NumberStyles.None, CultureInfo.InvariantCulture)).ToList())
+                : throw new IOException("/etc/pve/user.cfg: a pool line is malformed"))
+            .ToList();
+        var ours = pools.Where(p => p.Pool == options.Pool).ToList();
+        if (ours is []) return [];
+        if (ours.Count > 1) throw new IOException($"/etc/pve/user.cfg: pool {options.Pool} is defined more than once");
+        var members = ours[0].Ids.ToHashSet();
+        if (pools.SelectMany(p => p.Ids).Where(members.Contains).Count() != members.Count || members.Count != ours[0].Ids.Count)
+            throw new IOException($"/etc/pve/user.cfg: a VM of pool {options.Pool} is listed twice or also in another pool");
+        return members;
     }
 
     // A VM's current config on this node (the file's first section; [PENDING], [special:...] and snapshots follow), or
-    // null when it has none. `pending`: it has pending changes, which the API's answer would include.
+    // null when it has none. `pending`: it has pending changes, which the API's answer would include. Section headers
+    // as Proxmox's parse_vm_config reads them; a header it would skip (malformed or unknown) throws, as does a line
+    // of the current section it would not parse the same way, or a key repeated there.
     JsonObject? Conf(int id, out bool pending)
     {
         pending = false;
         if (api.Read($"nodes/{node}/qemu-server/{id}.conf") is not { } text) return null;
         var cfg = new JsonObject();
         var current = true;
-        foreach (var raw in text.Split('\n'))
+        foreach (var line in text.Split('\n'))
         {
-            var line = raw.TrimEnd('\r');
+            if (string.IsNullOrWhiteSpace(line)) continue;
             if (line.StartsWith('['))
             {
+                if (PendingHeader().IsMatch(line)) pending = true;
+                else if (!SectionHeader().IsMatch(line)) throw new IOException($"VM {id} config: unexpected section header");
                 current = false;
-                pending |= line == "[PENDING]";
                 continue;
             }
-            if (!current || line == "" || line.StartsWith('#')) continue;
+            if (!current || line.StartsWith('#')) continue;
             if (ConfLine().Match(line) is not { Success: true } m || !cfg.TryAdd(m.Groups[1].Value, m.Groups[2].Value))
                 throw new IOException($"VM {id} config: unexpected line");
         }
         return cfg;
     }
 
-    [GeneratedRegex(@"^([a-z][a-z0-9_-]*): ?(.*)$")]
+    [GeneratedRegex(@"^\[PENDING\]\s*$", RegexOptions.IgnoreCase)]
+    private static partial Regex PendingHeader();
+
+    // A snapshot, or one of the special sections (not part of the current config either).
+    [GeneratedRegex(@"^\[([a-z][a-z0-9_\-]+|special:(cloudinit|fleecing))\]\s*$", RegexOptions.IgnoreCase)]
+    private static partial Regex SectionHeader();
+
+    [GeneratedRegex(@"^([a-z][a-z_\-]*\d*):\s*(.+?)\s*$")]
     private static partial Regex ConfLine();
 
     // The one range VM with this name. Proxmox allows two VMs with one name: then neither is meant, and a name that
@@ -437,7 +454,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         string text;
         try { text = File.ReadAllText(Path.Combine(options.RunDir, $"{id}.pid")); }
         catch (FileNotFoundException) { return "off"; }
-        catch (IOException) { return "other"; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return "other"; }
         if (!int.TryParse(text.Trim(), out var pid)) return "other";
         try
         {

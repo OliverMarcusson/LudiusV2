@@ -89,6 +89,8 @@ sealed class FakePve : IPveApi
     public Func<string, string, Task>? Gate;
     public bool IgnoreSet;
     public HashSet<int> Pending = []; // VMs whose config file carries a [PENDING] section
+    public Dictionary<int, string> ConfTail = []; // raw lines right after a VM's current section
+    public string UserCfgTail = ""; // raw lines appended to user.cfg
     public readonly List<string> Reads = [];
 
     // The pmxcfs files, rendered from the same state the API answers from.
@@ -108,14 +110,14 @@ sealed class FakePve : IPveApi
                 }.ToJsonString();
             if (file == "user.cfg")
                 return "user:root@pam:1:0:::root@pve1::\n\n" + string.Concat(Vms.Where(v => v?["pool"] is not null).GroupBy(v => v!["pool"]!.GetValue<string>())
-                    .Select(g => $"pool:{g.Key}:Range%3a pool:{string.Join(",", g.Select(Id))}::\n"));
+                    .Select(g => $"pool:{g.Key}:Range%3a pool:{string.Join(",", g.Select(Id))}::\n")) + UserCfgTail;
             if (System.Text.RegularExpressions.Regex.Match(file, @"^nodes/([^/]+)/qemu-server/(\d+)\.conf$") is not { Success: true } m) return null;
             var id = int.Parse(m.Groups[2].Value);
             if (Vms.FirstOrDefault(v => Id(v) == id && v!["node"]!.GetValue<string>() == m.Groups[1].Value) is not { } vm) return null;
             var conf = $"#a description\nboot: order=scsi0\nmeta: creation-qemu=9.0.2,ctime={Ctime.GetValueOrDefault(id, 1700000000)}\n"
                 + $"name: {vm["name"]}\nsmbios1: uuid=0000{id:x4}-1111-2222-3333-444455556666\n"
                 + (Args.GetValueOrDefault(id) is { } a ? $"args: {a}\n" : "") + (vm["template"] is not null ? "template: 1\n" : "");
-            return conf + (Pending.Contains(id) ? "\n[PENDING]\nmemory: 8192\n" : "") + "\n[clean]\nname: ludius-old\nsnaptime: 1700000001\n";
+            return conf + ConfTail.GetValueOrDefault(id, "") + (Pending.Contains(id) ? "\n[PENDING]\nmemory: 8192\n" : "") + "\n[clean]\nname: ludius-old\nsnaptime: 1700000001\n";
         }
     }
 
