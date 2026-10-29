@@ -1,0 +1,57 @@
+---
+# The range DNS server (dc01 for exchange, srv01 for grommunio, VM srv01_vmid at srv01_ip) is every persona's default
+# gateway, so it must never forward: with an uplink attached, a forwarding gateway would route the range out. Enforced,
+# then read back; any failure fails the task (callers run it before they attach an uplink or hand out the gateway).
+# Runs on localhost: dc01 through the guest agent, srv01 over ssh (it has no guest agent).
+- name: Gateway does not forward (dc01)
+  when: mail_backend == 'exchange'
+  ansible.builtin.command:
+    argv: [qm, guest, exec, "{{ srv01_vmid }}", --timeout, "60", --, powershell.exe, -NoProfile, -NonInteractive,
+           -EncodedCommand, "{{ script | b64encode(encoding='utf-16-le') }}"]
+  vars:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $p = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters'
+      if ((Get-ItemProperty $p).IPEnableRouter -ne 0) { Set-ItemProperty $p IPEnableRouter 0 -Type DWord; 'changed' }
+      $ra = Get-Service RemoteAccess -ErrorAction SilentlyContinue
+      if ($ra -and $ra.StartType -ne 'Disabled') { Set-Service RemoteAccess -StartupType Disabled; 'changed' }
+      if ($ra -and $ra.Status -ne 'Stopped') { Stop-Service RemoteAccess -Force; 'changed' }
+      $on = Get-NetIPInterface | Where-Object Forwarding -ne Disabled
+      if ($on) { $on | Set-NetIPInterface -Forwarding Disabled; 'changed' }
+      $bad = @()
+      if ((Get-ItemProperty $p).IPEnableRouter -ne 0) { $bad += 'IPEnableRouter' }
+      $ra = Get-Service RemoteAccess -ErrorAction SilentlyContinue
+      if ($ra -and ($ra.StartType -ne 'Disabled' -or $ra.Status -ne 'Stopped')) { $bad += "RemoteAccess $($ra.Status)/$($ra.StartType)" }
+      $on = Get-NetIPInterface | Where-Object Forwarding -ne Disabled
+      if ($on) { $bad += 'Forwarding on ' + (($on | ForEach-Object { "$($_.InterfaceAlias)/$($_.AddressFamily)" }) -join ', ') }
+      if ($bad) { [Console]::Error.WriteLine('dc01 forwards: ' + ($bad -join '; ')); exit 1 }
+  register: gw_win
+  changed_when: (gw_win.stdout | from_json)['out-data'] | default('') is search('changed')
+  failed_when: gw_win.rc != 0 or (gw_win.stdout | from_json).exitcode | default(1) != 0
+
+- name: Gateway does not forward (srv01)
+  when: mail_backend == 'grommunio'
+  block:
+    - name: Forwarding off, persistent and live, every interface read back (srv01)
+      ansible.builtin.shell: |
+        set -eu
+        f=/etc/sysctl.d/99-ludius-no-forward.conf
+        printf 'net.ipv4.ip_forward = 0\nnet.ipv4.conf.all.forwarding = 0\nnet.ipv6.conf.all.forwarding = 0\n' > "$f.new"
+        if cmp -s "$f.new" "$f"; then rm "$f.new"; else mv "$f.new" "$f"; echo changed; fi
+        sysctl -q -p "$f"
+        bad=$(grep -L '^0$' /proc/sys/net/ipv4/ip_forward /proc/sys/net/ipv4/conf/*/forwarding /proc/sys/net/ipv6/conf/*/forwarding || true)
+        if [ -n "$bad" ]; then echo "srv01 forwards: $bad" >&2; exit 1; fi
+      delegate_to: srv01
+      become: true
+      # Unreachable would end localhost's run; the check below fails it instead.
+      ignore_unreachable: true
+      register: gw_linux
+      changed_when: "'changed' in gw_linux.stdout | default('')"
+      failed_when: false
+
+    - name: Srv01 reached and does not forward
+      ansible.builtin.assert:
+        that:
+          - gw_linux is not unreachable
+          - gw_linux.rc | default(1) == 0
+        fail_msg: "srv01 forwarding not confirmed off: {{ gw_linux.msg | default(gw_linux.stderr | default('')) }}"

@@ -108,8 +108,12 @@
         bootstrapped: []
         bringup_failures: []
 
+    # Fail closed: no clone is bootstrapped (and given the gateway) unless the gateway is confirmed not to forward.
     - name: Clone, isolate, start and bootstrap each persona VM
       block:
+        - name: Gateway does not forward
+          ansible.builtin.include_tasks: tasks/gateway-no-forwarding.yml
+
         - name: Persona VM
           ansible.builtin.include_tasks: tasks/persona-vm.yml
           loop: "{{ range_personas }}"
@@ -227,7 +231,7 @@
         - name: Persona done
           ansible.builtin.set_fact:
             persona_done: true
-          tags: [observer]
+          tags: [always]
 
 # Always reached (localhost never fails before here). The teardown covers every clone that got the bring-up admin,
 # whether its setup succeeded or not, through the guest agent (no WinRM); a clone it can't close is stopped.
@@ -248,10 +252,15 @@
       until: observed.rc == 0
       changed_when: false
       ignore_errors: true
-      tags: [observer]
+      tags: [always]
 
+    # apply: a tag on a dynamic include reaches only the include, not the tasks it loads; without it a tagged run
+    # (bootstrap is always) reopens the bring-up admin and WinRM and never closes them.
     - name: Bring-up admin and WinRM off on every bootstrapped clone (else the VM is stopped)
-      ansible.builtin.include_tasks: tasks/persona-teardown.yml
+      ansible.builtin.include_tasks:
+        file: tasks/persona-teardown.yml
+        apply:
+          tags: [always]
       tags: [always]
       loop: "{{ range_personas | selectattr('vmid', 'in', bootstrapped | default([])) | list }}"
       loop_control:
@@ -260,6 +269,7 @@
       when: bringup_teardown | bool
 
     - name: Every persona came up, its observer answers, and bring-up access is closed
+      tags: [always]
       ansible.builtin.assert:
         that:
           - bringup_failures | length == 0

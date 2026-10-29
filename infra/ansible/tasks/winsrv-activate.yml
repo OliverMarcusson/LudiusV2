@@ -18,6 +18,10 @@
 - name: Activate through a temporary uplink, {{ s.name }}
   when: (lic.stdout | from_json).exitcode | default(1) != 0
   block:
+    - name: Gateway does not forward before it gets an uplink, {{ s.name }}
+      ansible.builtin.include_tasks: gateway-no-forwarding.yml
+      when: s.vmid | int == srv01_vmid | int
+
     - name: Uplink NIC on the build bridge, {{ s.name }}
       ansible.builtin.command: qm set {{ s.vmid }} --net1 virtio={{ winsrv_build_mac[s.host] }},bridge={{ build_bridge }}
       changed_when: true

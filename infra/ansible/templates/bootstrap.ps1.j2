@@ -11,7 +11,7 @@ if (-not (Get-NetIPAddress -InterfaceIndex $n.ifIndex -IPAddress {{ ip }} -Error
     New-NetIPAddress -InterfaceIndex $n.ifIndex -IPAddress {{ ip }} -PrefixLength 24 | Out-Null
 }
 # Default gateway: the range DNS server (dc01 or srv01), a host that does not forward, so nothing leaves the range
-# through it. Outlook refuses Exchange on an adapter without a gateway ("does not have a default gateway"), and with
+# through it (enforced and read back by tasks/gateway-no-forwarding.yml before any clone gets here or it gets an uplink). Outlook refuses Exchange on an adapter without a gateway ("does not have a default gateway"), and with
 # an on-link default NLA reports no traffic and Outlook stays offline; the node (.1) is no option, its FORWARD chain
 # passes tailscale0 before the range DROP.
 $gw = Get-NetRoute -InterfaceIndex $n.ifIndex -DestinationPrefix 0.0.0.0/0 -PolicyStore PersistentStore -ErrorAction SilentlyContinue

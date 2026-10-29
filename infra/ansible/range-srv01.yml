@@ -105,6 +105,9 @@
     - name: Attach the uplink NIC (host side)
       when: inventory_hostname == 'localhost'
       block:
+        - name: Gateway does not forward before it gets an uplink
+          ansible.builtin.include_tasks: tasks/gateway-no-forwarding.yml
+
         - name: Uplink NIC on the build bridge
           ansible.builtin.command: qm set {{ srv01_vmid }} --net1 virtio={{ srv01_build_mac }},bridge={{ build_bridge }}
           changed_when: true
