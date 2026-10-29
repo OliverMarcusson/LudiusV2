@@ -22,7 +22,10 @@ from ludius import ews
 
 ROOT = Path(__file__).resolve().parents[3]
 SRV = ROOT / "infra" / "hyperv" / "build" / "srv"
-DOMAIN = "ludius.internal"
+# The mail domain, used for addresses and the in-range send/read boundary. Exchange refuses delivery to the reserved
+# .test TLD (RFC 2606), so the Proxmox range's mail is ludius.internal (the AD realm stays corp.ludius.test). The
+# Hyper-V grommunio range keeps corp.ludius.test (its gromox store path below is keyed by it): set LUDIUS_MAIL_DOMAIN.
+DOMAIN = os.environ.get("LUDIUS_MAIL_DOMAIN") or "ludius.internal"
 FOLDERS = {"inbox": 13, "sent": 10, "calendar": 15}  # gromox private-store folder ids
 PR_NORMALIZED_SUBJECT, PR_BODY = 0x0E1D001F, 0x1000001F
 PR_SENDER_SMTP, PR_SENT_REPRESENTING_SMTP, PR_DELIVERY_TIME = 0x5D01001F, 0x5D02001F, 0x0E060040
