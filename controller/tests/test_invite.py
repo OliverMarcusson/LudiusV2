@@ -50,7 +50,7 @@ def test_template_gets_the_meeting_send_contract() -> None:
     meeting_avoid = [
         ElementCheck(role="edit", name="^Info Bar$"),
         ElementCheck(
-            role="button", name="^(Required|Optional|Location|Rooms|Room Finder|Address Book|Scheduling Assistant)$"
+            role="button", name="^(Required|Optional|Location|Rooms|Room Finder|Address Book|Add Attendees|Scheduling Assistant)$"
         ),
         ElementCheck(name="^Scheduling Assistant$"),
         ElementCheck(role="data item"),

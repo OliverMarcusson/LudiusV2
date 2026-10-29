@@ -30,7 +30,7 @@ forms:
     # Decisions doesn't type, so they are never targets.
     avoid:
       - {role: edit, name: "^Info Bar$"}
-      - {role: button, name: "^(Required|Optional|Location|Rooms|Room Finder|Address Book|Scheduling Assistant)$"}
+      - {role: button, name: "^(Required|Optional|Location|Rooms|Room Finder|Address Book|Add Attendees|Scheduling Assistant)$"}
       - {name: "^Scheduling Assistant$"}
       - {role: data item}
     # Prompts the guarded send itself raises, answered once with this button right after the checked input (run1).

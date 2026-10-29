@@ -157,6 +157,10 @@ class Done(Strict):
     file: FileCheck | None = None
     # mail.read: the mail picked at task start (reply.prepare_read: proven unread then) is marked read on the server.
     read: bool = False
+    # A yes/no question for the Decider, on a screenshot, asked when the code checks fail: the state reached another way
+    # than the check expects (an attendee added through a picker reads differently). Fails closed; never the proof
+    # of an outcome (the send's own contract still reads the field in code before the irreversible step).
+    ask: str | None = None
 
 
 class Subgoal(Strict):

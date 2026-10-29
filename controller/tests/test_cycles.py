@@ -211,3 +211,36 @@ def test_a_spent_budget_abandons_the_task_the_same_way_at_every_site(tmp_path: P
     assert [e["event"] for e in events].count("task_end") == 1
     assert events[-1]["status"] == "abandoned" and events[-1]["reason"] == "budget spent"
     assert events[-1]["steps"] == out.steps
+
+
+class Answers(PrefersStart):
+    """Says yes to a done question with probability `yes`; steps like PrefersStart otherwise."""
+
+    def __init__(self, yes: float) -> None:
+        self.yes, self.asked = yes, 0
+
+    def decide(
+        self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
+    ) -> Decision:
+        if set(options) == {"yes", "no"}:
+            self.asked += 1
+            assert image == b"PNG shot" and "Notepad" in state["question"]
+            probs = {"yes": self.yes, "no": 1 - self.yes}
+            return Decision("yes" if self.yes >= 0.5 else "no", 0.9, probs, 0, 0, "fake")
+        return super().decide(state, options, ask_progress=ask_progress)
+
+
+@pytest.mark.parametrize(("yes", "done"), [(0.95, True), (0.6, False)])
+def test_a_done_question_the_decider_answers_on_the_screenshot(tmp_path: Path, yes: float, done: bool) -> None:
+    log = tmp_path / "gt.jsonl"
+    decider = Answers(yes)
+    runner = Runner(ToggleAgent(), decider, Persona(name="t", user="t"), GroundTruth(log), seed=1)  # type: ignore[arg-type]
+    tpl = load_templates()["notepad_write_note"].model_copy(deep=True)
+    task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
+    sg = tpl.subgoals["open_from_start"]
+    assert sg.done is not None
+    sg.done.ask = "Is Notepad open?"  # the code check (a Notepad window) never holds on ToggleAgent
+    status, _, _ = runner._subgoal(task, "open_from_start", task.subgoal("open_from_start"), budget=3, t0=1e18)  # pyright: ignore[reportPrivateUsage]
+    events = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert (status == "done") is done and decider.asked >= 1
+    assert any(e.get("event") == "subgoal_done" and e.get("by") == "decider" for e in events) is done

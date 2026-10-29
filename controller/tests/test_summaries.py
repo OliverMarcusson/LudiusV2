@@ -45,7 +45,7 @@ def test_cadence_and_cap(tmp_path: Path) -> None:
     assert sent[0]["reasoning"] == {"effort": "high"}
     s.step(mono=1010)  # nothing changed: no call
     event(event="step", subgoal="open", step=1, action="type", option="secret typed text")
-    s.step(mono=1050)  # changed, but inside the gap: no call
+    s.step(mono=1020)  # changed, but inside the gap: no call
     assert len(sent) == 1
     s.step(mono=1001 + summaries.MIN_GAP_S)
     assert len(sent) == 2 and "secret typed text" not in json.dumps(sent[1])

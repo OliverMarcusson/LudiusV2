@@ -155,6 +155,27 @@ class Runner:
             return None
         return None if moved else shot
 
+    def _decider_says_done(self, task: Task, name: str, question: str, snap: obs.Snapshot) -> bool:
+        """The subgoal's done question (Done.ask) put to the Decider with the screenshot. Fails closed: no
+        screenshot, no answer or an unsure yes is not done."""
+        shot = self._shot(fingerprint(snap))
+        if shot is None:
+            return False
+        q = task.fmt(question)
+        try:
+            options = {"yes": f"Yes: {q}", "no": "No, or it can't be seen on the screen."}
+            d = self.decider.decide({"question": q}, options, ask_progress=False, image=shot)
+        except CapReached:
+            raise  # a spent budget abandons the task like at every other site
+        except Exception as e:  # noqa: BLE001  fail closed: no answer is no
+            self.log.write(event="decider_check", host_ms=_now(), task=task.template.task, subgoal=name,
+                           error=str(e)[:300])  # fmt: skip
+            return False
+        yes = d.probabilities.get("yes", 0.0)
+        self.log.write(event="decider_check", host_ms=_now(), task=task.template.task, subgoal=name, yes=round(yes, 3),
+                       cost=d.cost)  # fmt: skip
+        return d.choice == "yes" and yes >= DONE_THRESHOLD
+
     def observe(self, timeout_ms: int = 5000) -> obs.Snapshot:
         self.snap = self.agent.observe(wait_settle=True, timeout_ms=timeout_ms).snapshot
         display = (self.snap.screen_width, self.snap.screen_height, self.snap.dpi)
@@ -432,6 +453,11 @@ class Runner:
                 time.sleep(BLOCKED_WAIT_S)
                 snap = self.observe(timeout_ms=10000)
                 continue
+            ask = sg.done.ask if code_done is False and sg.done else None
+            if ask and self._decider_says_done(task, name, ask, snap):
+                self.log.write(event="subgoal_done", host_ms=_now(), guest_ms=snap.guest_time_ms,
+                               task=task.template.task, subgoal=name, by="decider", steps=step - 1)  # fmt: skip
+                return "done", step - 1, ""
             if recipient_reserved(sg, task, self.policy):
                 self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
                                reason=RESERVED_RECIPIENT)  # fmt: skip

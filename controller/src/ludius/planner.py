@@ -148,10 +148,12 @@ MESSAGE_ID = re.compile(r"<[!-;=?-~]{1,200}@[!-;=?-~]{1,100}>")  # an Internet m
 _NOT_A_NAME = re.compile(r"[;,<>@]")  # a display name holding a second recipient or an address
 
 
-def catalog(templates: dict[str, Template]) -> str:
+def catalog(templates: dict[str, Template], seed: str = "") -> str:
     lines = [f"- {t.task}: {t.about} Parameters: {', '.join(p for p in t.params if p not in DERIVED) or 'none'}."
              + (f" Plan it rarely, about {t.plan_weight:g} times as often as other tasks." if t.plan_weight < 1 else "")
              for t in templates.values()]  # fmt: skip
+    if seed:  # a fixed (alphabetical) list became every persona's running order; shuffled per persona and day
+        random.Random(seed).shuffle(lines)
     lines.append(f"- {BREAK}: away from the desk (lunch, coffee, meeting), screen locked. Set minutes.")
     return "\n".join(lines)
 
@@ -210,7 +212,7 @@ def plan_day(
         f"{persona.hours[1]}.\nStyle and habits: {persona.style or 'ordinary'}\n\n"
         f"Day to plan: {date.strftime('%A')} {date.isoformat()}.\n\n"
         f"What happened so far:\n{world or '- nothing yet'}\n\n"
-        f"Task catalog:\n{catalog(templates)}\n\n"
+        f"Task catalog (in no particular order):\n{catalog(templates, f'{persona.user}:{date}')}\n\n"
         f"Recent content the persona already wrote (do not repeat or paraphrase it):\n"
         + ("\n".join(f"- {h[:120]}" for h in history[-40:]) or "- none")
         + (

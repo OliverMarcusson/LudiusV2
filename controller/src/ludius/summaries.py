@@ -8,7 +8,7 @@ running, a quiet log or one that can't be read: "idle" or "unknown", written wit
 Monitoring, not run decisions: these requests are counted neither in runs/openrouter-calls.json nor against its caps.
 They have their own counter (runs/summary-calls.json: today's calls, cost and routed models) and daily cap
 (LUDIUS_SUMMARY_CAP, default 2000); at the cap the lines say "summaries paused (cap)" until the next day. A persona is
-summarised again only when its record changes (new task or step), at most once per MIN_GAP_S. A failed request keeps
+summarised again when its record changes: a new task at once, a step at most once per MIN_GAP_S. A failed request keeps
 the last line, marked stale. Output: runs/monitor-summaries.json beside openrouter-calls.json; the host agent serves
 it read-only at /api/summaries.
 
@@ -39,7 +39,7 @@ from ludius.rangerun import personas, vm_of
 MODEL = os.environ.get("LUDIUS_SUMMARY_MODEL", "openrouter/auto-beta")
 OUT = calls.PATH.parent / "monitor-summaries.json"
 COUNTER = calls.PATH.parent / "summary-calls.json"
-MIN_GAP_S = 120.0
+MIN_GAP_S = 30.0  # between step updates of one task; a new task is summarised at once
 QUIET_MS = 10 * 60_000  # a running task that logs nothing this long: the worker may be gone, so "unknown"
 TAIL = 512 << 10  # bytes read from the end of a day log
 STEPS = 5
@@ -79,9 +79,9 @@ class Line:
     called: float = -math.inf  # monotonic time of the last request for this persona
 
 
-def due(line: Line, key: str, now: float) -> bool:
-    """A request is due when the record changed since the last answer and the persona's gap has passed."""
-    return key != line.key and now - line.called >= MIN_GAP_S
+def due(line: Line, act: Activity, now: float) -> bool:
+    """A request is due when the record changed since the last answer: at once for a new task, else after the gap."""
+    return act.key != line.key and (act.task != line.task or now - line.called >= MIN_GAP_S)
 
 
 def counter(path: Path, today: str) -> dict[str, Any] | None:
@@ -314,7 +314,7 @@ class Summariser:
                     self.lines[u] = Line(
                         "paused", "summaries paused (cap)", _iso(now), None, line.key, called=line.called
                     )
-            elif due(line, act.key, mono):
+            elif due(line, act, mono):
                 line.called = mono
                 if take(self.counter, self.cap, today):
                     jobs.append((u, act))
