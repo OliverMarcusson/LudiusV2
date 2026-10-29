@@ -11,6 +11,9 @@ interface IPveApi
 {
     // method: get, create (POST), set (PUT), delete. Returns the API's data.
     Task<JsonNode?> Call(string method, string path, IReadOnlyDictionary<string, string>? args, CancellationToken ct);
+
+    // A file under /etc/pve (pmxcfs, e.g. ".vmlist"), null when there is none.
+    string? Read(string file);
 }
 
 // The API through pvesh, as root on the node the agent runs on: no API token to keep, no TLS to pin, and root@pam may
@@ -45,6 +48,12 @@ sealed partial class Pvesh(string exe = "pvesh") : IPveApi
         // A worker task (start, clone, snapshot ...) may print its log before the UPID: keep the UPID.
         if (Upid().Match(text) is { Success: true } m && !text.StartsWith('{') && !text.StartsWith('[')) return JsonValue.Create(m.Value);
         return JsonNode.Parse(text);
+    }
+
+    public string? Read(string file)
+    {
+        try { return File.ReadAllText(Path.Combine("/etc/pve", file)); }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { return null; }
     }
 
     [GeneratedRegex(@"UPID:[^\s""]+")]

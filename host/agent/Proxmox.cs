@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Net.Sockets;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -21,6 +22,7 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         public required Qmp Qmp;
         public required string Identity; // see IdentityOf
         public DateTime CheckedAt;
+        public Task? Checking; // under the vms lock: the recheck in flight, which every stale caller waits on
     }
 
     readonly Dictionary<string, Vm> vms = [];
@@ -76,12 +78,47 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         if (cached is not null)
         {
             if (Now() - cached.CheckedAt < options.Recheck) return cached;
-            Recheck(cached);
+            // One recheck per handle at a time: the first stale caller runs it, the others wait for its outcome (never
+            // the stale handle meanwhile). Without this every frame and input call started its own (a pvesh storm).
+            TaskCompletionSource? mine = null;
+            Task check;
+            lock (vms)
+            {
+                if (Now() - cached.CheckedAt < options.Recheck && vms.TryGetValue(name, out var cur) && cur == cached) return cached;
+                if (cached.Checking is null) cached.Checking = (mine = new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+                check = cached.Checking;
+            }
+            if (mine is not null)
+            {
+                try { Recheck(cached); mine.SetResult(); }
+                catch (Exception e) { mine.SetException(e); }
+                finally { lock (vms) cached.Checking = null; }
+            }
+            Wait(check);
             lock (vms)
                 if (!ChangedSince(cached.Id, seen) && vms.TryGetValue(name, out var still) && still == cached) return cached;
             Forget(name);
             throw Raced(name, cached.Id);
         }
+        // A first resolve is single-flight too: a monitor opening eight feeds started 24 at once.
+        TaskCompletionSource<Vm>? first = null;
+        Task<Vm>? resolve;
+        lock (vms)
+            if (!resolving.TryGetValue(name, out resolve))
+                resolving[name] = resolve = (first = new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+        if (first is not null)
+        {
+            try { first.SetResult(Resolve(name, seen)); }
+            catch (Exception e) { first.SetException(e); }
+            finally { lock (vms) resolving.Remove(name); }
+        }
+        return Wait(resolve);
+    }
+
+    readonly Dictionary<string, Task<Vm>> resolving = []; // under the vms lock: first resolves in flight, by name
+
+    Vm Resolve(string name, long seen)
+    {
         var id = Find(name, CancellationToken.None).GetAwaiter().GetResult().Id;
         var cfg = Wait(api.Call("get", $"/nodes/{node}/qemu/{id}/config", null, CancellationToken.None));
         var vm = new Vm
@@ -110,11 +147,23 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     {
         try
         {
-            var now = Wait(List(CancellationToken.None)).Where(v => v.Id == vm.Id).ToList();
-            if (now is not [var v]) throw new KeyNotFoundException($"{vm.Name} (VM {vm.Id}) is gone");
-            if (v.Name != vm.Name || !InRange(v))
-                throw new UnauthorizedAccessException($"VM {vm.Id} is no longer the range VM {vm.Name} (pool {options.Pool})");
-            var cfg = Wait(api.Call("get", $"/nodes/{node}/qemu/{vm.Id}/config", null, CancellationToken.None));
+            // From pmxcfs (what pvesh reads, without its ~2 s of perl per call); a config with pending changes, or none
+            // found, is left to pvesh, whose answer (pending values applied) the handle was resolved from.
+            JsonNode? cfg = Conf(vm.Id, out var pending);
+            if (cfg is not null && !pending)
+            {
+                if (!Local(VmList(), vm.Id)) throw new KeyNotFoundException($"{vm.Name} (VM {vm.Id}) is gone");
+                if (cfg["name"]?.GetValue<string>() != vm.Name || !PoolMembers().Contains(vm.Id))
+                    throw new UnauthorizedAccessException($"VM {vm.Id} is no longer the range VM {vm.Name} (pool {options.Pool})");
+            }
+            else
+            {
+                var now = Wait(List(CancellationToken.None)).Where(v => v.Id == vm.Id).ToList();
+                if (now is not [var v]) throw new KeyNotFoundException($"{vm.Name} (VM {vm.Id}) is gone");
+                if (v.Name != vm.Name || !InRange(v))
+                    throw new UnauthorizedAccessException($"VM {vm.Id} is no longer the range VM {vm.Name} (pool {options.Pool})");
+                cfg = Wait(api.Call("get", $"/nodes/{node}/qemu/{vm.Id}/config", null, CancellationToken.None));
+            }
             if (IdentityOf(cfg) != vm.Identity)
                 throw new UnauthorizedAccessException($"VM {vm.Id} named {vm.Name} is a different VM than before (VMID reused)");
             OwnCid(vm.Name, vm.Id, cfg);
@@ -177,6 +226,55 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
             .ToList() ?? [];
 
     bool InRange(PveVm v) => options.Pool != "" && v.Pool == options.Pool;
+
+    // The node's VMs straight from pmxcfs (/etc/pve), the files /cluster/resources is built from: .vmlist (VMID to
+    // node), user.cfg (pool members) and each VM's config. Strict: a file not in the expected shape throws.
+    JsonObject VmList() =>
+        JsonNode.Parse(api.Read(".vmlist") ?? throw new IOException("no /etc/pve/.vmlist"))?["ids"] as JsonObject
+            ?? throw new IOException("/etc/pve/.vmlist has no ids");
+
+    bool Local(JsonObject ids, int id) =>
+        ids[$"{id}"] is JsonObject e && e["node"]?.GetValue<string>() == node && e["type"]?.GetValue<string>() == "qemu";
+
+    // pool:<id>:<comment>:<vmids>:<storages>: (the comment is escaped, no ':' in it). Unset Pool: no member.
+    HashSet<int> PoolMembers()
+    {
+        if (options.Pool == "") return [];
+        var lines = (api.Read("user.cfg") ?? throw new IOException("no /etc/pve/user.cfg")).Split('\n')
+            .Select(l => l.TrimEnd('\r')).Where(l => l.StartsWith($"pool:{options.Pool}:")).ToList();
+        if (lines is []) return [];
+        if (lines is not [var line] || line.Split(':') is not { Length: >= 5 } f)
+            throw new IOException($"/etc/pve/user.cfg: pool {options.Pool} is not one well-formed line");
+        return f[3].Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(v => int.Parse(v, NumberStyles.None, CultureInfo.InvariantCulture)).ToHashSet();
+    }
+
+    // A VM's current config on this node (the file's first section; [PENDING], [special:...] and snapshots follow), or
+    // null when it has none. `pending`: it has pending changes, which the API's answer would include.
+    JsonObject? Conf(int id, out bool pending)
+    {
+        pending = false;
+        if (api.Read($"nodes/{node}/qemu-server/{id}.conf") is not { } text) return null;
+        var cfg = new JsonObject();
+        var current = true;
+        foreach (var raw in text.Split('\n'))
+        {
+            var line = raw.TrimEnd('\r');
+            if (line.StartsWith('['))
+            {
+                current = false;
+                pending |= line == "[PENDING]";
+                continue;
+            }
+            if (!current || line == "" || line.StartsWith('#')) continue;
+            if (ConfLine().Match(line) is not { Success: true } m || !cfg.TryAdd(m.Groups[1].Value, m.Groups[2].Value))
+                throw new IOException($"VM {id} config: unexpected line");
+        }
+        return cfg;
+    }
+
+    [GeneratedRegex(@"^([a-z][a-z0-9_-]*): ?(.*)$")]
+    private static partial Regex ConfLine();
 
     // The one range VM with this name. Proxmox allows two VMs with one name: then neither is meant, and a name that
     // also belongs to a VM outside the range is refused too.
@@ -299,10 +397,15 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     // ends at once; a different VM behind the name (VMID or identity) ends it and opens one on the VM Get just returned.
     readonly Captures captures = new();
 
+    // Range servers (Proxmox:CapExempt) run no persona: not watched, not listed.
     public byte[] Frame(string name, int maxWidth)
     {
         Vm vm;
-        try { vm = Get(name); }
+        try
+        {
+            vm = Get(name);
+            if (options.CapExempt.Contains((vm.Id, vm.Name))) throw new InvalidOperationException($"{name} is a range server: not on the monitor");
+        }
         catch
         {
             captures.Close(name);
@@ -311,13 +414,38 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
         return captures.Frame(name, $"{vm.Id}|{vm.Identity}", vm.Qmp.VncClient, maxWidth);
     }
 
-    public List<VmInfo> ListVms() =>
-        Wait(List(CancellationToken.None)).Where(v => !v.Template && InRange(v))
-            .Select(v => v.Status == "running"
-                ? new VmInfo(v.Name, "running", options.Screen.W, options.Screen.H)
-                : new VmInfo(v.Name, v.Status == "stopped" ? "off" : "other", 0, 0))
-            .OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+    // From pmxcfs and the VMs' pid files (the monitor polls this every few seconds per viewer): running is a live
+    // QEMU pid, off is no pid file or a dead pid, an unreadable pid file is "other" (unknown, never off).
+    public List<VmInfo> ListVms()
+    {
+        var ids = VmList();
+        var list = new List<VmInfo>();
+        foreach (var id in PoolMembers().Where(id => Local(ids, id)))
+        {
+            if (Conf(id, out _) is not { } cfg || cfg["template"]?.GetValue<string>() == "1") continue;
+            var name = cfg["name"]?.GetValue<string>() ?? "";
+            if (options.CapExempt.Contains((id, name))) continue;
+            list.Add(PidStatus(id) is var s && s == "running"
+                ? new VmInfo(name, s, options.Screen.W, options.Screen.H)
+                : new VmInfo(name, s, 0, 0));
+        }
+        return list.OrderBy(v => v.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    string PidStatus(int id)
+    {
+        string text;
+        try { text = File.ReadAllText(Path.Combine(options.RunDir, $"{id}.pid")); }
+        catch (FileNotFoundException) { return "off"; }
+        catch (IOException) { return "other"; }
+        if (!int.TryParse(text.Trim(), out var pid)) return "other";
+        try
+        {
+            using var p = System.Diagnostics.Process.GetProcessById(pid);
+            return p.HasExited ? "off" : "running";
+        }
+        catch (ArgumentException) { return "off"; } // no such process
+    }
 
     // Lifecycle (Proxmox API) ----------------------------------------------
 

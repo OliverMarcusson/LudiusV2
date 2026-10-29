@@ -26,6 +26,7 @@ sealed class FakeQmp : IDisposable
     {
         listener.Bind(new UnixDomainSocketEndPoint(Path.Combine(Dir, $"{vmid}.qmp")));
         listener.Listen(4);
+        File.WriteAllText(Path.Combine(Dir, $"{vmid}.pid"), $"{Environment.ProcessId}\n"); // its QEMU runs
         _ = Task.Run(Serve);
     }
 
@@ -87,6 +88,36 @@ sealed class FakePve : IPveApi
     // Race tests hold a call open here (method, path) until they let it go.
     public Func<string, string, Task>? Gate;
     public bool IgnoreSet;
+    public HashSet<int> Pending = []; // VMs whose config file carries a [PENDING] section
+    public readonly List<string> Reads = [];
+
+    // The pmxcfs files, rendered from the same state the API answers from.
+    public string? Read(string file)
+    {
+        lock (Calls) Reads.Add(file);
+        Gate?.Invoke("read", file).GetAwaiter().GetResult();
+        lock (Calls)
+        {
+            int Id(JsonNode? v) => v!["vmid"]!.GetValue<int>();
+            if (file == ".vmlist")
+                return new JsonObject
+                {
+                    ["version"] = 1,
+                    ["ids"] = new JsonObject(Vms.Select(v => KeyValuePair.Create($"{Id(v)}",
+                        (JsonNode?)new JsonObject { ["node"] = v!["node"]!.GetValue<string>(), ["type"] = v["type"]!.GetValue<string>(), ["version"] = 1 }))),
+                }.ToJsonString();
+            if (file == "user.cfg")
+                return "user:root@pam:1:0:::root@pve1::\n\n" + string.Concat(Vms.Where(v => v?["pool"] is not null).GroupBy(v => v!["pool"]!.GetValue<string>())
+                    .Select(g => $"pool:{g.Key}:Range%3a pool:{string.Join(",", g.Select(Id))}::\n"));
+            if (System.Text.RegularExpressions.Regex.Match(file, @"^nodes/([^/]+)/qemu-server/(\d+)\.conf$") is not { Success: true } m) return null;
+            var id = int.Parse(m.Groups[2].Value);
+            if (Vms.FirstOrDefault(v => Id(v) == id && v!["node"]!.GetValue<string>() == m.Groups[1].Value) is not { } vm) return null;
+            var conf = $"#a description\nboot: order=scsi0\nmeta: creation-qemu=9.0.2,ctime={Ctime.GetValueOrDefault(id, 1700000000)}\n"
+                + $"name: {vm["name"]}\nsmbios1: uuid=0000{id:x4}-1111-2222-3333-444455556666\n"
+                + (Args.GetValueOrDefault(id) is { } a ? $"args: {a}\n" : "") + (vm["template"] is not null ? "template: 1\n" : "");
+            return conf + (Pending.Contains(id) ? "\n[PENDING]\nmemory: 8192\n" : "") + "\n[clean]\nname: ludius-old\nsnaptime: 1700000001\n";
+        }
+    }
 
     public async Task<JsonNode?> Call(string method, string path, IReadOnlyDictionary<string, string>? args, CancellationToken ct)
     {
@@ -429,12 +460,26 @@ public class ProxmoxTests
     [Fact]
     public void Monitor_lists_vms_but_not_templates()
     {
-        var (px, _, qmp) = Make();
+        var (px, pve, qmp) = Make();
         using var _q = qmp;
         var vms = px.ListVms();
         Assert.DoesNotContain(vms, v => v.Name == "ludius-golden");
         Assert.Contains(new VmInfo("ludius-win10-01", "running", 1920, 1080), vms);
         Assert.DoesNotContain(vms, v => v.Name is "web-prod" or "ludius-stray" or "ludius-elsewhere"); // not the range
+        Assert.Contains(new VmInfo("ludius-dup", "off", 0, 0), vms); // no QEMU pid
+        Assert.Empty(pve.Calls); // read from pmxcfs, no pvesh per poll
+    }
+
+    [Fact]
+    public void Range_servers_are_not_on_the_monitor()
+    {
+        using var qmp = new FakeQmp(101);
+        var px = new Proxmox(new FakePve(), "pve1", new ProxmoxOptions
+            { RunDir = qmp.Dir, ScratchDir = qmp.Dir, Pool = "ludius", CapExempt = [(101, "ludius-win10-01")] });
+        Assert.DoesNotContain(px.ListVms(), v => v.Name == "ludius-win10-01");
+        var e = Assert.Throws<InvalidOperationException>(() => px.Frame("ludius-win10-01", 640));
+        Assert.Contains("range server", e.Message);
+        Assert.Equal(0, qmp.Connections); // no capture opened
     }
 
     public static TheoryData<Op, string, string> EveryOp() => new()

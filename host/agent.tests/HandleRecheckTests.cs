@@ -47,6 +47,73 @@ public class HandleRecheckTests
         Assert.Throws<UnauthorizedAccessException>(() => px.Get("ludius-win10-01")); // dropped: resolved afresh, still refused
     }
 
+    static int VmlistReads(FakePve pve)
+    {
+        lock (pve.Calls) return pve.Reads.Count(r => r == ".vmlist");
+    }
+
+    // Every frame and input call on a stale handle used to start its own recheck (a pvesh storm under the monitor).
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Concurrent_callers_on_a_stale_handle_share_one_recheck(bool stillInRange)
+    {
+        var (px, pve, qmp, clock) = Make();
+        using var _q = qmp;
+        var vm = px.Get("ludius-win10-01");
+        clock.Now += TimeSpan.FromSeconds(6);
+        var hold = new Hold("read", ".vmlist");
+        pve.Gate = hold.Gate;
+        var first = Task.Run(() => px.Get("ludius-win10-01"));
+        await hold.Reached;
+        var others = Enumerable.Range(0, 8).Select(_ => Task.Run(() => px.Get("ludius-win10-01"))).ToArray();
+        await Task.Delay(300);
+        Assert.All(others, t => Assert.False(t.IsCompleted)); // waiting on the check, not served the stale handle
+        if (!stillInRange) lock (pve.Calls) Entry(pve, 101).Remove("pool");
+        hold.Release();
+
+        if (stillInRange)
+            foreach (var t in others.Prepend(first)) Assert.Same(vm, await t);
+        else
+            foreach (var t in others.Prepend(first)) await Assert.ThrowsAsync<UnauthorizedAccessException>(() => t);
+        Assert.Equal(1, VmlistReads(pve));
+        Assert.Equal(1, Lookups(pve)); // only the first resolve went through pvesh; the recheck read pmxcfs
+    }
+
+    [Fact]
+    public async Task Concurrent_first_lookups_share_one_resolve()
+    {
+        var (px, pve, qmp, _) = Make();
+        using var _q = qmp;
+        var hold = new Hold("get", "/cluster/resources");
+        pve.Gate = hold.Gate;
+        var first = Task.Run(() => px.Get("ludius-win10-01"));
+        await hold.Reached;
+        var others = Enumerable.Range(0, 8).Select(_ => Task.Run(() => px.Get("ludius-win10-01"))).ToArray();
+        await Task.Delay(300);
+        hold.Release();
+        var vm = await first;
+        foreach (var t in others) Assert.Same(vm, await t);
+        Assert.Equal(1, Lookups(pve));
+    }
+
+    [Fact]
+    public void A_config_with_pending_changes_is_rechecked_through_pvesh()
+    {
+        var (px, pve, qmp, clock) = Make();
+        using var _q = qmp;
+        var vm = px.Get("ludius-win10-01");
+        pve.Pending.Add(101);
+        clock.Now += TimeSpan.FromSeconds(6);
+        var reads = ConfigReads(pve, 101);
+        Assert.Same(vm, px.Get("ludius-win10-01"));
+        Assert.Equal(reads + 1, ConfigReads(pve, 101));
+
+        Entry(pve, 101).Remove("pool");
+        clock.Now += TimeSpan.FromSeconds(6);
+        Assert.Throws<UnauthorizedAccessException>(() => px.Get("ludius-win10-01"));
+    }
+
     [Fact]
     public void A_vmid_reused_by_another_vm_is_refused()
     {
