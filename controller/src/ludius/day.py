@@ -12,12 +12,13 @@ import datetime as dt
 import random
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 
 from ludius import keys
 from ludius.loop import Clock, GroundTruth, Outcome, Runner
 from ludius.planner import BREAK, DayPlan, PlanItem
-from ludius.session import Session
+from ludius.session import EscalationDenied, Session
 from ludius.tasks import Task, Template
 
 
@@ -27,16 +28,25 @@ def run_task(
     """One task with session hygiene around it and its side effects logged.
 
     Interruptions run without hygiene: normalizing would close the interrupted task's window.
+    An unclean desktop with escalation denied (LUDIUS_NO_ESCALATE=1) abandons this task, recorded, and the day goes
+    on; raising failed the slot, its retries, then the whole persona-day (live: pvanloon's warp day 1 lost 10:00 on).
     """
     if hygiene and not session.normalize():
-        session.escalate()
+        try:
+            session.escalate()
+        except EscalationDenied:
+            reason = "desktop not clean, escalation denied"
+            runner.log.write(event="task_end", host_ms=_now(), task=task.template.task, status="abandoned",
+                             reason=reason, steps=0)  # fmt: skip
+            return Outcome("abandoned", 0, reason)
     apps_before = [f"{a.title} ({a.process_name})" for a in runner.observe().apps]
     out = runner.run(task, between)
     apps_after = [f"{a.title} ({a.process_name})" for a in runner.observe().apps]
     runner.log.write(event="side_effects", host_ms=_now(), task=task.template.task,
                      opened=[a for a in apps_after if a not in apps_before], left=apps_after)  # fmt: skip
     if hygiene and out.status != "done" and not session.normalize():
-        session.escalate()
+        with suppress(EscalationDenied):  # logged (escalate_blocked); this task's outcome stands
+            session.escalate()
     return out
 
 
@@ -167,7 +177,8 @@ class DayRunner:
         self._jump(day, item.at)
         self._started(day, item)
         if not self.session.normalize():
-            self.session.escalate()
+            with suppress(EscalationDenied):  # logged; locking a desktop that is not clean is still a break
+                self.session.escalate()
         self.runner.agent.chord(keys.chord("Win+L"))
         self.log.write(event="break", host_ms=_now(), minutes=item.minutes, away_s=self.away_s(item))
 

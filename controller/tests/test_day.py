@@ -150,3 +150,23 @@ def test_realtime_day_waits_for_each_slot_in_logical_order(tmp_path: Path) -> No
     runs = [c for c in calls if c != "normalize"]
     assert runs[0] in ("08:55", "08:56", "08:57") and runs[1] == "run note 0855"  # its time, plus human slack
     assert runs[2] >= "09:00" and runs[3] == "run note 0900"
+
+
+def test_denied_escalation_abandons_the_task_and_the_day_goes_on(tmp_path: Path) -> None:
+    from ludius.session import EscalationDenied
+
+    class Dirty(FakeSession):
+        def normalize(self) -> bool:
+            self.calls.append("normalize")
+            return False
+
+        def escalate(self) -> int:
+            raise EscalationDenied("LUDIUS_NO_ESCALATE=1")
+
+    calls: list[str] = []
+    log = GroundTruth(tmp_path / "day.jsonl")
+    plan = DayPlan(persona="aberg", date="2026-11-02", items=[note("09:00"), note("10:00")])
+    day = DayRunner(FakeRunner(log, calls), Dirty(calls), load_templates(), log, "compressed", 0)  # type: ignore[arg-type]
+    assert [r.status for r in day.run(plan)] == ["abandoned", "abandoned"]
+    assert not [c for c in calls if c.startswith("run")]  # nothing acted on the unclean desktop
+    assert (tmp_path / "day.jsonl").read_text(encoding="utf-8").count("escalation denied") == 2
