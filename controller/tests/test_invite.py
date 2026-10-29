@@ -50,7 +50,8 @@ def test_template_gets_the_meeting_send_contract() -> None:
     meeting_avoid = [
         ElementCheck(role="edit", name="^Info Bar$"),
         ElementCheck(
-            role="button", name="^(Required|Optional|Location|Rooms|Room Finder|Address Book|Add Attendees|Scheduling Assistant)$"
+            role="button",
+            name="^(Required|Optional|Location|Rooms|Room Finder|Address Book|Add Attendees|Scheduling Assistant)$",
         ),
         ElementCheck(name="^Scheduling Assistant$"),
         ElementCheck(role="data item"),
@@ -208,6 +209,25 @@ def test_replace_selects_the_prefilled_value_before_typing(tmp_path: Path) -> No
     t = task()
     refused = runner.act(Option("o1", "type", "type", element=field, content="start"), t, t.subgoal("fill_start"))
     assert refused is None and agent.chords == [keys.chord("Ctrl+A"), [-1]]
+
+
+def test_a_launch_query_replaces_an_old_query_in_the_start_search(tmp_path: Path) -> None:
+    from ludius.options import Option
+
+    box = obs.Element(key="s", role="edit", name="Search box", value="edgeoutlook", focused=True, enabled=True,
+                      actions=["value"], bounds=obs.Rect(x=1, y=1, width=50, height=20))  # fmt: skip
+    fg = obs.Window(kind=obs.Window.FOREGROUND, process_name="SearchApp.exe", title="Search")
+    snap = obs.Snapshot(windows=[fg], elements=[box])
+    agent = FakeAgent([snap])
+    agent.type = lambda text, mean, jitter: agent.chords.append([-1])  # type: ignore[attr-defined]
+    runner = Runner(agent, None, cli.load_persona(None), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    runner.snap = snap
+    t = task()
+    for o in (Option("o1", "type", "type", element=box, content="launch_query"),
+              Option("o2", "type", "type", content="launch_query")):  # fmt: skip  # into the box, and at its focus
+        agent.chords.clear()
+        assert runner.act(o, t, t.subgoal("open_outlook")) is None
+        assert agent.chords == [keys.chord("Ctrl+A"), [-1]]
 
 
 def test_abandon_leaves_a_modal_that_ignores_close_keys_by_dont_send_or_cancel(tmp_path: Path) -> None:

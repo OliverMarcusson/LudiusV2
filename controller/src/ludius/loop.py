@@ -263,6 +263,8 @@ class Runner:
                 if e is None:
                     return "replacing text needs a target field that holds the keyboard focus"
                 self.agent.chord(keys.chord("Ctrl+A"))
+            elif sg.text == LAUNCH_TEXT:  # checked to be the Start search box: a retry never appends to an old query
+                self.agent.chord(keys.chord("Ctrl+A"))  # (warp6 dkoster: "edgeoutlookoutlookoutlook")
             self._type(text)
         elif o.kind == "key":
             self.agent.chord(keys.chord(o.keys))
