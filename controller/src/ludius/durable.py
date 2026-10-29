@@ -177,7 +177,7 @@ class DayActivities:
             self.mark_aborted()
 
     def mark_aborted(self) -> None:
-        """The workflow failed or was cancelled before day_end: the monitor (ludius.health) shows the day stopped.
+        """The workflow failed or was cancelled before day_end: the day log records that it stopped.
         Monitoring only, after the cleanup: an unwritable log never blocks a clock reset or a release."""
         try:
             self.day.log.write(event="day_aborted", host_ms=_now())

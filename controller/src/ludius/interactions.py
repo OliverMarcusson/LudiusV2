@@ -1,4 +1,4 @@
-"""Persona-to-persona interactions for the monitor's popups (ludius.summaries), by rule from recorded effects only.
+"""Persona-to-persona interactions for the monitor's popups (`range interactions`), by rule from recorded effects only.
 
 Never from a plan: an interaction is an effect the range recorded or verified.
 - mail, reply, invite: an item_end with status done whose template sends (capability mail.send, mail.reply,

@@ -494,8 +494,8 @@ def cmd_range(args: argparse.Namespace) -> int:
     today = dt.datetime.now(ZoneInfo(args.timezone)).date()
     if args.what == "unwarp":
         return _range_unwarp()
-    if args.what == "summaries":
-        return _range_summaries(users)
+    if args.what == "interactions":
+        return _range_interactions()
     if args.what == "status":
         print(rangerun.summary(planner.World(RUNS), users, today, RUNS / "range", dict(os.environ)))
         return 0
@@ -524,20 +524,23 @@ def cmd_range(args: argparse.Namespace) -> int:
     return 0
 
 
-def _range_summaries(users: list[str]) -> int:
-    """The monitor's activity lines, health and interactions (ludius.summaries), every 5 s until stopped; no model."""
+def _range_interactions() -> int:
+    """The monitor's interaction popups (ludius.interactions), every 5 s until stopped; no model."""
     import signal
+    from dataclasses import asdict
 
-    from ludius import summaries
+    from ludius import interactions, rangerun
 
     def term(*_: object) -> None:
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, term)
-    s = summaries.Summariser(users, planner.World(RUNS).root / "days")
+    days = planner.World(RUNS).root / "days"
+    t = interactions.Tracker(days, rangerun.personas(), RUNS / "monitor-interactions.jsonl")
     try:
         while True:
-            s.step()
+            for i in t.step():
+                print(json.dumps({"interaction": asdict(i)}), flush=True)
             time.sleep(5)
     except KeyboardInterrupt:
         pass
@@ -1140,9 +1143,9 @@ def main(argv: list[str] | None = None) -> int:
     rg = sub.add_parser("range", help="multi-persona run: start and supervise every persona's worker, or summarize")
     rg.add_argument(
         "what",
-        choices=["up", "status", "warp", "unwarp", "summaries"],
+        choices=["up", "status", "warp", "unwarp", "interactions"],
         help="warp: time-jump test over --days simulated weekdays (Proxmox); unwarp: clocks to real time; "
-        "summaries: keep the monitor's per-persona lines, health and interactions current (no model calls)",
+        "interactions: keep the monitor's interaction popups current (no model calls)",
     )
     rg.add_argument("--start", help="warp: first simulated date YYYY-MM-DD (after today)")
     rg.add_argument("--days", type=int, default=3, help="warp: simulated weekdays to play")

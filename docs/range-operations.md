@@ -107,8 +107,8 @@ ssh root@95.216.39.232 'cd /root/src/LudiusV2.new/controller && set -a && . ../.
 
 The local ssh may still hang after the `&`; that doesn't matter, because the warp runs in its own session.
 
-The monitor's activity lines and interaction toasts need a second process: start
-`.venv/bin/python -m ludius.cli range summaries` the same way, after the pre-flight (no model calls: the day log's own line, health and interactions).
+The monitor's interaction toasts need a second process: start
+`.venv/bin/python -m ludius.cli range interactions` the same way, after the pre-flight (no model calls).
 
 To stop a warp early, `kill -TERM <pid>` the `range warp` process once: it terminates the running day workflows,
 stops the workers (30 s grace for all, then kill) and only then resets the clocks (`interrupted`, then
@@ -125,7 +125,7 @@ ssh root@95.216.39.232 'date; pgrep -af "ludius.cli range warp"; R=/root/src/Lud
 - `runs/range/supervisor.jsonl`: worker starts, exits and restarts.
 - `runs/range/<user>.log`, `plan.log`: worker and planner output.
 - `runs/days/<date>-<user>.jsonl`: ground truth per persona day (`item_done`, `item_abandoned`, `day_end`, ...).
-- The operator monitor (health ring per persona, interactions) reads the same files.
+- The operator monitor (interaction popups) reads the same files.
 
 Per-day tally of item outcomes (box helper, `/root/tally.py`, not in the repo):
 
@@ -171,4 +171,3 @@ for that VM.
 - Clock sets check pool `ludius` membership, node and VM name first; a VM outside the pool is refused, not set.
 - `ludius range up --clock realtime --today` is the realtime (scheduled, 22:00 plan / 06:30 day) mode, not a warp;
   see [proxmox-bringup.md §7](proxmox-bringup.md#7-multi-persona-run-8-personas-ludius-range).
-- Health thresholds for the monitor are `LUDIUS_HEALTH_*` in `.env` (stall 300 s, see `controller/src/ludius/health.py`).
