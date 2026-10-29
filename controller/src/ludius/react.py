@@ -39,7 +39,7 @@ from pathlib import Path
 import yaml
 
 from ludius import mail
-from ludius.llm import LlmClient, LlmError
+from ludius.llm import DEFAULT_MODEL, LlmClient, LlmError
 from ludius.loop import GroundTruth
 from ludius.planner import PlanItem, catalog, day_records, fill_recipient_names, role_templates, targets, validate
 from ludius.policy import Policy
@@ -52,7 +52,7 @@ PER_SENDER = 4  # reactions to one colleague per day: two personas can't chat ea
 ATTEMPTS = 2  # a post whose read or reaction failed is tried again once
 ITEMS_MAX = 3
 # Run 9 replayed x8: no bad JSON, always the note, no folders, asked for offered figures (Haiku: folders, never asked)
-MODEL = "deepseek/deepseek-v4.1-flash-1017"  # LUDIUS_REACT_MODEL overrides
+MODEL = DEFAULT_MODEL  # LUDIUS_REACT_MODEL overrides
 # Live: the read closed Edge and the answer opened it again. The chat stays open through a reaction (the templates'
 # zero-weight variants: read and answer without closing) and is closed once at its end.
 _CHAT = ["open_chat", "open_conversation"]

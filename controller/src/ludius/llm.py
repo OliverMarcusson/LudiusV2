@@ -12,7 +12,7 @@ from pydantic import BaseModel, ValidationError
 from ludius import calls
 
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "anthropic/claude-sonnet-5.5"
+DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash-1017"  # every chat completion; LUDIUS_PLANNER_MODEL overrides
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
 
