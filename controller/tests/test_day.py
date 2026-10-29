@@ -247,6 +247,32 @@ def test_chat_notification_reads_then_reacts_outside_the_plan(tmp_path: Path, fa
     log.close()
 
 
+def test_messages_sent_while_reading_or_answering_are_answered_too(tmp_path: Path) -> None:
+    """Live: aberg's request came in while dkoster read her small talk; only the small talk was answered, and that
+    answer marked the request read. Now it is read and answered together; one seen while answering gets its own."""
+    narrative = tmp_path / "narrative.yaml"
+    narrative.write_text(yaml.safe_dump({"people": [{"user": "dkoster", "name": "Daan Koster"},
+                                                    {"user": "aberg", "name": "Anna Berg"}]}))  # fmt: skip
+    hi, ask = Post("p1", "aberg", "morning daan", 100), Post("p2", "aberg", "could you note the deliveries", 150)
+    more = Post("p3", "aberg", "and the carriers", 300)
+    polls = [[hi], [ask], []]
+    talks = [([hi, ask], 200), ([hi, ask, Post("p9", "dkoster", "done", 250), more], 400)]
+    llm = ReactionLlm([{"template": "chat_direct_message", "params": {"to": "aberg@ludius.internal", "message": "ok"}}])
+    calls: list[str] = []
+    log = GroundTruth(tmp_path / "day.jsonl")
+    reactor = Reactor(Persona(name="Daan Koster", user="dkoster"), load_templates(), Policy(), llm, narrative, log,  # type: ignore[arg-type]
+                      poll=lambda user: polls.pop(0) if polls else [],
+                      talk=lambda user, other: talks.pop(0) if talks else None)  # fmt: skip
+    day = DayRunner(FakeRunner(log, calls), FakeSession(calls), load_templates(), log, "compressed", 0, reactor=reactor)  # type: ignore[arg-type]
+    day.slot(dt.date(2026, 11, 2), note("10:00"), [])
+    assert [c for c in calls if c.startswith("run")] == ["run chat_read_messages", "run chat_read_messages",
+                                                         "run chat_direct_message", "run chat_direct_message",
+                                                         "run note 1000"]  # fmt: skip
+    assert "(new) Anna Berg: morning daan\n(new) Anna Berg: could you" in llm.prompts[0]
+    assert "(new) Anna Berg: and the carriers" in llm.prompts[1] and "(new) Anna Berg: could" not in llm.prompts[1]
+    log.close()
+
+
 def test_unread_reads_mattermost_and_unreadable_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     out = b'[{"id": "p1", "sender": "lnord", "createat": 1, "message": "hi"}]\n'
     monkeypatch.setattr(react, "_ssh", lambda remote, stdin: subprocess.CompletedProcess([], 0, out, b""))

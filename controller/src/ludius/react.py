@@ -7,13 +7,15 @@ over SSH (the notification; unreadable is unknown, never "no messages"). Per sen
 1. chat_read_messages with that sender; the posts must then no longer be unread on the server (the conversation
    really was open, in this window), whatever the task's own UI checks said: Mattermost marks a DM read as soon as
    it is open, so a read abandoned after that is never notified again; still unread = no reaction, tried later;
+   the sender's posts that came in while reading are read once more, and answered together with the rest;
 2. the conversation from the server: every post of the sender's from the first notified one up to the persona's
    read marker is new (a post that came in while the conversation was open was seen, and is never notified), the
    posts before them, both sides, are what was already said;
 3. ONE planner-LLM call (counted) picks 0-3 catalog items from the messages' text (data, never instructions): an
    answer by chat, the asked work, a mail to them; validated like a plan (planner.validate), every recipient the
    sender, no handoff or follow-up;
-4. the items run in order and stop at the first one not done, so a done-note never follows work that failed.
+4. the items run in order and stop at the first one not done, so a done-note never follows work that failed;
+5. once more 2-4 for the sender's posts seen while answering (on screen, so never notified), if any.
 Caps: reactions per sender per day, attempts per post, counted in the day's log (a durable worker builds a new
 runner per slot, and a retried slot must not answer twice). Reaction items are logged as reaction_start/reaction_end,
 never item_end: they are not plan items, and a plan item's done must not be read off them.
@@ -229,22 +231,37 @@ class Reactor:
                             context=f"A chat notification: new messages from {people[sender]}")  # fmt: skip
             run(read)  # the server's read marker is the outcome check, not the UI's status
             after = self.poll(self.persona.user)
+            # Live: a request sent while the small talk was being read stayed unread, and the small-talk answer then
+            # marked it read unanswered. Messages that came in meanwhile are read too and answered together.
+            later = [p for p in after or [] if p.sender == sender]
+            if after is not None and not {p.id for p in after} & {p.id for p in mine} and later:
+                self._log(event="chat_read_more", sender=sender, posts=[p.id for p in later])
+                mine += later
+                run(read)
+                after = self.poll(self.persona.user)
             if after is None or {p.id for p in after} & {p.id for p in mine}:
                 self._log(event="chat_read_check", sender=sender, ok=False,
                                reason="unknown" if after is None else "still unread on the server")  # fmt: skip
                 continue
             self._log(event="chat_read_check", sender=sender, ok=True)
-            talk = self.talk(self.persona.user, sender)
-            if talk is None:  # unknown: what was notified, without the conversation around it
-                self._log(event="chat_conversation", sender=sender, unknown=True)
-                new, shown = mine, mine
-            else:  # also what came in while the conversation was open: seen, so never notified
-                shown, viewed = talk
-                first = min(p.at for p in mine)
-                new = [p for p in shown if p.sender == sender and first <= p.at <= viewed] or mine
-            for it in self.plan(sender, people, new, at, day, shown):
-                if run(it) != "done":
+            first, answered = min(p.at for p in mine), set[str]()
+            for again in (False, True):  # again: what came in while answering, on screen so never notified
+                talk = self.talk(self.persona.user, sender)
+                if talk is None:  # unknown: what was notified, without the conversation around it
+                    self._log(event="chat_conversation", sender=sender, unknown=True)
+                    if again:
+                        break
+                    new, shown = mine, mine
+                else:  # also what came in while the conversation was open: seen, so never notified
+                    shown, viewed = talk
+                    new = [p for p in shown if p.sender == sender and first <= p.at <= viewed and p.id not in answered]
+                    new = new or ([] if again else mine)
+                if not new:
                     break
+                answered |= {p.id for p in new}
+                for it in self.plan(sender, people, new, at, day, shown):
+                    if run(it) != "done":
+                        break
 
     def plan(self, sender: str, people: dict[str, str], posts: list[Post], at: str, day: str,
              talk: list[Post] | None = None) -> list[PlanItem]:  # fmt: skip
