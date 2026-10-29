@@ -531,9 +531,14 @@ def _range_clock() -> rangeclock.RangeClock:
     main = yaml.safe_load((rangerun.VMS.parent / "main.yml").read_text(encoding="utf-8"))
     dc, ex = int(main["srv01_vmid"]), int(main["ex01_vmid"])
     names = {dc: "ludius-dc01", ex: "ludius-ex01"} | {v: rangerun.vm_of(u) for u, v in rangerun.vmids().items()}
-    # Root `qm` acts on whatever VMID it is given: every one must be a range VM before any clock is touched.
+    # Root `qm` acts on whatever VMID it is given: every one must be a range VM before any clock is touched, checked
+    # here and again (a fresh pvesh read) before every set and reset.
     rangeclock.confine(names, rangeclock.resources(), socket.gethostname())
-    return rangeclock.RangeClock(dc, [v for v in names if v != dc])
+    return rangeclock.RangeClock(
+        dc,
+        [v for v in names if v != dc],
+        verify=lambda: rangeclock.violations(names, rangeclock.resources(), socket.gethostname()),
+    )
 
 
 def _range_unwarp() -> int:
@@ -598,7 +603,7 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, term)
-    reset_failed = False
+    reset_failed, failure = False, None
     try:
         sup.step()
         for d in days:
@@ -623,6 +628,9 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
                 note(event="day", persona=u, date=d, result=res)
     except KeyboardInterrupt:
         note(event="interrupted")
+    except Exception as e:  # noqa: BLE001  re-raised below unless the clock reset failed too (that exit wins)
+        failure = e
+        note(event="warp_failed", error=repr(e)[-1500:])
     finally:
         if lease.held:
             try:
@@ -633,7 +641,12 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
                 reset_failed = True
                 note(event="clock_reset_failed", error=str(e)[-1500:], fix="ludius range unwarp")
         sup.stop()
-    return 3 if reset_failed else 0
+    if reset_failed:  # a range left on a jumped clock outranks whatever stopped the warp
+        print(f"warp: clock reset FAILED, run `ludius range unwarp`; warp error: {failure!r}", file=sys.stderr)
+        return 3
+    if failure:
+        raise failure
+    return 0
 
 
 async def _play_days(

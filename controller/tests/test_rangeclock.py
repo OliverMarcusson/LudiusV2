@@ -1,6 +1,8 @@
+import argparse
 import datetime as dt
 import re
 import time
+from pathlib import Path
 
 import pytest
 
@@ -111,3 +113,51 @@ def test_range_clock_refuses_before_touching_any_vm(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(rangeclock, "resources", lambda: RES)
     with pytest.raises(ValueError, match="not range VMs"):
         cli._range_clock()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_set_and_reset_recheck_the_range() -> None:
+    r = Range()
+    bad: dict[int, str] = {}
+    c = RangeClock(110, [111, 121], r.run, r.now, verify=lambda: dict(bad))
+    c.set(dt.datetime.fromtimestamp(r.t, dt.UTC) + dt.timedelta(days=1))
+    r.sets.clear()
+    bad[121] = "web01 in pool other"
+    with pytest.raises(ValueError, match="121: web01"):
+        c.set(dt.datetime.fromtimestamp(r.t, dt.UTC) + dt.timedelta(days=2))
+    assert r.sets == []
+    with pytest.raises(RuntimeError, match="VM 121 skipped"):
+        c.reset()
+    assert sorted(r.sets) == [110, 111] and abs(r.off[110]) < 1 and abs(r.off[111]) < 1
+
+
+def test_warp_exits_3_when_reset_fails_after_the_warp_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from ludius import cli, rangerun
+    from ludius.clocklease import Lease
+
+    class Broken(RangeClock):
+        def set(self, at: dt.datetime) -> dict[int, float]:
+            raise RuntimeError("guest agent hung mid-jump")
+
+        def reset(self) -> dict[int, float]:
+            raise RuntimeError("VM 110: guest agent not running")
+
+    monkeypatch.setattr(cli, "RUNS", tmp_path)
+    monkeypatch.setattr(cli, "_range_clock", lambda: Broken(110, [111]))
+
+    def lease(vm: str | None = None) -> Lease:
+        return Lease(tmp_path / f"clock-{vm}.json", vm or "range", renew_s=3600)
+
+    def no_specs(*_: object) -> list[rangerun.Spec]:
+        return []
+
+    monkeypatch.setattr(cli, "_clock_lease", lease)
+    monkeypatch.setattr(cli, "plan_sources", lambda: None)
+    monkeypatch.setattr(rangerun, "specs", no_specs)
+    args = argparse.Namespace(start="2099-01-05", days=1, timezone="Europe/Stockholm", plan_at="22:00", agent=None,
+                              temporal="127.0.0.1:7233", model="m")  # fmt: skip
+    assert cli._range_warp(args, [], dt.date(2099, 1, 1)) == 3  # pyright: ignore[reportPrivateUsage]
+    err = capsys.readouterr().err
+    assert "reset FAILED" in err and "guest agent hung mid-jump" in err
+    assert (tmp_path / "clock-range.json").exists()  # lease kept for recovery
