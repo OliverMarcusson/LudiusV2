@@ -422,7 +422,9 @@ class Runner:
         seen = {fingerprint(snap)}
         guarded = False  # the last input passed this subgoal's require/forbid checks (send_confirmation)
         shot_why: str | None = None  # why the next decision gets the screenshot (image_reason)
-        for step in range(1, budget + 1):
+        step = 0
+        while step < budget:
+            step += 1
             if time.monotonic() - t0 > task.template.budget_minutes * 60:
                 return "failed", step - 1, "time budget"
             if snap.locked:
@@ -563,6 +565,10 @@ class Runner:
                            check=(sg, typed_ok), code_done=code_done, image=image)  # fmt: skip
             shot_why = "refused" if refused else "no_change" if not changed else None
             recovering = False
+            if chosen.kind == "rescan":
+                # Waiting for an app to start or a dialog to open costs time, not a step: the time budget bounds it
+                # (warp6: Outlook's start and Excel's Save As used up whole step budgets on waits).
+                step -= 1
 
             progress = changed and not revisit
             no_change = 0 if progress else no_change + 1

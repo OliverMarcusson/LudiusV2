@@ -14,8 +14,10 @@ forms:
   mail:
     recipients: value  # To is read as the field's text value (as typed, or as Outlook resolves it)
     to: {role: edit, name: "^To$"}
-    # Bcc must be visible (aberg's Outlook view option): a hidden Bcc is unknown, never empty.
-    empty: [{role: edit, name: "^Cc$"}, {role: edit, name: "^Bcc$"}]
+    empty: [{role: edit, name: "^Cc$"}]
+    # Bcc is hidden by default in classic Outlook (warp6: sends waited out their budget for it). Only Decisions could
+    # fill it, never with planned text, and the done check requires the Sent Items copy to name {to} alone.
+    never_filled: [{role: edit, name: "^Bcc$"}]
     # The notice bar ("You are not responding to the latest message..."): its click opens that message and took the
     # caret away from the reply being typed.
     avoid: [{role: edit, name: "^Info Bar$"}]

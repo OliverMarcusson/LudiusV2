@@ -24,7 +24,7 @@ subgoals:
     keys: [Win]
     text: launch_query
     steps: 8
-    done: {foreground: {process: outlook.exe, title: "Outlook"}}
+    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}  # the main window, not "Opening - Microsoft Outlook"
   open_message:
     goal: "In the Inbox, open the mail with the subject {subject} in its own window (double-click it)"
     keys: [Enter]

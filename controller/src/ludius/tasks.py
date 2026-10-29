@@ -783,7 +783,13 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
         return "precondition: the target is not in the foreground window"
     for c in sg.require:
         if not any(e.window == fg and _guard_matches(e, c, task) for e in snap.elements):
-            return f"precondition: no readable {c.name or c.role!r} field with value {task.fmt(c.value or '')!r}"
+            seen = [
+                e.value[:80]
+                for e in snap.elements
+                if e.window == fg and element_matches(e, c.model_copy(update={"value": None}), task)
+            ]
+            return (f"precondition: no readable {c.name or c.role!r} field with value {task.fmt(c.value or '')!r}"
+                    f" (read: {seen!r})")  # fmt: skip
     for c in sg.forbid:
         if any(element_matches(e, c, task) for e in snap.elements):
             return f"precondition: {c.name or c.role!r} must not match {task.fmt(c.value or '')!r}"

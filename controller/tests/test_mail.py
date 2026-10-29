@@ -226,20 +226,16 @@ def test_send_is_blocked_unless_to_is_exact_and_cc_bcc_empty() -> None:
     resolved = ("Marcus Vellinga", "Marcus Vellinga <mvellinga@ludius.internal>")  # how Outlook shows it, resolved
     for to in ("mvellinga@ludius.internal", "mvellinga@ludius.internal;", *resolved):
         assert preconditions(sg, snap(To=to, Cc="", Bcc=""), task) is None
+        assert preconditions(sg, snap(To=to, Cc=""), task) is None  # Bcc hidden (Outlook's default): only filled blocks
     for bad in (snap(To="mvellinga@ludius.internal; outside@example.com", Cc="", Bcc=""),
                 snap(To="Marcus Vellinga; outside@example.com", Cc="", Bcc=""), snap(To="Lars Nord", Cc="", Bcc=""),
                 snap(To="Marcus Vellinga <outside@example.com>", Cc="", Bcc=""),
                 snap(To="mvellinga@ludius.internal", Cc="outside@example.com", Bcc=""),
                 snap(To="mvellinga@ludius.internal", Cc="", Bcc="lnord@ludius.internal"),
                 snap(To="lnord@ludius.internal", Cc="", Bcc=""),
-                snap(To="mvellinga@ludius.internal", Cc=""),  # Bcc not on screen: fails closed
                 snap(To="mvellinga@ludius.internal", Bcc=""),  # Cc not on screen
                 snap()):  # fmt: skip
         assert preconditions(sg, bad, task) is not None
-    # A toggle button named Bcc (the ribbon's Show Fields) is not the field.
-    toggle = obs.Snapshot(elements=[*snap(To="mvellinga@ludius.internal", Cc="").elements,
-                                    obs.Element(role="button", name="Bcc", value="")])  # fmt: skip
-    assert preconditions(sg, toggle, task) is not None
     reply = cli.load_templates()["outlook_reply_mail"].subgoals["send_shortcut"]
     assert reply.require == sg.require and reply.forbid == sg.forbid
 
@@ -258,12 +254,11 @@ def test_send_guard_reads_readable_ascii_fields_in_the_foreground_window() -> No
                                       for k, v in f.items()])  # fmt: skip
 
     assert preconditions(sg, snap(), task) is None
-    # The observer reads "" for a field without a Value pattern: that is not an empty Bcc.
-    assert preconditions(sg, snap(readable="To Cc"), task) is not None
+    # The observer reads "" for a field without a Value pattern: that is not an empty Cc.
     assert preconditions(sg, snap(readable="To Bcc"), task) is not None
     # Fields in another window do not authorise the foreground one; nor does a Send button in another window.
     assert preconditions(sg, snap(where={"To": 1}), task) is not None
-    assert preconditions(sg, snap(where={"Bcc": 1}), task) is not None
+    assert preconditions(sg, snap(where={"Cc": 1}), task) is not None
     send = obs.Element(role="button", name="Send", actions=["invoke"])
     assert preconditions(sg, snap(), task, send) is None
     send.window = 1
@@ -476,7 +471,6 @@ def test_mail_templates_get_the_shared_send_contract() -> None:
     require = [
         ElementCheck(role="edit", name="^To$", value="^({to}|{to_name}|{to_name} <{to}>);?$"),
         ElementCheck(role="edit", name="^Cc$", value="^$"),
-        ElementCheck(role="edit", name="^Bcc$", value="^$"),
     ]
     forbid = [ElementCheck(name="^Cc$", value=r"\S"), ElementCheck(name="^Bcc$", value=r"\S")]
     avoid = [ElementCheck(role="edit", name="^Info Bar$")]  # fmt: skip
@@ -486,7 +480,7 @@ def test_mail_templates_get_the_shared_send_contract() -> None:
         for n, sg in t.subgoals.items():
             assert sg.avoid[: len(avoid)] == avoid, n
             sends = bool(sg.done and sg.done.mail)
-            assert (sg.require[:3] == require and sg.forbid[:2] == forbid) is sends, n
+            assert (sg.require[:2] == require and sg.forbid[:2] == forbid) is sends, n
             assert sg.keys == (["Alt+S"] if n == "send_shortcut" else sg.keys), n
     raw = {"task": "x", "app": "outlook", "variants": [["s"]],
            "subgoals": {"s": {"goal": "send", "done": {"mail": {"mailbox": "{to}"}}}}}  # fmt: skip

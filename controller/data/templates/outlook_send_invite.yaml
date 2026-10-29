@@ -23,7 +23,7 @@ subgoals:
     keys: [Win]
     text: launch_query
     steps: 8
-    done: {foreground: {process: outlook.exe, title: "Outlook"}}
+    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}  # the main window, not "Opening - Microsoft Outlook"
   new_meeting_shortcut:
     goal: "Start a new meeting with Ctrl+Shift+Q"
     keys: [Ctrl+Shift+Q]
