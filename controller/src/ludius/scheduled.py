@@ -190,6 +190,8 @@ class WorkerActivities(durable.DayActivities):
             return
         if rec.day.clock == "time-jump":
             super().clock_reset()  # an unopenable runner fails closed here: the reservation stays for recovery
+        if self._day is not None:  # never open a runner just to log: an unopened day has nothing on the monitor
+            self.mark_aborted()
         self.close(release=rec.owner)  # other clocks never jumped, so release even if the runner never opened
 
     def _reserved(self) -> Reservation | None:

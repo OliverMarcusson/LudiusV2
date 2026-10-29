@@ -173,9 +173,16 @@ class DayActivities:
     @activity.defn(name="day_abort")
     def abort(self) -> None:
         if self._owns_activity():
-            # The workflow failed or was cancelled before day_end: the monitor (ludius.health) shows the day stopped.
-            self.day.log.write(event="day_aborted", host_ms=_now())
             self.clock_reset()
+            self.mark_aborted()
+
+    def mark_aborted(self) -> None:
+        """The workflow failed or was cancelled before day_end: the monitor (ludius.health) shows the day stopped.
+        Monitoring only, after the cleanup: an unwritable log never blocks a clock reset or a release."""
+        try:
+            self.day.log.write(event="day_aborted", host_ms=_now())
+        except Exception as e:  # noqa: BLE001 - the abort path must finish whatever the log does
+            activity.logger.warning("day_aborted not logged: %s", e)
 
     @activity.defn(name="day_end")
     def finish(self, e: DayEnd) -> None:
