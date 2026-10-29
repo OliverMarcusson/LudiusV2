@@ -360,6 +360,11 @@ SAVE_EXTENSIONS = {"notepad": ".txt", "wordpad": ".rtf", "paint": ".png", "excel
                    "powerpoint": ".pptx"}  # fmt: skip
 
 
+class KeyCommit(Strict):
+    keys: str
+    focus: ElementCheck
+
+
 class Template(Strict):
     task: str
     app: str
@@ -382,6 +387,9 @@ class Template(Strict):
     # What the task creates, profile-relative in a noise folder, as the app writes it (with the extension it adds;
     # ".*" for one it keeps, an Explorer rename). The shared reservation check (file_reserved) resolves these.
     writes: list[str] = Field(default_factory=list[str])
+    # Keys that commit while a matching element has the focus (Enter in a chat composer sends): offered only in a
+    # subgoal with `require` checks (its guarded send), never elsewhere and never with the focus unknown.
+    key_commits: list[KeyCommit] = Field(default_factory=list[KeyCommit])
 
     @property
     def sends_mail(self) -> bool:

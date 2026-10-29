@@ -309,6 +309,28 @@ def test_no_alt_f4_on_the_desktop() -> None:
     assert not shell_dialog(obs.Window(kind=obs.Window.FOREGROUND, class_name="#32770", process_name="notepad.exe"))
 
 
+def test_chat_enter_only_in_the_guarded_send() -> None:
+    """Enter in Mattermost's message box sends: a write step's Enter once posted a doubled leftover draft (live run)."""
+    from ludius.options import build_options, view
+
+    t = load_template(DATA / "templates" / "chat_post_message.yaml")
+    task = Task(t, TaskInstance(template=t.task, params=t.example), random.Random(0))
+    w = obs.Window(kind=obs.Window.FOREGROUND, class_name="Chrome_WidgetWin_1", process_name="msedge.exe")
+    box = obs.Rect(x=10, y=10, width=400, height=40)
+    composer = obs.Element(id=1, key="c", role="edit", name="Write to Coffee Corner", focused=True, bounds=box)
+    switcher = obs.Element(id=2, key="s", role="edit", name="Find channel", focused=True, bounds=box)
+
+    def enter(sg: str, *elements: obs.Element) -> bool:
+        snap = obs.Snapshot(windows=[w], elements=list(elements))
+        s = task.subgoal(sg)
+        return any(o.keys == "Enter" for o in build_options(view(snap, task, s, Policy()), task, s, Policy()))
+
+    assert not enter("write_message", composer)
+    assert not enter("write_message")  # focus unknown
+    assert enter("open_channel", switcher)
+    assert enter("send_message", composer)  # its require checks guard the press
+
+
 def test_visual_words_are_click_targets() -> None:
     from ludius.options import build_options, view
 

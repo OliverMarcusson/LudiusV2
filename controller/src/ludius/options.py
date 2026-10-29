@@ -215,6 +215,11 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
             continue
         if policy.key_allowed(k, v.snapshot, declared_commits(task, sg)):
             continue
+        if not sg.require and any(
+            c.keys.lower() == k.lower() and (focused is None or element_matches(focused, c.focus, task))
+            for c in task.template.key_commits
+        ):
+            continue  # commits here (Enter sends a chat line): only the guarded send subgoal may press it
         add("key", f"press {k}", keys=k)
     if any("list continues" in h for e in v.allowed for h in e.hints) or any(e.role == "document" for e in v.allowed):
         add("scroll", "scroll down", notches=-3)

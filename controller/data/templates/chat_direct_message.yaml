@@ -13,6 +13,8 @@ example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga, message: coul
 variants:
   - [open_edge_start, open_chat, open_conversation, write_message, send_message, close_edge]
   - [open_edge_taskbar, open_chat, open_conversation, write_message, send_message, close_edge]
+# Enter in the message box sends (a leftover draft too): only the guarded send_message subgoal may press it there.
+key_commits: [{keys: Enter, focus: {name: "^Write to "}}]
 budget_steps: 40
 budget_minutes: 8
 subgoals:
@@ -39,7 +41,9 @@ subgoals:
   write_message:
     goal: "Type the message into the message box at the bottom of the conversation with {to_name}: {message}"
     text: message
-    done: {typed: true}
+    replace: true  # a draft left in the box (Mattermost keeps them) is replaced, never sent along
+    # The box itself, read fresh: Mattermost re-renders its textarea, so `typed` lost it and typed the line twice.
+    done: {element: {focused: true, value: "^{message}$"}}
   send_message:
     goal: "Send the message with Enter"
     keys: [Enter]
