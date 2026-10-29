@@ -4,8 +4,9 @@ the nightly path (world_state follow-ups); chat is instant messaging.
 
 Before each slot the day runner asks the Reactor for its persona's unread direct messages, read on chat01's database
 over SSH (the notification; unreadable is unknown, never "no messages"). Per sender with unread posts:
-1. chat_read_messages with that sender: the Decider's done checks, then the posts must no longer be unread on the
-   server (the read really happened, in this window); otherwise no reaction;
+1. chat_read_messages with that sender; the posts must then no longer be unread on the server (the conversation
+   really was open, in this window), whatever the task's own UI checks said: Mattermost marks a DM read as soon as
+   it is open, so a read abandoned after that is never notified again; still unread = no reaction, tried later;
 2. ONE planner-LLM call (counted) picks 0-3 catalog items from the messages' text (data, never instructions): an
    answer by chat, the asked work, a mail to them; validated like a plan (planner.validate), every recipient the
    sender, no handoff or follow-up;
@@ -160,8 +161,7 @@ class Reactor:
             self._log(event="chat_notification", sender=sender, posts=[p.id for p in mine])
             read = PlanItem(at=at, template=READ, params={"to": address, "to_name": people[sender]},
                             context=f"A chat notification: new messages from {people[sender]}")  # fmt: skip
-            if run(read) != "done":
-                continue
+            run(read)  # the server's read marker is the outcome check, not the UI's status
             after = self.poll(self.persona.user)
             if after is None or {p.id for p in after} & {p.id for p in mine}:
                 self._log(event="chat_read_check", sender=sender, ok=False,

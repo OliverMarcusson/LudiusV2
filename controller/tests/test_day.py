@@ -190,10 +190,11 @@ class ReactionLlm:
         return cls.model_validate({"items": self.items})
 
 
-@pytest.mark.parametrize("fail", ["", "erp roles", "read"])
+@pytest.mark.parametrize("fail", ["", "erp roles", "read", "read ui"])
 def test_chat_notification_reads_then_reacts_outside_the_plan(tmp_path: Path, fail: str) -> None:
     """New DMs before a slot: read them (confirmed on the server), then the reaction from their real text, in order,
-    stopping at the first failure; none of it is a plan result or an item_end."""
+    stopping at the first failure; none of it is a plan result or an item_end. The server decides whether the read
+    happened: a read task abandoned after the conversation opened still reacts."""
     narrative = tmp_path / "narrative.yaml"
     narrative.write_text(yaml.safe_dump({"people": [{"user": "aberg", "name": "Anna Berg"},
                                                     {"user": "lnord", "name": "Lars Nord"}]}))  # fmt: skip
@@ -207,13 +208,14 @@ def test_chat_notification_reads_then_reacts_outside_the_plan(tmp_path: Path, fa
     calls: list[str] = []
     log = GroundTruth(tmp_path / "day.jsonl")
     runner = FakeRunner(log, calls)
-    runner.fail = {fail} - {"read"}
+    runner.fail = {"read": set(), "read ui": {"chat_read_messages"}}.get(fail, {fail})
     reactor = Reactor(Persona(name="Anna Berg", user="aberg"), load_templates(), Policy(), llm, narrative, log,  # type: ignore[arg-type]
                       poll=lambda user: polls.pop(0) if polls else [])  # fmt: skip
     day = DayRunner(runner, FakeSession(calls), load_templates(), log, "compressed", 0, reactor=reactor)  # type: ignore[arg-type]
     results = day.slot(dt.date(2026, 11, 2), note("10:00"), [])
     expected = {
         "": ["run chat_read_messages", "run erp roles", "run chat_direct_message", "run note 1000"],
+        "read ui": ["run chat_read_messages", "run erp roles", "run chat_direct_message", "run note 1000"],
         "erp roles": ["run chat_read_messages", "run erp roles", "run note 1000"],
         "read": ["run chat_read_messages", "run note 1000"],
     }[fail]
