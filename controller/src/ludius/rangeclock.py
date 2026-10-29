@@ -32,21 +32,24 @@ def qm_exec(vmid: int, script: str) -> str:
     late, inside MAX_SKEW_S, and the member's w32time pulls it to the DC."""
     argv = ["qm", "guest", "exec", str(vmid), "--timeout", "60", "--", "powershell", "-NoProfile", "-NonInteractive",
             "-Command", script]  # fmt: skip
-    for attempt in range(3):
-        out = subprocess.run(argv, capture_output=True, text=True, timeout=90)
+    out = subprocess.run(argv, capture_output=True, text=True, timeout=90)
+    for _ in range(2):
         if out.returncode == 0:
             break
-        if attempt == 2:
-            raise RuntimeError(f"VM {vmid}: qm guest exec exit {out.returncode}: {out.stderr.strip()[-300:]}")
         time.sleep(3)
+        out = subprocess.run(argv, capture_output=True, text=True, timeout=90)
+    if out.returncode:
+        raise RuntimeError(f"VM {vmid}: qm guest exec exit {out.returncode}: {out.stderr.strip()[-300:]}")
     res = json.loads(out.stdout)
     if res.get("exitcode") != 0 or not res.get("exited", 1):
         raise RuntimeError(f"VM {vmid}: exit {res.get('exitcode')}: {str(res.get('err-data', ''))[-300:]}")
     return str(res.get("out-data", ""))
 
 
-# Epoch milliseconds in and out: no agreement on time zones needed. The guest prints its UTC after setting.
-_SET = "Set-Date ([DateTimeOffset]::FromUnixTimeMilliseconds({ms}).LocalDateTime) | Out-Null; "
+# Epoch milliseconds in and out: no agreement on time zones needed. The guest prints its UTC after setting. The time
+# PowerShell took to start (seconds on a busy persona) is added, so a member lands on the DC's instant.
+_SET = ("Set-Date ([DateTimeOffset]::FromUnixTimeMilliseconds({ms}).LocalDateTime + ((Get-Date) - "
+        "[Diagnostics.Process]::GetCurrentProcess().StartTime)) | Out-Null; ")  # fmt: skip
 _NOW = "[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()"
 
 
