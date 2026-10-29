@@ -64,7 +64,7 @@
     firstname: "{{ item.name.split(' ', 1)[0] }}"
     surname: "{{ item.name.split(' ', 1)[1] | default(omit) }}"
     display_name: "{{ item.name }}"
-    email: "{{ item.user }}@{{ domain }}"
+    email: "{{ item.user }}@{{ mail_domain }}"
     password: "{{ item.user }}{{ user_password_suffix }}"
     update_password: always
     password_never_expires: true

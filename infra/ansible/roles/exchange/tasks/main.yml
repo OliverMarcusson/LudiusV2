@@ -5,7 +5,7 @@
 # certificate for mail/autodiscover/ex01 and the address (persona clones import it through the domain role as
 # range_tls_ca; the controller verifies EWS against it), internal URLs and the Autodiscover SCP on the mail names, EWS
 # Basic auth over TLS and ApplicationImpersonation for the service account limited to the narrative's mailboxes, and the range boundary: no send connector,
-# corp.ludius.test the only accepted domain, a transport rule rejecting any recipient outside the organisation, all
+# mail_domain (ludius.internal) the only accepted domain, a transport rule rejecting any recipient outside the organisation, all
 # asserted, plus a probe mail to an outside address through the pickup folder that must fail and never be sent.
 # Tags (range-exchange.yml): the whole role is ex01; mailboxes / mail-boundary rerun only the configuration. The
 # assertions and the boundary probe are checks.yml, which range-exchange.yml runs on every run.
@@ -134,7 +134,7 @@
   tags: [mailboxes, mail-boundary]
   ansible.windows.win_powershell:
     script: |
-      param($domain, $ip, $people, $svc, $marker)
+      param($domain, $mail_domain, $ip, $people, $svc, $marker)
       $ErrorActionPreference = 'Stop'
       $Ansible.Changed = $false
       Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
@@ -190,18 +190,32 @@
           -CustomRecipientWriteScope $scope | Out-Null
         $Ansible.Changed = $true
       }
-      # Range boundary.
+      # Range boundary. The mail domain (not AD's .test, which Exchange refuses as a recipient domain) is the one
+      # accepted domain and every recipient's primary address (default policy, so system mailboxes follow too).
       Get-SendConnector | ForEach-Object { Remove-SendConnector $_.Identity -Confirm:$false; $Ansible.Changed = $true }
-      Get-AcceptedDomain | Where-Object DomainName -ne $domain | ForEach-Object { Remove-AcceptedDomain $_.Identity -Confirm:$false; $Ansible.Changed = $true }
-      if (-not (Get-TransportRule 'Ludius range only' -ErrorAction SilentlyContinue)) {
+      $ad = Get-AcceptedDomain | Where-Object DomainName -eq $mail_domain
+      if (-not $ad) { $ad = New-AcceptedDomain $mail_domain -DomainName $mail_domain -DomainType Authoritative; $Ansible.Changed = $true }
+      if (-not $ad.Default) { Set-AcceptedDomain $ad.Identity -MakeDefault $true; $Ansible.Changed = $true }
+      $tpl = "SMTP:%m@$mail_domain"
+      $pol = Get-EmailAddressPolicy | Where-Object { "$($_.Priority)" -eq 'Lowest' } # the default policy
+      if (@($pol.EnabledEmailAddressTemplates | ForEach-Object { "$_" }) -join ',' -cne $tpl) {
+        Set-EmailAddressPolicy $pol.Identity -EnabledEmailAddressTemplates $tpl; $Ansible.Changed = $true }
+      if (Get-Recipient -ResultSize Unlimited | Where-Object { "$($_.PrimarySmtpAddress)" -notlike "*@$mail_domain" -and $_.EmailAddressPolicyEnabled }) {
+        Update-EmailAddressPolicy $pol.Identity; $Ansible.Changed = $true }
+      Get-AcceptedDomain | Where-Object DomainName -ne $mail_domain | ForEach-Object { Remove-AcceptedDomain $_.Identity -Confirm:$false; $Ansible.Changed = $true }
+      # Outside the organisation = not in an accepted domain, i.e. not @$mail_domain.
+      $reason = "Delivery outside $mail_domain is not allowed"
+      $r = Get-TransportRule 'Ludius range only' -ErrorAction SilentlyContinue
+      if (-not $r) {
         New-TransportRule 'Ludius range only' -SentToScope NotInOrganization -Priority 0 `
-          -RejectMessageReasonText "Delivery outside $domain is not allowed" -RejectMessageEnhancedStatusCode '5.7.1' | Out-Null
+          -RejectMessageReasonText $reason -RejectMessageEnhancedStatusCode '5.7.1' | Out-Null
         $Ansible.Changed = $true
-      }
+      } elseif ($r.RejectMessageReasonText -ne $reason) { Set-TransportRule $r.Identity -RejectMessageReasonText $reason; $Ansible.Changed = $true }
       Enable-TransportRule 'Ludius range only'
       if ($iis) { iisreset /noforce | Out-Null }
     parameters:
       domain: "{{ domain }}"
+      mail_domain: "{{ mail_domain }}"
       ip: "{{ ex01_ip }}"
       people: "{{ people | map(attribute='user') | list }}"
       svc: "{{ ews_user }}"

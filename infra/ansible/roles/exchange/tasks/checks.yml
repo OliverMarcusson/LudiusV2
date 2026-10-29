@@ -20,6 +20,7 @@
   ansible.windows.win_powershell:
     script: |
       param($domain, $people, $svc, $marker)
+      # $domain is the mail domain here.
       $ErrorActionPreference = 'Stop'
       $Ansible.Changed = $false
       Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
@@ -28,8 +29,8 @@
       if ($ad.Count -ne 1 -or $ad[0] -ne $domain) { throw "accepted domains: $($ad -join ', ')" }
       $r = Get-TransportRule 'Ludius range only'
       if ($r.State -ne 'Enabled' -or "$($r.SentToScope)" -ne 'NotInOrganization' -or -not $r.RejectMessageReasonText) { throw 'transport rule not as set' }
-      $missing = @($people | Where-Object { -not (Get-Mailbox $_ -ErrorAction SilentlyContinue) })
-      if ($missing) { throw "no mailbox: $($missing -join ', ')" }
+      $missing = @($people | Where-Object { "$((Get-Mailbox $_ -ErrorAction SilentlyContinue).PrimarySmtpAddress)" -ne "$_@$domain" })
+      if ($missing) { throw "no mailbox at <user>@$($domain): $($missing -join ', ')" }
       $grants = @(Get-ManagementRoleAssignment -RoleAssignee $svc -Role ApplicationImpersonation)
       if ($grants.Count -ne 1 -or "$($grants[0].CustomRecipientWriteScope)" -ne 'Ludius noise mailboxes' -or
           "$($grants[0].RecipientWriteScope)" -ne 'CustomRecipientScope') { throw 'impersonation not limited to the noise scope' }
@@ -67,7 +68,7 @@
       if (Get-Queue | Where-Object { $_.NextHopDomain -like '*example.com*' -and $_.MessageCount -gt 0 }) { throw 'probe queued' }
       $Ansible.Result = @{ rejected = "$(($ev | Where-Object EventId -eq FAIL | Select-Object -First 1).RecipientStatus)"; outside = $outside }
     parameters:
-      domain: "{{ domain }}"
+      domain: "{{ mail_domain }}"
       people: "{{ people | map(attribute='user') | list }}"
       svc: "{{ ews_user }}"
       marker: "{{ ews_scope_marker }}"

@@ -7,7 +7,7 @@
 # (ex01_vmid, ex01_ip: Exchange SE in trial mode, no key). Two VMs, not one: Microsoft does not recommend Exchange on a
 # DC and a DC role change after Exchange is unsupported; 4 + 16 GB beside 8 personas at 8 GB is 84 of the box's 128.
 # A guest only gets an uplink (build bridge) for its online evaluation activation; the Exchange media are fetched and
-# checked on the node and handed in as a CD and over WinRM. Mail never leaves corp.ludius.test: no send connector,
+# checked on the node and handed in as a CD and over WinRM. Mail never leaves mail_domain (ludius.internal; AD stays corp.ludius.test, Exchange refuses .test recipients): no send connector,
 # only that accepted domain, and a transport rule rejecting every recipient outside the organisation, all asserted,
 # plus a probe to an outside address that must be rejected. Whatever happens, WinRM is switched off on both servers
 # and ex01's local Administrator disabled again (through the guest agent) at the end; a server that can't be closed
@@ -228,7 +228,7 @@
           </soap:Header><soap:Body><m:GetFolder><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape></m:FolderShape>
           <m:FolderIds><t:DistinguishedFolderId Id="inbox"/></m:FolderIds></m:GetFolder></soap:Body></soap:Envelope>
       loop:
-        - { mailbox: "{{ people[0].user }}@{{ domain }}", want: "<m:ResponseCode>NoError</m:ResponseCode>" }
+        - { mailbox: "{{ people[0].user }}@{{ mail_domain }}", want: "<m:ResponseCode>NoError</m:ResponseCode>" }
         - { mailbox: "{{ hostvars['ex01'].boundary.result.outside | default('') }}", want: ErrorImpersonateUserDenied }
       loop_control:
         label: "{{ item.mailbox }}"

@@ -24,6 +24,9 @@ viosock_install_wsp: true # register viosock's Winsock provider (AF_VSOCK for us
 # --- range (range-up.yml, run on the Proxmox node) ---
 domain: corp.ludius.test
 domain_netbios: CORP
+# Mail (SMTP) domain, the range's mail boundary. Exchange refuses recipients in RFC 2606 TLDs such as .test (501 5.1.4),
+# so on Exchange mail is ludius.internal while AD stays corp.ludius.test; grommunio keeps the AD domain.
+mail_domain: "{{ 'ludius.internal' if mail_backend == 'exchange' else domain }}"
 range_bridge: vmbr1 # no uplink: persona VMs never reach the internet
 range_net: 10.77.0
 build_bridge: vmbr2 # NAT bridge for builds and srv01's apt
