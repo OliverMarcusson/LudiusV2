@@ -38,7 +38,7 @@
   <nav id="nav" aria-label="Sections"></nav>
   <div id="content"></div>
 </main>
-<script id="articles" type="application/json">{{ intranet_articles | to_json }}</script>
+<script id="articles" type="application/json">{{ intranet_articles | to_json | replace('<', '\\u003c') }}</script>
 {% raw %}
 <script>
 const company = document.querySelector("header a").textContent;

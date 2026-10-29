@@ -1076,6 +1076,21 @@ def cmd_vm(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_intranet(args: argparse.Namespace) -> int:
+    """The dc01 role embeds this output in the intranet page; a bad folder fails before anything is deployed."""
+    from dataclasses import asdict
+
+    from ludius import intranet
+
+    try:
+        pages = intranet.load(args.dir or intranet.DIR)
+    except ValueError as e:
+        print(f"intranet: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps([asdict(p) for p in pages], ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     load_env()
     p = argparse.ArgumentParser(prog="ludius")
@@ -1158,6 +1173,11 @@ def main(argv: list[str] | None = None) -> int:
     rg.add_argument("--today", action="store_true", help="up: plan today where missing and start today's days now")
     rg.add_argument("--model", default=DEFAULT_MODEL, help="Decisions model for the desktop workers")
     rg.set_defaults(fn=cmd_range)
+
+    it = sub.add_parser("intranet", help="check a range intranet folder (Markdown pages); prints the pages as JSON")
+    it.add_argument("what", choices=["check"])
+    it.add_argument("dir", nargs="?", type=Path, help="default: LUDIUS_INTRANET or controller/data/intranet")
+    it.set_defaults(fn=cmd_intranet)
 
     rv = sub.add_parser("reservation", help="inspect (default, dry run) or clear a closed workflow's day reservation")
     rv.add_argument("what", nargs="?", choices=["inspect", "clear"], default="inspect")

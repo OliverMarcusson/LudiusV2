@@ -171,3 +171,12 @@ for that VM.
 - Clock sets check pool `ludius` membership, node and VM name first; a VM outside the pool is refused, not set.
 - `ludius range up --clock realtime --today` is the realtime (scheduled, 22:00 plan / 06:30 day) mode, not a warp;
   see [proxmox-bringup.md §7](proxmox-bringup.md#7-multi-persona-run-8-personas-ludius-range).
+
+## Scenario intranet
+
+dc01 serves the range intranet from a folder of Markdown pages, one `<id>.md` per page (default
+`controller/data/intranet`; the header format is in `controller/src/ludius/intranet.py`). For a scenario's own pages,
+copy the folder, edit it, and point both sides at it: Ansible `-e intranet_dir=<dir>` and the planner's
+`LUDIUS_INTRANET=<dir>` (it lists the page titles so lookups search for real pages). Check it with
+`ludius intranet check <dir>`; the dc01 role runs the same check and stops before deploying a bad folder. Pages are
+plain text; links may only point inside `corp.ludius.test`. Apply with `PLAYBOOK=range-exchange.yml /root/range-up.sh --tags dc01`.

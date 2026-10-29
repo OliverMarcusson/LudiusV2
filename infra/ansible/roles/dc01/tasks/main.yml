@@ -110,6 +110,14 @@
   ansible.windows.win_feature:
     name: Web-Server
 
+# The scenario's pages (intranet_dir, Markdown, controller/src/ludius/intranet.py): checked on the node, a bad folder
+# fails here before anything is deployed; the check prints the pages the page embeds.
+- name: Range intranet pages checked ({{ intranet_dir }})
+  ansible.builtin.command: "{{ observer_check_cmd }} intranet check {{ intranet_dir }}"
+  delegate_to: localhost
+  changed_when: false
+  register: intranet_pages
+
 # Rendered on the controller: win_template writes the raw Jinja under ansible-core 2.21 (as in the apps role).
 - name: Range intranet page
   ansible.windows.win_copy:
@@ -117,7 +125,7 @@
     dest: C:\inetpub\wwwroot\index.html
   vars:
     intranet_company: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).company }}"
-    intranet_articles: "{{ lookup('ansible.builtin.file', 'intranet-articles.yml') | from_yaml }}"
+    intranet_articles: "{{ intranet_pages.stdout | from_json }}"
 
 # Domain GPO, so existing persona clones pick it up at their next policy refresh or boot. The range has no web: Edge's
 # address bar searches the intranet, and a new tab opens it (instead of a news feed that never loads). The chat gets
@@ -210,15 +218,16 @@
 - name: Checks (SRV records, Kerberos KDC, time service, no forwarder, intranet answers)
   ansible.windows.win_powershell:
     script: |
-      param($zone)
+      param($zone, $id)
       $Ansible.Changed = $false
       if (-not (Resolve-DnsName "_ldap._tcp.$zone" -Type SRV -DnsOnly -ErrorAction SilentlyContinue)) { throw 'no LDAP SRV' }
       if ((Get-Service kdc, W32Time, DNS | Where-Object Status -ne Running)) { throw 'kdc, W32Time or DNS not running' }
       if ((Get-DnsServerForwarder).IPAddress) { throw 'DNS forwarder present' }
-      $page = Invoke-WebRequest "http://intranet.$zone/?q=forklift" -UseBasicParsing
-      if ($page.StatusCode -ne 200 -or $page.Content -notmatch 'Forklift daily pre-use check') { throw 'intranet not served' }
+      $page = Invoke-WebRequest "http://intranet.$zone/" -UseBasicParsing
+      if ($page.StatusCode -ne 200 -or -not $page.Content.Contains('"' + $id + '"')) { throw 'intranet not served' }
     parameters:
       zone: "{{ domain }}"
+      id: "{{ (intranet_pages.stdout | from_json | first).id }}"
 
 - name: Dc01 done
   ansible.builtin.set_fact:

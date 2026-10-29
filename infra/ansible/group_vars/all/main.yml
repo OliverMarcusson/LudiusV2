@@ -48,6 +48,7 @@ range_admin_password: "{{ vault_range_admin_password }}"
 bringup_teardown: true # after bring-up: bring-up account disabled, WinRM stopped and disabled on every clone
 observer_check_cmd: uv run --project {{ playbook_dir }}/../../controller ludius # channel check through the host agent
 narrative_file: "{{ playbook_dir }}/../../runs/world/narrative.yaml" # the planner's company narrative
+intranet_dir: "{{ playbook_dir }}/../../controller/data/intranet" # the scenario's intranet pages (Markdown)
 people: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).people }}" # name, user: AD users, mailboxes
 range_tls_ca: "{{ playbook_dir }}/build/range-ca.crt" # grommunio's CA or Exchange's self-signed cert, fetched by its role
 grommunio_login_mailboxes: 5 # community licence cap on log-in mailboxes; raise only with a grommunio licence installed

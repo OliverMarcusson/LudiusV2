@@ -26,6 +26,7 @@ from typing import Any, cast
 import yaml
 from pydantic import Field, field_validator
 
+from ludius import intranet
 from ludius.llm import LlmClient
 from ludius.mail import DOMAIN as MAIL_DOMAIN
 from ludius.policy import Policy
@@ -218,7 +219,12 @@ def plan_day(
         f"Day to plan: {date.strftime('%A')} {date.isoformat()}.\n\n"
         f"What happened so far:\n{world or '- nothing yet'}\n\n"
         f"Task catalog (in no particular order):\n{catalog(templates, f'{persona.user}:{date}')}\n\n"
-        f"Recent content the persona already wrote (do not repeat or paraphrase it):\n"
+        + (
+            f"Intranet pages (a lookup's search_query should find one of them):\n{intranet.index()}\n\n"
+            if "edge_web_lookup" in templates
+            else ""
+        )
+        + "Recent content the persona already wrote (do not repeat or paraphrase it):\n"
         + ("\n".join(f"- {h[:120]}" for h in history[-40:]) or "- none")
         + (
             "\n\nThese files and folders already exist for the persona. Never create, save or rename anything to one "
