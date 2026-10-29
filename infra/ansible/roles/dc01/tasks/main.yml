@@ -177,8 +177,10 @@
               -AccountPassword $pw -Enabled $true -PasswordNeverExpires $true -CannotChangePassword $true
           }
           Set-ADUser $user -Replace @{ 'msDS-SupportedEncryptionTypes' = 24 }
+          $ErrorActionPreference = 'Continue'  # ktpass reports on stderr: under Stop, PowerShell 5.1 throws on its success line
           $o = & ktpass -princ "$spn@$realm" -mapuser "$env:USERDOMAIN\$user" -mapOp set -crypto All `
             -ptype KRB5_NT_PRINCIPAL +rndPass -out $out 2>&1
+          $ErrorActionPreference = 'Stop'
           if ($LASTEXITCODE -ne 0) { throw "ktpass: $($o -join ' ')" }
           if ((setspn -L $user | Out-String) -notmatch [regex]::Escape($spn)) { throw "$spn not on $user" }
         parameters:
