@@ -1,7 +1,7 @@
 ---
 # Range mail server for mail_backend: exchange (imported by range-up.yml; also runnable alone on the node to build or
 # re-check just the servers: ansible-playbook range-exchange.yml). Resume a phase without redoing the others with
-# --tags media | activation | dc01 | ex01 | mailboxes | mail-boundary: the VM checks, start and bootstrap (fast, no
+# --tags media | activation | defender | dc01 | ex01 | mailboxes | mail-boundary: the VM checks, start and bootstrap (fast, no
 # reinstall of an existing VM; reopens WinRM) and the close-down always run. Two Windows Server 2025 evaluation VMs from the ISO,
 # both range NIC only: dc01 (srv01_vmid, srv01_ip: AD forest corp.ludius.test, range DNS, range time source) and ex01
 # (ex01_vmid, ex01_ip: Exchange SE in trial mode, no key). Two VMs, not one: Microsoft does not recommend Exchange on a
@@ -145,12 +145,12 @@
   gather_facts: false
   tasks:
     - name: Defender off
-      tags: [always]
+      tags: [always, defender]
       when: inventory_hostname != 'localhost' and not hostvars['localhost'].winsrv_failures | default([])
       ansible.builtin.include_tasks:
         file: tasks/winsrv-defender-off.yml
         apply:
-          tags: [always]
+          tags: [always, defender]
 
 # localhost stays in these plays so a failed server never ends the run before the close-down play.
 - name: Dc01 (AD DS, DNS, time, accounts)
