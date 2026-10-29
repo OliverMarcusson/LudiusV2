@@ -161,6 +161,15 @@ def launch_target(e: obs.Element | None, snap: obs.Snapshot) -> bool:
     return w.process_name.lower() in LAUNCH_PROCESSES or (run and e.name == "Open:")
 
 
+def commits_unguarded(k: str, focused: obs.Element | None, task: Task, sg: Subgoal) -> bool:
+    """The key commits here (Enter sends a chat line: template key_commits) and the subgoal has no guard: only a
+    subgoal with `require` checks may press it, and never with the focus unknown."""
+    return not sg.require and any(
+        c.keys.lower() == k.lower() and (focused is None or element_matches(focused, c.focus, task))
+        for c in task.template.key_commits
+    )
+
+
 def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[Option]:
     opts: list[Option] = []
 
@@ -215,11 +224,8 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
             continue
         if policy.key_allowed(k, v.snapshot, declared_commits(task, sg)):
             continue
-        if not sg.require and any(
-            c.keys.lower() == k.lower() and (focused is None or element_matches(focused, c.focus, task))
-            for c in task.template.key_commits
-        ):
-            continue  # commits here (Enter sends a chat line): only the guarded send subgoal may press it
+        if commits_unguarded(k, focused, task, sg):
+            continue
         add("key", f"press {k}", keys=k)
     if any("list continues" in h for e in v.allowed for h in e.hints) or any(e.role == "document" for e in v.allowed):
         add("scroll", "scroll down", notches=-3)

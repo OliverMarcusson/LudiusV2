@@ -331,6 +331,24 @@ def test_chat_enter_only_in_the_guarded_send() -> None:
     assert enter("send_message", composer)  # its require checks guard the press
 
 
+def test_chat_enter_rechecks_the_focus_at_the_press(tmp_path: Any) -> None:
+    """The focus can move to the message box between the choice and the press: Enter is refused there, not sent."""
+    from ludius.loop import GroundTruth, Runner
+    from ludius.options import Option
+
+    t = load_template(DATA / "templates" / "chat_post_message.yaml")
+    task = Task(t, TaskInstance(template=t.task, params=t.example), random.Random(0))
+    w = obs.Window(kind=obs.Window.FOREGROUND, process_name="msedge.exe")
+    box = obs.Element(role="edit", name="Write to Coffee Corner", value="hi hi", focused=True)
+    chords: list[list[int]] = []
+    seen = type("R", (), {"snapshot": obs.Snapshot(windows=[w], elements=[box])})()
+    agent = type("A", (), {"vm": "t", "chord": lambda self, vks: chords.append(vks) or 0,
+                           "observe": lambda self, **_: seen})()  # fmt: skip
+    r = Runner(agent, None, Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    assert r.act(Option("o1", "key", "press Enter", keys="Enter"), task, task.subgoal("open_channel")) and not chords
+    assert r.act(Option("o1", "key", "press Esc", keys="Esc"), task, task.subgoal("open_channel")) is None and chords
+
+
 def test_visual_words_are_click_targets() -> None:
     from ludius.options import build_options, view
 
