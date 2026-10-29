@@ -11,6 +11,11 @@ They have their own counter (runs/summary-calls.json: today's calls, cost and ro
 summarised again only when its record changes (new task or step), at most once per MIN_GAP_S. A failed request keeps
 the last line, marked stale. Output: runs/monitor-summaries.json beside openrouter-calls.json; the host agent serves
 it read-only at /api/summaries.
+
+Each pass also judges every persona's health by rule (ludius.health: ok, warn or fail with a reason, in the same
+file). A change into warn or fail, and the recovery from one, is one journal line and one line in
+runs/monitor-alerts.jsonl (persona, health, reason, rules, host time and the persona's logical time) for an
+orchestrator to tail.
 """
 
 from __future__ import annotations
@@ -27,13 +32,14 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from ludius import calls
+from ludius import calls, health
 from ludius.llm import LlmClient
 from ludius.rangerun import vm_of
 
 MODEL = os.environ.get("LUDIUS_SUMMARY_MODEL", "openrouter/auto-beta")
 OUT = calls.PATH.parent / "monitor-summaries.json"
 COUNTER = calls.PATH.parent / "summary-calls.json"
+ALERTS = calls.PATH.parent / "monitor-alerts.jsonl"
 MIN_GAP_S = 120.0
 QUIET_MS = 10 * 60_000  # a running task that logs nothing this long: the worker may be gone, so "unknown"
 TAIL = 512 << 10  # bytes read from the end of a day log
@@ -129,15 +135,21 @@ def record_use(path: Path, today: str, model: str, cost: float) -> None:
     _write(path, c)
 
 
+def newest_log(days: Path, user: str) -> Path | None:
+    """The persona's most recently written day log (a warp's simulated days sort after today's); OSError if the
+    directory can't be read."""
+    logs = [(p.stat().st_mtime, p) for p in days.glob(f"????-??-??-{user}.jsonl")]
+    return max(logs)[1] if logs else None
+
+
 def activity(days: Path, user: str, now_ms: int) -> Activity:
     """What the persona's newest day log says is happening now."""
     try:
-        logs = [(p.stat().st_mtime, p) for p in days.glob(f"????-??-??-{user}.jsonl")]
+        log = newest_log(days, user)
     except OSError:
         return Activity("unknown", "unreadable", "unknown: day log unreadable")
-    if not logs:
+    if log is None:
         return Activity("idle", "none", "idle: no day log yet")
-    log = max(logs)[1]
     try:
         with log.open("rb") as f:
             f.seek(max(0, f.seek(0, os.SEEK_END) - TAIL))
@@ -268,7 +280,11 @@ class Summariser:
     cap: int = field(default_factory=lambda: int(os.environ.get("LUDIUS_SUMMARY_CAP", "2000")))
     out: Path = OUT
     counter: Path = COUNTER
+    alerts: Path = ALERTS
+    supervisor: Path | None = None  # runs/range/supervisor.jsonl, default beside days/
+    rules: health.Rules = field(default_factory=health.Rules)
     lines: dict[str, Line] = field(default_factory=dict[str, Line])
+    health: dict[str, health.Verdict] = field(default_factory=dict[str, health.Verdict])
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def step(self, mono: float | None = None) -> None:
@@ -280,6 +296,7 @@ class Summariser:
         c = counter(self.counter, today)
         capped = c is None or c["calls"] >= self.cap
         for u in self.users:
+            self.check(u, now, now_ms)
             act = activity(self.days, u, now_ms)
             line = self.lines.get(u) or Line("unknown", "unknown: not read yet")
             if act.state != "active":
@@ -311,6 +328,26 @@ class Summariser:
                     line.key, line.task = (old.key if old and same else ""), act.task
                 self.lines[u] = line
         self.write(now, today)
+
+    def check(self, user: str, now: dt.datetime, now_ms: int) -> None:
+        """The persona's health by rule; a change into or out of warn/fail is one journal line and one alert."""
+        supervisor = self.supervisor or self.days.parent / "range" / "supervisor.jsonl"
+        try:
+            log = newest_log(self.days, user)
+        except OSError:
+            v = health.Verdict("warn", "health unknown: day logs unreadable", ("unreadable",))
+        else:
+            v = health.classify(log, now_ms, self.rules, health.worker_exits(supervisor, user))
+        old = self.health.get(user)
+        self.health[user] = v
+        if ((old.health, old.rules) if old else ("ok", ())) == (v.health, v.rules):
+            return  # also the first ok: only warn/fail, and the recovery from one, are alerts
+        alert = {"persona": user, "health": v.health, "reason": v.reason or "recovered", "rules": list(v.rules),
+                 "host": _iso(now), "logical": v.logical}  # fmt: skip
+        print(json.dumps({"alert": alert}), flush=True)
+        self.alerts.parent.mkdir(parents=True, exist_ok=True)
+        with self.alerts.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(alert) + "\n")
 
     def _ask(self, user: str, act: Activity, today: str) -> Line:
         body = {
@@ -344,7 +381,12 @@ class Summariser:
             "used": (counter(self.counter, today) or {}).get("calls"),
             "paused": any(line.state == "paused" for line in self.lines.values()),
             "personas": {
-                u: {"vm": vm_of(u), **{k: v for k, v in asdict(line).items() if k in SHOWN}}
+                u: {
+                    "vm": vm_of(u),
+                    **{k: v for k, v in asdict(line).items() if k in SHOWN},
+                    "health": self.health[u].health if u in self.health else "ok",
+                    "reason": self.health[u].reason if u in self.health else "",
+                }
                 for u, line in self.lines.items()
             },  # fmt: skip
         }

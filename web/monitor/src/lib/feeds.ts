@@ -184,7 +184,12 @@ export interface Summary {
   text: string
   at: Date | null // when the text was written
   model: string | null // the model that wrote it (the routed one, for a router)
+  health: PersonaHealth // by rule from the day log: stalled, looping or failing
+  reason: string // why it is not ok; "" when ok
 }
+
+export type PersonaHealth = "ok" | "warn" | "fail"
+const HEALTH: readonly string[] = ["ok", "warn", "fail"]
 
 export interface Summaries {
   updated: Date | null // the summariser's last pass; null when it never ran
@@ -211,6 +216,8 @@ export function parseSummaries(data: unknown): Summaries {
       text: p.text.slice(0, 240),
       at: date(p.at),
       model: typeof p.model === "string" && MODEL.test(p.model) ? p.model : null,
+      health: typeof p.health === "string" && HEALTH.includes(p.health) ? (p.health as PersonaHealth) : "ok",
+      reason: typeof p.reason === "string" ? p.reason.slice(0, 240) : "",
     }
   }
   return { updated: date(r.updated), byVm }

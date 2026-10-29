@@ -39,7 +39,7 @@ def test_cadence_and_cap(tmp_path: Path) -> None:
     event(event="task_start", task="mail.read", subgoals=["open"])
     s.step(mono=1001)
     want = {"vm": "ludius-aberg", "state": "ok", "at": None, "text": "Aberg is opening Outlook."}
-    want["model"] = "routed/model"
+    want |= {"model": "routed/model", "health": "ok", "reason": ""}
     assert len(sent) == 1 and out() | {"at": None} == want
     assert sent[0]["reasoning"] == {"effort": "high"}
     s.step(mono=1010)  # nothing changed: no call
@@ -133,3 +133,69 @@ def test_interruptions_and_a_cut_off_start_are_not_idle(tmp_path: Path) -> None:
     cut = at({"event": "step", "subgoal": "type", "step": 7, "action": "type"})
     assert cut.state == "active" and cut.brief == "working on an unknown task: type" and "Task: unknown" in cut.text
     assert at(*outer, {"event": "task_end"}, {"event": "item_end"}).state == "idle"
+
+
+def test_health_rules_on_a_pvanloon_like_day(tmp_path: Path) -> None:
+    from ludius import health
+
+    days = tmp_path / "days"
+    days.mkdir()
+    log = days / "2026-11-02-pvanloon.jsonl"
+    t0 = int(time.time() * 1000) - 20 * 60_000
+    rules = health.Rules(stall_s=300, normalize_fails=2, retry_attempt=3, abandoned=6, errors=3)
+    explorer = {"event": "normalize_failed", "closed": [" (explorer.exe)"] * 12}
+    blocked = {"event": "escalate_blocked"}
+    start = {"event": "item_start", "template": "outlook_send_mail", "at": "10:00", "logical": "2026-11-02T10:00"}
+    day: list[dict[str, Any]] = [
+        {"event": "day_start", "clock": "compressed"},
+        {"event": "item_start", "template": "excel_new_workbook", "at": "09:00"},
+        {"event": "item_end", "template": "excel_new_workbook", "status": "abandoned"},
+        start, explorer, blocked, {"event": "item_retry", "template": "outlook_send_mail", "attempt": 2},
+        start, explorer, blocked, {"event": "item_retry", "template": "outlook_send_mail", "attempt": 3},
+        start, explorer, blocked,
+    ]  # fmt: skip
+
+    def write(events: list[dict[str, Any]], quiet_min: int) -> None:
+        end = int(time.time() * 1000) - quiet_min * 60_000
+        ms = [t0 + (end - t0) * i // max(1, len(events) - 1) for i in range(len(events))]
+        log.write_text(
+            "".join(json.dumps({"host_ms": m, **e}) + "\n" for m, e in zip(ms, events, strict=True)), encoding="utf-8"
+        )
+
+    now = int(time.time() * 1000)
+    write(day, 1)  # looping, still logging
+    v = health.classify(log, now, rules)
+    assert (v.health, v.rules) == ("warn", ("looping", "retrying")) and "normalize failed 3x" in v.reason
+    assert "outlook_send_mail retry attempt 3" in v.reason and v.logical == "2026-11-02T10:00"
+    write(day, 6)  # then silence: stalled as well
+    assert health.classify(log, now, rules).rules == ("stalled", "looping", "retrying")
+    assert health.classify(log, now, rules).health == "fail"
+    # One failed normalize that recovered, an attempt-2 retry, one decision error and a finished day: ok (lnord).
+    lnord = [day[0], explorer, blocked, {"event": "item_retry", "template": "x", "attempt": 2}, start,
+             {"event": "normalized"}, {"event": "decision_error"}, {"event": "item_end", "status": "abandoned"},
+             {"event": "day_end"}]  # fmt: skip
+    write(lnord, 30)
+    assert health.classify(log, now, rules).health == "ok"
+    # A realtime day waiting between items logs nothing for long: not stalled. Too many abandons or errors: failing.
+    write([{**day[0], "clock": "realtime"}, *day[1:3]], 40)
+    assert health.classify(log, now, rules).health == "ok"
+    ends = [{"event": "item_end", "status": "abandoned"}] * 7 + [{"event": "decision_error"}] * 2
+    write([day[0], *ends], 0)
+    assert health.classify(log, now, rules).rules == ("abandoning",)
+    assert health.classify(log, now, rules, exits=[now]).rules == ("abandoning", "errors")  # a worker exit is an error
+
+    # The summaries file carries health; a change to warn/fail (and the recovery) is one alert line, not one a pass.
+    write(day, 1)
+    llm = LlmClient("key")
+    llm._http = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500)))  # pyright: ignore[reportPrivateUsage]
+    s = summaries.Summariser(["pvanloon"], days, llm, out=tmp_path / "out.json", counter=tmp_path / "c.json",
+                             alerts=tmp_path / "alerts.jsonl", rules=rules)  # fmt: skip
+    s.step(mono=1000)
+    s.step(mono=1005)
+    p = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))["personas"]["pvanloon"]
+    assert p["health"] == "warn" and p["reason"].startswith("looping")
+    write(lnord, 30)
+    s.step(mono=1010)
+    alerts = [json.loads(x) for x in (tmp_path / "alerts.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(a["persona"], a["health"]) for a in alerts] == [("pvanloon", "warn"), ("pvanloon", "ok")]
+    assert alerts[0]["logical"] == "2026-11-02T10:00" and alerts[0]["host"] and alerts[1]["reason"] == "recovered"

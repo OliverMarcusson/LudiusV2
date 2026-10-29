@@ -104,7 +104,11 @@ export function Feed({
     <figure className="flex min-w-0 flex-col gap-2">
       <div
         ref={box}
-        className="relative overflow-hidden rounded-md bg-black ring-1 ring-border group-hover:ring-foreground/45"
+        className={cn(
+          "relative overflow-hidden rounded-md bg-black ring-1 ring-border group-hover:ring-foreground/45",
+          summary?.health === "warn" && "ring-2 ring-stale group-hover:ring-stale",
+          summary?.health === "fail" && "ring-2 ring-lost group-hover:ring-lost",
+        )}
         style={{ aspectRatio: ratio }}
       >
         <canvas
@@ -203,6 +207,11 @@ function Activity({ summary, note, large }: { summary?: Summary; note: string | 
       </span>
       {s?.at && s.state !== "idle" && s.state !== "unknown" && <span className="tabular-nums"> · {hhmm(s.at)}</span>}
       {marker && <span className="text-stale"> · {marker}</span>}
+      {s && s.health !== "ok" && (
+        <span className={cn("block font-medium", s.health === "fail" ? "text-lost" : "text-stale")}>
+          {s.health === "fail" ? "Failing" : "Warning"}: {s.reason}
+        </span>
+      )}
     </p>
   )
 }
