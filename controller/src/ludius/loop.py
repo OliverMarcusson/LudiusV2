@@ -453,7 +453,7 @@ class Runner:
                 time.sleep(BLOCKED_WAIT_S)
                 snap = self.observe(timeout_ms=10000)
                 continue
-            ask = sg.done.ask if code_done is False and sg.done else None
+            ask = sg.done.ask if sg.done else None
             if ask and self._decider_says_done(task, name, ask, snap):
                 self.log.write(event="subgoal_done", host_ms=_now(), guest_ms=snap.guest_time_ms,
                                task=task.template.task, subgoal=name, by="decider", steps=step - 1)  # fmt: skip
@@ -502,7 +502,7 @@ class Runner:
                 return "failed", step - 1, "decision error"
             chosen = self._choose(decision, options)
 
-            decider_done = code_done is None and decision.subgoal_done >= DONE_THRESHOLD and not recovering
+            decider_done = code_done is None and not ask and decision.subgoal_done >= DONE_THRESHOLD and not recovering
             if decider_done:
                 if self.assist is not None and verifications < 2:
                     # Open-ended completion: the LLM confirms the decision model's judgment (at most twice per subgoal).

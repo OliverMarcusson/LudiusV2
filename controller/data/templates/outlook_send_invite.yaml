@@ -35,11 +35,10 @@ subgoals:
   fill_to:
     goal: "Type {to} into the Required field of the new meeting"
     text: to
-    # The planned colleague in the Required field itself (as typed or resolved), not text typed anywhere (run2 typed
-    # into the Scheduling Assistant's grid).
-    # The Decider catches the colleague added in a form the regex doesn't know (warp4: a picker path, added 3 times).
-    done: {element: {role: edit, name: "^Required$", value: "^({to}|{to_name}|{to_name} <{to}>);?$"},
-           ask: "Is {to_name} ({to}) listed in the Required attendees of the open meeting?"}
+    # The planned colleague in the Required field itself, not text typed anywhere (run2 typed into the Scheduling
+    # Assistant's grid). The Decider reads it on the screen: a value regex missed the forms Outlook resolves it to
+    # (warp4: added 3 times through a picker, never matched).
+    done: {ask: "Is {to_name} ({to}) listed in the Required attendees of the open meeting?"}
   fill_subject:
     goal: "Type the meeting title into the Title field: {subject}"
     text: subject

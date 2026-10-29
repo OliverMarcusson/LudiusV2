@@ -157,10 +157,17 @@ class Done(Strict):
     file: FileCheck | None = None
     # mail.read: the mail picked at task start (reply.prepare_read: proven unread then) is marked read on the server.
     read: bool = False
-    # A yes/no question for the Decider, on a screenshot, asked when the code checks fail: the state reached another way
-    # than the check expects (an attendee added through a picker reads differently). Fails closed; never the proof
-    # of an outcome (the send's own contract still reads the field in code before the irreversible step).
+    # A yes/no question for the Decider, on a screenshot: the subgoal's whole done check, for an on-screen state a
+    # code check reads unreliably (an attendee added through a picker reads differently). Stands alone; fails closed;
+    # never the proof of an outcome (the send's own contract still reads the field in code before the irreversible
+    # step, and the outcome is checked on the server).
     ask: str | None = None
+
+    @model_validator(mode="after")
+    def _ask_alone(self) -> Done:
+        if self.ask is not None and self.model_dump(exclude={"ask"}, exclude_defaults=True):
+            raise ValueError("done.ask stands alone: the Decider's answer is the whole check")
+        return self
 
 
 class Subgoal(Strict):
@@ -645,8 +652,8 @@ def pixels_region(snap: obs.Snapshot, window: int, task: Task) -> list[obs.Eleme
 def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool, outside: bool = True) -> bool | None:
     """True/False when the subgoal has a code check, None when it has none (Decisions decides). `outside=False`: the
     checks on screen only (None when there are none), so the runner can wait for the server instead of acting."""
-    if done is None:
-        return None
+    if done is None or done.ask:
+        return None  # no code check: Decisions, or the Decider's done question (loop), decides
     if (done.mail or done.invite or done.file or done.read) and not (
         done.window or done.foreground or done.element or done.added or done.typed or done.pixels
     ):

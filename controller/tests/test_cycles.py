@@ -11,7 +11,7 @@ from ludius.calls import CapReached
 from ludius.cli import load_templates
 from ludius.decisions import Decision
 from ludius.loop import GroundTruth, Runner, image_reason
-from ludius.tasks import Persona, Task, TaskInstance
+from ludius.tasks import Done, Persona, Task, TaskInstance
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
@@ -237,10 +237,13 @@ def test_a_done_question_the_decider_answers_on_the_screenshot(tmp_path: Path, y
     runner = Runner(ToggleAgent(), decider, Persona(name="t", user="t"), GroundTruth(log), seed=1)  # type: ignore[arg-type]
     tpl = load_templates()["notepad_write_note"].model_copy(deep=True)
     task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
-    sg = tpl.subgoals["open_from_start"]
-    assert sg.done is not None
-    sg.done.ask = "Is Notepad open?"  # the code check (a Notepad window) never holds on ToggleAgent
+    tpl.subgoals["open_from_start"].done = Done(ask="Is Notepad open?")  # ToggleAgent never shows Notepad
     status, _, _ = runner._subgoal(task, "open_from_start", task.subgoal("open_from_start"), budget=3, t0=1e18)  # pyright: ignore[reportPrivateUsage]
     events = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     assert (status == "done") is done and decider.asked >= 1
     assert any(e.get("event") == "subgoal_done" and e.get("by") == "decider" for e in events) is done
+
+
+def test_done_ask_stands_alone() -> None:
+    with pytest.raises(ValueError, match="stands alone"):
+        Done(ask="Is it open?", window={"process": "notepad.exe"})  # type: ignore[arg-type]
