@@ -98,7 +98,14 @@ def counter(path: Path, today: str) -> dict[str, Any] | None:
         return None
     if any(not isinstance(k, str) or type(v) is not int for k, v in cast(dict[Any, Any], models).items()):
         return None
-    return c if day == today else {"day": today, "calls": 0, "cost": 0.0, "models": {}}
+    try:
+        earlier = dt.date.fromisoformat(day) < dt.date.fromisoformat(today)
+    except ValueError:
+        return None
+    if day == today:
+        return c
+    # Only a real earlier day rolls over; a future or impossible date would otherwise grant the day again.
+    return {"day": today, "calls": 0, "cost": 0.0, "models": {}} if earlier else None
 
 
 def take(path: Path, cap: int, today: str) -> bool:

@@ -88,6 +88,8 @@ def test_a_malformed_counter_pauses(tmp_path: Path) -> None:
         {"day": today, "calls": "1", "cost": 0, "models": {}},
         {"day": today, "calls": -1, "cost": 0, "models": {}},
         {"day": today, "calls": 0, "cost": 0, "models": []},
+        {"day": "2026-99-99", "calls": 5, "cost": 0, "models": {}},  # impossible date
+        {"day": "2026-10-30", "calls": 5, "cost": 0, "models": {}},  # future day
         [],
         "x",
     ]
