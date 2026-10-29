@@ -94,11 +94,29 @@ def view(snap: obs.Snapshot, task: Task, sg: Subgoal, policy: Policy) -> StepVie
         shell = w.kind == obs.Window.SHELL or proc in SHELL_PROCESSES
         if proc in apps or (dialog_of_app and _owner_is_app(snap, apps)) or (sg.launch and shell):
             v.windows[i] = w
+    # Live (aberg, dkoster): a second Edge window, minimized or behind the desktop, was never reachable once the
+    # first was closed, and close_edge spent its budget on the bare desktop. With only the shell in front, the
+    # app's taskbar button brings it back (never while an app window is in front: the click would minimize it).
+    fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
+    hidden = set[str]()
+    if not sg.launch and (fg is None or fg.process_name.lower() in SHELL_PROCESSES):
+        hidden = {_plain(a.title.split(" - ")[-1]) for a in snap.apps if a.process_name.lower() in apps} - {""}
+    scope = dict(v.windows)  # the shell window a button is in stays out of scope for its other elements
     for e in snap.elements:
-        in_region = e.window in v.windows and (e.id in region or not pixels_window(v.windows[e.window]))
-        if in_region and policy.element_allowed(e, sg.allow_destructive, snap) is None:
+        in_region = e.window in scope and (e.id in region or not pixels_window(v.windows[e.window]))
+        w = snap.windows[e.window] if 0 <= e.window < len(snap.windows) else None
+        button = (hidden and w is not None and e.role == "button"
+                  and w.class_name in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd")  # the taskbar, not Start
+                  and any(h in _plain(e.name) for h in hidden))  # fmt: skip
+        if (in_region or button) and policy.element_allowed(e, sg.allow_destructive, snap) is None:
+            if button and w is not None:
+                v.windows[e.window] = w
             v.allowed.append(e)
     return v
+
+
+def _plain(s: str) -> str:
+    return s.replace("\u200b", "").strip().lower()  # Edge's title says "Microsoft\u200b Edge", its button not
 
 
 def _owner_is_app(snap: obs.Snapshot, apps: set[str]) -> bool:

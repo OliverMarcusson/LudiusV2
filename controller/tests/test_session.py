@@ -135,3 +135,35 @@ def test_minimized_edge_is_brought_forward_by_its_taskbar_button(tmp_path: Path)
             Session(ClickOnly([tray]), GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize(rounds=1)  # pyright: ignore[reportArgumentType]
         assert clicks == []
         tray.apps.pop()
+
+
+def test_a_hidden_task_window_is_offered_its_taskbar_button_only_from_the_desktop() -> None:
+    """Live (aberg, dkoster): close_edge closed one Edge window; a second, minimized, was out of reach and the
+    subgoal spent its step budget on the bare desktop."""
+    import random
+
+    from ludius.cli import DATA
+    from ludius.options import view
+    from ludius.policy import Policy
+    from ludius.tasks import Task, TaskInstance, load_template
+
+    snap = clean_desktop()
+    snap.apps.append(obs.Window(title="Harbourline intranet - Microsoft\u200b Edge", process_name="msedge.exe",
+                                bounds=obs.Rect(x=-32000, y=-32000, width=160, height=28)))  # fmt: skip
+    snap.elements.extend([
+        obs.Element(id=79, role="button", name="Microsoft Edge – 1 running window", window=2),
+        obs.Element(id=80, role="button", name="File Explorer", window=2),
+    ])  # fmt: skip
+    tpl = load_template(DATA / "templates" / "chat_read_messages.yaml")
+    task = Task(tpl, TaskInstance(template=tpl.task, params={"to": "a@b", "to_name": "A"}), random.Random(0))
+    close = task.subgoal("close_edge")
+    assert [e.id for e in view(snap, task, close, Policy()).allowed] == [79]
+    # The same name in Start (it would launch another window) is not the taskbar's.
+    start = obs.Snapshot()
+    start.CopyFrom(snap)
+    start.windows[2].class_name = "Windows.UI.Core.CoreWindow"
+    assert view(start, task, close, Policy()).allowed == []
+    # Edge in front: the button would minimize it, so it is not offered.
+    snap.windows[0].CopyFrom(obs.Window(kind=obs.Window.FOREGROUND, title="Chat - Microsoft\u200b Edge",
+                                        process_name="msedge.exe"))  # fmt: skip
+    assert 79 not in [e.id for e in view(snap, task, close, Policy()).allowed]
