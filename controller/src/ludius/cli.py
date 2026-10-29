@@ -1106,6 +1106,20 @@ def cmd_intranet(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_chat(args: argparse.Namespace) -> int:
+    """Empty the direct-message conversations between every pair of the given range accounts on chat01."""
+    from itertools import combinations
+
+    from ludius import react
+
+    bad = 0
+    for a, b in combinations(dict.fromkeys(args.users), 2):
+        n = react.reset(a, b)
+        print(f"{a} <-> {b}: " + ("unknown (chat01 unreachable or refused)" if n is None else f"{n} posts deleted"))
+        bad += n is None
+    return 1 if bad else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     load_env()
     p = argparse.ArgumentParser(prog="ludius")
@@ -1193,6 +1207,11 @@ def main(argv: list[str] | None = None) -> int:
     it.add_argument("what", choices=["check"])
     it.add_argument("dir", nargs="?", type=Path, help="default: LUDIUS_INTRANET or controller/data/intranet")
     it.set_defaults(fn=cmd_intranet)
+
+    ch = sub.add_parser("chat", help="chat01: reset (delete) the direct messages between range accounts")
+    ch.add_argument("op", choices=["reset"])
+    ch.add_argument("users", nargs="+", help="Mattermost usernames (the range accounts), two or more")
+    ch.set_defaults(fn=cmd_chat)
 
     rv = sub.add_parser("reservation", help="inspect (default, dry run) or clear a closed workflow's day reservation")
     rv.add_argument("what", nargs="?", choices=["inspect", "clear"], default="inspect")

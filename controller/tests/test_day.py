@@ -198,7 +198,9 @@ def test_chat_notification_reads_then_reacts_outside_the_plan(tmp_path: Path, fa
     narrative = tmp_path / "narrative.yaml"
     narrative.write_text(yaml.safe_dump({"people": [{"user": "aberg", "name": "Anna Berg"},
                                                     {"user": "lnord", "name": "Lars Nord"}]}))  # fmt: skip
-    post = Post("p1", "lnord", "could you put the erp roles in a note and ping me")
+    post = Post("p1", "lnord", "could you put the erp roles in a note and ping me", 100)
+    # The conversation: aberg's earlier line is context; p2 came in while it was open (seen, never notified).
+    talk = [Post("p0", "aberg", "morning lars", 50), post, Post("p2", "lnord", "the dock list too", 150)]
     polls = [[post], [] if fail != "read" else [post]]
     llm = ReactionLlm([
         {"template": "notepad_write_note", "params": {"file_name": "erp roles", "body": "finance needs ap and ar"}},
@@ -210,7 +212,8 @@ def test_chat_notification_reads_then_reacts_outside_the_plan(tmp_path: Path, fa
     runner = FakeRunner(log, calls)
     runner.fail = {"read": set(), "read ui": {"chat_read_messages"}}.get(fail, {fail})
     reactor = Reactor(Persona(name="Anna Berg", user="aberg"), load_templates(), Policy(), llm, narrative, log,  # type: ignore[arg-type]
-                      poll=lambda user: polls.pop(0) if polls else [])  # fmt: skip
+                      poll=lambda user: polls.pop(0) if polls else [],
+                      talk=lambda user, other: (talk, 200) if other == "lnord" else None)  # fmt: skip
     day = DayRunner(runner, FakeSession(calls), load_templates(), log, "compressed", 0, reactor=reactor)  # type: ignore[arg-type]
     results = day.slot(dt.date(2026, 11, 2), note("10:00"), [])
     expected = {
@@ -221,6 +224,9 @@ def test_chat_notification_reads_then_reacts_outside_the_plan(tmp_path: Path, fa
     }[fail]
     assert [c for c in calls if c.startswith("run")] == expected
     assert (fail != "read") == any("could you put the erp roles in a note" in p for p in llm.prompts)
+    if fail != "read":
+        assert "You: morning lars\n(new) Lars Nord: could you" in llm.prompts[0]
+        assert "(new) Lars Nord: the dock list too" in llm.prompts[0]
     assert [r.item.at for r in results] == ["10:00"]
     events = [json.loads(x) for x in (tmp_path / "day.jsonl").read_text().splitlines()]
     assert [e["template"] for e in events if e["event"] == "item_end"] == ["notepad_write_note"]
@@ -238,7 +244,22 @@ def test_chat_notification_reads_then_reacts_outside_the_plan(tmp_path: Path, fa
 def test_unread_reads_mattermost_and_unreadable_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     out = b'[{"id": "p1", "sender": "lnord", "createat": 1, "message": "hi"}]\n'
     monkeypatch.setattr(react, "_ssh", lambda remote, stdin: subprocess.CompletedProcess([], 0, out, b""))
-    assert react.unread("aberg") == [Post("p1", "lnord", "hi")]
+    assert react.unread("aberg") == [Post("p1", "lnord", "hi", 1)]
     monkeypatch.setattr(react, "_ssh", lambda remote, stdin: None)
     assert react.unread("aberg") is None
     assert react.unread("x; rm") is None
+
+
+def test_chat_reset_soft_deletes_the_pair_s_posts_through_mmctl(monkeypatch: pytest.MonkeyPatch) -> None:
+    ids, remotes = ["a" * 26, "b" * 26], list[str]()
+
+    def ssh(remote: str, stdin: str, timeout: int = 30) -> subprocess.CompletedProcess[bytes]:
+        remotes.append(remote)
+        return subprocess.CompletedProcess([], 0, json.dumps(ids).encode() if "psql" in remote else b"", b"")
+
+    monkeypatch.setattr(react, "_ssh", ssh)
+    assert react.reset("aberg", "dkoster") == 2
+    assert remotes[1].endswith(f"mmctl --local post delete {ids[0]} {ids[1]}")
+    ids.append("x; rm -rf /")
+    assert react.reset("aberg", "dkoster") is None
+    assert react.reset("aberg", "x; rm") is None
