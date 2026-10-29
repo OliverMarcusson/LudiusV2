@@ -14,8 +14,10 @@ over SSH (the notification; unreadable is unknown, never "no messages"). Per sen
 3. ONE planner-LLM call (counted) picks 0-3 catalog items from the messages' text (data, never instructions): an
    answer by chat, the asked work, a mail to them; validated like a plan (planner.validate), every recipient the
    sender, no handoff or follow-up;
-4. the items run in order and stop at the first one not done, so a done-note never follows work that failed;
+4. the items run in order and stop at the first one not done, so a done-note never follows work that failed; then
+   one more plan, told what was done and what failed (its names are taken now): another way, or telling them;
 5. once more 2-4 for the sender's posts seen while answering (on screen, so never notified), if any.
+The chat stays open from the read through the answers (the templates' zero-weight variants) and is closed once after.
 Caps: reactions per sender per day, attempts per post, counted in the day's log (a durable worker builds a new
 runner per slot, and a retried slot must not answer twice). Reaction items are logged as reaction_start/reaction_end,
 never item_end: they are not plan items, and a plan item's done must not be read off them.
@@ -25,12 +27,13 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import subprocess
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -38,7 +41,7 @@ import yaml
 from ludius import mail
 from ludius.llm import LlmClient, LlmError
 from ludius.loop import GroundTruth
-from ludius.planner import PlanItem, catalog, day_records, fill_recipient_names, role_templates, validate
+from ludius.planner import PlanItem, catalog, day_records, fill_recipient_names, role_templates, targets, validate
 from ludius.policy import Policy
 from ludius.tasks import Persona, Strict, TaskInstance, Template
 
@@ -50,6 +53,12 @@ ATTEMPTS = 2  # a post whose read or reaction failed is tried again once
 ITEMS_MAX = 3
 # Run 9 replayed x8: no bad JSON, always the note, no folders, asked for offered figures (Haiku: folders, never asked)
 MODEL = "deepseek/deepseek-v4.1-flash-1017"  # LUDIUS_REACT_MODEL overrides
+# Live: the read closed Edge and the answer opened it again. The chat stays open through a reaction (the templates'
+# zero-weight variants: read and answer without closing) and is closed once at its end.
+_CHAT = ["open_chat", "open_conversation"]
+READ_OPEN = [[s, *_CHAT, "read_newest"] for s in ("open_edge_start", "open_edge_taskbar")]
+READ_CLOSE = ["close_edge"]
+DM_OPEN = ["open_edge_taskbar", *_CHAT, "write_message", "send_message"]
 SHOWN = 2500  # characters of the conversation the LLM sees, the newest kept
 _USER = re.compile(r"[a-z0-9._-]+")
 # Direct-message posts to `u` from others, newer than u's last view of that channel: what Mattermost shows unread.
@@ -98,6 +107,8 @@ class _Reaction(Strict):
     they_ask_me: str = ""  # what the colleague asks of me in the (new) messages; "" for nothing
     they_ask_question: str = ""  # a question to me in them; "" for none
     i_wait_for: str = ""  # what I asked of them that they have not done yet; "" for nothing
+    # Live (DeepSeek): Anna offered the freight figures, Daan made the data up and never asked for them.
+    they_offer: str = ""  # something they offered to send me if I need it; "" for none
     items: list[TaskInstance]
 
 
@@ -195,6 +206,10 @@ class Reactor:
     poll: Callable[[str], list[Post] | None] = unread
     talk: Callable[[str, str], tuple[list[Post], int] | None] = conversation
     busy: bool = False
+    taken: list[str] = field(default_factory=list)  # names reaction items created or tried: never reused
+
+    def _variant(self, template: str, subgoals: list[str]) -> int:
+        return self.templates[template].variants.index(subgoals)
 
     def _log(self, **rec: object) -> None:
         self.log.write(host_ms=int(time.time() * 1000), **rec)
@@ -240,43 +255,65 @@ class Reactor:
                 continue
             self._log(event="chat_notification", sender=sender, posts=[p.id for p in mine])
             read = PlanItem(at=at, template=READ, params={"to": address, "to_name": people[sender]},
-                            context=f"A chat notification: new messages from {people[sender]}")  # fmt: skip
-            run(read)  # the server's read marker is the outcome check, not the UI's status
+                            context=f"A chat notification: new messages from {people[sender]}",
+                            variant=self._variant(READ, random.choice(READ_OPEN)))  # fmt: skip
+            try:
+                self._answer(sender, people, mine, at, day, read, run)
+            finally:  # opened (or tried): closed once, after the whole reaction
+                run(read.model_copy(update={"variant": self._variant(READ, READ_CLOSE), "context": "Done in the chat"}))
+
+    def _answer(self, sender: str, people: dict[str, str], mine: list[Post], at: str, day: str, read: PlanItem,
+                run: Callable[[PlanItem], str]) -> None:  # fmt: skip
+        """Read `sender`'s new messages, leaving the chat open, and answer them in it."""
+        run(read)  # the server's read marker is the outcome check, not the UI's status
+        after = self.poll(self.persona.user)
+        # Live: a request sent while the small talk was being read stayed unread, and the small-talk answer then
+        # marked it read unanswered. Messages that came in meanwhile are read too and answered together.
+        later = [p for p in after or [] if p.sender == sender]
+        if after is not None and not {p.id for p in after} & {p.id for p in mine} and later:
+            self._log(event="chat_read_more", sender=sender, posts=[p.id for p in later])
+            mine = mine + later
+            run(read.model_copy(update={"variant": self._variant(READ, READ_OPEN[1])}))  # Edge is open already
             after = self.poll(self.persona.user)
-            # Live: a request sent while the small talk was being read stayed unread, and the small-talk answer then
-            # marked it read unanswered. Messages that came in meanwhile are read too and answered together.
-            later = [p for p in after or [] if p.sender == sender]
-            if after is not None and not {p.id for p in after} & {p.id for p in mine} and later:
-                self._log(event="chat_read_more", sender=sender, posts=[p.id for p in later])
-                mine += later
-                run(read)
-                after = self.poll(self.persona.user)
-            if after is None or {p.id for p in after} & {p.id for p in mine}:
-                self._log(event="chat_read_check", sender=sender, ok=False,
-                               reason="unknown" if after is None else "still unread on the server")  # fmt: skip
-                continue
-            self._log(event="chat_read_check", sender=sender, ok=True)
-            first, answered = min(p.at for p in mine), set[str]()
-            for again in (False, True):  # again: what came in while answering, on screen so never notified
-                talk = self.talk(self.persona.user, sender)
-                if talk is None:  # unknown: what was notified, without the conversation around it
-                    self._log(event="chat_conversation", sender=sender, unknown=True)
-                    if again:
+        if after is None or {p.id for p in after} & {p.id for p in mine}:
+            self._log(event="chat_read_check", sender=sender, ok=False,
+                      reason="unknown" if after is None else "still unread on the server")  # fmt: skip
+            return
+        self._log(event="chat_read_check", sender=sender, ok=True)
+        first, answered = min(p.at for p in mine), set[str]()
+        for again in (False, True):  # again: what came in while answering, on screen so never notified
+            talk = self.talk(self.persona.user, sender)
+            if talk is None:  # unknown: what was notified, without the conversation around it
+                self._log(event="chat_conversation", sender=sender, unknown=True)
+                if again:
+                    return
+                new, shown = mine, mine
+            else:  # also what came in while the conversation was open: seen, so never notified
+                shown, viewed = talk
+                new = [p for p in shown if p.sender == sender and first <= p.at <= viewed and p.id not in answered]
+                new = new or ([] if again else mine)
+            if not new:
+                return
+            answered |= {p.id for p in new}
+            # Live: the asked note's name was taken, the reaction stopped there and the request was lost. One more
+            # plan, told what was done and what failed (its names now taken): another way, or tell them.
+            outcome = ""
+            for _ in range(2):
+                failed = False
+                for it in self.plan(sender, people, new, at, day, shown, outcome):
+                    if it.template == "chat_direct_message":  # in the chat left open
+                        it = it.model_copy(update={"variant": self._variant(it.template, DM_OPEN)})
+                    self.taken += [v for _, v in targets(it, self.templates)]
+                    failed = run(it) != "done"
+                    what = json.dumps({**it.params, **it.content})
+                    outcome += f"{'FAILED' if failed else 'done'}: {it.template} {what}\n"
+                    if failed:
                         break
-                    new, shown = mine, mine
-                else:  # also what came in while the conversation was open: seen, so never notified
-                    shown, viewed = talk
-                    new = [p for p in shown if p.sender == sender and first <= p.at <= viewed and p.id not in answered]
-                    new = new or ([] if again else mine)
-                if not new:
+                if not failed:
                     break
-                answered |= {p.id for p in new}
-                for it in self.plan(sender, people, new, at, day, shown):
-                    if run(it) != "done":
-                        break
 
     def plan(self, sender: str, people: dict[str, str], posts: list[Post], at: str, day: str,
-             talk: list[Post] | None = None) -> list[PlanItem]:  # fmt: skip
+             talk: list[Post] | None = None, outcome: str = "") -> list[PlanItem]:  # fmt: skip
         """The reaction items from the new messages' real text, read in their conversation (`talk`, oldest first,
         both sides), validated; [] when none, or on any failure (logged)."""
         allowed = {k: t for k, t in role_templates(self.templates, self.persona).items()
@@ -287,17 +324,21 @@ class Reactor:
         text = "\n".join(f"{'(new) ' if p.id in new else ''}{'You' if p.sender == persona.user else name}: "
                          f"{p.message}" for p in talk or posts)[-SHOWN:]  # fmt: skip
         tasks = "\n".join(catalog(allowed).splitlines()[:-1])  # without the break line
+        retry = (f"You already tried, in order:\n{outcome}Return only what is still needed after the FAILED step: it "
+                 "again another way (another name), or a chat line telling them you could not.\n\n"
+                 if outcome else "")  # fmt: skip
         user = (
             f"You are {persona.name}, {persona.role} ({persona.department}). Style: {persona.style or 'ordinary'}\n\n"
             f"Your chat with {name} ({address}), oldest first; You lines are what you ({persona.name}) wrote, the rest "
             f"{name} wrote; you just read the (new) ones:\n<<<\n{text}\n>>>\n\n"
-            f"Task catalog:\n{tasks}\n\n"
-            f'Return JSON {{"they_ask_me": "...", "they_ask_question": "...", "i_wait_for": "...", "items": [...]}}: '
-            f"first, in a few words each, what {name} asks of you in the (new) messages, a question {name} asks you "
-            f'there, and what you asked of {name} that is still open ("" for none); then 0-{ITEMS_MAX} items in the '
-            f"order {persona.name} does them now, never for what you asked of {name}. Each "
-            "item: template (a catalog name), params (object with every listed parameter as a string), context (one "
-            f"sentence: why). Any to is {address}. A chat answer is chat_direct_message to {address}."
+            f"Task catalog:\n{tasks}\n\n{retry}"
+            'Return JSON {"they_ask_me": "...", "they_ask_question": "...", "they_offer": "...", "i_wait_for": "...", '
+            f'"items": [...]}}: first, in a few words each, what {name} asks of you in the (new) messages, a question '
+            f"{name} asks you there, something {name} offered to send you if you need it (when set and you do the "
+            f"work, the done line asks them to send it), and what you asked of {name} that is still open ('' for "
+            f"none); then 0-{ITEMS_MAX} items in the order {persona.name} does them now, never for what you asked of "
+            f"{name}. Each item: template (a catalog name), params (object with every listed parameter as a string), "
+            f"context (one sentence: why). Any to is {address}. A chat answer is chat_direct_message to {address}."
         )
         try:
             reaction = self.llm.json(_Reaction, SYSTEM, user, temperature=0.7, attempts=1)
@@ -309,14 +350,15 @@ class Reactor:
                  for d in drafts]  # fmt: skip
         fill_recipient_names(items, people)
         colleagues = set(people) - {persona.user}
-        rejects = validate(items, allowed, [], self.policy, colleagues, existing=self.existing(), people=people,
-                           user=persona.user, day=day)  # fmt: skip
+        rejects = validate(items, allowed, [], self.policy, colleagues, existing=[*self.existing(), *self.taken],
+                           people=people, user=persona.user, day=day)  # fmt: skip
         for i, it in enumerate(items):
             to = {**it.params, **it.content}.get("to")  # content wins over params, as in Task
             if to is not None and to.strip().lower() != address:
                 rejects.append((i, f"to must be {address}"))
         self._log(event="reaction_plan", sender=sender, posts=sorted(new), they_ask_me=reaction.they_ask_me,
-                  they_ask_question=reaction.they_ask_question, i_wait_for=reaction.i_wait_for,
+                  they_ask_question=reaction.they_ask_question,
+                  they_offer=reaction.they_offer, i_wait_for=reaction.i_wait_for,
                   items=[it.model_dump() for it in items],
                   rejects=[f"{items[i].template}: {why}" for i, why in rejects], llm_cost=self.llm.cost)  # fmt: skip
         return [] if rejects else items  # a dropped first step would make the rest claim it happened

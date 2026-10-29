@@ -12,6 +12,11 @@ example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga}
 variants:
   - [open_edge_start, open_chat, open_conversation, read_newest, close_edge]
   - [open_edge_taskbar, open_chat, open_conversation, read_newest, close_edge]
+  # Reactions only (ludius.react): read and leave the chat open for the answer, then close it.
+  - [open_edge_start, open_chat, open_conversation, read_newest]
+  - [open_edge_taskbar, open_chat, open_conversation, read_newest]
+  - [close_edge]
+weights: [1, 1, 0, 0, 0]
 # Enter in the message box sends (a leftover draft too): only the guarded send_message subgoal may press it there.
 key_commits: [{keys: Enter, focus: {name: "^Write to "}}]
 budget_steps: 30

@@ -78,7 +78,9 @@ def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Templa
     except ValueError as e:
         problems.append(str(e))
         return problems
-    if not 2 <= len(t.variants) <= 4:
+    # A zero-weight variant is never drawn: code plays it and closes the app after (ludius.react).
+    drawn = [v for i, v in enumerate(t.variants) if not t.weights or t.weights[i]]
+    if not 2 <= len(drawn) <= 4:
         problems.append("needs 2-4 variants")
     allowed = {a["process"].lower() for a in capabilities["apps"]}
     if bad := [p for p in t.processes if p.lower() not in allowed]:
@@ -111,7 +113,7 @@ def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Templa
                 problems.append(f"{name}: bad check regex {rx!r}: {e}")
     if open_ended > 1:
         problems.append("at most one open-ended subgoal (without done)")
-    for v in t.variants:
+    for v in drawn:
         last = t.subgoals[v[-1]].done
         if last is None or last.window is None or not last.window.absent:
             problems.append(f"variant {v} must end with a check that the app window is closed (window absent)")

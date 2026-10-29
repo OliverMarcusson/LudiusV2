@@ -59,8 +59,8 @@ class FakeSession:
     def __init__(self, calls: list[str], unlock_ok: bool = True) -> None:
         self.calls, self.unlock_ok = calls, unlock_ok
 
-    def normalize(self) -> bool:
-        self.calls.append("normalize")
+    def normalize(self, keep: set[str] | None = None) -> bool:
+        self.calls.append(f"normalize keep {sorted(keep)}" if keep else "normalize")
         return True
 
     def escalate(self) -> int:
@@ -170,7 +170,7 @@ def test_denied_escalation_abandons_the_task_and_the_day_goes_on(tmp_path: Path)
     from ludius.session import EscalationDenied
 
     class Dirty(FakeSession):
-        def normalize(self) -> bool:
+        def normalize(self, keep: set[str] | None = None) -> bool:
             self.calls.append("normalize")
             return False
 
@@ -222,13 +222,20 @@ def test_chat_notification_reads_then_reacts_outside_the_plan(tmp_path: Path, fa
                       talk=lambda user, other: (talk, 200) if other == "lnord" else None)  # fmt: skip
     day = DayRunner(runner, FakeSession(calls), load_templates(), log, "compressed", 0, reactor=reactor)  # type: ignore[arg-type]
     results = day.slot(dt.date(2026, 11, 2), note("10:00"), [])
+    R = "run chat_read_messages"
     expected = {
-        "": ["run chat_read_messages", "run erp roles", "run chat_direct_message", "run note 1000"],
-        "read ui": ["run chat_read_messages", "run erp roles", "run chat_direct_message", "run note 1000"],
-        "erp roles": ["run chat_read_messages", "run erp roles", "run note 1000"],
-        "read": ["run chat_read_messages", "run note 1000"],
+        "": [R, "run erp roles", "run chat_direct_message", R, "run note 1000"],
+        "read ui": [R, "run erp roles", "run chat_direct_message", R, "run note 1000"],
+        # Planned once more, told it failed: the same note again is refused (its name is taken now).
+        "erp roles": [R, "run erp roles", R, "run note 1000"],
+        "read": [R, R, "run note 1000"],  # the chat is closed after any reaction
     }[fail]
     assert [c for c in calls if c.startswith("run")] == expected
+    assert len(llm.prompts) == {"": 1, "read ui": 1, "erp roles": 2, "read": 0}[fail]
+    # Edge stays open from the read to the close: hygiene before each reaction item keeps it.
+    assert "normalize keep ['msedge.exe']" in calls and "normalize" not in calls[: calls.index("run note 1000") - 1]
+    if fail == "erp roles":
+        assert "FAILED: notepad_write_note" in llm.prompts[1] and "You already tried" not in llm.prompts[0]
     assert (fail != "read") == any("could you put the erp roles in a note" in p for p in llm.prompts)
     if fail != "read":
         assert "You: morning lars\n(new) Lars Nord: could you" in llm.prompts[0]
@@ -267,7 +274,7 @@ def test_messages_sent_while_reading_or_answering_are_answered_too(tmp_path: Pat
     day.slot(dt.date(2026, 11, 2), note("10:00"), [])
     assert [c for c in calls if c.startswith("run")] == ["run chat_read_messages", "run chat_read_messages",
                                                          "run chat_direct_message", "run chat_direct_message",
-                                                         "run note 1000"]  # fmt: skip
+                                                         "run chat_read_messages", "run note 1000"]  # fmt: skip
     assert "(new) Anna Berg: morning daan\n(new) Anna Berg: could you" in llm.prompts[0]
     assert "(new) Anna Berg: and the carriers" in llm.prompts[1] and "(new) Anna Berg: could" not in llm.prompts[1]
     log.close()

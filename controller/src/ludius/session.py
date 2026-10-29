@@ -127,7 +127,13 @@ class Session:
                 if a.process_name.lower() not in keep
                 and (a.process_name.lower() not in SHELL_PROCESSES or _explorer_window(a))
             ]
-            if fg is not None and _is_shell_surface(fg) and popup is None and not strays:
+            # A kept app may stay in front (a reaction's chat, ludius.react); never its dialog.
+            if (
+                fg is not None
+                and (_is_shell_surface(fg) or (fg.process_name.lower() in keep and fg.class_name != "#32770"))
+                and popup is None
+                and not strays
+            ):
                 self.log.write(event="normalized", host_ms=_now(), closed=closed)
                 return True
             if popup is not None or (fg is not None and fg.class_name == "#32770"):

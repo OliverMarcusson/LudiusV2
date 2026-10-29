@@ -27,15 +27,21 @@ if TYPE_CHECKING:
 
 
 def run_task(
-    runner: Runner, session: Session, task: Task, between: Callable[[], None] | None = None, hygiene: bool = True
+    runner: Runner,
+    session: Session,
+    task: Task,
+    between: Callable[[], None] | None = None,
+    hygiene: bool = True,
+    keep: set[str] | None = None,
 ) -> Outcome:
     """One task with session hygiene around it and its side effects logged.
 
-    Interruptions run without hygiene: normalizing would close the interrupted task's window.
+    Interruptions run without hygiene: normalizing would close the interrupted task's window. `keep`: apps
+    normalizing leaves open (a reaction's chat, open from its read to its end).
     An unclean desktop with escalation denied (LUDIUS_NO_ESCALATE=1) abandons this task, recorded, and the day goes
     on; raising failed the slot, its retries, then the whole persona-day (live: pvanloon's warp day 1 lost 10:00 on).
     """
-    if hygiene and not session.normalize():
+    if hygiene and not session.normalize(keep):
         try:
             session.escalate()
         except EscalationDenied:
@@ -48,7 +54,7 @@ def run_task(
     apps_after = [f"{a.title} ({a.process_name})" for a in runner.observe().apps]
     runner.log.write(event="side_effects", host_ms=_now(), task=task.template.task,
                      opened=[a for a in apps_after if a not in apps_before], left=apps_after)  # fmt: skip
-    if hygiene and out.status != "done" and not session.normalize():
+    if hygiene and out.status != "done" and not session.normalize(keep):
         with suppress(EscalationDenied):  # logged (escalate_blocked); this task's outcome stands
             session.escalate()
     return out
@@ -180,7 +186,10 @@ class DayRunner:
         logical = f"{day.isoformat()}T{item.at}"
         self.log.write(event="reaction_start", host_ms=_now(), logical=logical, template=item.template,
                        context=item.context, params=item.params)  # fmt: skip
-        status = run_task(self.runner, self.session, Task(self.templates[item.template], item, self.rng)).status
+        chat = set(self.templates["chat_read_messages"].processes)  # left open through the reaction (ludius.react)
+        status = run_task(
+            self.runner, self.session, Task(self.templates[item.template], item, self.rng), keep=chat
+        ).status
         self.log.write(event="reaction_end", host_ms=_now(), logical=logical, template=item.template,
                        params=item.params, status=status)  # fmt: skip
         return status

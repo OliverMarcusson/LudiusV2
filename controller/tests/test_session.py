@@ -167,3 +167,13 @@ def test_a_hidden_task_window_is_offered_its_taskbar_button_only_from_the_deskto
     snap.windows[0].CopyFrom(obs.Window(kind=obs.Window.FOREGROUND, title="Chat - Microsoft\u200b Edge",
                                         process_name="msedge.exe"))  # fmt: skip
     assert 79 not in [e.id for e in view(snap, task, close, Policy()).allowed]
+
+
+def test_a_kept_app_may_stay_in_front(tmp_path: Path) -> None:
+    """A reaction keeps the chat open between its tasks (ludius.react): Edge in front is clean, with no input."""
+    chat = clean_desktop()
+    edge = obs.Window(kind=obs.Window.FOREGROUND, class_name="Chrome_WidgetWin_1", process_name="msedge.exe",
+                      title="Mattermost - Edge", bounds=obs.Rect(width=1920, height=1040))  # fmt: skip
+    chat.windows[0].CopyFrom(edge)
+    chat.apps.append(edge)
+    assert Session(ObserveOnly([chat]), GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize({"msedge.exe"})  # pyright: ignore[reportArgumentType]
