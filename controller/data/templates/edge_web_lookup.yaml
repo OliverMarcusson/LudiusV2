@@ -1,9 +1,10 @@
-# Look something up on the web in Edge and read one result.
+# Look something up on the company intranet in Edge and read one result (the closed range has no web: Edge's default
+# search is the range intranet on dc01, set by GPO).
 task: edge_web_lookup
 app: edge
 processes: [msedge.exe]
 params: [search_query]
-about: "Look something up on the web in Edge and open one result. search_query: what the persona types into the search box."
+about: "Look something up on the company intranet in Edge (policies, procedures, supplier and product notes, IT help) and open one result. search_query: what the persona types into the search box."
 defaults: {app_query: edge}
 example: {search_query: weather in Lund tomorrow}
 variants:

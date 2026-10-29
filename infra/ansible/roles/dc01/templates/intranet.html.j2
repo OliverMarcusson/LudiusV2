@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ intranet_company }} intranet</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% raw %}
+<style>
+  body { margin: 0; font: 15px/1.5 "Segoe UI", Arial, sans-serif; color: #1d2733; background: #fff; }
+  header { background: #20384f; color: #fff; padding: 14px 28px; display: flex; gap: 28px; align-items: center; }
+  header a { color: #fff; text-decoration: none; font-weight: 600; font-size: 18px; }
+  header form { flex: 1; max-width: 560px; display: flex; }
+  header input { flex: 1; padding: 7px 10px; font: inherit; border: 1px solid #8aa0b5; border-radius: 3px 0 0 3px; }
+  header button { padding: 7px 14px; font: inherit; border: 0; background: #e0a43a; color: #1d2733; border-radius: 0 3px 3px 0; cursor: pointer; }
+  main { display: flex; gap: 36px; max-width: 1080px; margin: 0 auto; padding: 24px 28px; }
+  nav { width: 200px; flex: none; }
+  nav h3 { font-size: 13px; color: #5b6b7b; margin: 18px 0 6px; }
+  nav a { display: block; padding: 3px 0; color: #20384f; }
+  article, #results { flex: 1; min-width: 0; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  .meta { color: #5b6b7b; font-size: 13px; margin-bottom: 18px; }
+  .hit { margin-bottom: 18px; }
+  .hit a { font-size: 17px; color: #1a4f8b; }
+  .hit p { margin: 2px 0; color: #3a4754; }
+  .note { background: #f2f5f8; padding: 10px 14px; border-radius: 3px; margin-bottom: 18px; }
+</style>
+{% endraw %}
+</head>
+<body>
+<header>
+  <a href="/">{{ intranet_company }}</a>
+  <form action="/" method="get" role="search">
+    <input name="q" id="q" aria-label="Search the intranet" placeholder="Search policies, procedures, notes">
+    <button type="submit">Search</button>
+  </form>
+</header>
+<main>
+  <nav id="nav" aria-label="Sections"></nav>
+  <div id="content"></div>
+</main>
+<script id="articles" type="application/json">{{ intranet_articles | to_json }}</script>
+{% raw %}
+<script>
+const company = document.querySelector("header a").textContent;
+const articles = JSON.parse(document.getElementById("articles").textContent);
+const params = new URLSearchParams(location.search);
+const content = document.getElementById("content");
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const link = a => `<a href="/?a=${encodeURIComponent(a.id)}">${esc(a.title)}</a>`;
+const snippet = a => esc(a.body[0].slice(0, 180)) + (a.body[0].length > 180 ? "..." : "");
+
+const sections = [...new Set(articles.map(a => a.section))];
+document.getElementById("nav").innerHTML = sections.map(s =>
+  `<h3>${esc(s)}</h3>` + articles.filter(a => a.section === s).map(link).join("")).join("");
+
+const STOP = new Set("the and for with from what how are can our new check current about into this that when which who why".split(" "));
+const words = s => s.toLowerCase().match(/[a-z0-9À-ɏ]+/g) || [];
+// Lenient: a query word matches an article word that shares its first five letters (kraft/kraftliner, capitalise/capitalisation).
+const stem = w => w.slice(0, 5);
+function score(a, terms) {
+  const field = (text, weight) => { const ws = new Set(words(text).map(stem)); return terms.filter(t => ws.has(t)).length * weight; };
+  return field(a.title, 3) + field(a.tags.join(" "), 2) + field(a.body.join(" "), 1);
+}
+
+const q = (params.get("q") || "").replace(/\s+/g, " ").trim();
+const id = params.get("a");
+const shown = articles.find(a => a.id === id);
+if (q) {
+  document.title = `${q} - Intranet search`;
+  document.getElementById("q").value = q;
+  const terms = [...new Set(words(q).filter(w => w.length > 2 && !STOP.has(w)).map(stem))];
+  const hits = articles.map(a => [score(a, terms), a]).filter(([s]) => s > 0).sort((x, y) => y[0] - x[0]).map(([, a]) => a);
+  const list = hits.length ? hits.slice(0, 10) : articles.filter(a => a.popular);
+  content.innerHTML = `<div id="results"><h1>Search results</h1>` +
+    (hits.length ? `<div class="meta">${hits.length} page${hits.length > 1 ? "s" : ""} for <b>${esc(q)}</b></div>`
+                 : `<div class="note">No pages match <b>${esc(q)}</b>. Most visited pages:</div>`) +
+    list.map(a => `<div class="hit">${link(a)}<p>${snippet(a)}</p><p class="meta">${esc(a.section)} - updated ${esc(a.updated)}</p></div>`).join("") +
+    `</div>`;
+} else if (shown) {
+  document.title = `${shown.title} - ${company} intranet`;
+  content.innerHTML = `<article><h1>${esc(shown.title)}</h1><div class="meta">${esc(shown.section)} - owner ${esc(shown.owner)} - updated ${esc(shown.updated)}</div>` +
+    shown.body.map(p => `<p>${esc(p)}</p>`).join("") + `</article>`;
+} else {
+  content.innerHTML = `<article><h1>Welcome to the ${esc(company)} intranet</h1><p>Policies, procedures, supplier and product notes, and IT help. Search above or pick a page.</p>` +
+    `<h3>Most visited</h3>` + articles.filter(a => a.popular).map(a => `<div class="hit">${link(a)}<p>${snippet(a)}</p></div>`).join("") + `</article>`;
+}
+</script>
+{% endraw %}
+</body>
+</html>
