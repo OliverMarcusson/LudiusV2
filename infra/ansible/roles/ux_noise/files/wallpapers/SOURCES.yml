@@ -1,0 +1,51 @@
+---
+# Persona desktop wallpapers (range-up, ux_noise role): 1920x1080 crops of these Wikimedia Commons files.
+# Licence as Commons reports it; CC0 and public domain need no attribution, the author is recorded anyway.
+aberg:
+  animal: kitten
+  source: https://commons.wikimedia.org/wiki/File:Cute_napping_kitten_(Unsplash).jpg
+  author: "Dan Gold danielcgold"
+  licence: CC0
+  quality: 80
+lnord:
+  animal: puppy
+  source: https://commons.wikimedia.org/wiki/File:Golden_Retriever_puppy_(3813393).jpg
+  author: "https://pixabay.com/users/jaclou-dl-5602247/"
+  licence: CC0
+  quality: 88
+dkoster:
+  animal: red panda
+  source: https://commons.wikimedia.org/wiki/File:Red_Panda_(24986761703).jpg
+  author: "Mathias Appel"
+  licence: CC0
+  quality: 88
+pvanloon:
+  animal: sea otter
+  source: https://commons.wikimedia.org/wiki/File:Enhydra_lutris_cute_sea_otter_animal_in_lake.jpg
+  author: "David Menke"
+  licence: Public domain
+  quality: 88
+nokafor:
+  animal: fox cub
+  source: https://commons.wikimedia.org/wiki/File:Kit_Fox_Pup_near_Delta,_Utah_(26246976403).jpg
+  author: "BLMUtah"
+  licence: Public domain
+  quality: 88
+lsmit:
+  animal: hedgehog
+  source: https://commons.wikimedia.org/wiki/File:Hedgehog_on_grass_in_the_morning.jpg
+  author: "byapryl"
+  licence: CC0
+  quality: 88
+eyilmaz:
+  animal: baby goat
+  source: https://commons.wikimedia.org/wiki/File:Goat_baby_in_Margarita_Island.jpg
+  author: "Wilfredor"
+  licence: CC0
+  quality: 76
+sdekker:
+  animal: giant panda
+  source: https://commons.wikimedia.org/wiki/File:Giant_Panda_2004-03-2.jpg
+  author: "Jeff Kubina"
+  licence: Public domain
+  quality: 88

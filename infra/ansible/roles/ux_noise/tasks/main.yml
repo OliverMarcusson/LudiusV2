@@ -29,3 +29,45 @@
       Set-Content "$home_\.accessibility.properties" "assistive_technologies=com.sun.java.accessibility.AccessBridge`r`nscreen_magnifier_present=true" -Encoding ASCII
     parameters:
       account: "{{ domain_netbios }}\\{{ persona }}"
+
+# A wallpaper per persona (files/wallpapers, sources in SOURCES.yml). Set as a user policy in the persona's hive as
+# well as the Desktop value: the policy is applied at every logon, so neither the first-logon theme nor Spotlight
+# replaces it. Applies from the next logon (range-up.yml restarts afterwards and reads it back from the session).
+- name: Persona wallpaper folder
+  ansible.windows.win_file:
+    path: C:\Windows\Web\Wallpaper\Ludius
+    state: directory
+  tags: [wallpaper]
+
+- name: Persona wallpaper file
+  ansible.windows.win_copy:
+    src: wallpapers/{{ persona }}.jpg
+    dest: C:\Windows\Web\Wallpaper\Ludius\{{ persona }}.jpg
+  tags: [wallpaper]
+
+- name: Persona wallpaper in the persona's hive
+  ansible.windows.win_powershell:
+    script: |
+      param($account, $path)
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+      $sid = ([Security.Principal.NTAccount]$account).Translate([Security.Principal.SecurityIdentifier]).Value
+      $hive = "Registry::HKEY_USERS\$sid"
+      if (-not (Test-Path $hive)) { throw "$account's hive is not loaded (not logged on)" }
+      $want = @(
+        @("$hive\Control Panel\Desktop", 'Wallpaper', $path), @("$hive\Control Panel\Desktop", 'WallpaperStyle', '10'),
+        @("$hive\Control Panel\Desktop", 'TileWallpaper', '0'),
+        @("$hive\Software\Microsoft\Windows\CurrentVersion\Policies\System", 'Wallpaper', $path),
+        @("$hive\Software\Microsoft\Windows\CurrentVersion\Policies\System", 'WallpaperStyle', '4') # policy 4 = fill
+      )
+      foreach ($w in $want) {
+        if (-not (Test-Path $w[0])) { New-Item $w[0] -Force | Out-Null }
+        if ((Get-ItemProperty $w[0] -Name $w[1] -ErrorAction SilentlyContinue).($w[1]) -ne $w[2]) {
+          Set-ItemProperty $w[0] $w[1] $w[2] -Type String
+          $Ansible.Changed = $true
+        }
+      }
+    parameters:
+      account: "{{ domain_netbios }}\\{{ persona }}"
+      path: C:\Windows\Web\Wallpaper\Ludius\{{ persona }}.jpg
+  tags: [wallpaper]
