@@ -21,17 +21,10 @@
     data: "0"
     type: string
 
-# The build's WinRM (Basic over HTTP, on the NAT build bridge) back to off. Registry only: the running service keeps
-# serving Packer's sysprep provisioner; from the clones' first boot WinRM is disabled until range-up.yml enables it
-# with the default (Negotiate, encrypted) settings.
-- name: WinRM build settings reverted (take effect at next boot)
-  ansible.windows.win_regedit:
-    path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Service
-    name: "{{ item }}"
-    data: 0
-    type: dword
-  loop: [allow_unencrypted, auth_basic]
-
+# The build's WinRM (Basic over HTTP, on the NAT build bridge) is reverted by the clones' answer file (specialize, on
+# first boot): WinRM applies its registry settings live, so reverting them here cut off this very connection. From
+# the clones' first boot WinRM is disabled until range-up.yml enables it with the default (Negotiate, encrypted)
+# settings.
 - name: WinRM disabled from next boot
   ansible.windows.win_regedit:
     path: HKLM:\SYSTEM\CurrentControlSet\Services\WinRM

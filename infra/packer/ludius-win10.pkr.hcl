@@ -300,7 +300,8 @@ source "hyperv-iso" "hyperv" {
 # Packer's generated inventory sets ansible_shell_type=powershell for WinRM; ansible-core 2.21's winrm plugin needs cmd
 # (it sends the module as stdin to a cmd-launched bootstrap). With powershell the first module call's stdin never
 # arrived: the guest's bootstrap waited for good, and with a 3600 s WinRM operation timeout the build stalled in "Bake
-# in updates" for an hour. Extra vars override the inventory; the WinRM timeouts stay at pywinrm's defaults. The same
+# in updates" for an hour. Extra vars override the inventory. connection_timeout 120 (operation 120 s, read 130 s): with
+# pywinrm's 20/30 s a guest busy with Office's install and disk IO dropped the connection ("Read timed out"). The same
 # arguments in every ansible provisioner below (build.Password only exists inside a build).
 build {
   name    = "base"
@@ -313,7 +314,7 @@ build {
     ansible_env_vars = ["ANSIBLE_CONFIG=infra/ansible/ansible.cfg"]
     extra_arguments = [
       "-e", "hypervisor=proxmox",
-      "-e", "ansible_connection=winrm ansible_shell_type=cmd ansible_winrm_transport=basic ansible_winrm_scheme=http ansible_port=5985",
+      "-e", "ansible_connection=winrm ansible_shell_type=cmd ansible_winrm_transport=basic ansible_winrm_scheme=http ansible_port=5985 ansible_winrm_connection_timeout=120",
       "-e", "{\"ansible_password\": \"${build.Password}\"}", # JSON: the password's characters are validated above
     ]
   }
@@ -332,7 +333,7 @@ build {
     ansible_env_vars = ["ANSIBLE_CONFIG=infra/ansible/ansible.cfg"]
     extra_arguments = [
       "-e", "hypervisor=hyperv",
-      "-e", "ansible_connection=winrm ansible_shell_type=cmd ansible_winrm_transport=basic ansible_winrm_scheme=http ansible_port=5985",
+      "-e", "ansible_connection=winrm ansible_shell_type=cmd ansible_winrm_transport=basic ansible_winrm_scheme=http ansible_port=5985 ansible_winrm_connection_timeout=120",
       "-e", "{\"ansible_password\": \"${build.Password}\"}",
     ]
   }
@@ -344,7 +345,7 @@ build {
     ansible_env_vars = ["ANSIBLE_CONFIG=infra/ansible/ansible.cfg"]
     extra_arguments = [
       "-e", "hypervisor=${source.type == "hyperv-iso" ? "hyperv" : "proxmox"}",
-      "-e", "ansible_connection=winrm ansible_shell_type=cmd ansible_winrm_transport=basic ansible_winrm_scheme=http ansible_port=5985",
+      "-e", "ansible_connection=winrm ansible_shell_type=cmd ansible_winrm_transport=basic ansible_winrm_scheme=http ansible_port=5985 ansible_winrm_connection_timeout=120",
       "-e", "{\"ansible_password\": \"${build.Password}\"}",
     ]
   }
