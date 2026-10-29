@@ -96,6 +96,16 @@ class PlanItem(TaskInstance):
     def _none_is_empty(cls, v: object) -> object:
         return "" if v is None else v  # the planner writes null for "none"; one null must not drop the whole draft
 
+    @field_validator("params", "content", mode="before")
+    @classmethod
+    def _newlines(cls, v: object) -> object:
+        # Live: a reaction's note body came as \r\n lines, refused as untypable, so the whole reaction was dropped.
+        # Multi-line parameters only: a line break anywhere else stays a rejection.
+        if not isinstance(v, dict):
+            return v
+        return {k: x.replace("\r\n", "\n").replace("\r", "\n") if k in MULTILINE and isinstance(x, str) else x
+                for k, x in v.items()}  # pyright: ignore[reportUnknownVariableType]  # fmt: skip
+
     @field_validator("at")
     @classmethod
     def _at(cls, v: str) -> str:

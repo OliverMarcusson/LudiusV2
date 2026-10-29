@@ -122,6 +122,7 @@ def test_minimized_edge_is_brought_forward_by_its_taskbar_button(tmp_path: Path)
                         windows=[_win(obs.Window.FOREGROUND, "Shell_TrayWnd", 0, 1040, 1920, 40),
                                  _win(obs.Window.SHELL, "Progman", 0, 0, 1920, 1080)],
                         elements=[obs.Element(id=15, role="button", name="Notification Chevron")])  # fmt: skip
+    tray.windows.append(_win(obs.Window.POPUP, "SysShadow", 1713, 1020, 118, 25, no_tree=True))  # a tooltip's
     clicks.clear()
     agent = ClickOnly([tray, tray, edge, edge, clean_desktop()])
     assert Session(agent, GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize()  # pyright: ignore[reportArgumentType]

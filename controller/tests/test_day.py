@@ -263,3 +263,10 @@ def test_chat_reset_soft_deletes_the_pair_s_posts_through_mmctl(monkeypatch: pyt
     ids.append("x; rm -rf /")
     assert react.reset("aberg", "dkoster") is None
     assert react.reset("aberg", "x; rm") is None
+
+
+def test_plan_item_text_has_plain_newlines() -> None:
+    """Live: a reaction's note body came as \r\n lines and was refused as untypable, dropping the reaction."""
+    it = PlanItem(at="09:20", template="notepad_write_note", params={"body": "a\r\nb\rc", "file_name": "a\rb"},
+                  content={"body": "x\r\ny"})  # fmt: skip
+    assert it.params == {"body": "a\nb\nc", "file_name": "a\rb"} and it.content == {"body": "x\ny"}

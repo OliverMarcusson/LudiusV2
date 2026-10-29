@@ -233,12 +233,13 @@ def _is_shell_surface(w: obs.Window) -> bool:
 
 
 def _inert_shell_popup(snap: obs.Snapshot, i: int) -> bool:
-    """Explorer's tray "Worker Window": a WS_POPUP over the desktop with no UIA tree and no elements. Nothing to
-    dismiss; Esc never closes it, so counting it as a dialog fails every clean-desktop normalize."""
+    """Explorer's tray "Worker Window", or a SysShadow (a taskbar tooltip's shadow, live aberg): a WS_POPUP with no
+    UIA tree and no elements. Nothing to dismiss; Esc never closes it, so counting it as a dialog fails every
+    normalize (live: a minimized Edge behind it was never reached)."""
     w = snap.windows[i]
     return (
         w.process_name.lower() == "explorer.exe"
-        and w.class_name == "Worker Window"
+        and w.class_name in ("Worker Window", "SysShadow")
         and w.no_tree
         and not any(e.window == i for e in snap.elements)
     )
