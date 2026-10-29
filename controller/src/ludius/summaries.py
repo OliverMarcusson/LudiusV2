@@ -79,45 +79,47 @@ def due(line: Line, key: str, now: float) -> bool:
     return key != line.key and now - line.called >= MIN_GAP_S
 
 
-def take(path: Path, cap: int, today: str) -> bool:
-    """Count one request against today's cap before it is sent; False at the cap or on a counter that can't be
-    read (fails closed: a lost counter would grant the whole day again). ponytail: one summariser process, no lock."""
+def counter(path: Path, today: str) -> dict[str, Any] | None:
+    """Today's counter: fresh when there is none or it is from an earlier day; None when it is unreadable or
+    malformed, which pauses the summaries (fails closed: a lost counter would grant the whole day again)."""
     try:
-        data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+        data: Any = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        data = {}
+        return {"day": today, "calls": 0, "cost": 0.0, "models": {}}
     except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    c = cast(dict[str, Any], data)
+    day, n, cost, models = c.get("day"), c.get("calls"), c.get("cost"), c.get("models")
+    if not isinstance(day, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) or type(n) is not int or n < 0:
+        return None
+    if not isinstance(cost, int | float) or isinstance(cost, bool) or cost < 0 or not isinstance(models, dict):
+        return None
+    if any(not isinstance(k, str) or type(v) is not int for k, v in cast(dict[Any, Any], models).items()):
+        return None
+    return c if day == today else {"day": today, "calls": 0, "cost": 0.0, "models": {}}
+
+
+def take(path: Path, cap: int, today: str) -> bool:
+    """Count one request against today's cap before it is sent; False at the cap or on a malformed counter.
+    ponytail: one summariser process, no lock."""
+    c = counter(path, today)
+    if c is None or c["calls"] >= cap:
         return False
-    if data.get("day") != today:
-        data = {"day": today, "calls": 0, "cost": 0.0, "models": {}}
-    n = data.get("calls")
-    if type(n) is not int or n < 0 or n >= cap:
-        return False
-    data["calls"] = n + 1
-    _write(path, data)
+    c["calls"] += 1
+    _write(path, c)
     return True
 
 
 def record_use(path: Path, today: str, model: str, cost: float) -> None:
     """After an answer: its cost and routed model in today's counter."""
-    try:
-        data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    c = counter(path, today)
+    if c is None or c["calls"] == 0:
         return
-    if data.get("day") != today:
-        return
-    data["cost"] = round(float(data.get("cost") or 0) + cost, 6)
-    models: dict[str, int] = data.setdefault("models", {})
-    models[model] = models.get(model, 0) + 1
-    _write(path, data)
-
-
-def used(path: Path, today: str) -> int:
-    try:
-        data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return 0
-    return int(data.get("calls") or 0) if data.get("day") == today else 0
+    c["cost"] = round(c["cost"] + cost, 6)
+    c["models"][model] = c["models"].get(model, 0) + 1
+    _write(path, c)
 
 
 def activity(days: Path, user: str, now_ms: int) -> Activity:
@@ -137,13 +139,16 @@ def activity(days: Path, user: str, now_ms: int) -> Activity:
         return Activity("unknown", "unreadable", "unknown: day log unreadable")
 
     clock: Any = None
-    item: dict[str, Any] | None = None
-    task: dict[str, Any] | None = None
-    steps: list[dict[str, Any]] = []
-    done: list[str] = []
+    # One frame per item being played, an interruption on top of the item it cut into:
+    # {"item": its item_start or None, "task": its task_start or None, "steps": [...], "done": [...], "ms": start}.
+    stack: list[dict[str, Any]] = []
     ended = False
     last: dict[str, Any] | None = None
     last_ms = 0
+
+    def frame(item: dict[str, Any] | None, ms: int) -> dict[str, Any]:
+        return {"item": item, "task": None, "steps": [], "done": [], "ms": ms}
+
     for text in lines:
         try:
             parsed: Any = json.loads(text)
@@ -157,36 +162,47 @@ def activity(days: Path, user: str, now_ms: int) -> Activity:
         last, ev = e, e["event"]
         last_ms = int(e.get("host_ms") or last_ms)
         if ev == "day_start":
-            clock, item, task, ended = e.get("clock"), None, None, False
+            clock, stack, ended = e.get("clock"), [], False
         elif ev == "item_start":
-            item, task, steps, done = e, None, [], []
-        elif ev == "task_start":
-            task, steps, done = e, [], []
-        elif ev == "step":
-            steps = [*steps, e][-STEPS:]
-        elif ev == "subgoal_done":
-            done.append(str(e.get("subgoal", "")))
-        elif ev == "task_end":
-            task = None
-        elif ev == "item_end":
-            item, task = None, None
+            stack = [*stack, frame(e, last_ms)] if e.get("interrupt") else [frame(e, last_ms)]
+        elif ev == "resume" and not stack:  # the interrupted item's start was cut off: its name is in the resume
+            stack = [frame({"template": e.get("task")}, last_ms)]
+        elif ev in ("task_start", "step", "subgoal_done"):
+            if not stack:  # a task whose start is not in the part of the log read: active, task unknown
+                stack = [frame(None, last_ms)]
+            top = stack[-1]
+            if ev == "task_start":
+                top.update(task=e, steps=[], done=[])
+            elif ev == "step":
+                top["steps"] = [*top["steps"], e][-STEPS:]
+            else:
+                top["done"].append(str(e.get("subgoal", "")))
+        elif ev == "task_end" and stack:
+            stack[-1]["task"] = None
+        elif ev == "item_end" and stack:
+            stack = stack[:-1]
         elif ev == "day_end":
-            item, task, ended = None, None, True
+            stack, ended = [], True
     if last is None:
         return Activity("idle", f"{log.name}:empty", "idle: day not started")
     key = f"{log.name}:{last.get('event')}:{last.get('host_ms')}:{last.get('step', '')}"
     if ended:
         return Activity("idle", key, "idle: day ended")
+    if not stack:
+        return Activity("idle", key, "idle: between tasks")
+    top = stack[-1]
+    item: dict[str, Any] | None = top["item"]
+    task: dict[str, Any] | None = top["task"]
+    steps: list[dict[str, Any]] = top["steps"]
+    done: list[str] = top["done"]
     if item and item.get("template") == "break":
         return Activity("idle", key, f"away from the desk (screen locked), break from {item.get('at')}")
-    if not item and not task:
-        return Activity("idle", key, "idle: between tasks")
     if now_ms - last_ms > QUIET_MS:
         return Activity("unknown", key, f"unknown: no activity recorded for {(now_ms - last_ms) // 60_000} min")
-    template = str((task or {}).get("task") or (item or {}).get("template") or "?")
+    template = str((task or {}).get("task") or (item or {}).get("template") or "") or "an unknown task"
     subgoal = str(steps[-1].get("subgoal")) if steps else ""
     brief = f"working on {template}" + (f": {subgoal}" if subgoal else "")
-    started = f"{log.name}:{(item or task or {}).get('host_ms')}"
+    started = f"{log.name}:{len(stack)}:{top['ms']}"
     return Activity("active", key, _record(user, clock, item, task, steps, done, last_ms, now_ms), brief, started)
 
 
@@ -200,18 +216,22 @@ def _record(user: str, clock: Any, item: dict[str, Any] | None, task: dict[str, 
             out.append(f"Plan context: {_clip(item['context'], 300)}")
     if task:
         out.append(f"Task: {task.get('task')}, subgoals in order: {', '.join(map(str, task.get('subgoals') or []))}.")
+    elif not item:
+        out.append("Task: unknown (its start is not in the part of the log read).")
     if done:
         out.append(f"Subgoals done: {', '.join(done)}.")
     if steps:
+        # No window titles, element names or option texts: they can carry typed text (a search query in a
+        # browser's title). The step kind, the element's role and the app say enough.
         out.append("Last steps, oldest first:")
         for s in steps:
             el: dict[str, Any] = s.get("element") or {}
-            target = f" on {el.get('role', '')} '{_clip(el.get('name', ''), 60)}'" if el else ""
+            target = f" on a {_clip(el.get('role', ''), 30)}" if el.get("role") else ""
             ms = s.get("guest_ms") or s.get("host_ms") or 0
             at = dt.datetime.fromtimestamp(ms / 1000, dt.UTC).strftime("%H:%M:%S") if ms else "?"
-            window = f"window '{_clip(s.get('window', ''), 80)}' ({s.get('process', '')})"
-            out.append(f"- {at} UTC, subgoal {s.get('subgoal')}: {s.get('action')}{target}, {window}, "
-                       f"result {s.get('result', '')}")  # fmt: skip
+            app = _clip(s.get("process", ""), 40) or "an unknown app"
+            out.append(f"- {at} UTC, subgoal {s.get('subgoal')}: {_clip(s.get('action', ''), 30)}{target} in {app}, "
+                       f"result {_clip(s.get('result', ''), 30)}")  # fmt: skip
     else:
         out.append("No steps yet in this task.")
     out.append(f"Last event {max(0, now_ms - last_ms) // 1000} s ago.")
@@ -250,18 +270,26 @@ class Summariser:
         today = dt.date.today().isoformat()
         now_ms = int(now.timestamp() * 1000)
         jobs: list[tuple[str, Activity]] = []
+        c = counter(self.counter, today)
+        capped = c is None or c["calls"] >= self.cap
         for u in self.users:
             act = activity(self.days, u, now_ms)
             line = self.lines.get(u) or Line("unknown", "unknown: not read yet")
             if act.state != "active":
                 self.lines[u] = Line(act.state, act.text, _iso(now), None, act.key, called=line.called)
+            elif capped:
+                if line.state != "paused":
+                    self.lines[u] = Line(
+                        "paused", "summaries paused (cap)", _iso(now), None, line.key, called=line.called
+                    )
             elif due(line, act.key, mono):
                 line.called = mono
                 if take(self.counter, self.cap, today):
                     jobs.append((u, act))
                 else:
                     self.lines[u] = Line("paused", "summaries paused (cap)", _iso(now), None, line.key, called=mono)
-            elif line.task != act.task:  # a new task inside the gap: the record's own words until the model answers
+            elif line.task != act.task and line.state != "paused":
+                # a new task inside the gap: the record's own words until the model answers
                 self.lines[u] = Line("pending", act.brief, _iso(now), None, line.key, act.task, line.called)
         if jobs:
             with ThreadPoolExecutor(len(jobs)) as pool:
@@ -306,7 +334,7 @@ class Summariser:
             "updated": _iso(now),
             "model": self.llm.model,
             "cap": self.cap,
-            "used": used(self.counter, today),
+            "used": (counter(self.counter, today) or {}).get("calls"),
             "paused": any(line.state == "paused" for line in self.lines.values()),
             "personas": {
                 u: {"vm": vm_of(u), **{k: v for k, v in asdict(line).items() if k in SHOWN}}
