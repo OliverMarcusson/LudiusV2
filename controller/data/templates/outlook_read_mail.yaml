@@ -11,8 +11,8 @@ app: outlook
 capability: mail.read
 params: [sender, subject]
 defaults: {sender_name: ""}  # set at task start from the narrative (prepare_read)
-about: "Read a colleague's unread mail in the Outlook Inbox (open it, read it, close it). sender: the address of the colleague who sent it (<user>@corp.ludius.test); subject: that mail's exact subject, as listed in the inbox. Plan it before work the mail asks for, or as the morning look at new mail."
-example: {sender: mvellinga@corp.ludius.test, subject: "Points for tomorrow's ERP cost policy review"}
+about: "Read a colleague's unread mail in the Outlook Inbox (open it, read it, close it). sender: the address of the colleague who sent it (<user>@ludius.internal); subject: that mail's exact subject, as listed in the inbox. Plan it before work the mail asks for, or as the morning look at new mail."
+example: {sender: mvellinga@ludius.internal, subject: "Points for tomorrow's ERP cost policy review"}
 variants:
   - [open_outlook, open_message, close_message, close_outlook]
   - [open_outlook, open_message_click, close_message, close_outlook]

@@ -7,9 +7,9 @@ task: outlook_send_invite
 app: outlook
 capability: calendar.invite  # the shared send contract on the profile's meeting form (data/apps/outlook.yaml, ludius.tasks.Form)
 params: [to, to_name, subject, date, start, end, body]
-about: "Invite one colleague to a meeting in Outlook and send the invite. to: the colleague's address <user>@corp.ludius.test; subject: one line; date: YYYY-MM-DD, a weekday within the next two weeks after the plan's day; start and end: HH:MM between 08:00 and 17:00, 15-120 minutes apart; body: optional short agenda (ASCII, a few short lines) or empty."
+about: "Invite one colleague to a meeting in Outlook and send the invite. to: the colleague's address <user>@ludius.internal; subject: one line; date: YYYY-MM-DD, a weekday within the next two weeks after the plan's day; start and end: HH:MM between 08:00 and 17:00, 15-120 minutes apart; body: optional short agenda (ASCII, a few short lines) or empty."
 defaults: {body: ""}
-example: {to: mvellinga@corp.ludius.test, to_name: Marcus Vellinga, subject: lund accruals q4 review, date: "2026-11-05", start: "10:30", end: "11:15", body: "walk through the lund accruals before the close\n- anna"}
+example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga, subject: lund accruals q4 review, date: "2026-11-05", start: "10:30", end: "11:15", body: "walk through the lund accruals before the close\n- anna"}
 variants:
   - [open_outlook, new_meeting_shortcut, fill_to, fill_subject, fill_date, fill_start, fill_end, write_body, send_shortcut, close_outlook]
   - [open_outlook, new_meeting_menu, fill_to, fill_subject, fill_date, fill_start, fill_end, write_body, send_shortcut, close_outlook]

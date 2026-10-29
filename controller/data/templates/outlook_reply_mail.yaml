@@ -8,9 +8,9 @@ task: outlook_reply_mail
 app: outlook
 capability: mail.reply  # the shared send contract on the profile's mail form (data/apps/outlook.yaml, ludius.tasks.Form)
 params: [to, to_name, subject]
-about: "Reply in Outlook to a colleague's mail in the Inbox. to: the address of the colleague who sent it (<user>@corp.ludius.test); subject: that mail's exact subject without RE:, as listed in the inbox, or empty for their newest unanswered mail. The reply text is written when the task runs, from the mail itself."
+about: "Reply in Outlook to a colleague's mail in the Inbox. to: the address of the colleague who sent it (<user>@ludius.internal); subject: that mail's exact subject without RE:, as listed in the inbox, or empty for their newest unanswered mail. The reply text is written when the task runs, from the mail itself."
 defaults: {subject: ""}
-example: {to: mvellinga@corp.ludius.test, to_name: Marcus Vellinga, subject: ""}
+example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga, subject: ""}
 variants:
   - [open_outlook, open_message, reply_shortcut, write_reply, send_shortcut, close_message, close_outlook]
   - [open_outlook, open_message, reply_button, write_reply, send_shortcut, close_message, close_outlook]
