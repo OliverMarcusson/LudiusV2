@@ -42,7 +42,7 @@ from ludius.tasks import Persona, Task, TaskInstance, Template, load_template, l
 from ludius.v1 import agent_pb2 as pb
 
 if TYPE_CHECKING:
-    from ludius import nightly
+    from ludius import nightly, rangeclock, rangerun
 
 ROOT = Path(__file__).resolve().parents[3]
 DATA = ROOT / "controller" / "data"
@@ -130,7 +130,8 @@ def require_hyperv_clock(address: str | None, vm: str) -> None:
     if not ok:
         raise ClockRefused(
             f"time-jump refused: the host agent at {address} does not drive Hyper-V on this machine (the clock "
-            f"scripts would act on a local VM named {vm}); use --clock compressed or realtime"
+            f"scripts would act on a local VM named {vm}); use --clock compressed or realtime (a Proxmox range jumps "
+            "range-wide only: `ludius range warp`)"
         )
 
 
@@ -490,12 +491,16 @@ def cmd_range(args: argparse.Namespace) -> int:
         print(f"not in {rangerun.VMS}: {', '.join(unknown)}", file=sys.stderr)
         return 2
     today = dt.datetime.now(ZoneInfo(args.timezone)).date()
+    if args.what == "unwarp":
+        return _range_unwarp()
     if args.what == "status":
         print(rangerun.summary(planner.World(RUNS), users, today, RUNS / "range", dict(os.environ)))
         return 0
     if why := rangerun.refusals(users, dict(os.environ), DATA / "personas"):
         print("range not started:", *why, sep="\n  ", file=sys.stderr)
         return 2
+    if args.what == "warp":
+        return _range_warp(args, users, today)
     asyncio.run(asyncio.wait_for(_range_schedules(args, users, today), timeout=60 + 600 * bool(args.today)))
     agent = args.agent or os.environ.get("LUDIUS_AGENT", "127.0.0.1:7451")
     sup = rangerun.Supervisor([rangerun.Child(s) for s in rangerun.specs(users, agent, args.temporal, args.model,
@@ -514,6 +519,148 @@ def cmd_range(args: argparse.Namespace) -> int:
     finally:
         sup.stop()
     return 0
+
+
+def _range_clock() -> rangeclock.RangeClock:
+    """dc01 first, then ex01 and every persona VM in range-vms.yml (all of them: one DC, one clock)."""
+    from ludius import rangeclock, rangerun
+
+    if os.environ.get("LUDIUS_MAIL_BACKEND") != "exchange":
+        raise ClockRefused("range clock: Proxmox Exchange range only (dc01 is its time source; LUDIUS_MAIL_BACKEND)")
+    main = yaml.safe_load((rangerun.VMS.parent / "main.yml").read_text(encoding="utf-8"))
+    return rangeclock.RangeClock(int(main["srv01_vmid"]), [int(main["ex01_vmid"]), *rangerun.vmids().values()])
+
+
+def _range_unwarp() -> int:
+    """Every range VM back on real time, then the range lease dropped (recovery after a failed warp reset)."""
+    got = _range_clock().reset()
+    _clock_lease("range").path.unlink(missing_ok=True)
+    print(json.dumps({"offsets_s": {str(k): round(v, 1) for k, v in got.items()}}))
+    return 0
+
+
+def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> int:
+    """Time-jump on a Proxmox range (spec section 7). Per simulated weekday: the range clock to the evening before,
+    that day's plans (nightly.ensure_day, as `up --today`), the range clock to just before the day's first item,
+    then every persona's day as a compressed durable day on its own worker; the clock runs on from there. Every
+    jump goes through the range clock (rangeclock: DC first, forward only, skew verified) under the range's clock
+    lease; the range goes back on real time when the warp ends or fails (then roll back to the pre-warp snapshot:
+    AD and Exchange have seen the future). Workers are supervised as by `up`; no schedules are created.
+    ponytail: no lease sweeper on Proxmox; a killed warp leaves the clocks jumped until `ludius range unwarp`."""
+    import signal
+    from zoneinfo import ZoneInfo
+
+    from ludius import calls, durable, nightly, rangerun
+
+    if not args.start or not 1 <= args.days <= 7:
+        print("warp needs --start YYYY-MM-DD (a future date) and --days 1-7", file=sys.stderr)
+        return 2
+    start = dt.date.fromisoformat(args.start)
+    if start <= today:
+        print("warp is forward only: --start must be after today", file=sys.stderr)
+        return 2
+    days = [d for d in (start + dt.timedelta(n) for n in range(3 * args.days)) if d.weekday() < 5][: args.days]
+    tz, clock, lease = ZoneInfo(args.timezone), _range_clock(), _clock_lease("range")
+    world, src = planner.World(RUNS), plan_sources()
+    llm = functools.partial(
+        LlmClient, os.environ.get("OPENROUTER_API_KEY", ""), model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL)
+    )
+    agent = args.agent or os.environ.get("LUDIUS_AGENT", "127.0.0.1:7451")
+    sup = rangerun.Supervisor([rangerun.Child(s) for s in rangerun.specs(users, agent, args.temporal, args.model,
+                              dict(os.environ))], RUNS / "range", rangerun.popen)  # fmt: skip
+    journal = RUNS / "range" / "warp.jsonl"
+
+    def note(**rec: object) -> None:
+        line = json.dumps({"at": dt.datetime.now().isoformat(timespec="seconds"), **rec}, default=str)
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        with journal.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        print(line, flush=True)
+
+    def offsets(got: dict[int, float]) -> dict[str, object]:
+        return {"skew_s": round(max(got.values()) - min(got.values()), 1),
+                "offsets_s": {str(k): round(v, 1) for k, v in got.items()}}  # fmt: skip
+
+    def jump(at: dt.datetime) -> None:
+        lease.hold()  # before the jump: a warp killed mid-jump still leaves its lease behind
+        note(event="clock_set", logical=at.isoformat(), **offsets(clock.set(at)))
+
+    def term(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, term)
+    try:
+        sup.step()
+        for d in days:
+            jump(dt.datetime.combine(d - dt.timedelta(days=1), dt.time.fromisoformat(args.plan_at), tz))
+            plans: dict[str, planner.DayPlan] = {}
+            for u in users:
+                persona = next(p for p in src.personas if p.user == u)
+                calls.persona = u
+                try:
+                    with durable.desk_lock(world.root / "locks" / "nightly.lock"):
+                        plans[u] = planner.load_plan(Path(nightly.ensure_day(llm, world, persona, src, d).path))
+                except Exception as e:  # noqa: BLE001  one persona without a plan leaves the others' days to run
+                    note(event="no_plan", persona=u, date=d, error=str(e)[:300])
+                finally:
+                    calls.persona = None
+            note(event="planned", date=d, items={u: len(p.items) for u, p in plans.items()})
+            if not plans:
+                continue
+            first = min(dt.time.fromisoformat(i.at) for p in plans.values() for i in p.items)
+            jump(dt.datetime.combine(d, first, tz) - dt.timedelta(minutes=10))
+            for u, res in asyncio.run(_play_days(args.temporal, plans, tz, sup)).items():
+                note(event="day", persona=u, date=d, result=res)
+    except KeyboardInterrupt:
+        note(event="interrupted")
+    finally:
+        if lease.held:
+            try:
+                got = clock.reset()
+                lease.release()  # only after a reset that worked
+                note(event="clock_reset", **offsets(got))
+            except Exception as e:  # noqa: BLE001  report it; never mask an exception in flight
+                note(event="clock_reset_failed", error=str(e)[-500:], fix="ludius range unwarp")
+        sup.stop()
+    return 0
+
+
+async def _play_days(
+    temporal: str, plans: dict[str, planner.DayPlan], tz: dt.tzinfo, sup: rangerun.Supervisor
+) -> dict[str, object]:
+    """Every persona's day as a compressed durable day on its own worker; the supervisor keeps the workers up."""
+    from temporalio.client import WorkflowFailureError
+    from temporalio.common import WorkflowIDReusePolicy
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from ludius import durable
+
+    client = await durable.connect(durable.Target(temporal))
+
+    async def one(plan: planner.DayPlan) -> object:
+        noon = dt.datetime.combine(dt.date.fromisoformat(plan.date), dt.time(12), tz).utcoffset() or dt.timedelta()
+        inp = durable.DayInput(plan=plan, clock="compressed", utc_offset_s=int(noon.total_seconds()))
+        wid = durable.workflow_id(plan)
+        try:
+            h = await client.start_workflow(durable.PersonaDay.run, inp, id=wid, task_queue=durable.task_queue(plan),
+                                            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE)  # fmt: skip
+        except WorkflowAlreadyStartedError:  # a rerun of the warp picks the day up again
+            h = client.get_workflow_handle_for(durable.PersonaDay.run, wid)
+        try:
+            return [f"{d.at} {d.template} {d.status}" for d in await h.result()]
+        except WorkflowFailureError as e:
+            return f"failed: {e.cause}"
+
+    async def keep() -> None:
+        while True:
+            sup.step()
+            await asyncio.sleep(5)
+
+    keeper = asyncio.create_task(keep())
+    try:
+        return dict(zip(plans, await asyncio.gather(*(one(p) for p in plans.values())), strict=True))
+    finally:
+        keeper.cancel()
 
 
 async def _range_schedules(args: argparse.Namespace, users: list[str], today: dt.date) -> None:

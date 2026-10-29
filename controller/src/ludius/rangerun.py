@@ -43,6 +43,11 @@ def personas(path: Path = VMS) -> list[str]:
     return [str(p["user"]) for p in yaml.safe_load(path.read_text(encoding="utf-8"))["range_personas"]]
 
 
+def vmids(path: Path = VMS) -> dict[str, int]:
+    """Persona -> Proxmox VMID, in map order."""
+    return {str(p["user"]): int(p["vmid"]) for p in yaml.safe_load(path.read_text(encoding="utf-8"))["range_personas"]}
+
+
 def vm_of(user: str) -> str:
     return f"ludius-{user}"  # range-up.yml's clone name
 
