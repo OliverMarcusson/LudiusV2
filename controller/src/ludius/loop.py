@@ -59,6 +59,7 @@ OFF_TRACK_THRESHOLD = 0.8
 NEAR_TIE = 0.05  # probability gap within which equivalent options may be sampled
 BLOCKED_WAIT_S = 1.5  # a step with no input allowed: wait this long, then look again (no Decisions call)
 LAUNCH_REASON = "the launch query goes into the Start search box only"
+REPLACE_REASON = "replacing text needs a target field that holds the keyboard focus"
 NARRATIVE = requests.ROOT / "world" / "narrative.yaml"  # who the colleagues are (mail.read without a composer)
 
 
@@ -263,10 +264,8 @@ class Runner:
                 if e is None or not e.focused:
                     return "the focusing click did not put the keyboard focus in the target field"
                 self._caret_to_end(e, sg)
-            if sg.replace:  # the focus is checked to be the target: the text replaces its old value
-                if e is None:
-                    return "replacing text needs a target field that holds the keyboard focus"
-                self.agent.chord(keys.chord("Ctrl+A"))
+            if sg.replace and e is not None:  # checked to be the target: the text replaces its old value
+                self.agent.chord(keys.chord("Ctrl+A"))  # no element known (pixels only): typed as before
             elif sg.text == LAUNCH_TEXT:  # checked to be the Start search box: a retry never appends to an old query
                 self.agent.chord(keys.chord("Ctrl+A"))  # (warp6 dkoster: "edgeoutlookoutlookoutlook")
             self._type(text)
@@ -305,6 +304,11 @@ class Runner:
                 return "the keyboard focus is not a field this task may type into", None
             if sg.text == LAUNCH_TEXT and not launch_target(focus, fresh):
                 return LAUNCH_REASON, None
+            if sg.replace and focus is not None:  # its old value is selected first: only in the subgoal's own field
+                field = sg.done.element.name if sg.done and sg.done.element and sg.done.element.name else ""
+                if self._focus_shared or not re.search(task.fmt_re(field), focus.name):
+                    return REPLACE_REASON, None  # (Ctrl+A in Notepad's document would select the note's body)
+                return None, focus
             return None, None
         target = allowed.get(o.element.key)
         if target is None or (target.role, target.name) != (o.element.role, o.element.name):

@@ -276,3 +276,29 @@ def test_the_guarded_sends_own_prompt_is_confirmed_once_and_nothing_else(tmp_pat
         {"at": "09:00", "template": "outlook_send_mail", "params": {"to": "mvellinga@ludius.internal",
          "to_name": "Marcus Vellinga", "subject": "s", "body": "b"}}), random.Random(0))  # fmt: skip
     assert send_confirmation(prompt, mail_task) is None  # only the meeting form's prompt
+
+
+def test_a_save_name_typed_at_the_focus_replaces_the_box(tmp_path: Path) -> None:
+    """Live run 11 (dkoster): Save As's File name held '*.txt', and each retry appended the name to it."""
+    from ludius.options import Option
+    from ludius.tasks import TaskInstance
+
+    box = obs.Element(key="f", role="edit", name="File name:", value="*.txtmaintenance", focused=True, enabled=True,
+                      actions=["value"], bounds=obs.Rect(x=1, y=1, width=50, height=20))  # fmt: skip
+    fg = obs.Window(kind=obs.Window.FOREGROUND, process_name="notepad.exe", title="Save As")
+    snap = obs.Snapshot(windows=[fg], elements=[box])
+    agent = FakeAgent([snap])
+    agent.type = lambda text, mean, jitter: agent.chords.append([-1])  # type: ignore[attr-defined]
+    runner = Runner(agent, None, cli.load_persona(None), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    runner.snap = snap
+    t = Task(cli.load_templates()["notepad_write_note"], TaskInstance(template="notepad_write_note",
+             params={"file_name": "maintenance", "body": "x"}, variant=0), random.Random(0))  # fmt: skip
+    assert runner.act(Option("o1", "type", "type", content="file_name"), t, t.subgoal("name_file")) is None
+    assert agent.chords == [keys.chord("Ctrl+A"), [-1]]
+    # Never select-all in another field: the note's body would be replaced by the name.
+    body = obs.Element(key="b", role="document", name="Text Editor", value="press 3 oil leak", focused=True,
+                       enabled=True, actions=["value"], bounds=obs.Rect(x=1, y=1, width=50, height=20))  # fmt: skip
+    runner.snap = obs.Snapshot(windows=[fg], elements=[body])
+    agent.snaps, agent.chords = [runner.snap], []
+    assert runner.act(Option("o1", "type", "type", content="file_name"), t, t.subgoal("name_file")) is not None
+    assert agent.chords == []

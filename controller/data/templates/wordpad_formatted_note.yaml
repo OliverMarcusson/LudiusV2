@@ -94,6 +94,7 @@ subgoals:
   name_file:
     goal: Enter {file_name} as the file name in the Save As dialog
     text: file_name
+    replace: true  # the box may hold a filter (*.txt) or a name typed before
     done:
       element:
         name: ^File name
