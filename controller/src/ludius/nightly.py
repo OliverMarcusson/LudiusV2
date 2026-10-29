@@ -179,7 +179,8 @@ def generate_day(
     if not isinstance(boss, str) and src.decider is not None:
         decider = src.decider()
         try:
-            mails = requests.pending(world, persona.user, boss, inbox_mails, src.policy, date)
+            with shared or nullcontext():  # reads every request day, which ensure() rewrites in place
+                mails = requests.pending(world, persona.user, boss, inbox_mails, src.policy, date)
             role = planner.role_templates(src.templates, persona)
             mapped, more = requests.candidates(llm, decider, world, persona, boss, mails, role, date, people)
             notes += more

@@ -33,8 +33,9 @@ subgoals:
     goal: "Open one of the search results that matches the search"
     allow_destructive: ["(?i)accept.*|reject.*"]
     steps: 10
-    # A result page is in front: Edge's title no longer names the query (results often open in a new tab).
-    done: {foreground: {process: msedge.exe, title: '^(?!.*{search_query})'}}
+    # An intranet article is in front (results often open in a new tab): its title ends "- Intranet page" (dc01 role,
+    # intranet.html.j2); "not naming the query" failed whenever an article's title held a short query (ERP).
+    done: {foreground: {process: msedge.exe, title: ' - Intranet page'}}
   close_edge:
     goal: "Close Microsoft Edge"
     done: {window: {process: msedge.exe, absent: true}}

@@ -77,7 +77,7 @@ if (q) {
     list.map(a => `<div class="hit">${link(a)}<p>${snippet(a)}</p><p class="meta">${esc(a.section)} - updated ${esc(a.updated)}</p></div>`).join("") +
     `</div>`;
 } else if (shown) {
-  document.title = `${shown.title} - ${company} intranet`;
+  document.title = `${shown.title} - Intranet page`;  // edge_web_lookup's open_result checks for this ending
   content.innerHTML = `<article><h1>${esc(shown.title)}</h1><div class="meta">${esc(shown.section)} - owner ${esc(shown.owner)} - updated ${esc(shown.updated)}</div>` +
     shown.body.map(p => `<p>${esc(p)}</p>`).join("") + `</article>`;
 } else {
