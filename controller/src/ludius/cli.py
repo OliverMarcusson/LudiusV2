@@ -1044,7 +1044,13 @@ def main(argv: list[str] | None = None) -> int:
     pw.set_defaults(fn=cmd_plan_worker)
 
     rg = sub.add_parser("range", help="multi-persona run: start and supervise every persona's worker, or summarize")
-    rg.add_argument("what", choices=["up", "status"])
+    rg.add_argument(
+        "what",
+        choices=["up", "status", "warp", "unwarp"],
+        help="warp: time-jump test over --days simulated weekdays (Proxmox); unwarp: clocks to real time",
+    )
+    rg.add_argument("--start", help="warp: first simulated date YYYY-MM-DD (after today)")
+    rg.add_argument("--days", type=int, default=3, help="warp: simulated weekdays to play")
     rg.add_argument("--temporal", default="127.0.0.1:7233", metavar="HOST:PORT")
     rg.add_argument("--persona", action="append", help="only this persona (repeatable; default: all in range-vms.yml)")
     rg.add_argument("--clock", choices=["realtime", "compressed"], default="realtime", help="for new day schedules")
