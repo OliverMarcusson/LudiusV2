@@ -8,15 +8,18 @@ folder a range admin can swap per scenario (LUDIUS_INTRANET; Ansible `intranet_d
     updated: 2026-09-30
     popular: true
     tags: month end, close, accruals
+    files: Close timetable 2026.xlsx, close-checklist.pdf
     ---
     First paragraph.
 
     Second paragraph.
 
 The header is `key: value` lines only (the page reads it with the same rule, in the browser); tags are comma
-separated, popular pages show on the home page and when a search matches nothing. The body is plain text paragraphs,
-shown as text, never as HTML. `ludius intranet check` validates a folder before it is deployed; the planner gets the
-page index so a lookup searches for a page that exists.
+separated, popular pages show on the home page and when a search matches nothing; files (comma separated) are
+downloads kept in the folder's files/ subfolder, each on some page (edge_download_file fetches one). The body is
+plain text paragraphs, shown as text, never as HTML. A scenario's own pages go in the same folder; the scenario
+file's `pages:` (policy) keeps noise off them. `ludius intranet check` validates a folder before it is deployed; the
+planner gets the page and download index (without the scenario's pages) so a task asks for one that exists.
 """
 
 from __future__ import annotations
@@ -24,13 +27,18 @@ from __future__ import annotations
 import datetime as dt
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
 DIR = Path(os.environ.get("LUDIUS_INTRANET") or Path(__file__).resolve().parents[2] / "data" / "intranet")
-FIELDS = {"title", "section", "owner", "updated", "popular", "tags"}
+FIELDS = {"title", "section", "owner", "updated", "popular", "tags", "files"}
 MAX_PAGE = 64 << 10  # bytes per page file
+MAX_FILE = 1_000_000  # bytes per download: guestfile.MAX_BYTES, so the download check reads it whole
+MAX_FILES = 50 << 20  # all downloads together (copied to dc01 on every apply)
+# Documents IIS serves as static files (its default MIME map); nothing that runs when opened, no macros.
+_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}\.(?:pdf|docx|xlsx|pptx|txt|csv|png|jpg)", re.I)
 MAX_PAGES = 200  # the whole folder is embedded in one page
 _ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 _URL = re.compile(r"(?:[a-z][a-z0-9+.-]*:)?//[^\s\"'<>()]+", re.I)  # with a scheme or scheme-relative
@@ -47,6 +55,7 @@ class Page:
     popular: bool
     tags: tuple[str, ...]
     body: tuple[str, ...]
+    files: tuple[str, ...] = ()
 
 
 def parse(id: str, text: str) -> Page:
@@ -82,8 +91,13 @@ def parse(id: str, text: str) -> Page:
         if host != RANGE_DOMAIN and not host.endswith("." + RANGE_DOMAIN):
             raise ValueError(f"{id}.md: link to {host} outside {RANGE_DOMAIN}")
     tags = tuple(t.strip() for t in head.get("tags", "").split(",") if t.strip())
+    files = tuple(f.strip() for f in head.get("files", "").split(",") if f.strip())
+    if bad := [f for f in files if not _FILE.fullmatch(f) or ".." in f]:
+        raise ValueError(
+            f"{id}.md: files {bad}: letters, digits, space . _ - and a .pdf/docx/xlsx/pptx/txt/csv/png/jpg end"
+        )
     return Page(id, head["title"], head["section"], head["owner"], head["updated"], head.get("popular") == "true",
-                tags, body)  # fmt: skip
+                tags, body, files)  # fmt: skip
 
 
 def load(folder: Path = DIR) -> list[Page]:
@@ -100,9 +114,31 @@ def load(folder: Path = DIR) -> list[Page]:
         pages.append(parse(f.stem, f.read_text(encoding="utf-8")))
     if not any(p.popular for p in pages):
         raise ValueError(f"{folder}: no page is popular: true (the home page would be empty)")
+    named = {f for p in pages for f in p.files}
+    there = {f.name: f for f in (folder / "files").glob("*") if f.is_file()} if (folder / "files").is_dir() else {}
+    if missing := sorted(named - there.keys()):
+        raise ValueError(f"{folder}: files {missing} named on a page but not in files/")
+    if unused := sorted(there.keys() - named):
+        raise ValueError(f"{folder}: files/{unused} not on any page (it would be served unlisted)")
+    for f in there.values():
+        if f.stat().st_size > MAX_FILE:
+            raise ValueError(f"files/{f.name}: over {MAX_FILE} bytes")
+    if sum(f.stat().st_size for f in there.values()) > MAX_FILES:
+        raise ValueError(f"{folder}: files/ over {MAX_FILES >> 20} MiB together")
     return pages
 
 
-def index(folder: Path = DIR) -> str:
-    """The planner's list of pages, one line each: title and tags."""
-    return "\n".join(f"- {p.title}" + (f" ({', '.join(p.tags[:8])})" if p.tags else "") for p in load(folder))
+def index(folder: Path = DIR, skip: Callable[[str], bool] = lambda title: False) -> str:
+    """The planner's list of pages, one line each: title and tags; `skip` leaves out the scenario's reserved ones."""
+    return "\n".join(f"- {p.title}" + (f" ({', '.join(p.tags[:8])})" if p.tags else "")
+                     for p in load(folder) if not skip(p.title))  # fmt: skip
+
+
+def downloads(folder: Path = DIR, skip: Callable[[str], bool] = lambda title: False) -> dict[str, str]:
+    """Each download (file name) and the title of the page that lists it; `skip` leaves out reserved pages."""
+    return {f: p.title for p in load(folder) if not skip(p.title) for f in p.files}
+
+
+def download_bytes(name: str, folder: Path = DIR) -> bytes | None:
+    """The served content of a download listed on some page, else None."""
+    return (folder / "files" / name).read_bytes() if name in downloads(folder) else None

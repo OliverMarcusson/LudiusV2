@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ludius import guestfile, mail
+from ludius import guestfile, intranet, mail
 from ludius.v1 import observation_pb2 as obs
 
 
@@ -120,18 +120,24 @@ class FileCheck(Strict):
     case-insensitively (AutoCorrect capitalises, Excel's AutoComplete keeps an earlier cell's case). One content
     check, by the file's type: `cells` for .xlsx (planned rows, cells split by tabs: the workbook's only sheet),
     `paragraphs` for .docx (planned lines: the document's non-empty paragraphs in order), `slides` for .pptx (one
-    entry per slide, its lines the title then each bullet: the deck's slides in order).
+    entry per slide, its lines the title then each bullet: the deck's slides in order). `download` instead: the file
+    holds exactly the bytes the range intranet serves for that download (ludius.intranet), any of its file types.
     """
 
     path: str
     cells: str | None = None
     paragraphs: str | None = None
     slides: list[str] | None = None
+    download: str | None = None
 
     @model_validator(mode="after")
     def _noise_folder(self) -> FileCheck:
         need = {".xlsx": "cells", ".docx": "paragraphs", ".pptx": "slides"}
         ext = self.path.lower()[-5:]
+        if self.download is not None and guestfile.profile_path("u", self.path) is not None:
+            if any(getattr(self, k) is not None for k in need.values()):
+                raise ValueError(f"file check {self.path!r}: a download check stands alone")
+            return self
         if guestfile.profile_path("u", self.path) is None or ext not in need:
             raise ValueError(f"file check {self.path!r}: an {'/'.join(need)} in a noise folder")
         if [k for k in need.values() if getattr(self, k) is not None] != [need[ext]]:
@@ -227,6 +233,7 @@ Capability = Literal[
     "calendar.invite",
     "file.move",
     "file.write",
+    "file.download",
     "chat.post",
     "chat.dm",
     "chat.read",
@@ -914,6 +921,8 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
     f = guestfile.read(task.owner, rel)
     if f is None or not f.exists or f.written_ms < task.started_ms:
         return False
+    if c.download is not None:
+        return f.data == intranet.download_bytes(task.fmt(c.download))
     if c.cells is not None:
         cells = guestfile.xlsx_cells(f.data)
         want = guestfile.grid_cells(task.fmt(c.cells))

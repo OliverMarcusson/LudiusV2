@@ -17,6 +17,7 @@ public class GuestFileTests : IDisposable
         profile = Directory.CreateDirectory(Path.Combine(root, "aberg")).FullName;
         docs = Directory.CreateDirectory(Path.Combine(profile, "Documents")).FullName;
         Directory.CreateDirectory(Path.Combine(profile, "Pictures"));
+        Directory.CreateDirectory(Path.Combine(profile, "Downloads"));
         Directory.CreateDirectory(Path.Combine(profile, "Desktop"));
         File.WriteAllText(Path.Combine(docs, "a.txt"), "hello");
         File.WriteAllText(Path.Combine(profile, "Desktop", "a.txt"), "desk");
@@ -53,6 +54,7 @@ public class GuestFileTests : IDisposable
         Assert.True(Math.Abs(got.WrittenMs - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) < 60_000);
         Assert.False(Read(Path.Combine(docs, "missing.txt")).Exists);
         Assert.False(Read(Path.Combine(profile, "Pictures", "missing.png")).Exists);
+        Assert.False(Read(Path.Combine(profile, "Downloads", "missing.pdf")).Exists);
 
         // An app holding the file open for writing does not make it unreadable.
         using var held = new FileStream(Path.Combine(docs, "a.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);

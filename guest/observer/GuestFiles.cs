@@ -5,7 +5,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Ludius.Observer;
 
-// A done-check's file, read-only: only in this user's noise folders (Documents, Pictures, as the controller's
+// A done-check's file, read-only: only in this user's noise folders (Documents, Pictures, Downloads, as the controller's
 // guestfile.NOISE_FOLDERS), opened for reading with full sharing (an app may still hold it). Fails closed like the
 // PowerShell Direct read it replaces: anything that is not a definite answer throws (unknown). A reparse point
 // (symlink, junction, mount point) anywhere from the profile down, or a handle that ends up elsewhere, is unknown; only
@@ -13,7 +13,7 @@ namespace Ludius.Observer;
 static class GuestFiles
 {
     public const int Max = 8 << 20; // the guest channel's frame limit is 16 MB
-    public static readonly string[] NoiseFolders = ["Documents", "Pictures"];
+    public static readonly string[] NoiseFolders = ["Documents", "Pictures", "Downloads"];
 
     public static FileContent Read(ReadFile r, string profile)
     {

@@ -180,3 +180,16 @@ copy the folder, edit it, and point both sides at it: Ansible `-e intranet_dir=<
 `LUDIUS_INTRANET=<dir>` (it lists the page titles so lookups search for real pages). Check it with
 `ludius intranet check <dir>`; the dc01 role runs the same check and stops before deploying a bad folder. Pages are
 plain text; links may only point inside `corp.ludius.test`. Apply with `PLAYBOOK=range-exchange.yml /root/range-up.sh --tags dc01`.
+
+Downloads: list them on a page (`files: Q4 plan.xlsx, checklist.pdf`) and put them in the folder's `files/`
+(`.pdf .docx .xlsx .pptx .txt .csv .png .jpg`, 1 MB each so the guest check reads it whole, 50 MiB together). The check fails on a file that is
+missing or on no page; dc01 serves them at `/files/<name>` and removes any other file there. A scenario's own pages
+go in the same folder; list their titles (globs) under `pages:` in the scenario file (`LUDIUS_SCENARIO`, as
+`messages:`) and noise never opens or searches for them (no click on their links, no key while one is focused or
+selected), and the planner does not see them.
+
+Personas download them with `edge_download_file` (plan params `page`, the exact page title, and `file_name`, one file
+that page lists; the planner gets the list, without scenario pages, and plan load rejects any other pair). Edge saves
+to the persona's `Downloads` (a noise folder, as Documents and Pictures; the observer reads it too, so this needs the
+observer from the same commit). The task never starts if that file is already there; done is the file in Downloads,
+written after the task started, byte for byte what dc01 serves.

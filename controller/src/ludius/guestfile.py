@@ -25,7 +25,7 @@ import grpc
 from ludius.hostagent import HostAgent
 
 MAX_BYTES = 1_000_000  # noise documents are small; a larger file is unknown, never parsed
-NOISE_FOLDERS = ("Documents", "Pictures")  # profile folders noise may create files in (spec section 5)
+NOISE_FOLDERS = ("Documents", "Pictures", "Downloads")  # profile folders noise may create files in (spec section 5)
 
 # Runs on the host; the guest part gets the path as an argument, so it never reaches a command line as code.
 _PS = r"""

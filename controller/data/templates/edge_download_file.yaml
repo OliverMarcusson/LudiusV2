@@ -1,0 +1,43 @@
+# Download a file from a company intranet page in Edge (dc01 role: a page's Downloads list, ludius.intranet). Edge
+# saves it to Downloads under its own name; the runner refuses to start if that file is already there.
+task: edge_download_file
+app: edge
+capability: file.download  # page and file_name must be one listed download (planner, at plan load)
+processes: [msedge.exe]
+params: [page, file_name]
+writes: ["Downloads/{file_name}"]  # irreversible: the downloaded file stays in Downloads
+about: "Download a file from a company intranet page in Edge. page: the page's exact title; file_name: the exact name of a file in that page's Downloads list."
+defaults: {app_query: edge}
+example: {page: Month-end close checklist and timetable, file_name: Close timetable October 2026.csv}
+variants:
+  - [open_edge_start, search, open_page, download, close_edge]
+  - [open_edge_taskbar, search, open_page, download, close_edge]
+budget_steps: 40
+budget_minutes: 8
+subgoals:
+  open_edge_start:
+    goal: "Open Microsoft Edge from the Start menu"
+    launch: true
+    keys: [Win]
+    text: app_query
+    done: {foreground: {process: msedge.exe}}
+  open_edge_taskbar:
+    goal: "Open Microsoft Edge from its taskbar button"
+    launch: true
+    done: {foreground: {process: msedge.exe}}
+  search:
+    goal: "Search the intranet for the page: {page}"
+    text: page
+    keys: [Ctrl+L, Enter]
+    done: {foreground: {process: msedge.exe, title: "{page}"}}
+  open_page:
+    goal: "Open the intranet page titled: {page}"
+    steps: 10
+    done: {foreground: {process: msedge.exe, title: '^{page} - Intranet page'}}
+  download:
+    goal: "Download {file_name} from the page's Downloads list"
+    steps: 8
+    done: {file: {path: "Downloads/{file_name}", download: "{file_name}"}}
+  close_edge:
+    goal: "Close Microsoft Edge"
+    done: {window: {process: msedge.exe, absent: true}}

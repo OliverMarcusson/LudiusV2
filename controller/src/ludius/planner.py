@@ -220,8 +220,17 @@ def plan_day(
         f"What happened so far:\n{world or '- nothing yet'}\n\n"
         f"Task catalog (in no particular order):\n{catalog(templates, f'{persona.user}:{date}')}\n\n"
         + (
-            f"Intranet pages (a lookup's search_query should find one of them):\n{intranet.index()}\n\n"
+            "Intranet pages (a lookup's search_query should find one of them):\n"
+            + intranet.index(skip=policy.page_reserved)
+            + "\n\n"
             if "edge_web_lookup" in templates
+            else ""
+        )
+        + (
+            "Intranet downloads (edge_download_file: page is the exact page title, file_name the exact file name):\n"
+            + "\n".join(f"- {page}: {f}" for f, page in intranet.downloads(skip=policy.page_reserved).items())
+            + "\n\n"
+            if any(t.capability == "file.download" for t in templates.values())
             else ""
         )
         + "Recent content the persona already wrote (do not repeat or paraphrase it):\n"
@@ -513,6 +522,10 @@ def item_problem(it: PlanItem, templates: dict[str, Template], policy: Policy, u
         return f"channel {task.values.get('channel')!r} is not one of {CHAT_CHANNELS}"
     if t.capability in ("chat.post", "chat.dm") and not 2 <= len(task.values.get("message", "").strip()) <= 200:
         return "message: one line of 2-200 characters"
+    if t.capability == "file.download":
+        page = intranet.downloads(skip=policy.page_reserved).get(task.values.get("file_name", ""))
+        if page is None or page != task.values.get("page"):
+            return "file_name and page: one download and its page from the intranet downloads list, exactly"
     for name, sg in t.subgoals.items():
         # The observer reports at most VALUE_MAX chars of a value, so a longer checked value can never pass
         # (acceptance 20261027-1442: a 381-char WordPad note was retyped until the step budget ran out).

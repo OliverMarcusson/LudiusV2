@@ -4,6 +4,7 @@ section: Finance
 owner: Group finance
 updated: 2026-09-30
 popular: true
+files: Close timetable October 2026.csv
 tags: month end, close, closing, accruals, prepayments, reconciliation, workpapers, management accounts, October, timetable, journal
 ---
 Working day 1: purchase ledger cut-off, goods received not invoiced accrual, payroll journal. Working day 2: bank and intercompany reconciliations, stock valuation from the warehouse count. Working day 3: accruals and prepayments review, fixed asset register, VAT control account.

@@ -127,6 +127,29 @@
     intranet_company: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).company }}"
     intranet_articles: "{{ intranet_pages.stdout | from_json }}"
 
+# Downloads named on the pages (the check proved each is in files/ and on a page); a file a previous scenario left
+# there is removed, so only what the pages list is served.
+- name: Range intranet downloads
+  ansible.windows.win_copy:
+    src: "{{ intranet_dir }}/files/"
+    dest: C:\inetpub\wwwroot\files\
+  when: intranet_files | length > 0
+  vars:
+    intranet_files: "{{ intranet_pages.stdout | from_json | map(attribute='files') | flatten | unique }}"
+
+- name: No other intranet downloads
+  ansible.windows.win_powershell:
+    script: |
+      param([string[]]$keep)
+      $Ansible.Changed = $false
+      $dir = 'C:\inetpub\wwwroot\files'
+      if (Test-Path $dir) {
+        Get-ChildItem $dir -Force | Where-Object { $_.PSIsContainer -or $keep -notcontains $_.Name } | ForEach-Object {
+          Remove-Item $_.FullName -Recurse -Force; $Ansible.Changed = $true }
+      }
+    parameters:
+      keep: "{{ intranet_pages.stdout | from_json | map(attribute='files') | flatten | unique }}"
+
 # Domain GPO, so existing persona clones pick it up at their next policy refresh or boot. The range has no web: Edge's
 # address bar searches the intranet, and a new tab opens it (instead of a news feed that never loads). The chat gets
 # the Windows logon's Kerberos ticket (no sign-in prompt): it is the only server Edge may negotiate with.

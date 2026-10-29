@@ -79,7 +79,9 @@ if (q) {
 } else if (shown) {
   document.title = `${shown.title} - Intranet page`;  // edge_web_lookup's open_result checks for this ending
   content.innerHTML = `<article><h1>${esc(shown.title)}</h1><div class="meta">${esc(shown.section)} - owner ${esc(shown.owner)} - updated ${esc(shown.updated)}</div>` +
-    shown.body.map(p => `<p>${esc(p)}</p>`).join("") + `</article>`;
+    shown.body.map(p => `<p>${esc(p)}</p>`).join("") +
+    (shown.files.length ? `<h3>Downloads</h3><ul>` + shown.files.map(f => `<li><a href="/files/${encodeURIComponent(f)}" download>${esc(f)}</a></li>`).join("") + `</ul>` : "") +
+    `</article>`;
 } else {
   content.innerHTML = `<article><h1>Welcome to the ${esc(company)} intranet</h1><p>Policies, procedures, supplier and product notes, and IT help. Search above or pick a page.</p>` +
     `<h3>Most visited</h3>` + articles.filter(a => a.popular).map(a => `<div class="hit">${link(a)}<p>${snippet(a)}</p></div>`).join("") + `</article>`;

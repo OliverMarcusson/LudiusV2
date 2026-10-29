@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 
+from ludius import intranet
 from ludius.tasks import COMMITS, Strict, pixels_window, profile
 from ludius.v1 import observation_pb2 as obs
 
@@ -81,6 +82,7 @@ class Scenario(Strict):
     reserved: list[ReservedPath] = []
     mailboxes: list[str] = []  # addresses or globs noise must not write to
     messages: list[str] = []  # subjects (globs, without RE:) of scenario mails noise must not open or answer
+    pages: list[str] = []  # titles (globs) of scenario intranet pages noise must not open or search for
 
 
 def _glob(g: str) -> str:
@@ -97,6 +99,7 @@ class Policy:
     reserved_stems: list[str] = field(default_factory=list[str])  # reserved paths without their extension
     reserved_name_stems: list[str] = field(default_factory=list[str])  # reserved leaf names without their extension
     reserved_subjects: list[str] = field(default_factory=list[str])  # regexes a scenario mail's whole subject matches
+    reserved_pages: list[str] = field(default_factory=list[str])  # regexes searched in names and typed text
 
     @classmethod
     def load(cls, path: Path) -> Policy:
@@ -120,8 +123,12 @@ class Policy:
             paths.append(_glob(m.strip()))
             names.append(_glob(m.strip()))
         subjects = [_glob(m.strip()) for m in s.messages if m.strip()]
+        pages = [_glob(t.strip()) for t in s.pages if t.strip()]
+        # The page's own address too: a typed intranet URL (`/?a=<id>`) opens it without its title anywhere.
+        pages += [rf"[?&]a={re.escape(p.id)}(?![a-z0-9-])" for p in intranet.load()
+                  if any(re.search(g, p.title, re.I) for g in pages)]  # fmt: skip
         return cls(reserved_paths=paths, reserved_names=names, reserved_stems=stems, reserved_name_stems=name_stems,
-                   reserved_subjects=subjects)  # fmt: skip
+                   reserved_subjects=subjects, reserved_pages=pages)  # fmt: skip
 
     @classmethod
     def from_env(cls) -> Policy:
@@ -145,6 +152,10 @@ class Policy:
     def reserved(self, text: str) -> bool:
         return any(re.search(p, text, re.I) for p in self.reserved_paths)
 
+    def page_reserved(self, text: str) -> bool:
+        """A scenario intranet page's title in the text: a result link, its tab or window, or a search for it."""
+        return any(re.search(p, text, re.I) for p in self.reserved_pages)
+
     def mail_reserved(self, sender: str, subject: str, body: str) -> bool:
         """A mail noise must not open or answer: a reserved sender, subject, or path or mailbox named in it."""
         return any(self.reserved(x) for x in (sender, subject, body)) or any(
@@ -152,11 +163,13 @@ class Policy:
         )
 
     def reserved_element(self, e: obs.Element) -> bool:
-        """A reserved leaf name (whole name), or a reserved path, mailbox or scenario mail subject anywhere in its
-        name or value: a mail list row is named "From ..., Subject ..., Received ...", and opening it reads it."""
+        """A reserved leaf name (whole name), or a reserved path, mailbox, scenario mail subject or intranet page
+        title anywhere in its name or value: a mail list row is named "From ..., Subject ..., Received ...", and
+        opening it reads it; a search result link is named by its page's title."""
         name = e.name.strip()
         return (any(re.fullmatch(p, name, re.I) for p in self.reserved_names) or self.reserved(e.value)
-                or self.reserved(name) or any(re.search(p, name, re.I) for p in self.reserved_subjects))  # fmt: skip
+                or self.reserved(name) or any(re.search(p, name, re.I) for p in self.reserved_subjects)
+                or self.page_reserved(name))  # fmt: skip
 
     def key_allowed(self, keys: str, snap: obs.Snapshot, declared: list[str] | None = None) -> str | None:
         """Keyboard activation acts on the selection or focus, which click filtering never sees.
@@ -218,4 +231,6 @@ class Policy:
             return "never type into password fields"
         if self.reserved(text) or any(re.fullmatch(p, text.strip(), re.I) for p in self.reserved_names):
             return "scenario-reserved path"
+        if self.page_reserved(text):
+            return "scenario-reserved intranet page"
         return None
