@@ -29,7 +29,8 @@ SRV = ROOT / "infra" / "hyperv" / "build" / "srv"
 _DOTENV = ROOT / ".env"
 _LINES = _DOTENV.read_text(encoding="utf-8").splitlines() if _DOTENV.exists() else []
 _SET = [ln.partition("=")[2].strip() for ln in _LINES if ln.partition("=")[0].strip() == "LUDIUS_MAIL_DOMAIN"]
-DOMAIN = os.environ.get("LUDIUS_MAIL_DOMAIN") or next(filter(None, _SET), "ludius.internal")
+# As in cli.load_env: a variable set in the environment (even empty) beats .env, and .env's first line wins.
+DOMAIN = os.environ.get("LUDIUS_MAIL_DOMAIN", _SET[0] if _SET else "") or "ludius.internal"
 FOLDERS = {"inbox": 13, "sent": 10, "calendar": 15}  # gromox private-store folder ids
 PR_NORMALIZED_SUBJECT, PR_BODY = 0x0E1D001F, 0x1000001F
 PR_SENDER_SMTP, PR_SENT_REPRESENTING_SMTP, PR_DELIVERY_TIME = 0x5D01001F, 0x5D02001F, 0x0E060040
