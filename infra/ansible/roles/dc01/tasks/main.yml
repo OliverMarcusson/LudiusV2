@@ -109,9 +109,10 @@
   ansible.windows.win_feature:
     name: Web-Server
 
+# Rendered on the controller: win_template writes the raw Jinja under ansible-core 2.21 (as in the apps role).
 - name: Range intranet page
-  ansible.windows.win_template:
-    src: intranet.html.j2
+  ansible.windows.win_copy:
+    content: "{{ lookup('ansible.builtin.template', 'intranet.html.j2') }}"
     dest: C:\inetpub\wwwroot\index.html
   vars:
     intranet_company: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).company }}"
