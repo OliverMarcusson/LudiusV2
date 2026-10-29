@@ -37,7 +37,8 @@ subgoals:
   download:
     goal: "Download {file_name} from the page's Downloads list"
     steps: 8
-    done: {file: {path: "Downloads/{file_name}", download: "{file_name}"}}
+    done: {ask: "Has {file_name} finished downloading, shown as done in Edge's downloads list?"}
   close_edge:
     goal: "Close Microsoft Edge"
-    done: {window: {process: msedge.exe, absent: true}}
+    # Edge keeps a download's file open (its write time the moment Edge closes): checked once Edge is gone.
+    done: {window: {process: msedge.exe, absent: true}, file: {path: "Downloads/{file_name}", download: "{file_name}"}}
