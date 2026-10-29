@@ -153,6 +153,8 @@ public class HandleRecheckTests
     // Proxmox keeps a VMID's first pool membership only: a range VM also in another pool, or listed twice, is refused.
     [Theory]
     [InlineData("pool:other::200,101::\n")]
+    [InlineData(" pool:other::101::\n")] // Proxmox trims the record: still a pool line
+    [InlineData("POOL:other::101::\n")]
     [InlineData("pool:ludius::101::\n")] // the range pool defined again, 101 in it twice
     public void A_vmid_with_conflicting_pool_memberships_is_refused(string tail)
     {

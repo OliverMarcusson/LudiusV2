@@ -242,7 +242,9 @@ sealed partial class Proxmox(IPveApi api, string node, ProxmoxOptions options) :
     {
         if (options.Pool == "") return [];
         var pools = (api.Read("user.cfg") ?? throw new IOException("no /etc/pve/user.cfg")).Split('\n')
-            .Select(l => l.TrimEnd('\r')).Where(l => l.StartsWith("pool:"))
+            .Select(l => l.Trim()) // Proxmox trims each record, so " pool:..." is a pool record too
+            .Where(l => l.StartsWith("pool", StringComparison.OrdinalIgnoreCase)
+                && (l.StartsWith("pool:") ? true : throw new IOException("/etc/pve/user.cfg: a pool line is malformed")))
             .Select(l => l.Split(':') is { Length: >= 5 } f ? (Pool: f[1], Ids: f[3].Split(',', StringSplitOptions.RemoveEmptyEntries)
                     .Select(v => int.Parse(v, NumberStyles.None, CultureInfo.InvariantCulture)).ToList())
                 : throw new IOException("/etc/pve/user.cfg: a pool line is malformed"))
