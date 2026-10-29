@@ -1043,9 +1043,9 @@ def make_reactor(persona: Persona, templates: dict[str, Template], policy: Polic
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if not key or not os.environ.get("LUDIUS_CHAT_HOST"):
         return None
-    from ludius import world_state
+    from ludius import react, world_state
 
-    llm = LlmClient(key, model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))
+    llm = LlmClient(key, model=os.environ.get("LUDIUS_REACT_MODEL", react.MODEL))
     return Reactor(persona, templates, policy, llm, RUNS / "world" / "narrative.yaml", log,
                    existing=lambda: world_state.existing_files(planner.World(RUNS), persona.user))  # fmt: skip
 
