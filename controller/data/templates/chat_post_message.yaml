@@ -44,11 +44,11 @@ subgoals:
     text: message
     replace: true  # a draft left in the box (Mattermost keeps them) is replaced, never sent along
     # The box itself, read fresh: Mattermost re-renders its textarea, so `typed` lost it and typed the line twice.
-    done: {element: {focused: true, value: "^{message}$"}}
+    done: {element: {name: "^Write to ", focused: true, value: "^{message}$"}}
   send_message:
     goal: "Send the message with Enter"
     keys: [Enter]
-    require: [{focused: true, value: "^{message}$"}]
+    require: [{name: "^Write to ", focused: true, value: "^{message}$"}]
     done: {ask: "Has the message \"{message}\" been sent: shown as the newest post in the {channel} channel, with the message box at the bottom now empty?"}
   close_edge:
     goal: "Close Microsoft Edge"

@@ -411,3 +411,15 @@ def test_typing_rechecks_its_target_on_a_fresh_snapshot(
         r.act(Option("o1", "type", "t", element=r.snap.elements[0], content=content, literal=literal), tk, sg) is None
     )
     assert agent.typed == [tk.values["file_name"] if planner_text else "save as"]
+    # The target and another element both report focus (Chromium: the page's DOM focus while the keyboard is in the
+    # address bar, live aberg): click the target first, never type at a focus that may be elsewhere.
+    clicks: list[int] = []
+    click = agent.click
+    agent.click = lambda button=0, count=1: clicks.append(1) or click(button, count)  # type: ignore[method-assign]
+    agent.fresh, agent.typed = snap(), []
+    agent.fresh.elements[0].focused = True
+    agent.fresh.elements.append(obs.Element(id=9, role="edit", name="Address and search bar", focused=True))
+    assert (
+        r.act(Option("o1", "type", "t", element=r.snap.elements[0], content=content, literal=literal), tk, sg) is None
+    )
+    assert clicks == [1] and len(agent.typed) == 1

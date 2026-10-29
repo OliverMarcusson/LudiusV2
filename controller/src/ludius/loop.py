@@ -249,7 +249,9 @@ class Runner:
             why, e = self._type_target(o, task, sg, text)
             if why:
                 return why
-            if e is not None and not e.focused:
+            # Another element focused too: Chromium reports a page's DOM focus (Mattermost focuses its message box)
+            # while the keyboard is in the address bar (live: aberg's chat message typed there and searched).
+            if e is not None and (not e.focused or self._focus_shared):
                 self._move_to(e)
                 self.agent.click()
                 time.sleep(0.15)
@@ -290,6 +292,7 @@ class Runner:
         and text policy (password, reserved, template text's own rule). Typing at the focus needs the focused
         element, if any, to pass the same. Returns (reason not to type, the fresh target)."""
         fresh = self.agent.observe(wait_settle=False).snapshot
+        self._focus_shared = sum(e.focused for e in fresh.elements) > 1
         v = view(fresh, task, sg, self.policy)
         fg = next((i for i, w in enumerate(fresh.windows) if w.kind == obs.Window.FOREGROUND), None)
         was = next((w for w in self.snap.windows if w.kind == obs.Window.FOREGROUND), None)
