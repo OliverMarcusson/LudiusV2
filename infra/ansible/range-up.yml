@@ -14,6 +14,7 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  tags: [always]
   tasks:
     - name: Narrative people, personas and passwords are safe to use
       ansible.builtin.assert:
@@ -100,6 +101,7 @@
 - name: Persona clones
   hosts: localhost
   gather_facts: false
+  tags: [always]
   tasks:
     - name: Bring-up state
       ansible.builtin.set_fact:
@@ -134,11 +136,48 @@
         - name: Ux_noise role
           ansible.builtin.include_role:
             name: ux_noise
+          tags: [wallpaper]
+
+        # A clone keeps the template's observer until this: a newer signed build replaces it (the running one is
+        # stopped first, the logon below starts the new one).
+        - name: Observer build on the controller
+          ansible.builtin.stat:
+            path: "{{ observer_exe }}"
+            checksum_algorithm: sha256
+          delegate_to: localhost
+          register: observer_local
+          tags: [observer]
+
+        - name: Observer build on the clone
+          ansible.windows.win_stat:
+            path: "{{ observer_dir }}\\uiprobe.exe"
+            checksum_algorithm: sha256
+          register: observer_guest
+          tags: [observer]
+
+        - name: Observer replaced by the controller's build
+          when: observer_guest.stat.checksum | default('') != observer_local.stat.checksum
+          tags: [observer]
+          block:
+            - name: Running observer stopped
+              ansible.windows.win_powershell:
+                script: |
+                  Get-Process uiprobe -ErrorAction SilentlyContinue | Stop-Process -Force
+                  Start-Sleep 2
+
+            - name: Observer binary, root and signature check
+              ansible.builtin.include_role:
+                name: observer
+                apply:
+                  tags: [observer]
 
         - name: Observer logon task
           ansible.builtin.include_role:
             name: observer
             tasks_from: persona
+            apply:
+              tags: [observer]
+          tags: [observer]
 
         - name: Office activation
           ansible.builtin.include_role:
@@ -148,6 +187,27 @@
         - name: Log on again (hive settings and the observer apply at logon)
           ansible.windows.win_reboot:
             reboot_timeout: 900
+          tags: [wallpaper, observer]
+
+        # Read back in the persona's logged-on hive (HKCU of the session) after the logon: what the session now uses.
+        - name: Persona wallpaper after logon
+          ansible.windows.win_powershell:
+            script: |
+              param($account, $path)
+              $Ansible.Changed = $false
+              $sid = ([Security.Principal.NTAccount]$account).Translate([Security.Principal.SecurityIdentifier]).Value
+              $hive = "Registry::HKEY_USERS\$sid"
+              if (-not (Test-Path $hive)) { throw "$account is not logged on" }
+              $got = (Get-ItemProperty "$hive\Control Panel\Desktop" -Name Wallpaper -ErrorAction SilentlyContinue).Wallpaper
+              if ($got -ne $path) { throw "wallpaper is '$got', not $path" }
+            parameters:
+              account: "{{ domain_netbios }}\\{{ persona }}"
+              path: C:\Windows\Web\Wallpaper\Ludius\{{ persona }}.jpg
+          register: wallpaper
+          retries: 10
+          delay: 15
+          until: wallpaper is succeeded
+          tags: [wallpaper]
 
         - name: Observer process in the persona's session
           ansible.windows.win_powershell:
@@ -162,10 +222,12 @@
           retries: 20
           delay: 15
           until: obs is succeeded
+          tags: [observer]
 
         - name: Persona done
           ansible.builtin.set_fact:
             persona_done: true
+          tags: [observer]
 
 # Always reached (localhost never fails before here). The teardown covers every clone that got the bring-up admin,
 # whether its setup succeeded or not, through the guest agent (no WinRM); a clone it can't close is stopped.
@@ -186,9 +248,11 @@
       until: observed.rc == 0
       changed_when: false
       ignore_errors: true
+      tags: [observer]
 
     - name: Bring-up admin and WinRM off on every bootstrapped clone (else the VM is stopped)
       ansible.builtin.include_tasks: tasks/persona-teardown.yml
+      tags: [always]
       loop: "{{ range_personas | selectattr('vmid', 'in', bootstrapped | default([])) | list }}"
       loop_control:
         loop_var: p

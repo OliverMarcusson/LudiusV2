@@ -69,18 +69,33 @@ if (args.Contains("--once"))
     return 0;
 }
 
-using var listener = Listen();
-listener.Listen(1);
-while (true)
+// Hyper-V socket on the observer's service id, or vsock on the port that id encodes (its first field, as in
+// Hyper-V's VSOCK template 0000xxxx-facb-11e6-bd58-64006a7986d3), from any CID: only the host can connect.
+if (Arg("--transport") is null or "hyperv")
 {
-    using var conn = listener.Accept();
-    try { Serve(conn); }
-    catch (Exception e) when (e is SocketException or IOException or EndOfStreamException) { }
+    using var listener = new Socket(HyperVEndPoint.Family, SocketType.Stream, HyperVEndPoint.RawProtocol);
+    listener.Bind(new HyperVEndPoint(Guid.Empty, service)); // HV_GUID_WILDCARD
+    listener.Listen(1);
+    while (true)
+    {
+        using var conn = listener.Accept();
+        try { Serve(new NetworkStream(conn)); }
+        catch (Exception e) when (e is SocketException or IOException or EndOfStreamException) { }
+    }
+}
+if (Arg("--transport") != "vsock") throw new ArgumentException("--transport is hyperv or vsock");
+using (var listener = new VsockListener(int.Parse(Arg("--vsock-family") ?? "40"), BitConverter.ToUInt32(service.ToByteArray(), 0)))
+{
+    while (true)
+    {
+        try { Serve(listener.Accept()); }
+        catch (Exception e) when (e is IOException or EndOfStreamException) { }
+    }
 }
 
-void Serve(Socket conn)
+void Serve(Stream conn)
 {
-    using var stream = new NetworkStream(conn);
+    using var stream = conn;
     Send(stream, new ObserverResponse
     {
         Hello = new Hello
@@ -131,23 +146,6 @@ Snapshot Observe(SnapshotRequest r)
     snap.Settled = settled;
     snap.SettleMs = ms;
     return snap;
-}
-
-// Hyper-V socket on the observer's service id, or vsock on the port that id encodes (its first field, as in
-// Hyper-V's VSOCK template 0000xxxx-facb-11e6-bd58-64006a7986d3), from any CID: only the host can connect.
-Socket Listen()
-{
-    if (Arg("--transport") is null or "hyperv")
-    {
-        var hv = new Socket(HyperVEndPoint.Family, SocketType.Stream, HyperVEndPoint.RawProtocol);
-        hv.Bind(new HyperVEndPoint(Guid.Empty, service)); // HV_GUID_WILDCARD
-        return hv;
-    }
-    if (Arg("--transport") != "vsock") throw new ArgumentException("--transport is hyperv or vsock");
-    var family = (System.Net.Sockets.AddressFamily)int.Parse(Arg("--vsock-family") ?? "40");
-    var vs = new Socket(family, SocketType.Stream, ProtocolType.Unspecified);
-    vs.Bind(new VsockEndPoint(family, VsockEndPoint.AnyCid, BitConverter.ToUInt32(service.ToByteArray(), 0)));
-    return vs;
 }
 
 // Frames: u32 little-endian length, then the protobuf message.
