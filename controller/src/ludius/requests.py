@@ -12,7 +12,7 @@ the recipient is one of this manager's persona reports and not scenario-reserved
 template of that report's role, the text is typeable and policy-clean, the subject is new in the report's Inbox,
 and what the outcome check compares (file name, phrases to include, colleague) is named in the mail itself.
 Effects: runs/world/requests/<date>-<manager>.yaml is written first (each request with its own Message-ID), then
-each valid request is sent from the manager's mailbox through srv01's local LDA (mail.deliver: corp.ludius.test
+each valid request is sent from the manager's mailbox through srv01's local LDA (mail.deliver: ludius.internal
 only). A sent mail is irreversible; a retry finds it by Message-ID and never sends twice.
 
 Persona side (candidates()): each new mail from the persona's manager in the persona's real Inbox is mapped to one

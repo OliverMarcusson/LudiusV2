@@ -22,7 +22,7 @@ from ludius import ews
 
 ROOT = Path(__file__).resolve().parents[3]
 SRV = ROOT / "infra" / "hyperv" / "build" / "srv"
-DOMAIN = "corp.ludius.test"
+DOMAIN = "ludius.internal"
 FOLDERS = {"inbox": 13, "sent": 10, "calendar": 15}  # gromox private-store folder ids
 PR_NORMALIZED_SUBJECT, PR_BODY = 0x0E1D001F, 0x1000001F
 PR_SENDER_SMTP, PR_SENT_REPRESENTING_SMTP, PR_DELIVERY_TIME = 0x5D01001F, 0x5D02001F, 0x0E060040

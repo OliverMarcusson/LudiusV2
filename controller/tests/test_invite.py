@@ -21,7 +21,7 @@ AT = local_ms("2026-11-05", "10:30", "Europe/Stockholm"), local_ms("2026-11-05",
 
 
 def item(**params: str) -> dict[str, Any]:
-    p = {"to": "mvellinga@corp.ludius.test", "to_name": "Marcus Vellinga", "subject": "lund accruals q4 review",
+    p = {"to": "mvellinga@ludius.internal", "to_name": "Marcus Vellinga", "subject": "lund accruals q4 review",
          "date": "2026-11-05", "start": "10:30", "end": "11:15"}  # fmt: skip
     return {"at": "09:00", "template": "outlook_send_invite", "params": p | params, "context": "Review with Marcus."}
 
@@ -92,7 +92,7 @@ def test_send_needs_the_planned_meeting_in_the_form() -> None:
     sg = t.subgoal("send_shortcut")
 
     def form(**over: str) -> obs.Snapshot:
-        values = {"Title": "lund accruals q4 review", "Required": "Marcus Vellinga <mvellinga@corp.ludius.test>",
+        values = {"Title": "lund accruals q4 review", "Required": "Marcus Vellinga <mvellinga@ludius.internal>",
                   "Optional": "", "Location": "", "Start date, combo": "Thu 05/11/2026",
                   "Start time, combo": "10:30", "End date, combo": "Thu 05/11/2026",
                   "End time, combo": "11:15"} | over  # fmt: skip
@@ -100,15 +100,15 @@ def test_send_needs_the_planned_meeting_in_the_form() -> None:
         return obs.Snapshot(windows=[obs.Window(kind=obs.Window.FOREGROUND, process_name="OUTLOOK.EXE")], elements=els)
 
     assert preconditions(sg, form(), t) is None
-    for over in ({"Optional": "lnord@corp.ludius.test"}, {"Location": "Room 1"},
+    for over in ({"Optional": "lnord@ludius.internal"}, {"Location": "Room 1"},
                  {"Start time, combo": "11:30"}, {"End time, combo": "11:00"},
-                 {"Required": "mvellinga@corp.ludius.test; lnord@corp.ludius.test"},
+                 {"Required": "mvellinga@ludius.internal; lnord@ludius.internal"},
                  {"Start date, combo": "Wed 04/11/2026"}):  # fmt: skip
         assert preconditions(sg, form(**over), t), over
 
 
 def test_invite_done_only_on_new_request_and_appointment(monkeypatch: pytest.MonkeyPatch) -> None:
-    me, guest = "aberg@corp.ludius.test", "mvellinga@corp.ludius.test"
+    me, guest = "aberg@ludius.internal", "mvellinga@ludius.internal"
     req = mail.Message(me, 5_000, 5_000, "", (me, guest), 7, mail.MEETING_REQUEST, *AT, 5_000, me)
     appt = mail.Message("-", 0, 0, "", tuple(sorted((me, guest))), 3, mail.APPOINTMENT, *AT, 60_000, me)
     store: dict[tuple[str, str], list[mail.Message]] = {}
@@ -133,8 +133,8 @@ def test_invite_done_only_on_new_request_and_appointment(monkeypatch: pytest.Mon
     store[("aberg", "calendar")] = [appt]
     assert check_done(done, obs.Snapshot(), t, typed_ok=False)
     for bad in (dataclasses.replace(req, start_ms=AT[0] + 3_600_000), dataclasses.replace(req, cls="IPM.Note"),
-                dataclasses.replace(req, recipients=(guest, "lnord@corp.ludius.test")),
-                dataclasses.replace(req, sender="lnord@corp.ludius.test")):  # fmt: skip
+                dataclasses.replace(req, recipients=(guest, "lnord@ludius.internal")),
+                dataclasses.replace(req, sender="lnord@ludius.internal")):  # fmt: skip
         store[("mvellinga", "inbox")] = [bad]
         assert not check_done(done, obs.Snapshot(), t, typed_ok=False), bad
     store[("mvellinga", "inbox")] = [req]
@@ -253,6 +253,6 @@ def test_the_guarded_sends_own_prompt_is_confirmed_once_and_nothing_else(tmp_pat
     edge = obs.Window(kind=obs.Window.FOREGROUND, process_name="msedge.exe")
     assert send_confirmation(obs.Snapshot(windows=[edge], elements=list(prompt.elements)), t) is None
     mail_task = Task(cli.load_templates()["outlook_send_mail"], PlanItem.model_validate(
-        {"at": "09:00", "template": "outlook_send_mail", "params": {"to": "mvellinga@corp.ludius.test",
+        {"at": "09:00", "template": "outlook_send_mail", "params": {"to": "mvellinga@ludius.internal",
          "to_name": "Marcus Vellinga", "subject": "s", "body": "b"}}), random.Random(0))  # fmt: skip
     assert send_confirmation(prompt, mail_task) is None  # only the meeting form's prompt

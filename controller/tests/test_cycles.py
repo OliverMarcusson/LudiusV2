@@ -199,7 +199,7 @@ def test_a_spent_budget_abandons_the_task_the_same_way_at_every_site(tmp_path: P
     if site == "reply content":
         tpl = load_templates()["outlook_reply_mail"]
         task = Task(
-            tpl, TaskInstance(template=tpl.task, params={"to": "x@corp.ludius.test", "to_name": "X"}), random.Random(0)
+            tpl, TaskInstance(template=tpl.task, params={"to": "x@ludius.internal", "to_name": "X"}), random.Random(0)
         )
     else:
         task = open_ended()

@@ -13,13 +13,13 @@ ITEM = f"""<t:Message xmlns:t="{ews.T}">
   <t:ItemId Id="AAMk1" ChangeKey="CQ"/><t:ItemClass>IPM.Note</t:ItemClass><t:Subject>RE: Q3 draft</t:Subject>
   <t:DateTimeReceived>2026-10-28T09:01:30Z</t:DateTimeReceived><t:DateTimeSent>2026-10-28T09:01:00Z</t:DateTimeSent>
   <t:DateTimeCreated>2026-10-28T09:00:00Z</t:DateTimeCreated><t:TextBody>Hi Anna</t:TextBody>
-  <t:InReplyTo>&lt;a@corp.ludius.test&gt;</t:InReplyTo>
-  <t:Sender><t:Mailbox><t:Name>Lars</t:Name><t:EmailAddress>LNord@corp.ludius.test</t:EmailAddress>
+  <t:InReplyTo>&lt;a@ludius.internal&gt;</t:InReplyTo>
+  <t:Sender><t:Mailbox><t:Name>Lars</t:Name><t:EmailAddress>LNord@ludius.internal</t:EmailAddress>
     <t:RoutingType>SMTP</t:RoutingType></t:Mailbox></t:Sender>
-  <t:ToRecipients><t:Mailbox><t:EmailAddress>aberg@corp.ludius.test</t:EmailAddress></t:Mailbox>
+  <t:ToRecipients><t:Mailbox><t:EmailAddress>aberg@ludius.internal</t:EmailAddress></t:Mailbox>
     <t:Mailbox><t:EmailAddress>/o=Ludius/cn=x</t:EmailAddress><t:RoutingType>EX</t:RoutingType></t:Mailbox>
   </t:ToRecipients>
-  <t:InternetMessageId>&lt;b@corp.ludius.test&gt;</t:InternetMessageId><t:IsRead>false</t:IsRead>
+  <t:InternetMessageId>&lt;b@ludius.internal&gt;</t:InternetMessageId><t:IsRead>false</t:IsRead>
   <t:ExtendedProperty><t:ExtendedFieldURI PropertyTag="0xe1d" PropertyType="String"/><t:Value>Q3 draft</t:Value>
   </t:ExtendedProperty>
   <t:ExtendedProperty><t:ExtendedFieldURI PropertyTag="0x3d" PropertyType="String"/><t:Value>RE: </t:Value>
@@ -44,10 +44,10 @@ class Response:
 
 def test_item_maps_to_message_and_non_smtp_recipients_never_match() -> None:
     m = mail.Message(**ews.parse(ET.fromstring(ITEM)))
-    assert (m.sender, m.subject, m.prefix, m.cls, m.body) == ("lnord@corp.ludius.test", "Q3 draft", "RE: ", "IPM.Note",
+    assert (m.sender, m.subject, m.prefix, m.cls, m.body) == ("lnord@ludius.internal", "Q3 draft", "RE: ", "IPM.Note",
                                                              "Hi Anna")  # fmt: skip
-    assert m.recipients == ("?", "aberg@corp.ludius.test")
-    assert (m.msgid, m.in_reply_to, m.read) == ("<b@corp.ludius.test>", "<a@corp.ludius.test>", False)
+    assert m.recipients == ("?", "aberg@ludius.internal")
+    assert (m.msgid, m.in_reply_to, m.read) == ("<b@ludius.internal>", "<a@ludius.internal>", False)
     assert m.submit_ms + 30_000 == m.delivery_ms and m.id > 0
 
 
@@ -58,8 +58,8 @@ def test_exchange_backend_without_settings_is_unknown(monkeypatch: pytest.Monkey
     assert mail.matching("aberg", "inbox", "x") is None
     assert mail.newest("aberg", "inbox") is None
     assert mail.read_state("aberg", 7) is None
-    assert mail.present("aberg@corp.ludius.test", "inbox", "x", "lnord@corp.ludius.test") is None
-    assert not mail.deliver("lnord@corp.ludius.test", "Lars", "aberg@corp.ludius.test", "Anna", "x", "y", "<m@x>")
+    assert mail.present("aberg@ludius.internal", "inbox", "x", "lnord@ludius.internal") is None
+    assert not mail.deliver("lnord@ludius.internal", "Lars", "aberg@ludius.internal", "Anna", "x", "y", "<m@x>")
 
 
 def test_a_failed_ews_response_message_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -68,4 +68,4 @@ def test_a_failed_ews_response_message_is_unknown(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(ews.Path, "read_text", lambda *_, **__: "pw")  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
     monkeypatch.setattr(ews.ssl, "create_default_context", lambda **_: context)  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
     monkeypatch.setattr(ews.httpx.Client, "post", post)
-    assert ews.query("aberg@corp.ludius.test", "inbox", "x") is None
+    assert ews.query("aberg@ludius.internal", "inbox", "x") is None

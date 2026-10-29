@@ -73,7 +73,7 @@ def test_requests_are_validated_sent_once_and_capped(tmp_path: Path, monkeypatch
     day = ensure(tmp_path, llm)
     assert [r.subject for r in day.requests] == ["lund accruals note"] and day.requests[0].status == "sent"
     assert len(day.rejects) == 6 and "not a report with requests left" in day.rejects[-1]
-    assert sent[0][:5] == ("mvellinga@corp.ludius.test", "Marcus Vellinga", "aberg@corp.ludius.test", "Anna Berg",
+    assert sent[0][:5] == ("mvellinga@ludius.internal", "Marcus Vellinga", "aberg@ludius.internal", "Anna Berg",
                            "lund accruals note")  # fmt: skip
     assert ensure(tmp_path, FakeLlm()).requests == day.requests and len(sent) == 1  # no second call, no resend
     assert ensure(tmp_path, FakeLlm(), dt.date(2026, 10, 31)).rejects == ["no request: weekend"]
@@ -87,7 +87,7 @@ def test_requests_are_validated_sent_once_and_capped(tmp_path: Path, monkeypatch
                                                 ).rejects[0]  # fmt: skip
     reserved = requests.problem(requests.Ask(**ASK), {"aberg": 1}, {"aberg": cli.load_templates()}, {}, BOSS,
                                 Policy(reserved_paths=["aberg@"]), {"aberg": set()}, {"aberg": []})  # fmt: skip
-    assert reserved == "aberg@corp.ludius.test is scenario-reserved"
+    assert reserved == "aberg@ludius.internal is scenario-reserved"
     assert requests.Ask.model_validate({**ASK, "heading": "x"}).subject == ASK["subject"]  # extra keys dropped
 
 
@@ -111,9 +111,9 @@ def test_persona_maps_a_request_fail_closed(tmp_path: Path, monkeypatch: pytest.
     monkeypatch.setattr(mail, "deliver", lambda *a: True)  # type: ignore[misc]
     msgid = ensure(tmp_path, FakeLlm({"requests": [ASK]})).requests[0].msgid
     at = int(dt.datetime(2026, 10, 28, tzinfo=dt.UTC).timestamp() * 1000)
-    m = mail.Message("mvellinga@corp.ludius.test", 0, at, BODY, cls="IPM.Note", subject="lund accruals note",
+    m = mail.Message("mvellinga@ludius.internal", 0, at, BODY, cls="IPM.Note", subject="lund accruals note",
                      msgid=msgid)  # fmt: skip
-    seed = mail.Message(m.sender, 0, at, BODY, cls="IPM.Note", subject="seeded", msgid="<s1@corp.ludius.test>")
+    seed = mail.Message(m.sender, 0, at, BODY, cls="IPM.Note", subject="seeded", msgid="<s1@ludius.internal>")
     w, ts, book = World(tmp_path), cli.load_templates(), {"aberg": "Anna Berg"}
     assert requests.pending(w, "aberg", BOSS, [m, seed], Policy(), THU) == [m]  # only mails sent as requests
     assert requests.pending(w, "aberg", BOSS, [m], Policy(reserved_subjects=["lund accruals note"]), THU) == []

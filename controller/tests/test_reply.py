@@ -20,14 +20,14 @@ from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
 NOW = 10 * reply.DAY_MS
-TO = "mvellinga@corp.ludius.test"
+TO = "mvellinga@ludius.internal"
 PEOPLE = {"aberg": "Anna Berg", "mvellinga": "Marcus Vellinga", "lnord": "Lars Nord"}
 ANNA = Persona(name="Anna Berg", user="aberg", role="accountant")
 
 
 def msg(i: int, subject: str = "lund q4", sender: str = TO, age_days: float = 0, cls: str = "IPM.Note") -> mail.Message:
     return mail.Message(sender, 0, NOW - int(age_days * reply.DAY_MS), "Hi Anna, are the lund accruals booked?",
-                        id=i, cls=cls, subject=subject, msgid=f"<{i}@corp.ludius.test>")  # fmt: skip
+                        id=i, cls=cls, subject=subject, msgid=f"<{i}@ludius.internal>")  # fmt: skip
 
 
 def server(monkeypatch: pytest.MonkeyPatch, inbox: list[mail.Message] | None, sent: list[mail.Message] = ()) -> None:  # type: ignore[assignment]
@@ -45,10 +45,10 @@ def server(monkeypatch: pytest.MonkeyPatch, inbox: list[mail.Message] | None, se
 
 
 def test_pick_takes_the_newest_answerable_mail(monkeypatch: pytest.MonkeyPatch) -> None:
-    answered = mail.Message("aberg@corp.ludius.test", 0, NOW, "ok", subject="old thread",
-                            in_reply_to="<3@corp.ludius.test>")  # fmt: skip
+    answered = mail.Message("aberg@ludius.internal", 0, NOW, "ok", subject="old thread",
+                            in_reply_to="<3@ludius.internal>")  # fmt: skip
     inbox = [
-        msg(1, "from lars", sender="lnord@corp.ludius.test"),  # another colleague
+        msg(1, "from lars", sender="lnord@ludius.internal"),  # another colleague
         msg(8, "meeting", cls="IPM.Schedule.Meeting.Request"),  # not a mail
         msg(2, "lund q4"),
         msg(3, "old thread"),  # answered already
@@ -61,14 +61,14 @@ def test_pick_takes_the_newest_answerable_mail(monkeypatch: pytest.MonkeyPatch) 
     for subject in ("old thread", "dup", "ancient", "missing"):
         why = reply.pick("aberg", TO, subject, NOW, PEOPLE, Policy())
         assert isinstance(why, str) and why.startswith("no mail to answer"), subject
-    assert reply.pick("aberg", "lnord@corp.ludius.test", "from lars", NOW, PEOPLE, Policy()) == inbox[0]
+    assert reply.pick("aberg", "lnord@ludius.internal", "from lars", NOW, PEOPLE, Policy()) == inbox[0]
 
 
 def test_pick_refuses_strangers_reserved_and_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     server(monkeypatch, [msg(1)])
-    for to in ("someone@example.com", "jdoe@corp.ludius.test", "aberg@corp.ludius.test"):  # not a colleague
+    for to in ("someone@example.com", "jdoe@ludius.internal", "aberg@ludius.internal"):  # not a colleague
         assert "not a colleague" in str(reply.pick("aberg", to, "", NOW, PEOPLE, Policy()))
-    p = Policy(reserved_paths=[r"mvellinga@corp\.ludius\.test"])
+    p = Policy(reserved_paths=[r"mvellinga@ludius.internal"])
     assert "reserved mailbox" in str(reply.pick("aberg", TO, "", NOW, PEOPLE, p))
     assert "scenario-reserved" in str(reply.pick("aberg", TO, "", NOW, PEOPLE, Policy(reserved_subjects=["lund q4"])))
     assert "scenario-reserved" in str(reply.pick("aberg", TO, "", NOW, PEOPLE, Policy(reserved_paths=["accruals"])))
@@ -99,7 +99,7 @@ def test_pick_refuses_strangers_reserved_and_unknown(monkeypatch: pytest.MonkeyP
     ],
 )
 def test_reply_text_rules(text: str, why: str | None) -> None:
-    p = Policy(reserved_paths=[r"payroll q4", r"lnord@corp\.ludius\.test"])
+    p = Policy(reserved_paths=[r"payroll q4", r"lnord@ludius.internal"])
     got = reply.problem(text, PEOPLE, p)
     assert (got is None) if why is None else (got is not None and why in got)
 
@@ -155,7 +155,7 @@ def test_prepare_fills_the_reply_with_one_llm_call_and_a_decision_yes(
     assert "are the lund accruals booked?" in llm.calls[0]["user"]  # it answers the mail's actual text
     assert decider.calls[0]["ask_progress"] is False and decider.calls[0]["state"]["reply"].startswith("Hi Marcus")
     assert {k: task.values[k] for k in ("to", "to_name", "subject", "reply_to")} == {
-        "to": TO, "to_name": "Marcus Vellinga", "subject": "lund q4", "reply_to": "<7@corp.ludius.test>"}  # fmt: skip
+        "to": TO, "to_name": "Marcus Vellinga", "subject": "lund q4", "reply_to": "<7@ludius.internal>"}  # fmt: skip
     assert task.text(task.subgoal("write_reply")) == "Hi Marcus,\nyes, all booked yesterday.\n- Anna"
 
 
@@ -214,8 +214,8 @@ def test_runner_abandons_before_any_input(monkeypatch: pytest.MonkeyPatch, narra
 
 
 def test_done_needs_the_reply_link(monkeypatch: pytest.MonkeyPatch) -> None:
-    def copy(user: str, prefix: str = "RE: ", irt: str = "<7@corp.ludius.test>") -> mail.Message:
-        return mail.Message("aberg@corp.ludius.test", NOW + 1000, NOW + 1000, "Yes, booked.\r\nFrom: Marcus\r\nSent: x",
+    def copy(user: str, prefix: str = "RE: ", irt: str = "<7@ludius.internal>") -> mail.Message:
+        return mail.Message("aberg@ludius.internal", NOW + 1000, NOW + 1000, "Yes, booked.\r\nFrom: Marcus\r\nSent: x",
                             (TO,), id=1 if user == "mvellinga" else 2, prefix=prefix, in_reply_to=irt)  # fmt: skip
 
     def args(**kw: Any) -> bool:
@@ -223,20 +223,20 @@ def test_done_needs_the_reply_link(monkeypatch: pytest.MonkeyPatch) -> None:
             return [copy(user, **kw)]
 
         monkeypatch.setattr(mail, "messages", messages)
-        return mail.delivered(TO, "inbox", "lund q4", "yes booked", "aberg@corp.ludius.test", NOW, True, frozenset(),
-                              "<7@corp.ludius.test>")  # fmt: skip
+        return mail.delivered(TO, "inbox", "lund q4", "yes booked", "aberg@ludius.internal", NOW, True, frozenset(),
+                              "<7@ludius.internal>")  # fmt: skip
 
     assert args()
     assert not args(prefix="")  # a new mail with the same subject is not a reply
-    assert not args(irt="<8@corp.ludius.test>")  # a reply to another mail of that thread
+    assert not args(irt="<8@ludius.internal>")  # a reply to another mail of that thread
     assert not args(irt="")
 
 
 def test_template_and_plan_time_inbox_hints() -> None:
     t = cli.load_templates()["outlook_reply_mail"]
     assert t.task_content == "reply" and "body" not in t.params
-    hints = reply.hints([msg(1), msg(2, sender="lnord@corp.ludius.test"), msg(3, "secret", sender="x@example.com")],
-                        "aberg", PEOPLE, Policy(reserved_paths=[r"lnord@corp\.ludius\.test"]))  # fmt: skip
+    hints = reply.hints([msg(1), msg(2, sender="lnord@ludius.internal"), msg(3, "secret", sender="x@example.com")],
+                        "aberg", PEOPLE, Policy(reserved_paths=[r"lnord@ludius.internal"]))  # fmt: skip
     assert hints == [("mvellinga", "lund q4")]
     assert reply.hints(None, "aberg", PEOPLE, Policy()) == []  # unread: nothing to offer
 

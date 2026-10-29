@@ -17,7 +17,7 @@ from ludius.policy import Policy
 from ludius.tasks import Persona, Task, TaskInstance, Template, check_done
 from ludius.v1 import observation_pb2 as obs
 
-BOSS = "mvellinga@corp.ludius.test"
+BOSS = "mvellinga@ludius.internal"
 SUBJECT = "Points for tomorrow's ERP cost policy review"
 PEOPLE = {"aberg": "Anna Berg", "mvellinga": "Marcus Vellinga", "lnord": "Lars Nord"}
 ANNA = Persona(name="Anna Berg", user="aberg", role="accountant")
@@ -25,7 +25,7 @@ ANNA = Persona(name="Anna Berg", user="aberg", role="accountant")
 
 def msg(i: int, subject: str = SUBJECT, sender: str = BOSS, read: bool = False) -> mail.Message:
     return mail.Message(sender, 0, 0, "Hi Anna, please save the points.", id=i, cls="IPM.Note", subject=subject,
-                        msgid=f"<{i}@corp.ludius.test>", read=read)  # fmt: skip
+                        msgid=f"<{i}@ludius.internal>", read=read)  # fmt: skip
 
 
 def server(monkeypatch: pytest.MonkeyPatch, inbox: list[mail.Message] | None, states: list[bool | None]) -> list[int]:
@@ -101,12 +101,12 @@ def test_to_read_picks_only_an_unread_colleague_mail(monkeypatch: pytest.MonkeyP
     assert "read state unreadable" in str(reply.to_read("aberg", BOSS, SUBJECT, PEOPLE, Policy()))
     server(monkeypatch, None, [False])
     assert "inbox unreadable" in str(reply.to_read("aberg", BOSS, SUBJECT, PEOPLE, Policy()))
-    server(monkeypatch, [msg(7), msg(8, sender="lnord@corp.ludius.test")], [False])  # opened by subject: ambiguous
+    server(monkeypatch, [msg(7), msg(8, sender="lnord@ludius.internal")], [False])  # opened by subject: ambiguous
     assert "in the Inbox" in str(reply.to_read("aberg", BOSS, SUBJECT, PEOPLE, Policy()))
     server(monkeypatch, [msg(7)], [False])
-    for sender in ("someone@corp.ludius.test", "aberg@corp.ludius.test", "mvellinga@example.com"):
+    for sender in ("someone@ludius.internal", "aberg@ludius.internal", "mvellinga@example.com"):
         assert "not a colleague" in str(reply.to_read("aberg", sender, SUBJECT, PEOPLE, Policy()))
-    reserved = Policy(reserved_paths=[r"mvellinga@corp\.ludius\.test"])
+    reserved = Policy(reserved_paths=[r"mvellinga@ludius.internal"])
     assert "reserved" in str(reply.to_read("aberg", BOSS, SUBJECT, PEOPLE, reserved))
 
 
@@ -198,7 +198,7 @@ def test_plan_reads_only_listed_inbox_mail_once() -> None:
 
 def test_a_request_mail_is_read_before_its_task() -> None:
     ts = cli.load_templates()
-    req = PlanItem(template="notepad_write_note", at="10:31", params={}, request="<7@corp.ludius.test>")
+    req = PlanItem(template="notepad_write_note", at="10:31", params={}, request="<7@ludius.internal>")
     other = PlanItem(template="break", at="10:26", minutes=5)
     read = requests.read_first(req, [msg(7)], ts, [req, other])
     assert read is not None and read.at == "10:25" and read.params == {"sender": BOSS, "subject": SUBJECT}

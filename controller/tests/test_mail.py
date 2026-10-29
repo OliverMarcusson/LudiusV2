@@ -24,7 +24,7 @@ PEOPLE = {"mvellinga": "Marcus Vellinga", "lnord": "Lars Nord", "aberg": "Anna B
 
 
 def item(template: str = "outlook_send_mail", **extra: Any) -> dict[str, Any]:
-    params = {"to": "mvellinga@corp.ludius.test", "to_name": "Marcus Vellinga", "subject": "lund accruals q4 status",
+    params = {"to": "mvellinga@ludius.internal", "to_name": "Marcus Vellinga", "subject": "lund accruals q4 status",
               "body": "hi marcus\nlund accruals for q4 are booked"}  # fmt: skip
     return {"at": "09:00", "template": template, "params": params | extra.pop("params", {}),
             "context": "Marcus asked for the status.", **extra}  # fmt: skip
@@ -56,7 +56,7 @@ def test_mail_to_a_colleague_is_valid() -> None:
     ("extra", "why"),
     [
         ({"params": {"to": "someone@example.com"}}, "not a colleague's address"),
-        ({"params": {"to": "jdoe@corp.ludius.test"}}, "not a colleague's address"),
+        ({"params": {"to": "jdoe@ludius.internal"}}, "not a colleague's address"),
         ({"handoff": "lnord"}, "must be the mail's recipient"),
         ({"params": {"to_name": "Marcus Vellinga; outside@example.com"}}, "name from the company story"),
         ({"params": {"to_name": "Marcus Vellinga <outside@example.com>"}}, "to_name"),
@@ -73,7 +73,7 @@ def test_to_name_is_derived_from_the_narrative_not_the_llm() -> None:
     from ludius.planner import catalog, fill_recipient_names
 
     its = [PlanItem.model_validate(item(params={"to_name": "Marcus Vellinga; outside@example.com"})),
-           PlanItem.model_validate(item(params={"to": "jdoe@corp.ludius.test"}))]  # fmt: skip
+           PlanItem.model_validate(item(params={"to": "jdoe@ludius.internal"}))]  # fmt: skip
     fill_recipient_names(its, PEOPLE)
     assert [it.params["to_name"] for it in its] == ["Marcus Vellinga", ""]
     assert "to_name" not in catalog(cli.load_templates())  # the LLM is never asked for it
@@ -85,7 +85,7 @@ def test_reply_must_answer_the_matching_mail_followup() -> None:
     assert "set followup" in check(item("outlook_reply_mail", followup="f2"))[0]  # a folder handoff, not a mail
     wrong_subject = item("outlook_reply_mail", followup="f1", params={"subject": "other thing"})
     wrong_sender = item(
-        "outlook_reply_mail", followup="f1", params={"to": "lnord@corp.ludius.test", "to_name": "Lars Nord"}
+        "outlook_reply_mail", followup="f1", params={"to": "lnord@ludius.internal", "to_name": "Lars Nord"}
     )
     for it in (wrong_subject, wrong_sender):
         assert "reply to that, with that subject" in check(it)[0]
@@ -104,8 +104,8 @@ def test_done_is_read_on_the_server_whatever_the_screen(monkeypatch: pytest.Monk
     monkeypatch.setattr(mail, "delivered", delivered)
     done = t.subgoals["send_shortcut"].done
     assert check_done(done, obs.Snapshot(), task, typed_ok=False) is True
-    assert calls == [("mvellinga@corp.ludius.test", "inbox", "lund accruals q4 status",
-                      "hi marcus\nlund accruals for q4 are booked", "aberg@corp.ludius.test", 1_000,
+    assert calls == [("mvellinga@ludius.internal", "inbox", "lund accruals q4 status",
+                      "hi marcus\nlund accruals for q4 are booked", "aberg@ludius.internal", 1_000,
                       False, frozenset(), "")]  # fmt: skip
     assert check_done(done, obs.Snapshot(), task, typed_ok=True) is False
 
@@ -119,25 +119,25 @@ def test_body_match_ignores_outlook_autocorrect() -> None:
 
 def test_foreign_or_malformed_mailbox_never_queries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mail, "_host", lambda: pytest.fail("no query expected"))
-    assert not mail.delivered("aberg@example.com", "inbox", "s", "b", "aberg@corp.ludius.test", 1)
+    assert not mail.delivered("aberg@example.com", "inbox", "s", "b", "aberg@ludius.internal", 1)
     assert mail.messages("a;rm -rf", "inbox", "s") == []
 
 
-SEED = mail.Message("mvellinga@corp.ludius.test", 1_000, 1_000, "Hi Anna,\r\nyes\r\n")
+SEED = mail.Message("mvellinga@ludius.internal", 1_000, 1_000, "Hi Anna,\r\nyes\r\n")
 REPLY = mail.Message(
-    "aberg@corp.ludius.test", 5_000, 5_000, "Yes, booked.\r\n-----\r\nHi Anna, yes", ("mvellinga@corp.ludius.test",)
+    "aberg@ludius.internal", 5_000, 5_000, "Yes, booked.\r\n-----\r\nHi Anna, yes", ("mvellinga@ludius.internal",)
 )
 
 
 @pytest.mark.parametrize(
     ("body", "sender", "since", "ok"),
     [
-        ("yes, booked", "aberg@corp.ludius.test", 4_000, True),
-        ("yes", "aberg@corp.ludius.test", 6_000, False),  # only the seed and an older reply: before the task
-        ("hi anna", "aberg@corp.ludius.test", 4_000, True),
-        ("yes", "mvellinga@corp.ludius.test", 4_000, False),  # the seed's sender is not the persona
-        ("yes", "aberg@corp.ludius.test", 0, False),  # no task start: never
-        ("- ...", "aberg@corp.ludius.test", 4_000, False),  # punctuation-only body normalises to nothing
+        ("yes, booked", "aberg@ludius.internal", 4_000, True),
+        ("yes", "aberg@ludius.internal", 6_000, False),  # only the seed and an older reply: before the task
+        ("hi anna", "aberg@ludius.internal", 4_000, True),
+        ("yes", "mvellinga@ludius.internal", 4_000, False),  # the seed's sender is not the persona
+        ("yes", "aberg@ludius.internal", 0, False),  # no task start: never
+        ("- ...", "aberg@ludius.internal", 4_000, False),  # punctuation-only body normalises to nothing
         ("yes", "", 4_000, False),  # no persona
     ],
 )
@@ -148,14 +148,14 @@ def test_delivered_needs_sender_time_and_a_real_body(
         return [SEED, REPLY]
 
     monkeypatch.setattr(mail, "messages", messages)
-    assert mail.delivered("mvellinga@corp.ludius.test", "inbox", "s", body, sender, since) is ok
+    assert mail.delivered("mvellinga@ludius.internal", "inbox", "s", body, sender, since) is ok
 
 
 @pytest.mark.parametrize(
     "sent_to",
     [
-        ("mvellinga@corp.ludius.test", "outside@example.com"),  # a hidden Bcc: only the Sent Items copy shows it
-        ("lnord@corp.ludius.test", "mvellinga@corp.ludius.test"),  # an extra colleague in Cc
+        ("mvellinga@ludius.internal", "outside@example.com"),  # a hidden Bcc: only the Sent Items copy shows it
+        ("lnord@ludius.internal", "mvellinga@ludius.internal"),  # an extra colleague in Cc
         ("?",),  # a recipient without a readable address
         (),  # no Sent Items copy recipients at all
     ],
@@ -163,15 +163,15 @@ def test_delivered_needs_sender_time_and_a_real_body(
 def test_sent_copy_must_go_to_the_planned_recipient_alone(
     monkeypatch: pytest.MonkeyPatch, sent_to: tuple[str, ...]
 ) -> None:
-    sent = mail.Message("aberg@corp.ludius.test", 5_000, 0, "Yes, booked.", sent_to)
+    sent = mail.Message("aberg@ludius.internal", 5_000, 0, "Yes, booked.", sent_to)
 
     def messages(user: str, folder: str, _subject: str) -> list[mail.Message]:
         return [sent] if (user, folder) == ("aberg", "sent") else [REPLY]
 
     monkeypatch.setattr(mail, "messages", messages)
-    assert not mail.delivered("mvellinga@corp.ludius.test", "inbox", "s", "yes booked", "aberg@corp.ludius.test", 1)
-    sent = mail.Message("aberg@corp.ludius.test", 5_000, 0, "Yes, booked.", ("mvellinga@corp.ludius.test",))
-    assert mail.delivered("mvellinga@corp.ludius.test", "inbox", "s", "yes booked", "aberg@corp.ludius.test", 1)
+    assert not mail.delivered("mvellinga@ludius.internal", "inbox", "s", "yes booked", "aberg@ludius.internal", 1)
+    sent = mail.Message("aberg@ludius.internal", 5_000, 0, "Yes, booked.", ("mvellinga@ludius.internal",))
+    assert mail.delivered("mvellinga@ludius.internal", "inbox", "s", "yes booked", "aberg@ludius.internal", 1)
 
 
 MIN = mail.MINUTE_MS
@@ -193,13 +193,13 @@ START = 100 * MIN + 8_000  # the task started 8 s into a minute
 def test_delivered_needs_submit_and_delivery_times_in_the_task(
     monkeypatch: pytest.MonkeyPatch, submit: int, delivery: int, ok: bool
 ) -> None:
-    m = mail.Message("aberg@corp.ludius.test", submit, delivery, "Yes, booked.", ("mvellinga@corp.ludius.test",))
+    m = mail.Message("aberg@ludius.internal", submit, delivery, "Yes, booked.", ("mvellinga@ludius.internal",))
 
     def messages(*_: str) -> list[mail.Message]:
         return [m]
 
     monkeypatch.setattr(mail, "messages", messages)
-    assert mail.delivered("mvellinga@corp.ludius.test", "inbox", "s", "yes", "aberg@corp.ludius.test", START) is ok
+    assert mail.delivered("mvellinga@ludius.internal", "inbox", "s", "yes", "aberg@ludius.internal", START) is ok
 
 
 @pytest.mark.parametrize("error", [FileNotFoundError("pwsh"), subprocess.TimeoutExpired("pwsh", 30)])
@@ -223,21 +223,21 @@ def test_send_is_blocked_unless_to_is_exact_and_cc_bcc_empty() -> None:
                             elements=[obs.Element(role="edit", name=k, value=v, actions=["value"], window=1)
                                       for k, v in fields.items()])  # fmt: skip
 
-    resolved = ("Marcus Vellinga", "Marcus Vellinga <mvellinga@corp.ludius.test>")  # how Outlook shows it, resolved
-    for to in ("mvellinga@corp.ludius.test", "mvellinga@corp.ludius.test;", *resolved):
+    resolved = ("Marcus Vellinga", "Marcus Vellinga <mvellinga@ludius.internal>")  # how Outlook shows it, resolved
+    for to in ("mvellinga@ludius.internal", "mvellinga@ludius.internal;", *resolved):
         assert preconditions(sg, snap(To=to, Cc="", Bcc=""), task) is None
-    for bad in (snap(To="mvellinga@corp.ludius.test; outside@example.com", Cc="", Bcc=""),
+    for bad in (snap(To="mvellinga@ludius.internal; outside@example.com", Cc="", Bcc=""),
                 snap(To="Marcus Vellinga; outside@example.com", Cc="", Bcc=""), snap(To="Lars Nord", Cc="", Bcc=""),
                 snap(To="Marcus Vellinga <outside@example.com>", Cc="", Bcc=""),
-                snap(To="mvellinga@corp.ludius.test", Cc="outside@example.com", Bcc=""),
-                snap(To="mvellinga@corp.ludius.test", Cc="", Bcc="lnord@corp.ludius.test"),
-                snap(To="lnord@corp.ludius.test", Cc="", Bcc=""),
-                snap(To="mvellinga@corp.ludius.test", Cc=""),  # Bcc not on screen: fails closed
-                snap(To="mvellinga@corp.ludius.test", Bcc=""),  # Cc not on screen
+                snap(To="mvellinga@ludius.internal", Cc="outside@example.com", Bcc=""),
+                snap(To="mvellinga@ludius.internal", Cc="", Bcc="lnord@ludius.internal"),
+                snap(To="lnord@ludius.internal", Cc="", Bcc=""),
+                snap(To="mvellinga@ludius.internal", Cc=""),  # Bcc not on screen: fails closed
+                snap(To="mvellinga@ludius.internal", Bcc=""),  # Cc not on screen
                 snap()):  # fmt: skip
         assert preconditions(sg, bad, task) is not None
     # A toggle button named Bcc (the ribbon's Show Fields) is not the field.
-    toggle = obs.Snapshot(elements=[*snap(To="mvellinga@corp.ludius.test", Cc="").elements,
+    toggle = obs.Snapshot(elements=[*snap(To="mvellinga@ludius.internal", Cc="").elements,
                                     obs.Element(role="button", name="Bcc", value="")])  # fmt: skip
     assert preconditions(sg, toggle, task) is not None
     reply = cli.load_templates()["outlook_reply_mail"].subgoals["send_shortcut"]
@@ -248,7 +248,7 @@ def test_send_guard_reads_readable_ascii_fields_in_the_foreground_window() -> No
     t = cli.load_templates()["outlook_send_mail"]
     task = Task(t, PlanItem.model_validate(item()), random.Random(0))
     sg = t.subgoals["send_button"]
-    fields = {"To": "mvellinga@corp.ludius.test", "Cc": "", "Bcc": ""}
+    fields = {"To": "mvellinga@ludius.internal", "Cc": "", "Bcc": ""}
 
     def snap(where: dict[str, int] | None = None, readable: str = "To Cc Bcc", **values: str) -> obs.Snapshot:
         f = fields | values
@@ -270,10 +270,10 @@ def test_send_guard_reads_readable_ascii_fields_in_the_foreground_window() -> No
     assert preconditions(sg, snap(), task, send) is not None
     assert preconditions(sg, obs.Snapshot(elements=snap().elements), task) is not None  # no foreground window
     # Lookalikes: Unicode re.I folds dotless i (U+0131) to i and the Kelvin sign to k.
-    for to in ("mvell\u0131nga@corp.ludius.test", "mvellinga@corp.lud\u0131us.test", "Marcus Vell\u0131nga",
-               "Marcus Vellinga <mvellinga@corp.ludius.test>\u200b"):  # fmt: skip
+    for to in ("mvell\u0131nga@ludius.internal", "mvellinga@corp.lud\u0131us.test", "Marcus Vell\u0131nga",
+               "Marcus Vellinga <mvellinga@ludius.internal>\u200b"):  # fmt: skip
         assert preconditions(sg, snap(To=to), task) is not None, to
-    assert preconditions(sg, snap(To="MVellinga@Corp.Ludius.Test"), task) is None  # ASCII case still folds
+    assert preconditions(sg, snap(To="MVellinga@Ludius.Internal"), task) is None  # ASCII case still folds
 
 
 def test_value_less_typing_counts_only_where_the_template_says_so() -> None:
@@ -401,7 +401,7 @@ def test_reply_never_offers_the_info_bar() -> None:
 
 
 QUOTED = (
-    "\r\nFrom: Marcus Vellinga <mvellinga@corp.ludius.test>\r\nSent: 27 October 2026 21:23\r\n"
+    "\r\nFrom: Marcus Vellinga <mvellinga@ludius.internal>\r\nSent: 27 October 2026 21:23\r\n"
     "Hi Anna,\r\nThanks,\r\nMarcus"
 )
 
@@ -416,13 +416,13 @@ QUOTED = (
     ],
 )
 def test_reply_text_must_come_before_the_quoted_original(monkeypatch: pytest.MonkeyPatch, body: str, ok: bool) -> None:
-    m = mail.Message("aberg@corp.ludius.test", 5_000, 5_000, body, ("mvellinga@corp.ludius.test",))
+    m = mail.Message("aberg@ludius.internal", 5_000, 5_000, body, ("mvellinga@ludius.internal",))
 
     def messages(*_: str) -> list[mail.Message]:
         return [m]
 
     monkeypatch.setattr(mail, "messages", messages)
-    args = ("mvellinga@corp.ludius.test", "inbox", "s", "hi marcus\nall booked", "aberg@corp.ludius.test", 1)
+    args = ("mvellinga@ludius.internal", "inbox", "s", "hi marcus\nall booked", "aberg@ludius.internal", 1)
     assert mail.delivered(*args, above_quote=True) is ok
     assert mail.delivered(*args) is (ok or body.startswith(QUOTED))  # a send's check: anywhere in the body
     done = cli.load_templates()["outlook_reply_mail"].subgoals["send_shortcut"].done
@@ -513,8 +513,8 @@ def test_mail_from_an_earlier_playback_never_counts_after_a_clock_rewind(monkeyp
     from ludius.tasks import mail_baseline
 
     # The guest clock was rewound to 1_000 (time-jump replay); the earlier playback's mail is dated after that.
-    old_in = mail.Message("aberg@corp.ludius.test", 5_000, 5_000, "Yes, booked.", ("mvellinga@corp.ludius.test",), 7)
-    old_sent = mail.Message("aberg@corp.ludius.test", 5_000, 0, "Yes, booked.", ("mvellinga@corp.ludius.test",), 3)
+    old_in = mail.Message("aberg@ludius.internal", 5_000, 5_000, "Yes, booked.", ("mvellinga@ludius.internal",), 7)
+    old_sent = mail.Message("aberg@ludius.internal", 5_000, 0, "Yes, booked.", ("mvellinga@ludius.internal",), 3)
     store = {("mvellinga", "inbox"): [old_in], ("aberg", "sent"): [old_sent]}
 
     def query(user: str, folder: str, _subject: str) -> list[mail.Message] | None:
@@ -549,7 +549,7 @@ def test_send_is_refused_when_the_recipient_became_reserved(tmp_path: Path) -> N
     from ludius.tasks import RESERVED_RECIPIENT, recipient_reserved
 
     scenario = tmp_path / "scenario.yaml"
-    scenario.write_text("mailboxes: [mvellinga@corp.ludius.test]\n", encoding="utf-8")
+    scenario.write_text("mailboxes: [mvellinga@ludius.internal]\n", encoding="utf-8")
     reserved = Policy.load(scenario)
     t = cli.load_templates()["outlook_reply_mail"]
     task = Task(t, PlanItem.model_validate(item("outlook_reply_mail", followup="f1")), random.Random(0))
