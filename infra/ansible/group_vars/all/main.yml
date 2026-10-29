@@ -9,7 +9,8 @@ windows_updates: true # bake updates into the image (base role)
 office_product_id: ProPlus2024Volume
 office_channel: PerpetualVL2024
 office_language: en-gb
-office_pidkey: "{{ vault_office_pidkey | default('') }}" # MAK; empty = the volume edition's GVLK (KMS or grace period)
+office_pidkey: "{{ vault_office_pidkey | default('') }}" # MAK; empty = no key in the image (activate.yml installs office_gvlk)
+office_gvlk: XJ2XN-FW8RK-P4HMP-DKDBV-GCVGB # Microsoft's published KMS client key for ProPlus2024Volume
 office_kms_host: "{{ vault_office_kms_host | default('') }}" # host[:port] reachable from the range bridge; set per clone
 temurin_msi_url: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_windows_hotspot_25.0.5_8.msi
 temurin_msi_sha256: 503f1c8ce75378b1dfe89485abdbc2cb1588600937cff87e8a63d70ca5873139 # pinned in infra/hyperv/provision-java.ps1

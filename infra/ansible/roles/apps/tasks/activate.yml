@@ -1,17 +1,26 @@
 ---
 # Per clone (range-up.yml): point Office at the KMS host and activate. Without a KMS host nothing happens here:
 # a MAK needs Microsoft's servers, which the range bridge can't reach, so the clone runs on the grace period.
+# The ODT install leaves the volume licences without a product key (no PIDKEY without a MAK), so the edition's GVLK
+# goes in first; a key already there (a MAK) is kept. Done = the keyed Office product is licensed (status 1).
 - name: Activate Office against the range KMS host
   when: office_kms_host | length > 0
   ansible.windows.win_powershell:
     script: |
-      param($kms)
+      param($kms, $gvlk)
       $ErrorActionPreference = 'Stop'
-      $ospp = 'C:\Program Files\Microsoft Office\Office16\OSPP.VBS'
+      $office = "ApplicationID='0ff1ce15-a989-479d-af46-f275c6370663' AND PartialProductKey IS NOT NULL"
+      if (-not (Get-CimInstance SoftwareLicensingProduct -Filter $office)) {
+        Invoke-CimMethod -InputObject (Get-CimInstance SoftwareLicensingService) -MethodName InstallProductKey -Arguments @{ ProductKey = $gvlk } | Out-Null
+      }
       $h, $p = $kms -split ':', 2
-      cscript //nologo $ospp "/sethst:$h" | Out-Null
-      if ($p) { cscript //nologo $ospp "/setprt:$p" | Out-Null }
-      $out = cscript //nologo $ospp /act
-      if (-not ($out -match 'Product activation successful')) { throw ($out -join "`n") }
+      foreach ($o in Get-CimInstance SoftwareLicensingProduct -Filter $office) {
+        Invoke-CimMethod -InputObject $o -MethodName SetKeyManagementServiceMachine -Arguments @{ MachineName = $h } | Out-Null
+        if ($p) { Invoke-CimMethod -InputObject $o -MethodName SetKeyManagementServicePort -Arguments @{ PortNumber = [uint32]$p } | Out-Null }
+        Invoke-CimMethod -InputObject $o -MethodName Activate | Out-Null
+      }
+      $bad = Get-CimInstance SoftwareLicensingProduct -Filter $office | Where-Object LicenseStatus -ne 1
+      if ($bad) { throw "Office not licensed: $(($bad | ForEach-Object { "$($_.Name) status $($_.LicenseStatus)" }) -join '; ')" }
     parameters:
       kms: "{{ office_kms_host }}"
+      gvlk: "{{ office_gvlk }}"
