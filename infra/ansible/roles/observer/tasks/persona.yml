@@ -8,8 +8,13 @@
       # In the persona's interactive session at logon, never a service; restarted daily (it swaps between requests)
       # and after a crash or watchdog fault. uiAccess binaries only start through ShellExecute (AppInfo), not the
       # scheduler's CreateProcess (error 740), so explorer launches it.
+      # Explorer takes its argument as one path, so arguments (vsock on Proxmox) go in a shortcut it opens instead.
       $a = "`"$dir\uiprobe.exe`""
-      if ($observerArgs) { $a = "$a $observerArgs" }
+      if ($observerArgs) {
+        $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut("$dir\RangeAssist.lnk")
+        $lnk.TargetPath = "$dir\uiprobe.exe"; $lnk.Arguments = $observerArgs; $lnk.WorkingDirectory = $dir; $lnk.Save()
+        $a = "`"$dir\RangeAssist.lnk`""
+      }
       $action = New-ScheduledTaskAction -Execute 'C:\Windows\explorer.exe' -Argument $a
       # A crash (including the watchdog's FailFast) raises Application Error 1000, which starts it again after 30 s.
       $crash = Get-CimClass MSFT_TaskEventTrigger root/Microsoft/Windows/TaskScheduler | New-CimInstance -ClientOnly
