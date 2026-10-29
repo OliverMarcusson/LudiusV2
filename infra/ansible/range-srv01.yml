@@ -87,7 +87,9 @@
         port: 22
         timeout: 600
 
+    # Every run, whatever the tags: the gateway check (tasks/gateway-no-forwarding.yml) reaches srv01 through it.
     - name: Srv01 in the inventory
+      tags: [always]
       ansible.builtin.add_host:
         name: srv01
         ansible_host: "{{ srv01_ip }}"
