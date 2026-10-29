@@ -1,0 +1,36 @@
+#!/bin/bash
+# roles/chat01: the team, its channels (controller/data/chat.yaml) and one user per narrative person, signed in only
+# through the SSO shim (auth service gitlab, auth data = the shim's id). Idempotent; prints "changed" for a change.
+set -euo pipefail
+cd /
+mm() { /opt/mattermost/bin/mmctl --local "$@" >/dev/null; }
+sql() { runuser -u postgres -- psql -d mattermost -v ON_ERROR_STOP=1 -tAc "$1"; }
+team={{ chat.team.name | quote }}
+restart=
+
+[ -n "$(sql "select 1 from teams where name = '$team' and deleteat = 0")" ] ||
+  { mm team create --name "$team" --display-name {{ chat.team.display_name | quote }}; echo changed; }
+{% for c in chat.channels %}
+[ -n "$(sql "select 1 from channels c join teams t on t.id = c.teamid where t.name = '$team' and c.name = '{{ c | lower | replace(' ', '-') }}'")" ] ||
+  { mm channel create --team "$team" --name {{ c | lower | replace(' ', '-') | quote }} --display-name {{ c | quote }}; echo changed; }
+{% endfor %}
+
+{% for p in people %}
+u={{ p.user | quote }}
+case "$(sql "select 'u:' || authservice from users where username = '$u'")" in
+  "") mm user create --email {{ (p.user ~ '@' ~ mail_domain) | quote }} --username "$u" --firstname {{ p.name.split(' ', 1)[0] | quote }} \
+        --lastname {{ p.name.split(' ', 1)[1] | default('') | quote }} --password "$(openssl rand -base64 24)Aa1!"
+      echo changed ;&
+  u:) sql "update users set authservice = 'gitlab', authdata = '{{ (p.user | hash('sha1'))[:12] | int(base=16) }}', password = '', emailverified = true where username = '$u'" >/dev/null
+      restart=1; echo changed ;;
+esac
+[ -n "$(sql "select 1 from teammembers m join users u on u.id = m.userid join teams t on t.id = m.teamid where u.username = '$u' and t.name = '$team' and m.deleteat = 0")" ] ||
+  { mm team users add "$team" "$u"; echo changed; }
+{% for c in chat.channels %}
+[ -n "$(sql "select 1 from channelmembers m join users u on u.id = m.userid join channels c on c.id = m.channelid join teams t on t.id = c.teamid where u.username = '$u' and t.name = '$team' and c.name = '{{ c | lower | replace(' ', '-') }}'")" ] ||
+  { mm channel users add "$team:{{ c | lower | replace(' ', '-') }}" "$u"; echo changed; }
+{% endfor %}
+{% endfor %}
+
+# Mattermost caches users: a changed sign-in method is only seen after a restart.
+[ -z "$restart" ] || systemctl restart mattermost

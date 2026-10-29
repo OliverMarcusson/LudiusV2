@@ -4,7 +4,8 @@
 # upstream; members follow the domain hierarchy, so time-jump sets the range here first), the range's simple password
 # policy (as srv01's Samba), one AD user per narrative person and the EWS service account, the mail names pointing
 # at ex01, and the range intranet (IIS on dc01, intranet.<domain>: the range has no web, so a GPO makes it Edge's
-# default search and new tab page). Expects people, srv01_ip, ex01_ip, dc_admin_password, ews_user/ews_password, user_password_suffix.
+# default search and new tab page), and the range chat's Kerberos side (chat.<domain> at chat01, its HTTP service
+# principal and keytab, Edge allowed to sign in there with the Windows logon). Expects people, srv01_ip, ex01_ip, dc_admin_password, ews_user/ews_password, user_password_suffix.
 - name: AD DS role
   ansible.windows.win_feature:
     name: AD-Domain-Services
@@ -87,7 +88,7 @@
     state: present
   no_log: true
 
-- name: Mail and Autodiscover names at ex01, intranet at dc01
+- name: Mail and Autodiscover names at ex01, intranet at dc01, chat at chat01
   ansible.windows.win_powershell:
     script: |
       param($zone, $records)
@@ -103,7 +104,7 @@
       }
     parameters:
       zone: "{{ domain }}"
-      records: { mail: "{{ ex01_ip }}", autodiscover: "{{ ex01_ip }}", intranet: "{{ srv01_ip }}" }
+      records: { mail: "{{ ex01_ip }}", autodiscover: "{{ ex01_ip }}", intranet: "{{ srv01_ip }}", chat: "{{ chat01_ip }}" }
 
 - name: IIS for the range intranet (static content only)
   ansible.windows.win_feature:
@@ -119,11 +120,12 @@
     intranet_articles: "{{ lookup('ansible.builtin.file', 'intranet-articles.yml') | from_yaml }}"
 
 # Domain GPO, so existing persona clones pick it up at their next policy refresh or boot. The range has no web: Edge's
-# address bar searches the intranet, and a new tab opens it (instead of a news feed that never loads).
-- name: Edge searches the range intranet (GPO)
+# address bar searches the intranet, and a new tab opens it (instead of a news feed that never loads). The chat gets
+# the Windows logon's Kerberos ticket (no sign-in prompt): it is the only server Edge may negotiate with.
+- name: Edge searches the range intranet and signs in to the chat (GPO)
   ansible.windows.win_powershell:
     script: |
-      param($url)
+      param($url, $chat)
       $Ansible.Changed = $false
       $name = 'Ludius Edge intranet'
       $key = 'HKLM\Software\Policies\Microsoft\Edge'
@@ -131,6 +133,7 @@
       $values = [ordered]@{
         DefaultSearchProviderEnabled = 1; DefaultSearchProviderName = 'Intranet'
         DefaultSearchProviderSearchURL = "$url/?q={searchTerms}"; NewTabPageLocation = "$url/"; HomepageLocation = "$url/"
+        AuthServerAllowlist = $chat
       }
       foreach ($n in $values.Keys) {
         $v = $values[$n]
@@ -148,6 +151,58 @@
       }
     parameters:
       url: "http://intranet.{{ domain }}"
+      chat: "{{ chat_host }}"
+
+# The chat's HTTP service principal on its own account (chat_svc_user). ktpass gives the account a random password and
+# writes the keytab; made only while the node has no copy (each run of ktpass invalidates the last keytab), fetched to
+# the node for range-chat.yml and removed from dc01.
+- name: Chat keytab on the node
+  ansible.builtin.stat:
+    path: "{{ chat_keytab }}"
+  delegate_to: localhost
+  register: chat_keytab_node
+
+- name: Chat service account and keytab for HTTP/{{ chat_host }}
+  when: not chat_keytab_node.stat.exists
+  block:
+    - name: Account, AES tickets, ktpass
+      ansible.windows.win_powershell:
+        script: |
+          param($user, $spn, $realm, $out)
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-ADUser -Filter "SamAccountName -eq '$user'")) {
+            $pw = ConvertTo-SecureString ([Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(24))) -AsPlainText -Force
+            New-ADUser -Name $user -SamAccountName $user -Description 'Ludius chat (Kerberos HTTP service)' `
+              -AccountPassword $pw -Enabled $true -PasswordNeverExpires $true -CannotChangePassword $true
+          }
+          Set-ADUser $user -Replace @{ 'msDS-SupportedEncryptionTypes' = 24 }
+          $o = & ktpass -princ "$spn@$realm" -mapuser "$env:USERDOMAIN\$user" -mapOp set -crypto All `
+            -ptype KRB5_NT_PRINCIPAL +rndPass -out $out 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "ktpass: $($o -join ' ')" }
+          if ((setspn -L $user | Out-String) -notmatch [regex]::Escape($spn)) { throw "$spn not on $user" }
+        parameters:
+          user: "{{ chat_svc_user }}"
+          spn: HTTP/{{ chat_host }}
+          realm: "{{ domain | upper }}"
+          out: C:\Windows\Temp\chat.keytab
+
+    - name: Keytab to the node (0600)
+      ansible.builtin.fetch:
+        src: C:\Windows\Temp\chat.keytab
+        dest: "{{ chat_keytab }}"
+        flat: true
+
+    - name: Keytab file mode on the node
+      ansible.builtin.file:
+        path: "{{ chat_keytab }}"
+        mode: "0600"
+      delegate_to: localhost
+
+  always:
+    - name: No keytab left on dc01
+      ansible.windows.win_file:
+        path: C:\Windows\Temp\chat.keytab
+        state: absent
 
 - name: Checks (SRV records, Kerberos KDC, time service, no forwarder, intranet answers)
   ansible.windows.win_powershell:

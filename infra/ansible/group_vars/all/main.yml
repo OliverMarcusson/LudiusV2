@@ -58,8 +58,18 @@ mail_backend: exchange
 login_mailbox_cap: "{{ grommunio_login_mailboxes if mail_backend == 'grommunio' else 99 }}"
 range_servers: >-
   {{ [[srv01_vmid | int, 'ludius-srv01']] if mail_backend == 'grommunio'
-     else [[srv01_vmid | int, 'ludius-dc01'], [ex01_vmid | int, 'ludius-ex01']] }}
+     else [[srv01_vmid | int, 'ludius-dc01'], [ex01_vmid | int, 'ludius-ex01'], [chat01_vmid | int, 'ludius-chat01']] }}
 ex01_vmid: 111
+# Range chat (mail_backend exchange; range-chat.yml): Mattermost Team Edition 10.11 ESR (the last TE line with GitLab
+# SSO, which the Kerberos shim poses as) on Debian 13, http://chat.<domain>; team and channels from controller/data/chat.yaml.
+chat01_vmid: 112
+chat01_ip: "{{ range_net }}.13"
+chat01_build_mac: "BC:24:11:4C:55:13" # chat01's temporary uplink NIC (provisioning only)
+chat_host: chat.{{ domain }}
+chat_svc_user: ludiuschat # AD account holding HTTP/chat.<domain> (never a narrative user)
+chat_keytab: "{{ playbook_dir }}/build/chat.keytab" # HTTP/chat.<domain>, made on dc01 (roles/dc01), copied to chat01
+mattermost_url: https://releases.mattermost.com/10.11.25/mattermost-team-10.11.25-linux-amd64.tar.gz
+mattermost_sha256: 9ddd044a68c45dad8b18e21185c081f62f4a61b0fc2c9131c49f784c63420f8a
 # range-exchange.yml: a tagged resume (--tags dc01, ex01, mailboxes, mail-boundary) only answers for the phases it ran.
 winsrv_full_run: "{{ 'all' in ansible_run_tags }}"
 winsrv_dc01_ran: "{{ winsrv_full_run or 'dc01' in ansible_run_tags }}"

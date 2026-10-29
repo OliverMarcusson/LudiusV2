@@ -26,6 +26,10 @@ apps:
     process: msedge.exe
     start_query: edge
     features: [web search, open a result, open a site by address, add a favorite, download a public document, read a page]
+  - name: chat
+    process: msedge.exe
+    start_query: edge
+    features: [team chat (Mattermost) in Edge at chat.corp.ludius.test, post a line in a channel, direct message a colleague, read a colleague's messages]
   - name: outlook
     process: outlook.exe
     start_query: outlook

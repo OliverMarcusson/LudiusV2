@@ -1,0 +1,189 @@
+---
+# Range chat for mail_backend: exchange (imported by range-up.yml after range-exchange.yml; also runnable alone on the
+# node: ansible-playbook range-chat.yml): chat01 from the stock Debian 13 cloud image + the chat01 role (Mattermost,
+# Kerberos sign-in through dc01's keytab), with an uplink only while it is provisioned. Same shape as range-srv01.yml.
+- name: Chat01 VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    chat01_key: /root/.ssh/ludius_chat01
+    chat01_image: /var/lib/vz/template/ludius/debian-13-genericcloud-amd64.qcow2
+    chat01_user_data: ludius-chat01-user.yaml
+  tasks:
+    - name: Exchange range, and dc01's keytab for the chat (roles/dc01)
+      ansible.builtin.assert:
+        that:
+          - mail_backend == 'exchange'
+          - chat_keytab is file
+        fail_msg: range chat needs mail_backend exchange and {{ chat_keytab }} (run range-exchange.yml --tags dc01 first)
+
+    - name: Node and VMs (range-up.yml already read them; alone, read here)
+      when: pve_vms is not defined
+      block:
+        - name: Node name
+          ansible.builtin.command: hostname
+          register: node
+          changed_when: false
+
+        - name: Proxmox VMs
+          ansible.builtin.command: pvesh get /cluster/resources --type vm --output-format json
+          register: resources
+          changed_when: false
+
+        - name: Existing VMs by id
+          ansible.builtin.set_fact:
+            pve_node: "{{ node.stdout }}"
+            pve_vms: "{{ dict(resources.stdout | from_json | map(attribute='vmid') | zip(resources.stdout | from_json)) }}"
+
+    - name: Chat01's id is ours (range pool, this node, expected name) or free
+      ansible.builtin.assert:
+        that: >-
+          (chat01_vmid | int) not in pve_vms or
+          (pve_vms[chat01_vmid | int].pool | default('') == range_pool and pve_vms[chat01_vmid | int].name == 'ludius-chat01'
+           and pve_vms[chat01_vmid | int].node == pve_node)
+        fail_msg: VM {{ chat01_vmid }} exists but is not ludius-chat01 in pool {{ range_pool }}; refusing to touch it
+
+    - name: Chat01 SSH key
+      ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -C ludius@chat01 -f {{ chat01_key }}
+      args:
+        creates: "{{ chat01_key }}"
+
+    # Replaces Proxmox's own user-data: hostname chat01, no package upgrade at first boot (no uplink then).
+    - name: Chat01 cloud-init user-data
+      ansible.builtin.copy:
+        dest: /var/lib/vz/snippets/{{ chat01_user_data }}
+        mode: "0644"
+        content: |
+          #cloud-config
+          hostname: chat01
+          fqdn: {{ chat_host }}
+          package_update: false
+          package_upgrade: false
+          users:
+            - name: ludius
+              groups: [sudo]
+              shell: /bin/bash
+              sudo: 'ALL=(ALL) NOPASSWD:ALL'
+              lock_passwd: true
+              ssh_authorized_keys: ['{{ lookup('ansible.builtin.file', chat01_key ~ '.pub') }}']
+          ssh_pwauth: false
+
+    - name: Create chat01
+      when: (chat01_vmid | int) not in pve_vms
+      block:
+        - name: Image folder
+          ansible.builtin.file:
+            path: "{{ chat01_image | dirname }}"
+            state: directory
+            mode: "0755"
+
+        - name: Debian 13 cloud image, checked against Debian's SHA512SUMS
+          ansible.builtin.get_url:
+            url: "{{ debian_image_url }}"
+            dest: "{{ chat01_image }}"
+            checksum: "sha512:{{ debian_image_sums }}"
+            mode: "0644"
+
+        - name: Chat01 VM, range NIC only (the uplink is attached while provisioning)
+          ansible.builtin.command: >-
+            qm create {{ chat01_vmid }} --name ludius-chat01 --pool {{ range_pool }} --ostype l26 --cores 2
+            --memory 4096 --cpu host --scsihw virtio-scsi-single
+            --scsi0 {{ storage }}:0,import-from={{ chat01_image }},discard=on
+            --ide2 {{ storage }}:cloudinit --boot order=scsi0 --serial0 socket --vga serial0
+            --net0 virtio,bridge={{ range_bridge }} --ipconfig0 ip={{ chat01_ip }}/24 --onboot 1
+          changed_when: true
+
+        - name: Chat01 disk 20G (cloud-init grows the root partition)
+          ansible.builtin.command: qm disk resize {{ chat01_vmid }} scsi0 20G
+          changed_when: true
+
+    - name: Chat01 range NIC only and cloud-init, asserted before every start
+      ansible.builtin.include_tasks: tasks/range-nic-only.yml
+      vars:
+        nic_vmid: "{{ chat01_vmid }}"
+        nic_extra: [--cicustom, "user=local:snippets/{{ chat01_user_data }}", --ciupgrade, "0", --ipconfig0, "ip={{ chat01_ip }}/24"]
+
+    - name: Chat01 running
+      ansible.builtin.command: qm start {{ chat01_vmid }}
+      register: start
+      changed_when: start.rc == 0
+      failed_when: start.rc != 0 and 'already running' not in start.stderr
+
+    - name: Chat01 SSH up on the range address
+      ansible.builtin.wait_for:
+        host: "{{ chat01_ip }}"
+        port: 22
+        timeout: 600
+
+    - name: Chat01 in the inventory
+      ansible.builtin.add_host:
+        name: chat01
+        ansible_host: "{{ chat01_ip }}"
+        ansible_user: ludius
+        ansible_ssh_private_key_file: "{{ chat01_key }}"
+        ansible_ssh_common_args: -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/ludius_known_hosts
+
+# Guest work runs as chat01's own host (see range-srv01.yml): a failed chat01 drops out, the detach below still runs.
+- name: Chat01 (Mattermost, Kerberos sign-in), uplink only while provisioning
+  hosts: localhost:chat01
+  gather_facts: false
+  tasks:
+    - name: Uplink NIC on the build bridge (host side)
+      when: inventory_hostname == 'localhost'
+      ansible.builtin.command: qm set {{ chat01_vmid }} --net1 virtio={{ chat01_build_mac }},bridge={{ build_bridge }}
+      changed_when: true
+
+    - name: Provision chat01 through the uplink
+      when: inventory_hostname == 'chat01'
+      become: true
+      block:
+        - name: Uplink up in the guest
+          ansible.builtin.include_tasks: tasks/srv01-uplink-guest.yml
+          vars:
+            uplink: present
+            uplink_mac: "{{ chat01_build_mac }}"
+
+        - name: Chat01 role
+          ansible.builtin.include_role:
+            name: chat01
+
+        - name: Chat01 provisioned
+          ansible.builtin.set_fact:
+            chat01_provisioned: true
+
+- name: Chat01 uplink off (host side), then chat01's verdict
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Detach the uplink NIC (host side), else stop chat01
+      block:
+        - name: Range NIC only
+          ansible.builtin.include_tasks: tasks/range-nic-only.yml
+          vars:
+            nic_vmid: "{{ chat01_vmid }}"
+      rescue:
+        - name: Stop chat01 (its uplink could not be confirmed gone)
+          ansible.builtin.command: qm stop {{ chat01_vmid }}
+          changed_when: true
+          failed_when: false
+
+        - name: Fail after stopping chat01
+          ansible.builtin.fail:
+            msg: chat01's uplink NIC could not be detached; chat01 was stopped. Check qm config {{ chat01_vmid }}.
+
+    - name: No off-range route left in the guest (after the detach; skipped if chat01 is unreachable)
+      ansible.builtin.include_tasks:
+        file: tasks/srv01-uplink-guest.yml
+        apply:
+          delegate_to: chat01
+          become: true
+          ignore_unreachable: true
+      vars:
+        uplink: absent
+        uplink_mac: "{{ chat01_build_mac }}"
+
+    - name: Chat01 provisioned (a failed or unreachable chat01 fails the run here, after the detach)
+      ansible.builtin.assert:
+        that: hostvars['chat01'].chat01_provisioned | default(false)
+        fail_msg: chat01 was not provisioned (its tasks failed or it was unreachable, see above); its uplink NIC is detached

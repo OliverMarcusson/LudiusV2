@@ -1,0 +1,234 @@
+---
+# chat01 on stock Debian 13 (range-chat.yml, uplink attached): the range's Slack. Mattermost Team Edition on local
+# Postgres, behind nginx at http://chat.<domain>. Sign-in is the persona's Windows logon: nginx checks its Kerberos
+# ticket (SPNEGO, dc01's keytab for HTTP/chat.<domain>) and the SSO shim (files/chat-sso.py) hands it to Mattermost as
+# GitLab OAuth; email and username sign-in are off, so no password is ever typed. Mattermost, the shim and Postgres
+# listen on loopback only; no mail leaves (email notifications off) and nothing is fetched (link previews, plugins
+# and telemetry off). The clock follows dc01 (chrony, any step): Kerberos needs it within 5 minutes of the personas'.
+- name: Packages
+  ansible.builtin.apt:
+    name: [postgresql, nginx, libnginx-mod-http-auth-spnego, chrony, python3, curl]
+    update_cache: true
+
+- name: Kerberos realm for the keytab
+  ansible.builtin.copy:
+    dest: /etc/krb5.conf
+    mode: "0644"
+    content: |
+      [libdefaults]
+        default_realm = {{ domain | upper }}
+        dns_canonicalize_hostname = false
+        rdns = false
+
+- name: Clock follows dc01, stepping any offset (the range clock jumps)
+  ansible.builtin.copy:
+    dest: /etc/chrony/chrony.conf
+    mode: "0644"
+    content: |
+      server {{ srv01_ip }} iburst minpoll 4 maxpoll 6
+      makestep 1 -1
+      driftfile /var/lib/chrony/chrony.drift
+  register: chrony_conf
+
+- name: Chrony restarted
+  ansible.builtin.systemd_service:
+    name: chrony
+    state: restarted
+    enabled: true
+  when: chrony_conf is changed
+
+- name: Mattermost account
+  ansible.builtin.user:
+    name: mattermost
+    system: true
+    home: /opt/mattermost
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Mattermost database (peer auth over the socket, as the mattermost account)
+  ansible.builtin.shell: |
+    set -eu
+    q() { runuser -u postgres -- psql -tAc "$1"; }
+    [ "$(q "select 1 from pg_roles where rolname = 'mattermost'")" = 1 ] || { runuser -u postgres -- createuser mattermost; echo changed; }
+    [ "$(q "select 1 from pg_database where datname = 'mattermost'")" = 1 ] || { runuser -u postgres -- createdb -O mattermost mattermost; echo changed; }
+  args:
+    chdir: /
+  register: db
+  changed_when: "'changed' in db.stdout"
+
+- name: Mattermost release, checked
+  ansible.builtin.get_url:
+    url: "{{ mattermost_url }}"
+    dest: /opt/{{ mattermost_url | basename }}
+    checksum: sha256:{{ mattermost_sha256 }}
+    mode: "0644"
+
+- name: Mattermost unpacked
+  ansible.builtin.unarchive:
+    src: /opt/{{ mattermost_url | basename }}
+    dest: /opt
+    remote_src: true
+    owner: mattermost
+    group: mattermost
+    creates: /opt/mattermost/bin/mattermost
+
+- name: Mattermost data folder
+  ansible.builtin.file:
+    path: /opt/mattermost/data
+    state: directory
+    owner: mattermost
+    group: mattermost
+    mode: "0750"
+
+- name: SSO secret folder
+  ansible.builtin.file:
+    path: /etc/ludius-chat
+    state: directory
+    mode: "0755"
+
+- name: SSO client secret (made once)
+  ansible.builtin.shell: umask 077 && openssl rand -hex 32 > /etc/ludius-chat/sso-secret
+  args:
+    creates: /etc/ludius-chat/sso-secret
+
+- name: SSO client secret read
+  ansible.builtin.slurp:
+    src: /etc/ludius-chat/sso-secret
+  register: sso_secret
+
+- name: Mattermost settings
+  ansible.builtin.template:
+    src: mattermost.env.j2
+    dest: /etc/mattermost.env
+    mode: "0600"
+  vars:
+    chat_sso_secret: "{{ sso_secret.content | b64decode | trim }}"
+  no_log: true
+  register: mm_env
+
+- name: Mattermost service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/mattermost.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Mattermost
+      After=network.target postgresql.service
+      Requires=postgresql.service
+
+      [Service]
+      Type=notify
+      ExecStart=/opt/mattermost/bin/mattermost
+      EnvironmentFile=/etc/mattermost.env
+      WorkingDirectory=/opt/mattermost
+      User=mattermost
+      Group=mattermost
+      TimeoutStartSec=600
+      KillMode=mixed
+      Restart=always
+      RestartSec=10
+      LimitNOFILE=49152
+
+      [Install]
+      WantedBy=multi-user.target
+  register: mm_unit
+
+- name: Narrative people for the SSO shim (account -> id, address, name)
+  ansible.builtin.copy:
+    dest: /etc/ludius-chat/users.json
+    mode: "0644"
+    content: |
+      {
+      {% for p in people %}
+        {{ p.user | to_json }}: {"id": {{ (p.user | hash('sha1'))[:12] | int(base=16) }}, "email": {{ (p.user ~ '@' ~ mail_domain) | to_json }}, "name": {{ p.name | to_json }}}{{ '' if loop.last else ',' }}
+      {% endfor %}
+      }
+  register: sso_users
+
+- name: SSO shim
+  ansible.builtin.copy:
+    src: chat-sso.py
+    dest: /usr/local/lib/chat-sso.py
+    mode: "0755"
+  register: sso_code
+
+- name: SSO shim service (loopback only, no privileges)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/chat-sso.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Ludius chat SSO (Kerberos via nginx -> GitLab-style OAuth for Mattermost)
+
+      [Service]
+      ExecStart=/usr/bin/python3 /usr/local/lib/chat-sso.py
+      Environment=REALM={{ domain | upper }} CLIENT_ID=ludius-chat USERS=/etc/ludius-chat/users.json
+      Environment=REDIRECT=http://{{ chat_host }}/signup/gitlab/complete
+      LoadCredential=secret:/etc/ludius-chat/sso-secret
+      DynamicUser=true
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+  register: sso_unit
+
+- name: Services up (restarted on a change)
+  ansible.builtin.systemd_service:
+    name: "{{ item.name }}"
+    state: "{{ 'restarted' if item.changed else 'started' }}"
+    enabled: true
+    daemon_reload: true
+  loop:
+    - { name: chat-sso, changed: "{{ sso_users is changed or sso_code is changed or sso_unit is changed }}" }
+    - { name: mattermost, changed: "{{ mm_env is changed or mm_unit is changed }}" }
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Keytab for the chat's HTTP principal (made on dc01)
+  ansible.builtin.copy:
+    src: "{{ chat_keytab }}"
+    dest: /etc/nginx/chat.keytab
+    owner: root
+    group: www-data
+    mode: "0640"
+  register: keytab
+
+- name: Nginx site
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/sites-available/default
+    mode: "0644"
+  register: site
+
+- name: Nginx config valid, reloaded on a change
+  ansible.builtin.shell: nginx -t && systemctl reload-or-restart nginx
+  when: keytab is changed or site is changed
+  changed_when: true
+
+- name: Setup script
+  ansible.builtin.template:
+    src: chat-setup.sh.j2
+    dest: /usr/local/sbin/chat-setup
+    mode: "0755"
+  vars:
+    chat: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../controller/data/chat.yaml') | from_yaml }}"
+
+- name: Team, channels and users (SSO only)
+  ansible.builtin.command: /usr/local/sbin/chat-setup
+  register: setup
+  changed_when: "'changed' in setup.stdout"
+
+- name: Checks (Mattermost through nginx, sign-in page offers only SSO, no password sign-in, Kerberos required)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    c=$(curl -s http://127.0.0.1/api/v4/config/client?format=old -H 'Host: {{ chat_host }}')
+    echo "$c" | python3 -c 'import json,sys; c=json.load(sys.stdin); sys.exit(not (c["EnableSignUpWithGitLab"] == "true" and c["EnableSignInWithEmail"] == "false" and c["EnableSignInWithUsername"] == "false"))'
+    test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/oauth/authorize -H 'Host: {{ chat_host }}')" = 401
+    chronyc -n sources | grep -q '^\^\*'
+  args:
+    executable: /bin/bash
+  register: chat_checks
+  retries: 20
+  delay: 15
+  until: chat_checks is succeeded
+  changed_when: false

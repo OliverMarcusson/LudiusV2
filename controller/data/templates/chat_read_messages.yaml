@@ -1,0 +1,44 @@
+# Look in the team chat for what a colleague wrote (a request, an answer): open the direct messages with them and
+# read the newest. Mattermost on chat01, web app in Edge, Kerberos SSO. Effect: Mattermost's read marker only;
+# nothing is typed into the conversation. Done checks are the Decider's, on a screenshot.
+task: chat_read_messages
+app: edge
+capability: chat.read
+processes: [msedge.exe]
+params: [to, to_name]
+about: "Check the team chat for messages from one colleague (a request they sent, an answer): open the direct messages with them and read the newest. to: the colleague's address <user>@ludius.internal."
+defaults: {app_query: edge, chat_url: chat.corp.ludius.test}
+example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga}
+variants:
+  - [open_edge_start, open_chat, open_conversation, read_newest, close_edge]
+  - [open_edge_taskbar, open_chat, open_conversation, read_newest, close_edge]
+budget_steps: 30
+budget_minutes: 6
+subgoals:
+  open_edge_start:
+    goal: "Open Microsoft Edge from the Start menu"
+    launch: true
+    keys: [Win]
+    text: app_query
+    done: {foreground: {process: msedge.exe}}
+  open_edge_taskbar:
+    goal: "Open Microsoft Edge from its taskbar button"
+    launch: true
+    done: {foreground: {process: msedge.exe}}
+  open_chat:
+    goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click the GitLab button (it signs in with the Windows account; never type a password)"
+    text: chat_url
+    keys: [Ctrl+L, Enter]
+    done: {ask: "Is the Mattermost team chat open and signed in, showing its list of channels?"}
+  open_conversation:
+    goal: "Open the direct messages with {to_name}: press Ctrl+K, type the name and press Enter, or click the name under Direct Messages"
+    text: to_name
+    keys: [Ctrl+K, Enter]
+    done: {ask: "Is the direct message conversation with {to_name} open in the chat, the name shown above the messages?"}
+  read_newest:
+    goal: "Read the newest messages from {to_name}; scroll down to the end of the conversation if needed"
+    steps: 6
+    done: {ask: "Is the end of the conversation with {to_name} shown, with its newest message visible above the message box?"}
+  close_edge:
+    goal: "Close Microsoft Edge"
+    done: {window: {process: msedge.exe, absent: true}}

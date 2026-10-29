@@ -1,0 +1,50 @@
+# Post one line in a channel of the team chat: Mattermost on the range's chat01, the web app in Edge, signed in by
+# Kerberos SSO (the persona's Windows logon; never a typed password). Small talk or a short work note.
+# Effect: one post in a range channel (noise never deletes it). Done checks are the Decider's, on a screenshot; the
+# send is guarded in code: Enter only while the focused box holds exactly the planned line.
+task: chat_post_message
+app: edge
+capability: chat.post
+processes: [msedge.exe]
+params: [channel, message]
+about: "Post one short line in a team chat channel: small talk in Coffee Corner or Off-Topic, a work note in Operations or Town Square. channel: one of Town Square, Off-Topic, Operations, Coffee Corner; message: one line, plain ASCII, under 200 characters."
+defaults: {app_query: edge, chat_url: chat.corp.ludius.test}
+example: {channel: Coffee Corner, message: anyone else think the canteen soup is better on thursdays}
+variants:
+  - [open_edge_start, open_chat, open_channel, write_message, send_message, close_edge]
+  - [open_edge_taskbar, open_chat, open_channel, write_message, send_message, close_edge]
+budget_steps: 40
+budget_minutes: 8
+subgoals:
+  open_edge_start:
+    goal: "Open Microsoft Edge from the Start menu"
+    launch: true
+    keys: [Win]
+    text: app_query
+    done: {foreground: {process: msedge.exe}}
+  open_edge_taskbar:
+    goal: "Open Microsoft Edge from its taskbar button"
+    launch: true
+    done: {foreground: {process: msedge.exe}}
+  open_chat:
+    goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click the GitLab button (it signs in with the Windows account; never type a password)"
+    text: chat_url
+    keys: [Ctrl+L, Enter]
+    done: {ask: "Is the Mattermost team chat open and signed in, showing its list of channels?"}
+  open_channel:
+    goal: "Open the {channel} channel: click it in the channel list, or press Ctrl+K, type its name and press Enter"
+    text: channel
+    keys: [Ctrl+K, Enter]
+    done: {ask: "Is the {channel} channel open in the chat, its name shown above the messages?"}
+  write_message:
+    goal: "Type the message into the message box at the bottom of the {channel} channel: {message}"
+    text: message
+    done: {typed: true}
+  send_message:
+    goal: "Send the message with Enter"
+    keys: [Enter]
+    require: [{focused: true, value: "^{message}$"}]
+    done: {ask: "Is the message \"{message}\" shown as the newest post in the {channel} channel?"}
+  close_edge:
+    goal: "Close Microsoft Edge"
+    done: {window: {process: msedge.exe, absent: true}}

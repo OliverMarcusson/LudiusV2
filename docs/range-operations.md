@@ -19,11 +19,12 @@ VMs (persona accounts come from `infra/ansible/group_vars/all/range-vms.yml`, VM
 
 | VMID | VM | VMID | VM |
 | --- | --- | --- | --- |
-| 110 | dc01 (Samba AD, clock master) | 124 | pvanloon |
-| 111 | ex01 (grommunio) | 125 | nokafor |
+| 110 | dc01 (AD, DNS, clock master) | 123 | dkoster |
+| 111 | ex01 (Exchange) | 124 | pvanloon |
+| 112 | chat01 (Mattermost, clock from dc01) | 125 | nokafor |
 | 121 | aberg | 126 | lsmit |
 | 122 | lnord | 127 | eyilmaz |
-| 123 | dkoster | 128 | sdekker |
+| | | 128 | sdekker |
 
 Every remote command below starts with the same prefix:
 
@@ -47,7 +48,7 @@ Comparing with `sha1sum` against a Windows checkout shows every file as changed 
 ## 2. Pre-flight
 
 ```bash
-ssh root@95.216.39.232 'cd /root/src/LudiusV2.new; ls runs runs/range; cat runs/openrouter-calls.json; pgrep -af "ludius.cli"; systemctl is-active ludius-agent; podman ps --format "{{.Names}} {{.Status}}"; for v in 110 111 121 122 123 124 125 126 127 128; do echo -n "$v $(qm status $v | cut -d" " -f2) snaps=$(qm listsnapshot $v | grep -vc current) | "; done; echo'
+ssh root@95.216.39.232 'cd /root/src/LudiusV2.new; ls runs runs/range; cat runs/openrouter-calls.json; pgrep -af "ludius.cli"; systemctl is-active ludius-agent; podman ps --format "{{.Names}} {{.Status}}"; for v in 110 111 112 121 122 123 124 125 126 127 128; do echo -n "$v $(qm status $v | cut -d" " -f2) snaps=$(qm listsnapshot $v | grep -vc current) | "; done; echo'
 ```
 
 Expect: no `ludius.cli` process, all 10 VMs running, no snapshots, agent and Temporal up.
@@ -76,9 +77,9 @@ RAM snapshots, dc01 and ex01 first, then the personas in parallel:
 
 ```bash
 cd /root/warp
-for v in 110 111; do qm snapshot $v pre-warp --vmstate 1 --description "warp test, rollback after" > snap-$v.log 2>&1 || echo "$v snap FAILED"; done
+for v in 110 111 112; do qm snapshot $v pre-warp --vmstate 1 --description "warp test, rollback after" > snap-$v.log 2>&1 || echo "$v snap FAILED"; done
 for v in 121 122 123 124 125 126 127 128; do (qm snapshot $v pre-warp --vmstate 1 --description "warp test, rollback after" > snap-$v.log 2>&1 || echo "$v snap FAILED") & done; wait
-for v in 110 111 121 122 123 124 125 126 127 128; do echo -n "$v $(qm listsnapshot $v | grep -c pre-warp) | "; done; echo
+for v in 110 111 112 121 122 123 124 125 126 127 128; do echo -n "$v $(qm listsnapshot $v | grep -c pre-warp) | "; done; echo
 ```
 
 Every VM must show `1`. Don't launch with a missing snapshot.
@@ -141,7 +142,7 @@ After the warp exits (check `warpN.out` for the reset):
 cd /root/src/LudiusV2.new && tar czf /root/warp/warpN-runs-$(date +%Y%m%d%H%M).tgz runs
 
 # 2. Roll back, dc01 and ex01 first
-cd /root/warp; for v in 110 111 121 122 123 124 125 126 127 128; do qm rollback $v pre-warp > rb-$v.log 2>&1 || echo "$v rollback FAILED"; done
+cd /root/warp; for v in 110 111 112 121 122 123 124 125 126 127 128; do qm rollback $v pre-warp > rb-$v.log 2>&1 || echo "$v rollback FAILED"; done
 
 # 3. Clocks to real time (harmless if the warp already reset them)
 cd /root/src/LudiusV2.new/controller && set -a && . ../.env && set +a && .venv/bin/python -m ludius.cli range unwarp
@@ -151,7 +152,7 @@ for v in 121 122 123 124 125 126 127 128; do qm guest exec $v --timeout 30 -- po
 sleep 20; for u in aberg lnord dkoster pvanloon nokafor lsmit eyilmaz sdekker; do echo "$u: $(timeout 40 .venv/bin/python -m ludius.cli --vm ludius-$u observe --limit 0 2>&1 | grep -E "settled=|details" | head -1 | cut -c1-120)"; done
 
 # 5. Drop the snapshots
-for v in 110 111 121 122 123 124 125 126 127 128; do qm delsnapshot $v pre-warp || echo "$v delsnapshot FAILED"; done
+for v in 110 111 112 121 122 123 124 125 126 127 128; do qm delsnapshot $v pre-warp || echo "$v delsnapshot FAILED"; done
 ```
 
 Each persona must print a `settled=` line in step 4. A persona that doesn't still has a dead observer; rerun step 4

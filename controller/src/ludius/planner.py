@@ -52,6 +52,10 @@ _NAME_KEYS = ("file_name", "folder_name", "new_name")
 _DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)  # Windows reserved, any extension
 # A meeting (date, start, end): a weekday inside the working day, of a sensible length, soon after the plan's day.
 WORK_DAY, MEETING_MINUTES, MEETING_DAYS_AHEAD = ("08:00", "17:00"), (15, 120), 14
+# The range chat (Mattermost on chat01): its channels by display name, also read by infra/ansible/roles/chat01.
+CHAT_CHANNELS: list[str] = yaml.safe_load(
+    (Path(__file__).resolve().parents[2] / "data" / "chat.yaml").read_text("utf-8")
+)["channels"]
 SHOWN_EXISTING = 80  # existing names listed in the prompt; validation checks all of them
 
 
@@ -206,6 +210,7 @@ def plan_day(
     names = sorted({_leaf(e) for e in existing if _leaf(e)}, key=str.casefold)[:SHOWN_EXISTING]
     mail_tasks = ", ".join(sorted(k for k, t in templates.items() if t.capability in SENDS)) or "none"
     reads = sorted(k for k, t in templates.items() if t.capability == "mail.read")
+    chats = {t.capability: k for k, t in templates.items() if t.capability in ("chat.post", "chat.dm", "chat.read")}
     user = (
         f"Company story:\n{narrative.model_dump_json(indent=1)}\n\n"
         f"Persona: {persona.name}, {persona.role} ({persona.department}). Usual hours {persona.hours[0]}-"
@@ -240,6 +245,15 @@ def plan_day(
                 else ""
             )  # fmt: skip
             if colleagues
+            else ""
+        )
+        + (
+            f" Team chat: now and then one line of small talk ({chats['chat.post']} in Coffee Corner or Off-Topic, "
+            f"or {chats['chat.dm']} to a colleague, no handoff). To ask a colleague for something concrete the persona "
+            f"needs (a file, a figure, a lookup), {chats['chat.dm']} saying what and by when, with handoff their "
+            f"account. A follow-up that came as a chat message: first {chats['chat.read']} with its sender, then the "
+            "asked work with followup set; a short chat thanks or done-note to them may follow."
+            if colleagues and len(chats) == 3
             else ""
         )
         + (
@@ -322,6 +336,8 @@ def validate(
             why = _read_mail(it, colleagues or set[str](), inbox or set[tuple[str, str]](), items[:i])
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
+        if not why and it.followup and cap == "chat.read":
+            why = "reading the chat does not settle a follow-up: set followup on the asked work"
         if not why and it.followup and it.followup not in (followups or set[str]()):
             why = f"followup {it.followup!r} is not an open follow-up"
         if not why and (it.at, it.template) in {(x.at, x.template) for x in items[:i]}:
@@ -487,6 +503,10 @@ def item_problem(it: PlanItem, templates: dict[str, Template], policy: Policy, u
         task = Task(t, it, random.Random(0))
     except ValueError as e:
         return str(e)
+    if t.capability == "chat.post" and task.values.get("channel") not in CHAT_CHANNELS:
+        return f"channel {task.values.get('channel')!r} is not one of {CHAT_CHANNELS}"
+    if t.capability in ("chat.post", "chat.dm") and not 2 <= len(task.values.get("message", "").strip()) <= 200:
+        return "message: one line of 2-200 characters"
     for name, sg in t.subgoals.items():
         # The observer reports at most VALUE_MAX chars of a value, so a longer checked value can never pass
         # (acceptance 20261027-1442: a 381-char WordPad note was retyped until the step budget ran out).

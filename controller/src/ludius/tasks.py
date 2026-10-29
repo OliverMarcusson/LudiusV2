@@ -158,9 +158,8 @@ class Done(Strict):
     # mail.read: the mail picked at task start (reply.prepare_read: proven unread then) is marked read on the server.
     read: bool = False
     # A yes/no question for the Decider, on a screenshot: the subgoal's whole done check, for an on-screen state a
-    # code check reads unreliably (an attendee added through a picker reads differently). Stands alone; fails closed;
-    # never the proof of an outcome (the send's own contract still reads the field in code before the irreversible
-    # step, and the outcome is checked on the server).
+    # code check reads unreliably (an attendee added through a picker reads differently), or the outcome itself (a
+    # chat post shown in its channel). Stands alone; fails closed: no screenshot, no answer or an unsure yes is no.
     ask: str | None = None
 
     @model_validator(mode="after")
@@ -219,7 +218,19 @@ class Subgoal(Strict):
 # non-local recipients.
 RECIPIENT = "^({to}|{to_name}|{to_name} <{to}>);?$"
 # file.write: a new file; mail.read: a colleague's Inbox mail opened, its only effect the read flag (never sends)
-Capability = Literal["mail.send", "mail.reply", "mail.read", "calendar.invite", "file.move", "file.write"]
+# chat.post / chat.dm: one line posted in the range chat (Mattermost), irreversible for noise (never deleted);
+# chat.read: a direct message conversation opened, no effect beyond Mattermost's read marker
+Capability = Literal[
+    "mail.send",
+    "mail.reply",
+    "mail.read",
+    "calendar.invite",
+    "file.move",
+    "file.write",
+    "chat.post",
+    "chat.dm",
+    "chat.read",
+]
 SENDS: dict[str, Literal["mail", "meeting"]] = {"mail.send": "mail", "mail.reply": "mail", "calendar.invite": "meeting"}
 # Values a capability's parameters name rather than create (a recipient, the subject a reply answers, a rename's
 # source): they may repeat, so the planner's near-duplicate check skips them.
@@ -229,6 +240,9 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "mail.read": {"sender", "subject"},
     "calendar.invite": {"to", "to_name"},
     "file.move": {"file_name", "folder_name"},
+    "chat.post": {"channel"},
+    "chat.dm": {"to", "to_name"},
+    "chat.read": {"to", "to_name"},
 }
 APPS = Path(__file__).resolve().parents[2] / "data" / "apps"
 # Buttons that commit something: no discard or leave word in a profile may name one (abandon clicks those).

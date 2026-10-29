@@ -1,0 +1,50 @@
+# Send a colleague one direct message in the team chat (Mattermost on chat01, web app in Edge, Kerberos SSO): small
+# talk, asking them for something (the plan's handoff makes it their follow-up, ludius.world_state), or telling them
+# the asked work is done. Effect: one direct message to a range colleague (noise never deletes it). Done checks are
+# the Decider's; the send is guarded in code: Enter only while the focused box holds exactly the planned line.
+task: chat_direct_message
+app: edge
+capability: chat.dm
+processes: [msedge.exe]
+params: [to, to_name, message]
+about: "Send one colleague a short direct message in the team chat: small talk, asking them for something you need (what and by when), or saying the work they asked for is done. to: the colleague's address <user>@ludius.internal; message: one line, plain ASCII, under 200 characters."
+defaults: {app_query: edge, chat_url: chat.corp.ludius.test}
+example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga, message: could you send me the lund freight figures for october by thursday}
+variants:
+  - [open_edge_start, open_chat, open_conversation, write_message, send_message, close_edge]
+  - [open_edge_taskbar, open_chat, open_conversation, write_message, send_message, close_edge]
+budget_steps: 40
+budget_minutes: 8
+subgoals:
+  open_edge_start:
+    goal: "Open Microsoft Edge from the Start menu"
+    launch: true
+    keys: [Win]
+    text: app_query
+    done: {foreground: {process: msedge.exe}}
+  open_edge_taskbar:
+    goal: "Open Microsoft Edge from its taskbar button"
+    launch: true
+    done: {foreground: {process: msedge.exe}}
+  open_chat:
+    goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click the GitLab button (it signs in with the Windows account; never type a password)"
+    text: chat_url
+    keys: [Ctrl+L, Enter]
+    done: {ask: "Is the Mattermost team chat open and signed in, showing its list of channels?"}
+  open_conversation:
+    goal: "Open the direct messages with {to_name}: press Ctrl+K, type the name and press Enter, or click the name under Direct Messages"
+    text: to_name
+    keys: [Ctrl+K, Enter]
+    done: {ask: "Is the direct message conversation with {to_name} open in the chat, the name shown above the messages?"}
+  write_message:
+    goal: "Type the message into the message box at the bottom of the conversation with {to_name}: {message}"
+    text: message
+    done: {typed: true}
+  send_message:
+    goal: "Send the message with Enter"
+    keys: [Enter]
+    require: [{focused: true, value: "^{message}$"}]
+    done: {ask: "Is the message \"{message}\" shown as the newest post in the conversation with {to_name}?"}
+  close_edge:
+    goal: "Close Microsoft Edge"
+    done: {window: {process: msedge.exe, absent: true}}

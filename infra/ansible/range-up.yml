@@ -98,6 +98,10 @@
   ansible.builtin.import_playbook: range-exchange.yml
   when: mail_backend == 'exchange'
 
+- name: Range chat (chat01, needs dc01's keytab)
+  ansible.builtin.import_playbook: range-chat.yml
+  when: mail_backend == 'exchange'
+
 - name: Persona clones
   hosts: localhost
   gather_facts: false
