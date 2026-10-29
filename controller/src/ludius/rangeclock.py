@@ -18,11 +18,12 @@ import datetime as dt
 import json
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 MAX_SKEW_S = 60.0  # spec of the warp test; Kerberos breaks at 300
+POOL = "ludius"  # the range pool (host agent Proxmox__Pool)
 Exec = Callable[[int, str], str]  # (vmid, PowerShell) -> stdout; raises on failure
 
 
@@ -77,26 +78,72 @@ class RangeClock:
             raise ValueError("range clock needs an aware datetime")
         target = at.timestamp()
         dc_now = self.now() + self._offset(self.dc)
-        if target < dc_now - MAX_SKEW_S:
+        if target <= dc_now:
             raise ValueError(f"range clock is forward only: DC at {_iso(dc_now)}, asked {_iso(target)}")
         return self._apply(target - self.now())
 
     def reset(self) -> dict[int, float]:
-        """Every VM back to the box's UTC, DC first (the members follow it again)."""
-        return self._apply(0.0)
+        """Every VM back to the box's UTC, DC first (the members follow it again). Tries every VM whatever fails
+        (a DC whose agent is down must not keep the members jumped) and raises all errors together at the end."""
+        return self._apply(0.0, keep_going=True)
 
-    def _apply(self, offset: float) -> dict[int, float]:
+    def _apply(self, offset: float, keep_going: bool = False) -> dict[int, float]:
+        errors: list[str] = []
+        got: dict[int, float] = {}
+
+        def guarded(vmid: int, act: Callable[[int], object]) -> None:
+            try:
+                act(vmid)
+            except Exception as e:
+                if not keep_going:
+                    raise
+                errors.append(f"VM {vmid}: {e}")
+
         # Each VM to box time + offset at the moment its command is built: the members land on the DC's instant.
-        def one(vmid: int) -> str:
+        def set_one(vmid: int) -> str:
             return self.run(vmid, _SET.format(ms=int((self.now() + offset) * 1000)) + _NOW)
 
-        one(self.dc)
-        with ThreadPoolExecutor(max(1, len(self.members))) as pool:
-            list(pool.map(one, self.members))
-        got = self.offsets()
-        if (skew := max(got.values()) - min(got.values())) > MAX_SKEW_S or abs(got[self.dc] - offset) > MAX_SKEW_S:
-            raise RuntimeError(f"range clock not converged (skew {skew:.1f} s): {got}")
+        def measure(vmid: int) -> None:
+            got[vmid] = self._offset(vmid)
+
+        def set_guarded(vmid: int) -> None:
+            guarded(vmid, set_one)
+
+        def measure_guarded(vmid: int) -> None:
+            guarded(vmid, measure)
+
+        set_guarded(self.dc)
+        with ThreadPoolExecutor(len(self.members) + 1) as pool:
+            list(pool.map(set_guarded, self.members))
+            list(pool.map(measure_guarded, [self.dc, *self.members]))
+        skew = max(got.values()) - min(got.values()) if got else 0.0
+        if skew > MAX_SKEW_S or (self.dc in got and abs(got[self.dc] - offset) > MAX_SKEW_S):
+            errors.append(f"range clock not converged (skew {skew:.1f} s): {got}")
+        if errors:
+            raise RuntimeError("; ".join(errors))
         return got
+
+
+def confine(expected: dict[int, str], resources: Sequence[Mapping[str, object]], node: str, pool: str = POOL) -> None:
+    """Every VMID must be a VM (not a template) in the range pool on this node, with its expected name; else nothing
+    is touched. `resources` is `pvesh get /cluster/resources --type vm`."""
+    seen = {int(str(r["vmid"])): r for r in resources if "vmid" in r}
+    bad: list[str] = []
+    for vmid, name in expected.items():
+        r = seen.get(vmid)
+        if r is None:
+            bad.append(f"{vmid}: not found")
+        elif (r.get("name"), r.get("pool"), r.get("node"), int(str(r.get("template") or 0))) != (name, pool, node, 0):
+            bad.append(f"{vmid}: {r.get('name')} in pool {r.get('pool')} on {r.get('node')}, expected {name} in {pool}"
+                       f" on {node}" + (" (a template)" if r.get("template") else ""))  # fmt: skip
+    if bad:
+        raise ValueError("range clock refused, not range VMs: " + "; ".join(bad))
+
+
+def resources() -> list[dict[str, object]]:
+    out = subprocess.run(["pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json"],
+                         check=True, capture_output=True, text=True, timeout=60)  # fmt: skip
+    return json.loads(out.stdout)
 
 
 def _iso(t: float) -> str:

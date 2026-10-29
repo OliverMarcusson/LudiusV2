@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import random
+import socket
 import subprocess
 import sys
 import time
@@ -528,12 +529,20 @@ def _range_clock() -> rangeclock.RangeClock:
     if os.environ.get("LUDIUS_MAIL_BACKEND") != "exchange":
         raise ClockRefused("range clock: Proxmox Exchange range only (dc01 is its time source; LUDIUS_MAIL_BACKEND)")
     main = yaml.safe_load((rangerun.VMS.parent / "main.yml").read_text(encoding="utf-8"))
-    return rangeclock.RangeClock(int(main["srv01_vmid"]), [int(main["ex01_vmid"]), *rangerun.vmids().values()])
+    dc, ex = int(main["srv01_vmid"]), int(main["ex01_vmid"])
+    names = {dc: "ludius-dc01", ex: "ludius-ex01"} | {v: rangerun.vm_of(u) for u, v in rangerun.vmids().items()}
+    # Root `qm` acts on whatever VMID it is given: every one must be a range VM before any clock is touched.
+    rangeclock.confine(names, rangeclock.resources(), socket.gethostname())
+    return rangeclock.RangeClock(dc, [v for v in names if v != dc])
 
 
 def _range_unwarp() -> int:
     """Every range VM back on real time, then the range lease dropped (recovery after a failed warp reset)."""
-    got = _range_clock().reset()
+    try:
+        got = _range_clock().reset()
+    except Exception as e:  # noqa: BLE001  every VM was tried; say which failed, keep the lease
+        print(f"unwarp FAILED, range clocks may still be jumped: {e}", file=sys.stderr)
+        return 3
     _clock_lease("range").path.unlink(missing_ok=True)
     print(json.dumps({"offsets_s": {str(k): round(v, 1) for k, v in got.items()}}))
     return 0
@@ -589,6 +598,7 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, term)
+    reset_failed = False
     try:
         sup.step()
         for d in days:
@@ -620,9 +630,10 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
                 lease.release()  # only after a reset that worked
                 note(event="clock_reset", **offsets(got))
             except Exception as e:  # noqa: BLE001  report it; never mask an exception in flight
-                note(event="clock_reset_failed", error=str(e)[-500:], fix="ludius range unwarp")
+                reset_failed = True
+                note(event="clock_reset_failed", error=str(e)[-1500:], fix="ludius range unwarp")
         sup.stop()
-    return 0
+    return 3 if reset_failed else 0
 
 
 async def _play_days(
