@@ -613,10 +613,12 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
 
     def note(**rec: object) -> None:
         line = json.dumps({"at": dt.datetime.now().isoformat(timespec="seconds"), **rec}, default=str)
-        journal.parent.mkdir(parents=True, exist_ok=True)
-        with journal.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-        print(line, flush=True)
+        with suppress(OSError):  # unwritable journal or output must never skip the cleanup in `finally` (stop, reset)
+            journal.parent.mkdir(parents=True, exist_ok=True)
+            with journal.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        with suppress(OSError):
+            print(line, flush=True)
 
     def offsets(got: dict[int, float]) -> dict[str, object]:
         return {"skew_s": round(max(got.values()) - min(got.values()), 1),
@@ -630,7 +632,7 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, term)
-    reset_failed, failure = False, None
+    reset_failed, failure, failed, playing, open_days = False, None, 0, list[str](), list[str]()
     try:
         sup.step()
         for d in days:
@@ -647,18 +649,33 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
                 finally:
                     calls.persona = None
             note(event="planned", date=d, items={u: len(p.items) for u, p in plans.items()})
+            failed += len(users) - len(plans)
+            plans = {u: p for u, p in plans.items() if p.items}  # an empty plan has no first item and no day
             if not plans:
                 continue
             first = min(dt.time.fromisoformat(i.at) for p in plans.values() for i in p.items)
             jump(dt.datetime.combine(d, first, tz) - dt.timedelta(minutes=10))
-            for u, res in asyncio.run(_play_days(args.temporal, plans, tz, sup)).items():
+            playing = [durable.workflow_id(p) for p in plans.values()]
+            results = asyncio.run(_play_days(args.temporal, plans, tz, sup))
+            playing = []
+            for u, res in results.items():
                 note(event="day", persona=u, date=d, result=res)
+                failed += isinstance(res, str) and res.startswith("failed")
     except KeyboardInterrupt:
         note(event="interrupted")
     except Exception as e:  # noqa: BLE001  re-raised below unless the clock reset failed too (that exit wins)
         failure = e
         note(event="warp_failed", error=repr(e)[-1500:])
     finally:
+        # Stopped mid-day: no day may run on after the warp (a SIGTERM can skip any task's own cleanup).
+        if playing:
+            try:
+                open_days = asyncio.run(_stop_days(args.temporal, playing))
+            except Exception:  # noqa: BLE001  nothing confirmed
+                open_days = playing
+        if open_days:
+            note(event="days_not_stopped", workflows=open_days, fix="temporal workflow terminate --workflow-id")
+        sup.stop(30)  # before the reset: a worker still driving its day would jump its clock again
         if lease.held:
             try:
                 got = clock.reset()
@@ -667,13 +684,17 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
             except Exception as e:  # noqa: BLE001  report it; never mask an exception in flight
                 reset_failed = True
                 note(event="clock_reset_failed", error=str(e)[-1500:], fix="ludius range unwarp")
-        sup.stop()
     if reset_failed:  # a range left on a jumped clock outranks whatever stopped the warp
         print(f"warp: clock reset FAILED, run `ludius range unwarp`; warp error: {failure!r}", file=sys.stderr)
         return 3
+    if open_days:
+        print(f"warp: day workflows not confirmed stopped, terminate them: {open_days}", file=sys.stderr)
+        return 4
     if failure:
         raise failure
-    return 0
+    if failed:
+        print(f"warp: {failed} persona day(s) without a plan or failed, see {journal}", file=sys.stderr)
+    return 1 if failed else 0
 
 
 async def _play_days(
@@ -681,8 +702,7 @@ async def _play_days(
 ) -> dict[str, object]:
     """Every persona's day as a compressed durable day on its own worker; the supervisor keeps the workers up."""
     from temporalio.client import WorkflowFailureError
-    from temporalio.common import WorkflowIDReusePolicy
-    from temporalio.exceptions import WorkflowAlreadyStartedError
+    from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
     from ludius import durable
 
@@ -692,11 +712,10 @@ async def _play_days(
         noon = dt.datetime.combine(dt.date.fromisoformat(plan.date), dt.time(12), tz).utcoffset() or dt.timedelta()
         inp = durable.DayInput(plan=plan, clock="compressed", utc_offset_s=int(noon.total_seconds()))
         wid = durable.workflow_id(plan)
-        try:
-            h = await client.start_workflow(durable.PersonaDay.run, inp, id=wid, task_queue=durable.task_queue(plan),
-                                            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE)  # fmt: skip
-        except WorkflowAlreadyStartedError:  # a rerun of the warp picks the day up again
-            h = client.get_workflow_handle_for(durable.PersonaDay.run, wid)
+        # A running day is picked up again; a closed one is played anew: after a rollback its result is not real.
+        h = await client.start_workflow(durable.PersonaDay.run, inp, id=wid, task_queue=durable.task_queue(plan),
+                                        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+                                        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING)  # fmt: skip
         try:
             return [f"{d.at} {d.template} {d.status}" for d in await h.result()]
         except WorkflowFailureError as e:
@@ -712,6 +731,33 @@ async def _play_days(
         return dict(zip(plans, await asyncio.gather(*(one(p) for p in plans.values())), strict=True))
     finally:
         keeper.cancel()
+
+
+async def _stop_days(temporal: str, wids: list[str]) -> list[str]:
+    """Terminate the warp's day workflows; returns the ids not confirmed closed (unreachable server, any doubt)."""
+    from temporalio.client import WorkflowExecutionStatus
+    from temporalio.service import RPCError, RPCStatusCode
+
+    from ludius import durable
+
+    try:
+        client = await durable.connect(durable.Target(temporal))
+    except Exception:  # noqa: BLE001  nothing confirmed
+        return wids
+    left: list[str] = []
+    for wid in wids:
+        h = client.get_workflow_handle(wid)
+        try:
+            with suppress(RPCError):  # already closed or never started: the describe below decides
+                await h.terminate("warp stopped")
+            if (await h.describe()).status == WorkflowExecutionStatus.RUNNING:
+                left.append(wid)
+        except RPCError as e:
+            if e.status != RPCStatusCode.NOT_FOUND:  # not found: its start never reached the server
+                left.append(wid)
+        except Exception:  # noqa: BLE001  unknown is not closed
+            left.append(wid)
+    return left
 
 
 async def _range_schedules(args: argparse.Namespace, users: list[str], today: dt.date) -> None:

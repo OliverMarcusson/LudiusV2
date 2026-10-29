@@ -346,7 +346,7 @@ def pending(
     done = set(seen(world.root, user))
     for p in sorted(world.root.glob(f"plans/*-{user}.yaml")):
         try:
-            done |= {it.request for it in load_plan(p).items if it.request}
+            done |= {it.request for it in load_plan(p, history=True).items if it.request}
         except (OSError, ValueError, yaml.YAMLError):
             continue
     sent = {r.msgid for d in _days(world.root) for r in d.requests if r.to == user and r.status == "sent"}

@@ -172,4 +172,4 @@ def test_dotted_folder_names_stay_distinct() -> None:
     # Re-check of 24ed2ec: stripping any extension made finance.receivables block finance.payables.
     folder = note("finance.payables", template="explorer_new_folder")
     assert check(folder, existing=["finance.receivables"]) == []
-    assert check(note("finance.receivables", template="explorer_new_folder"), folder, existing=[]) == []
+    assert check(note("finance.receivables", at="09:30", template="explorer_new_folder"), folder, existing=[]) == []

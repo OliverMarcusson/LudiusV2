@@ -21,7 +21,7 @@ from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from pydantic import Field, field_validator
@@ -85,6 +85,11 @@ class PlanItem(TaskInstance):
     interrupt: bool = False  # cuts into the task running at that time, at its next subgoal boundary
     handoff: str = ""  # colleague's account: the result lands on their later plan as a thread to pick up
     followup: str = ""  # id of the open follow-up (world_state) this item settles
+
+    @field_validator("handoff", "followup", mode="before")
+    @classmethod
+    def _none_is_empty(cls, v: object) -> object:
+        return "" if v is None else v  # the planner writes null for "none"; one null must not drop the whole draft
 
     @field_validator("at")
     @classmethod
@@ -317,6 +322,8 @@ def validate(
             why = f"handoff {it.handoff!r} is not a colleague's account"
         if not why and it.followup and it.followup not in (followups or set[str]()):
             why = f"followup {it.followup!r} is not an open follow-up"
+        if not why and (it.at, it.template) in {(x.at, x.template) for x in items[:i]}:
+            why = f"another item is already {it.template} at {it.at}"
         if not why and it.followup and it.followup in {x.followup for x in items[:i]}:
             why = f"followup {it.followup!r} is already scheduled"
         t = templates.get(it.template)
@@ -734,8 +741,7 @@ class World:
             day = d.name[:10]
             if day >= before.isoformat():
                 continue
-            for line in d.read_text(encoding="utf-8").splitlines():
-                r: dict[str, Any] = json.loads(line)
+            for r in day_records(d):
                 if r.get("event") == "item_end":
                     params: dict[str, str] = r.get("params") or {}
                     detail = ", ".join(f"{k}={v[:60]}" for k, v in params.items() if k != "body")
@@ -761,15 +767,11 @@ class World:
             date, who = path.stem[:10], path.stem[11:]
             if who == user or not start <= date < before.isoformat():
                 continue
-            mine = [it for it in load_plan(path).items if it.handoff == user]
+            mine = [it for it in load_plan(path, history=True).items if it.handoff == user]
             log = self.day_log(who, date)
             if not mine or not log.exists():
                 continue
-            done: set[tuple[str, str]] = set()
-            for line in log.read_text(encoding="utf-8").splitlines():
-                r: dict[str, Any] = json.loads(line)
-                if r.get("event") == "item_end" and r.get("status") == "done":
-                    done.add((r["at"], r["template"]))
+            done = done_slots(log)
             for it in mine:
                 if (it.at, it.template) in done:
                     detail = ", ".join(f"{k}={v[:60]}" for k, v in it.params.items() if k != "body")
@@ -777,7 +779,27 @@ class World:
         return out
 
 
-def load_plan(path: Path) -> DayPlan:
+def day_records(log: Path) -> Generator[dict[str, Any]]:
+    """A day ground-truth log's records. A line that doesn't parse (a worker killed mid-write) is skipped: it
+    proves nothing, so whatever it would have recorded stays unknown, and the other personas still plan."""
+    for line in log.read_text(encoding="utf-8").splitlines():
+        try:
+            r = json.loads(line) if line.strip() else None
+        except ValueError:
+            continue
+        if isinstance(r, dict):
+            yield cast(dict[str, Any], r)
+
+
+def done_slots(log: Path) -> set[tuple[str, str]]:
+    """(at, template) of every item the log ends "done"."""
+    if not log.exists():
+        return set()
+    return {(str(r["at"]), str(r["template"])) for r in day_records(log)
+            if r.get("event") == "item_end" and r.get("status") == "done"}  # fmt: skip
+
+
+def load_plan(path: Path, *, history: bool = False) -> DayPlan:
     """Every entry point (day, worker, nightly reuse, world state) loads plans here, so each item's own checks
     (item_problem, under the LUDIUS_SCENARIO policy; a meeting's date against the plan's) and mail recipients are
     checked here too: each mail or meeting item's `to`
@@ -785,6 +807,12 @@ def load_plan(path: Path) -> DayPlan:
     (<root>/world/narrative.yaml for <root>/plans/<plan>.yaml). No narrative: a plan with mail is refused.
     """
     plan = DayPlan.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    # (at, template) is an item's identity in day logs and world state: two alike share one outcome. Such a plan is
+    # never played; read as history (older plans), its ambiguous items are dropped: their outcome is unknown.
+    if dup := {k for k, n in Counter((it.at, it.template) for it in plan.items).items() if n > 1}:
+        if not history:
+            raise ValueError(f"{path}: items share a time and template: {sorted(dup)}")
+        plan = plan.model_copy(update={"items": [it for it in plan.items if (it.at, it.template) not in dup]})
     # The plan as written may never have passed generation (hand-edited, older code): the item checks run again.
     # An unknown template can't be played at all; validate() reports it with the role's template set.
     policy, templates = Policy.from_env(), _templates()

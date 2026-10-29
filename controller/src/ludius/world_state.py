@@ -16,13 +16,11 @@ This is planning data. Mail, calendar and sharing UIs are not driven from it unt
 from __future__ import annotations
 
 import datetime as dt
-import json
 from pathlib import Path
-from typing import Any
 
 import yaml
 
-from ludius.planner import Narrative, World, _templates, load_plan, targets  # pyright: ignore[reportPrivateUsage]
+from ludius.planner import Narrative, World, _templates, done_slots, load_plan, targets  # pyright: ignore[reportPrivateUsage]
 from ludius.tasks import Persona, Strict
 
 # Where each template's result lands, relative to the persona's profile. Templates without a lasting
@@ -84,17 +82,6 @@ def next_workday(day: dt.date) -> dt.date:
     return day
 
 
-def _done(log: Path) -> set[tuple[str, str]]:
-    if not log.exists():
-        return set()
-    out: set[tuple[str, str]] = set()
-    for line in log.read_text(encoding="utf-8").splitlines():
-        r: dict[str, Any] = json.loads(line) if line.strip() else {}
-        if r.get("event") == "item_end" and r.get("status") == "done":
-            out.add((str(r["at"]), str(r["template"])))
-    return out
-
-
 def build(world: World, narrative: Narrative, personas: list[Persona], before: dt.date) -> State:
     """Everything that happened on days before `before`."""
     state = State()
@@ -105,8 +92,8 @@ def build(world: World, narrative: Narrative, personas: list[Persona], before: d
         date, user = path.stem[:10], path.stem[11:]
         if date >= before.isoformat():
             continue
-        done = _done(world.day_log(user, date))
-        for it in load_plan(path).items:
+        done = done_slots(world.day_log(user, date))
+        for it in load_plan(path, history=True).items:
             if (it.at, it.template) not in done:
                 continue
             doc = ""
@@ -144,7 +131,7 @@ def existing_files(world: World, user: str) -> list[str]:
     templates = _templates()
     for path in sorted(world.root.glob("plans/*.yaml")):
         if path.stem[11:] == user:
-            out += [v for it in load_plan(path).items for _, v in targets(it, templates)]
+            out += [v for it in load_plan(path, history=True).items for _, v in targets(it, templates)]
     inventory = world.root / "world" / f"guest-files-{user}.txt"
     if inventory.exists():
         out += [x for x in inventory.read_text(encoding="utf-8-sig").splitlines() if x.strip()]

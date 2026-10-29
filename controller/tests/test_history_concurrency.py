@@ -23,8 +23,9 @@ DAY = "2026-10-28"
 QUERIES = ("ifrs 16 lease accounting", "supplier payment terms netherlands")
 PLAN = DayPlan.model_validate({
     "persona": "aberg", "date": DAY,
-    "items": [{"at": "09:00", "template": "edge_web_lookup", "params": {"search_query": q},
-               "context": "Checks the lease rules before the close."} for q in QUERIES],
+    "items": [{"at": at, "template": "edge_web_lookup", "params": {"search_query": q},
+               "context": "Checks the lease rules before the close."}
+              for at, q in zip(("09:00", "09:30"), QUERIES, strict=True)],
 })  # fmt: skip
 
 

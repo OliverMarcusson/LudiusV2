@@ -45,7 +45,7 @@ TAIL = 512 << 10  # bytes read from the end of a day log
 STEPS = 5
 MAX_WORDS = 25
 PROGRESS = {"day_start", "item_start", "task_start", "step", "subgoal_done", "task_end", "item_end", "break",
-            "day_end", "interrupt", "resume"}  # fmt: skip
+            "day_end", "day_aborted", "interrupt", "resume"}  # fmt: skip
 
 SYSTEM = (
     "You write the live status line on an operator's monitor for one simulated office worker on a training range. "
@@ -199,7 +199,7 @@ def activity(days: Path, user: str, now_ms: int) -> Activity:
             stack[-1]["task"] = None
         elif ev == "item_end" and stack:
             stack = stack[:-1]
-        elif ev == "day_end":
+        elif ev in ("day_end", "day_aborted"):  # an aborted day is over too: nothing runs after it
             stack, ended = [], True
     if last is None:
         return Activity("idle", f"{log.name}:empty", "idle: day not started")

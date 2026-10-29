@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -148,14 +149,18 @@ class Supervisor:
                 c.proc.kill()
             else:
                 c.proc.send_signal(signal.SIGINT)
+        deadline = time.monotonic() + grace_s  # one grace for all: they stop in parallel
         for c in live:
             assert c.proc is not None
             try:
-                c.proc.wait(grace_s)
+                c.proc.wait(max(0.0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 c.proc.kill()
-            self._event(c, "stopped")
-        self._save()
+                c.proc.wait()  # reaped: the caller resets clocks next, never under a live worker
+            with suppress(OSError):  # a log write must never skip reaping the rest: clocks reset after this
+                self._event(c, "stopped")
+        with suppress(OSError):
+            self._save()
 
     def _event(self, c: Child, event: str, **rec: Any) -> None:
         line = {"at": dt.datetime.now().isoformat(timespec="seconds"), "worker": c.spec.name, "event": event, **rec}
