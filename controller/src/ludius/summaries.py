@@ -284,7 +284,8 @@ class Summariser:
     supervisor: Path | None = None  # runs/range/supervisor.jsonl, default beside days/
     rules: health.Rules = field(default_factory=health.Rules)
     lines: dict[str, Line] = field(default_factory=dict[str, Line])
-    health: dict[str, health.Verdict] = field(default_factory=dict[str, health.Verdict])
+    verdicts: dict[str, health.Verdict] = field(default_factory=dict[str, health.Verdict])
+    _seeded: bool = False
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def step(self, mono: float | None = None) -> None:
@@ -331,15 +332,29 @@ class Summariser:
 
     def check(self, user: str, now: dt.datetime, now_ms: int) -> None:
         """The persona's health by rule; a change into or out of warn/fail is one journal line and one alert."""
+        if not self._seeded:  # a restart carries on from the last alerts, so it neither repeats nor loses one
+            self.verdicts = seed(self.alerts, self.users) | self.verdicts
+            self._seeded = True
         supervisor = self.supervisor or self.days.parent / "range" / "supervisor.jsonl"
+        old = self.verdicts.get(user)
+        was_running = old is not None and old.running
         try:
             log = newest_log(self.days, user)
         except OSError:
-            v = health.Verdict("warn", "health unknown: day logs unreadable", ("unreadable",))
+            v = health.Verdict("warn", "unknown: day logs unreadable", ("unreadable",), running=was_running)
         else:
-            v = health.classify(log, now_ms, self.rules, health.worker_exits(supervisor, user))
-        old = self.health.get(user)
-        self.health[user] = v
+            gone = old is not None and old.log != "" and str(log) != old.log and not Path(old.log).exists()
+            if was_running and (log is None or gone):  # the running day's log went away: never ok
+                assert old is not None
+                v = health.Verdict("warn", "unknown: the running day's log is missing", ("missing",), old.logical,
+                                   True, old.log)  # fmt: skip
+            elif log is None:
+                v = health.Verdict("ok", "")
+            else:
+                v = health.classify(log, now_ms, self.rules, health.worker_exits(supervisor, user))
+                if v.rules == ("unreadable",):
+                    v.running, v.logical = was_running, old.logical if old else None
+        self.verdicts[user] = v
         if ((old.health, old.rules) if old else ("ok", ())) == (v.health, v.rules):
             return  # also the first ok: only warn/fail, and the recovery from one, are alerts
         alert = {"persona": user, "health": v.health, "reason": v.reason or "recovered", "rules": list(v.rules),
@@ -384,13 +399,38 @@ class Summariser:
                 u: {
                     "vm": vm_of(u),
                     **{k: v for k, v in asdict(line).items() if k in SHOWN},
-                    "health": self.health[u].health if u in self.health else "ok",
-                    "reason": self.health[u].reason if u in self.health else "",
+                    "health": self.verdicts[u].health if u in self.verdicts else "ok",
+                    "reason": self.verdicts[u].reason if u in self.verdicts else "",
                 }
                 for u, line in self.lines.items()
             },  # fmt: skip
         }
         _write(self.out, data)
+
+
+def seed(alerts: Path, users: list[str]) -> dict[str, health.Verdict]:
+    """Each persona's health as its last alert left it (runs/monitor-alerts.jsonl); a warn or fail is taken as a
+    day still running, so a log missing now reads as unknown, not ok."""
+    out: dict[str, health.Verdict] = {}
+    try:
+        lines = alerts.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        try:
+            a: Any = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(a, dict):
+            continue
+        r = cast(dict[str, Any], a)
+        h, rules = r.get("health"), r.get("rules")
+        if r.get("persona") in users and h in ("ok", "warn", "fail") and isinstance(rules, list):
+            reason = str(r.get("reason") or "") if h != "ok" else ""
+            out[str(r["persona"])] = health.Verdict(h, reason,
+                                                    tuple(map(str, cast(list[Any], rules))),
+                                                    r.get("logical"), running=h != "ok")  # fmt: skip
+    return out
 
 
 def _iso(t: dt.datetime) -> str:

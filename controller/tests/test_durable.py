@@ -246,7 +246,8 @@ async def _cancelled(tmp_path: Path) -> None:
             await running
         assert calls == ["clock 09:00", "normalize", "run note 0900", "clock 10:00", "normalize", "start 1000",
                          "cancelled 1000", "clock reset"]  # fmt: skip
-        assert '"clock_reset"' in (tmp_path / "day.jsonl").read_text(encoding="utf-8")
+        log = (tmp_path / "day.jsonl").read_text(encoding="utf-8")
+        assert '"clock_reset"' in log and '"day_aborted"' in log and '"day_end"' not in log
 
 
 class CanaryRunner(FakeRunner):

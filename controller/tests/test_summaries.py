@@ -188,8 +188,10 @@ def test_health_rules_on_a_pvanloon_like_day(tmp_path: Path) -> None:
     write(day, 1)
     llm = LlmClient("key")
     llm._http = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500)))  # pyright: ignore[reportPrivateUsage]
+    sup = tmp_path / "supervisor.jsonl"
+    sup.write_text("", encoding="utf-8")
     s = summaries.Summariser(["pvanloon"], days, llm, out=tmp_path / "out.json", counter=tmp_path / "c.json",
-                             alerts=tmp_path / "alerts.jsonl", rules=rules)  # fmt: skip
+                             alerts=tmp_path / "alerts.jsonl", supervisor=sup, rules=rules)  # fmt: skip
     s.step(mono=1000)
     s.step(mono=1005)
     p = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))["personas"]["pvanloon"]
@@ -199,3 +201,81 @@ def test_health_rules_on_a_pvanloon_like_day(tmp_path: Path) -> None:
     alerts = [json.loads(x) for x in (tmp_path / "alerts.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [(a["persona"], a["health"]) for a in alerts] == [("pvanloon", "warn"), ("pvanloon", "ok")]
     assert alerts[0]["logical"] == "2026-11-02T10:00" and alerts[0]["host"] and alerts[1]["reason"] == "recovered"
+
+
+def test_a_stopped_day_unknown_inputs_and_a_restart(tmp_path: Path, monkeypatch: Any) -> None:
+    import pytest
+
+    from ludius import health
+
+    days = tmp_path / "days"
+    days.mkdir()
+    log = days / "2026-11-02-pvanloon.jsonl"
+    sup = tmp_path / "supervisor.jsonl"
+    sup.write_text("", encoding="utf-8")
+    rules = health.Rules(stall_s=300, normalize_fails=2, retry_attempt=3, abandoned=6, errors=3)
+    now = int(time.time() * 1000)
+
+    def write(events: list[dict[str, Any]], quiet_min: int) -> None:
+        ms = now - quiet_min * 60_000
+        log.write_text("".join(json.dumps({"host_ms": ms, **e}) + "\n" for e in events), encoding="utf-8")
+
+    # A failed break unlock: item_end failed, the workflow fails non-retryably, no day_end.
+    unlock_failed = [
+        {"event": "day_start", "clock": "realtime"},
+        {"event": "item_start", "template": "break", "at": "12:00", "minutes": 30},
+        {"event": "break", "minutes": 30},
+        {"event": "item_end", "template": "break", "status": "failed"},
+    ]
+    write(unlock_failed, 1)
+    assert health.classify(log, now, rules).health == "ok"  # not yet: the worker may still log
+    write(unlock_failed, 6)
+    v = health.classify(log, now, rules)
+    assert (v.health, v.rules) == ("fail", ("stopped",)) and "after break failed, no day_end" in v.reason
+    write([*unlock_failed, {"event": "day_aborted"}], 0)  # the durable layer's signal: at once, on any clock
+    assert health.classify(log, now, rules).rules == ("stopped",)
+    # A realtime day waiting after an ordinary failed task is not stopped.
+    write([*unlock_failed[:1], {"event": "item_start", "template": "x"}, {"event": "item_end", "template": "x",
+           "status": "failed"}], 40)  # fmt: skip
+    assert health.classify(log, now, rules).health == "ok"
+
+    # An unreadable supervisor log while the day runs is unknown, not ok; a finished day doesn't need it.
+    write(unlock_failed[:2], 0)
+    assert health.classify(log, now, rules, None).rules == ("supervisor",)
+    write([*unlock_failed, {"event": "day_end"}], 0)
+    assert health.classify(log, now, rules, None).health == "ok"
+
+    # The summariser: a running day's log that disappears is unknown; a restart seeds from the alerts file.
+    llm = LlmClient("key")
+    llm._http = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500)))  # pyright: ignore[reportPrivateUsage]
+    alerts = tmp_path / "alerts.jsonl"
+
+    def summariser() -> summaries.Summariser:
+        return summaries.Summariser(["pvanloon"], days, llm, out=tmp_path / "out.json", counter=tmp_path / "c.json",
+                                    alerts=alerts, supervisor=sup, rules=rules)  # fmt: skip
+
+    def sent() -> list[tuple[str, str]]:
+        return [(a["health"], a["reason"]) for a in map(json.loads, alerts.read_text(encoding="utf-8").splitlines())]
+
+    write(unlock_failed[:2], 0)
+    s = summariser()
+    s.step(mono=1000)
+    assert s.verdicts["pvanloon"].health == "ok" and not alerts.exists()
+    log.unlink()
+    s.step(mono=1005)
+    assert sent() == [("warn", "unknown: the running day's log is missing")]
+    write(unlock_failed, 6)
+    s.step(mono=1010)
+    assert sent()[-1][0] == "fail" and len(sent()) == 2
+    s2 = summariser()  # restarted: the same failure is no new alert
+    s2.step(mono=2000)
+    assert len(sent()) == 2
+    write([*unlock_failed, {"event": "item_start", "template": "x"}, {"event": "item_end", "status": "done"},
+           {"event": "day_end"}], 0)  # fmt: skip
+    summariser().step(mono=3000)  # restarted again: the recovery is still written
+    assert sent()[-1] == ("ok", "recovered") and len(sent()) == 3
+
+    for bad in ("0", "-5"):
+        monkeypatch.setenv("LUDIUS_HEALTH_STALL_S", bad)
+        with pytest.raises(ValueError, match="at least 1"):
+            health.Rules()

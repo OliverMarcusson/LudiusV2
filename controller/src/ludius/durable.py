@@ -173,6 +173,8 @@ class DayActivities:
     @activity.defn(name="day_abort")
     def abort(self) -> None:
         if self._owns_activity():
+            # The workflow failed or was cancelled before day_end: the monitor (ludius.health) shows the day stopped.
+            self.day.log.write(event="day_aborted", host_ms=_now())
             self.clock_reset()
 
     @activity.defn(name="day_end")

@@ -9,7 +9,12 @@ ok, warn or fail, with a short reason. Rules, thresholds from the environment:
 - failing (fail): more than LUDIUS_HEALTH_ABANDONED (6) items ended other than done today (a full day on the range
   abandons 4 to 6 of 8 to 10 now), or LUDIUS_HEALTH_ERRORS (3) errors: decision_error and budget_spent in the day log
   plus the worker's exits and failed starts in runs/range/supervisor.jsonl since the day started.
-A finished day (day_end) is judged on its counts only. A log that can't be read is warn: health unknown.
+- stopped (fail): the day's workflow ended without day_end: day_aborted (written by the durable layer's day_abort on
+  failure or cancel), or, for workers from before that event, no day_end, the last item not done and nothing logged
+  for LUDIUS_HEALTH_STALL_S (on a realtime day only after a failed break, the unlock that stops the day: after any
+  other item it may be waiting for the next one).
+A finished day (day_end) is judged on its counts only. A log that can't be read, or a supervisor log that can't be
+read while the day runs, is warn: health unknown. Thresholds must be at least 1; anything else stops at start.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -27,7 +33,10 @@ ERRORS = ("decision_error", "budget_spent")
 
 
 def _env(name: str, default: int) -> int:
-    return int(os.environ.get(name, default))
+    value = int(os.environ.get(name, default))
+    if value < 1:
+        raise ValueError(f"{name}={value}: a health threshold must be at least 1")
+    return value
 
 
 @dataclass(frozen=True)
@@ -45,15 +54,18 @@ class Verdict:
     reason: str  # shown on the tile; "" when ok
     rules: tuple[str, ...] = ()  # which rules fired: an alert is due when these or the health change
     logical: str | None = None  # the persona's own clock at the last event (guest time, else the item's slot)
+    running: bool = False  # the log shows a day still running
+    log: str = ""  # the day log judged
 
 
-def worker_exits(supervisor: Path, worker: str) -> list[int]:
-    """Host ms of the worker's exits and failed starts in the supervisor's event log (local-time stamps)."""
+def worker_exits(supervisor: Path, worker: str) -> list[int] | None:
+    """Host ms of the worker's exits and failed starts in the supervisor's event log (local-time stamps); None when
+    the log is missing or can't be read."""
     out: list[int] = []
     try:
         lines = supervisor.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return out
+        return None
     for line in lines:
         try:
             e: Any = json.loads(line)
@@ -69,17 +81,17 @@ def worker_exits(supervisor: Path, worker: str) -> list[int]:
     return out
 
 
-def classify(log: Path | None, now_ms: int, rules: Rules, exits: list[int] | None = None) -> Verdict:
-    if log is None:
-        return Verdict("ok", "")
+def classify(log: Path, now_ms: int, rules: Rules, exits: Sequence[int] | None = ()) -> Verdict:
+    """`exits`: worker_exits() for this persona, None when the supervisor log is unreadable."""
     try:
         with log.open("rb") as f:
             f.seek(max(0, f.seek(0, os.SEEK_END) - MAX_READ))
             lines = f.read().decode("utf-8", "replace").splitlines()
     except OSError:
-        return Verdict("warn", "health unknown: day log unreadable", ("unreadable",))
+        return Verdict("warn", "unknown: day log unreadable", ("unreadable",), log=str(log))
 
-    running = False
+    running = aborted = False
+    last_end: dict[str, Any] | None = None  # the last item_end since the last item_start
     clock: Any = None
     last_ms = start_ms = 0
     item: dict[str, Any] | None = None  # the open item (the innermost, while interrupted)
@@ -100,13 +112,15 @@ def classify(log: Path | None, now_ms: int, rules: Rules, exits: list[int] | Non
         if isinstance(e.get("guest_ms"), int):
             guest_ms = e["guest_ms"]
         if ev == "day_start":  # a restarted day starts its counts again
-            running, clock, start_ms, item, open_items = True, e.get("clock"), last_ms, None, 0
+            running, aborted, clock, start_ms, item, open_items = True, False, e.get("clock"), last_ms, None, 0
+            last_end = None
             normalize_streak = retry = abandoned = errors = 0
-        elif ev == "day_end":
-            running, item, open_items = False, None, 0
+        elif ev in ("day_end", "day_aborted"):
+            running, aborted, item, open_items = False, ev == "day_aborted", None, 0
         elif ev == "item_start":
-            item, open_items = e, (open_items + 1 if e.get("interrupt") else 1)
+            item, open_items, last_end = e, (open_items + 1 if e.get("interrupt") else 1), None
         elif ev == "item_end":
+            last_end = e
             open_items = max(0, open_items - 1)
             item = item if open_items else None
             abandoned += e.get("status") != "done"
@@ -120,7 +134,7 @@ def classify(log: Path | None, now_ms: int, rules: Rules, exits: list[int] | Non
         elif ev in ERRORS:
             errors += 1
     if not last_ms:
-        return Verdict("ok", "")
+        return Verdict("ok", "", log=str(log))
     errors += sum(t >= start_ms for t in exits or [])
 
     found: list[tuple[str, Health, str]] = []
@@ -129,6 +143,22 @@ def classify(log: Path | None, now_ms: int, rules: Rules, exits: list[int] | Non
         away_s = int(item.get("minutes") or 0) * 60 if item and item.get("template") == "break" else 0
         if quiet_s >= rules.stall_s + away_s:
             found.append(("stalled", "fail", f"stalled: nothing logged for {quiet_s // 60} min"))
+    if aborted:
+        found.append(("stopped", "fail", "stopped: the day's workflow ended without day_end"))
+    elif (
+        running
+        and not open_items
+        and last_end
+        and last_end.get("status") != "done"
+        and quiet_s >= rules.stall_s
+        and (clock != "realtime" or last_end.get("template") == "break")  # realtime: else waiting for the next item
+    ):
+        what = f"{last_end.get('template') or 'an item'} {last_end.get('status')}"
+        found.append(("stopped", "fail", f"stopped: no event for {quiet_s // 60} min after {what}, no day_end"))
+    if any(n == "stopped" for n, _, _ in found):  # the more precise reason for the same silence
+        found = [f for f in found if f[0] != "stalled"]
+    if running and exits is None:
+        found.append(("supervisor", "warn", "unknown: supervisor log unreadable"))
     if running and normalize_streak >= rules.normalize_fails:
         found.append(("looping", "warn", f"looping: normalize failed {normalize_streak}x in a row"))
     if running and retry >= rules.retry_attempt:
@@ -145,6 +175,7 @@ def classify(log: Path | None, now_ms: int, rules: Rules, exits: list[int] | Non
         else None
     )
     if not found:
-        return Verdict("ok", "", (), logical)
+        return Verdict("ok", "", (), logical, running, str(log))
     health: Health = "fail" if any(h == "fail" for _, h, _ in found) else "warn"
-    return Verdict(health, "; ".join(r for _, _, r in found), tuple(n for n, _, _ in found), logical)
+    reason = "; ".join(r for _, _, r in found)
+    return Verdict(health, reason, tuple(n for n, _, _ in found), logical, running, str(log))
