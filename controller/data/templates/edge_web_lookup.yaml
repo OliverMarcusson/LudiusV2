@@ -35,7 +35,8 @@ subgoals:
     steps: 10
     # An intranet article is in front (results often open in a new tab): its title ends "- Intranet page" (dc01 role,
     # intranet.html.j2); "not naming the query" failed whenever an article's title held a short query (ERP).
-    done: {foreground: {process: msedge.exe, title: ' - Intranet page'}}
+    # Not a results page whose query holds those words ("x - intranet page - Intranet search").
+    done: {foreground: {process: msedge.exe, title: '^(?!.* - Intranet search).* - Intranet page'}}
   close_edge:
     goal: "Close Microsoft Edge"
     done: {window: {process: msedge.exe, absent: true}}

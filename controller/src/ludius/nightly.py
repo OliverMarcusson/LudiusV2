@@ -148,13 +148,13 @@ def generate_day(
     src: Sources,
     date: dt.date,
     scenario: planner.Scenario | None = None,
-    shared: AbstractContextManager[object] | None = None,
+    shared: Callable[[], AbstractContextManager[object]] = nullcontext,  # entered once per shared step
 ) -> Generated:
     """`ludius plan day`: due weekly revision first (raises RevisionBusy), world state, the manager's requests (sent
     server-side, ludius.requests), then the validated plan with the persona's new requests mapped into it."""
     # Shared across personas (narrative revision, world state, the manager's requests, which send mail): one
     # planner at a time. The rest reads only this persona's files and runs in parallel with the others.
-    with shared or nullcontext():
+    with shared():
         auto = revision.revise_if_due(llm, world, src.personas, date)
         state = world_state.build(world, auto.narrative, src.personas, date)
         world_state.save(state, world)
@@ -179,7 +179,7 @@ def generate_day(
     if not isinstance(boss, str) and src.decider is not None:
         decider = src.decider()
         try:
-            with shared or nullcontext():  # reads every request day, which ensure() rewrites in place
+            with shared():  # reads every request day, which ensure() rewrites in place
                 mails = requests.pending(world, persona.user, boss, inbox_mails, src.policy, date)
             role = planner.role_templates(src.templates, persona)
             mapped, more = requests.candidates(llm, decider, world, persona, boss, mails, role, date, people)
@@ -280,7 +280,7 @@ def ensure_day(
     persona: Persona,
     src: Sources,
     date: dt.date,
-    shared: AbstractContextManager[object] | None = None,
+    shared: Callable[[], AbstractContextManager[object]] = nullcontext,  # entered once per shared step
 ) -> Planned:
     """Keep a valid existing plan (no model call, history repaired), refuse an invalid one, else create one."""
     path = world.plan_path(persona.user, date.isoformat())
@@ -339,7 +339,7 @@ class PlanActivities:
             raise ApplicationError(str(e), non_retryable=True) from e
         try:
             with calls.for_persona(fire.persona):  # this persona's daily budget pays for its plan (per thread)
-                return ensure_day(self.llm, self.world, persona, src, date, shared=self._shared())
+                return ensure_day(self.llm, self.world, persona, src, date, shared=self._shared)
         except durable.DeskBusy as e:
             raise RuntimeError("another nightly planner is running; retrying") from e
         except (PlanConflict, calls.CapReached) as e:
