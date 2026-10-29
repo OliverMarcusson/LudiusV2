@@ -44,7 +44,7 @@ subgoals:
     goal: "Send the message with Enter"
     keys: [Enter]
     require: [{focused: true, value: "^{message}$"}]
-    done: {ask: "Is the message \"{message}\" shown as the newest post in the conversation with {to_name}?"}
+    done: {ask: "Has the message \"{message}\" been sent: shown as the newest post in the conversation with {to_name}, posted by you, with the message box at the bottom now empty?"}
   close_edge:
     goal: "Close Microsoft Edge"
     done: {window: {process: msedge.exe, absent: true}}

@@ -1,7 +1,8 @@
 # Post one line in a channel of the team chat: Mattermost on the range's chat01, the web app in Edge, signed in by
 # Kerberos SSO (the persona's Windows logon; never a typed password). Small talk or a short work note.
 # Effect: one post in a range channel (noise never deletes it). Done checks are the Decider's, on a screenshot; the
-# send is guarded in code: Enter only while the focused box holds exactly the planned line.
+# send is guarded in code: Enter only while the focused box holds exactly the planned line. The sent check asks for
+# an empty message box too: it runs before every step, while the typed line still sits in the box.
 task: chat_post_message
 app: edge
 capability: chat.post
@@ -44,7 +45,7 @@ subgoals:
     goal: "Send the message with Enter"
     keys: [Enter]
     require: [{focused: true, value: "^{message}$"}]
-    done: {ask: "Is the message \"{message}\" shown as the newest post in the {channel} channel?"}
+    done: {ask: "Has the message \"{message}\" been sent: shown as the newest post in the {channel} channel, posted by you, with the message box at the bottom now empty?"}
   close_edge:
     goal: "Close Microsoft Edge"
     done: {window: {process: msedge.exe, absent: true}}

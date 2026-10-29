@@ -171,7 +171,8 @@
           param($user, $spn, $realm, $out)
           $ErrorActionPreference = 'Stop'
           if (-not (Get-ADUser -Filter "SamAccountName -eq '$user'")) {
-            $pw = ConvertTo-SecureString ([Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(24))) -AsPlainText -Force
+            $b = New-Object byte[] 24; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)  # PowerShell 5.1
+            $pw = ConvertTo-SecureString ([Convert]::ToBase64String($b)) -AsPlainText -Force
             New-ADUser -Name $user -SamAccountName $user -Description 'Ludius chat (Kerberos HTTP service)' `
               -AccountPassword $pw -Enabled $true -PasswordNeverExpires $true -CannotChangePassword $true
           }
