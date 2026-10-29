@@ -1,18 +1,16 @@
-"""Monitor activity lines: a request only on a changed record, at most once per gap, never past the daily cap."""
+"""Monitor activity lines by rule from the day log (no model), persona health and interactions."""
 
 import json
 import time
 from pathlib import Path
 from typing import Any
 
-import httpx
 import yaml
 
 from ludius import summaries
-from ludius.llm import LlmClient
 
 
-def test_cadence_and_cap(tmp_path: Path) -> None:
+def test_lines_from_the_day_log(tmp_path: Path) -> None:
     days = tmp_path / "days"
     days.mkdir()
     log = days / "2026-10-29-aberg.jsonl"
@@ -22,41 +20,16 @@ def test_cadence_and_cap(tmp_path: Path) -> None:
         with log.open("a", encoding="utf-8") as f:
             f.write(json.dumps({"host_ms": now, **e}) + "\n")
 
-    sent: list[dict[str, object]] = []
-
-    def reply(r: httpx.Request) -> httpx.Response:
-        sent.append(json.loads(r.content))
-        answer = {"message": {"content": "Aberg is opening Outlook."}}
-        return httpx.Response(200, json={"model": "routed/model", "usage": {"cost": 0.001}, "choices": [answer]})
-
-    llm = LlmClient("key", model="openrouter/auto-beta")
-    llm._http = httpx.Client(transport=httpx.MockTransport(reply))  # pyright: ignore[reportPrivateUsage]
-    s = summaries.Summariser(["aberg"], days, llm, cap=2, out=tmp_path / "out.json", counter=tmp_path / "c.json")
+    s = summaries.Summariser(["aberg"], days, out=tmp_path / "out.json")
     out = lambda: json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))["personas"]["aberg"]  # noqa: E731
-
-    s.step(mono=1000)  # no log yet: idle, no call
-    assert out()["state"] == "idle" and not sent
+    s.step()  # no log yet
+    assert (out()["state"], out()["text"]) == ("idle", "idle: no day log yet")
     event(event="item_start", template="mail.read", at="09:00")
     event(event="task_start", task="mail.read", subgoals=["open"])
-    s.step(mono=1001)
-    want = {"vm": "ludius-aberg", "state": "ok", "at": None, "text": "Aberg is opening Outlook."}
-    want |= {"model": "routed/model", "health": "ok", "reason": ""}
-    assert len(sent) == 1 and out() | {"at": None} == want
-    assert sent[0]["reasoning"] == {"effort": "high"}
-    s.step(mono=1010)  # nothing changed: no call
     event(event="step", subgoal="open", step=1, action="type", option="secret typed text")
-    s.step(mono=1020)  # changed, but inside the gap: no call
-    assert len(sent) == 1
-    s.step(mono=1001 + summaries.MIN_GAP_S)
-    assert len(sent) == 2 and "secret typed text" not in json.dumps(sent[1])
-    event(event="step", subgoal="open", step=2, action="click")
-    s.step(mono=2000)  # changed after the gap, but the day's 2 calls are spent
-    assert len(sent) == 2 and out()["state"] == "paused" and out()["text"] == "summaries paused (cap)"
-    assert json.loads((tmp_path / "c.json").read_text(encoding="utf-8"))["models"] == {"routed/model": 2}
-    event(event="item_end", template="mail.read")
-    event(event="item_start", template="web.lookup", at="09:30")  # a new task while capped: still paused
-    s.step(mono=2010)
-    assert len(sent) == 2 and out()["state"] == "paused"
+    s.step()
+    assert out() | {"at": None} == {"vm": "ludius-aberg", "state": "ok", "text": "working on mail.read: open",
+                                    "at": None, "health": "ok", "reason": ""}  # fmt: skip
 
 
 def test_no_typed_text_from_titles_or_names(tmp_path: Path) -> None:
@@ -74,34 +47,8 @@ def test_no_typed_text_from_titles_or_names(tmp_path: Path) -> None:
         "".join(json.dumps({"host_ms": now, **e}) + "\n" for e in steps), encoding="utf-8"
     )
     act = summaries.activity(days, "aberg", now)
-    assert act.state == "active" and "msedge" in act.text and "edit" in act.text
+    assert act.state == "active" and act.text == "working on edge_web_lookup: search"
     assert "lisbon" not in act.text.lower()
-
-
-def test_a_malformed_counter_pauses(tmp_path: Path) -> None:
-    path = tmp_path / "c.json"
-    today = "2026-10-29"
-    assert summaries.take(path, 5, today)  # none yet: a fresh day
-    bads: list[Any] = [
-        {},
-        {"calls": 0},
-        {"day": "2026-10-28"},
-        {"day": today, "calls": "1", "cost": 0, "models": {}},
-        {"day": today, "calls": -1, "cost": 0, "models": {}},
-        {"day": today, "calls": 0, "cost": 0, "models": []},
-        {"day": "2026-99-99", "calls": 5, "cost": 0, "models": {}},  # impossible date
-        {"day": "2026-10-30", "calls": 5, "cost": 0, "models": {}},  # future day
-        [],
-        "x",
-    ]
-    for bad in bads:
-        path.write_text(json.dumps(bad), encoding="utf-8")
-        assert summaries.counter(path, today) is None and not summaries.take(path, 5, today), bad
-        assert json.loads(path.read_text(encoding="utf-8")) == bad  # left as it was
-    path.write_text("{not json", encoding="utf-8")
-    assert not summaries.take(path, 5, today)
-    path.write_text(json.dumps({"day": "2026-10-28", "calls": 5, "cost": 0.1, "models": {"m": 5}}), encoding="utf-8")
-    assert summaries.take(path, 5, today)  # a valid counter from yesterday rolls over
 
 
 def test_interruptions_and_a_cut_off_start_are_not_idle(tmp_path: Path) -> None:
@@ -124,15 +71,15 @@ def test_interruptions_and_a_cut_off_start_are_not_idle(tmp_path: Path) -> None:
         {"event": "task_end", "task": "mail.read"},
         {"event": "item_end", "template": "mail.read"},
     ]
-    assert at(*outer, *inner).brief == "working on mail.read"
-    assert at(*outer, *inner, *after).brief == "working on word.write: type"
+    assert at(*outer, *inner).text == "working on mail.read"
+    assert at(*outer, *inner, *after).text == "working on word.write: type"
     resumed: list[dict[str, Any]] = [*outer, *inner, *after, {"event": "resume", "task": "word.write"},
                {"event": "step", "subgoal": "type", "step": 2, "action": "click"}]  # fmt: skip
-    assert at(*resumed).brief == "working on word.write: type"
+    assert at(*resumed).text == "working on word.write: type"
     # The outer item's start is cut off (tail): the resume names it; with no resume either, fresh steps are active.
-    assert at(*inner, *after, *resumed[-2:]).brief == "working on word.write: type"
+    assert at(*inner, *after, *resumed[-2:]).text == "working on word.write: type"
     cut = at({"event": "step", "subgoal": "type", "step": 7, "action": "type"})
-    assert cut.state == "active" and cut.brief == "working on an unknown task: type" and "Task: unknown" in cut.text
+    assert cut.state == "active" and cut.text == "working on an unknown task: type"
     assert at(*outer, {"event": "task_end"}, {"event": "item_end"}).state == "idle"
 
 
@@ -187,18 +134,16 @@ def test_health_rules_on_a_pvanloon_like_day(tmp_path: Path) -> None:
 
     # The summaries file carries health; a change to warn/fail (and the recovery) is one alert line, not one a pass.
     write(day, 1)
-    llm = LlmClient("key")
-    llm._http = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500)))  # pyright: ignore[reportPrivateUsage]
     sup = tmp_path / "supervisor.jsonl"
     sup.write_text("", encoding="utf-8")
-    s = summaries.Summariser(["pvanloon"], days, llm, out=tmp_path / "out.json", counter=tmp_path / "c.json",
+    s = summaries.Summariser(["pvanloon"], days, out=tmp_path / "out.json",
                              alerts=tmp_path / "alerts.jsonl", supervisor=sup, rules=rules)  # fmt: skip
-    s.step(mono=1000)
-    s.step(mono=1005)
+    s.step()
+    s.step()
     p = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))["personas"]["pvanloon"]
     assert p["health"] == "warn" and p["reason"].startswith("looping")
     write(lnord, 30)
-    s.step(mono=1010)
+    s.step()
     alerts = [json.loads(x) for x in (tmp_path / "alerts.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [(a["persona"], a["health"]) for a in alerts] == [("pvanloon", "warn"), ("pvanloon", "ok")]
     assert alerts[0]["logical"] == "2026-11-02T10:00" and alerts[0]["host"] and alerts[1]["reason"] == "recovered"
@@ -247,12 +192,10 @@ def test_a_stopped_day_unknown_inputs_and_a_restart(tmp_path: Path, monkeypatch:
     assert health.classify(log, now, rules, None).health == "ok"
 
     # The summariser: a running day's log that disappears is unknown; a restart seeds from the alerts file.
-    llm = LlmClient("key")
-    llm._http = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500)))  # pyright: ignore[reportPrivateUsage]
     alerts = tmp_path / "alerts.jsonl"
 
     def summariser() -> summaries.Summariser:
-        return summaries.Summariser(["pvanloon"], days, llm, out=tmp_path / "out.json", counter=tmp_path / "c.json",
+        return summaries.Summariser(["pvanloon"], days, out=tmp_path / "out.json",
                                     alerts=alerts, supervisor=sup, rules=rules)  # fmt: skip
 
     def sent() -> list[tuple[str, str]]:
@@ -260,20 +203,20 @@ def test_a_stopped_day_unknown_inputs_and_a_restart(tmp_path: Path, monkeypatch:
 
     write(unlock_failed[:2], 0)
     s = summariser()
-    s.step(mono=1000)
+    s.step()
     assert s.verdicts["pvanloon"].health == "ok" and not alerts.exists()
     log.unlink()
-    s.step(mono=1005)
+    s.step()
     assert sent() == [("warn", "unknown: the running day's log is missing")]
     write(unlock_failed, 6)
-    s.step(mono=1010)
+    s.step()
     assert sent()[-1][0] == "fail" and len(sent()) == 2
     s2 = summariser()  # restarted: the same failure is no new alert
-    s2.step(mono=2000)
+    s2.step()
     assert len(sent()) == 2
     write([*unlock_failed, {"event": "item_start", "template": "x"}, {"event": "item_end", "status": "done"},
            {"event": "day_end"}], 0)  # fmt: skip
-    summariser().step(mono=3000)  # restarted again: the recovery is still written
+    summariser().step()  # restarted again: the recovery is still written
     assert sent()[-1] == ("ok", "recovered") and len(sent()) == 3
 
     for bad in ("0", "-5"):

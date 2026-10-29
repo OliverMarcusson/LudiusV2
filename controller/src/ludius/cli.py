@@ -525,7 +525,7 @@ def cmd_range(args: argparse.Namespace) -> int:
 
 
 def _range_summaries(users: list[str]) -> int:
-    """The monitor's activity lines (ludius.summaries), every 5 s until stopped; its own budget, not the run's."""
+    """The monitor's activity lines, health and interactions (ludius.summaries), every 5 s until stopped; no model."""
     import signal
 
     from ludius import summaries
@@ -534,16 +534,13 @@ def _range_summaries(users: list[str]) -> int:
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, term)
-    llm = LlmClient(os.environ.get("OPENROUTER_API_KEY", ""), model=summaries.MODEL, timeout=90)
-    s = summaries.Summariser(users, planner.World(RUNS).root / "days", llm)
+    s = summaries.Summariser(users, planner.World(RUNS).root / "days")
     try:
         while True:
             s.step()
             time.sleep(5)
     except KeyboardInterrupt:
         pass
-    finally:
-        llm.close()
     return 0
 
 
@@ -1145,7 +1142,7 @@ def main(argv: list[str] | None = None) -> int:
         "what",
         choices=["up", "status", "warp", "unwarp", "summaries"],
         help="warp: time-jump test over --days simulated weekdays (Proxmox); unwarp: clocks to real time; "
-        "summaries: keep the monitor's per-persona activity lines current (ludius.summaries)",
+        "summaries: keep the monitor's per-persona lines, health and interactions current (no model calls)",
     )
     rg.add_argument("--start", help="warp: first simulated date YYYY-MM-DD (after today)")
     rg.add_argument("--days", type=int, default=3, help="warp: simulated weekdays to play")

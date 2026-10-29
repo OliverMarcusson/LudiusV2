@@ -107,7 +107,7 @@ ssh root@95.216.39.232 'cd /root/src/LudiusV2.new/controller && set -a && . ../.
 The local ssh may still hang after the `&`; that doesn't matter, because the warp runs in its own session.
 
 The monitor's activity lines and interaction toasts need a second process: start
-`.venv/bin/python -m ludius.cli range summaries` the same way, after the pre-flight (it has its own call budget).
+`.venv/bin/python -m ludius.cli range summaries` the same way, after the pre-flight (no model calls: the day log's own line, health and interactions).
 
 To stop a warp early, `kill -TERM <pid>` the `range warp` process once: it terminates the running day workflows,
 stops the workers (30 s grace for all, then kill) and only then resets the clocks (`interrupted`, then
