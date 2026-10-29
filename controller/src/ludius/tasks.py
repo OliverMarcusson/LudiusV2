@@ -919,10 +919,10 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
     if task.files_absent is None or rel not in task.files_absent:
         return False  # not proven absent (and not reserved) at start: pre-existing state, or never to be read
     f = guestfile.read(task.owner, rel)
+    if c.download is not None:  # absent at start is the proof it is new: Edge sets its write time only on close
+        return f is not None and f.exists and f.data == intranet.download_bytes(task.fmt(c.download))
     if f is None or not f.exists or f.written_ms < task.started_ms:
         return False
-    if c.download is not None:
-        return f.data == intranet.download_bytes(task.fmt(c.download))
     if c.cells is not None:
         cells = guestfile.xlsx_cells(f.data)
         want = guestfile.grid_cells(task.fmt(c.cells))

@@ -20,7 +20,7 @@ from ludius import keys
 from ludius.loop import Clock, GroundTruth, Outcome, Runner
 from ludius.planner import BREAK, DayPlan, PlanItem
 from ludius.session import EscalationDenied, Session
-from ludius.tasks import Task, Template
+from ludius.tasks import Task, Template, write_paths
 
 if TYPE_CHECKING:
     from ludius.react import Reactor
@@ -156,8 +156,16 @@ class DayRunner:
         self._started(day, item)
         task = Task(self.templates[item.template], item, self.rng)
 
+        mine = {w.casefold() for w in write_paths(task)}
+
+        def writes(i: PlanItem) -> set[str]:
+            return {w.casefold() for w in write_paths(Task(self.templates[i.template], i, random.Random(0)))}
+
         def between() -> None:
-            due = [i for i in interrupts if self.clock != "realtime" or self._clock_reached(day, i.at)]
+            # An interrupt that writes what this task writes waits until after it (the late loop): its file would
+            # pass this task's outcome check, which proves only that the file was absent at start.
+            due = [i for i in interrupts if (self.clock != "realtime" or self._clock_reached(day, i.at))
+                   and (i.template == BREAK or not writes(i) & mine)]  # fmt: skip
             for i in due:
                 interrupts.remove(i)
                 self.log.write(event="interrupt", host_ms=_now(), task=item.template, by=i.template, at=i.at)

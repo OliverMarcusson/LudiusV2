@@ -95,6 +95,12 @@ def test_time_jump_day_keeps_order_breaks_and_interrupts(tmp_path: Path) -> None
     calls.clear()
     day.slot(dt.date(2026, 11, 2), note("12:05"), [], jump_at="12:30")
     assert calls[:2] == ["clock 12:30", "normalize"]
+    # An interrupt that writes the same file waits until after the task: its file would pass the task's check.
+    calls.clear()
+    same = note("09:00", interrupt=True).model_copy(update={"at": "09:10"})
+    day.slot(dt.date(2026, 11, 2), note("09:00"), [same])
+    assert [c for c in calls if c.startswith("run")] == ["run note 0900", "run note 0900"]
+    assert [r.item.at for r in day.results[-2:]] == ["09:00", "09:10"]
     log.close()
 
 

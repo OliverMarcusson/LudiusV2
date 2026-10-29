@@ -74,7 +74,9 @@ def test_download_task(monkeypatch: pytest.MonkeyPatch) -> None:
     served = (intranet.DIR / "files" / name).read_bytes()
     check = next(sg.done.file for sg in t.template.subgoals.values() if sg.done and sg.done.file)
     for got, ok in [(guestfile.GuestFile(True, 2000, served), True), (guestfile.GuestFile(True, 2000, b"x"), False),
-                    (guestfile.GuestFile(True, 500, served), False), (None, False)]:  # fmt: skip
+                    (guestfile.GuestFile(True, 500, served), True), (None, False)]:  # fmt: skip
         monkeypatch.setattr(guestfile, "read", lambda user, rel, f=got: f)  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
         assert tasks._file_ok(check, t) is ok  # pyright: ignore[reportPrivateUsage]
+    t.files_absent = frozenset()  # there at start: never this task's download
+    assert tasks._file_ok(check, t) is False  # pyright: ignore[reportPrivateUsage]
     assert guestfile.profile_path("aberg", rel) == "C:\\Users\\aberg\\Downloads\\" + name
