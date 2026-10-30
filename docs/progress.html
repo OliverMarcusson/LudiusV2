@@ -106,7 +106,7 @@
 <body>
 <main>
   <h1>Ludius V2: progress against the spec</h1>
-  <p class="meta"><span>Updated 30 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/71cd98d"><code>71cd98d</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
+  <p class="meta"><span>Updated 30 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/87474fe"><code>87474fe</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
 
   <div class="summary" id="summary"></div>
   <p class="meta">The percentage gives every partial requirement half credit. Improvements within a partial row do not move the score. Current priority: finish end-to-end acceptance cases and close requirements; deferred infrastructure remains in the total.</p>
@@ -130,6 +130,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-30">30 Oct 2026</time><span>Files sent as attachments. outlook_send_attachment copies an own Documents file in Explorer, pastes it into a new Outlook mail and sends it to one colleague; plan load allows only own .docx, .xlsx, .pptx, .txt or .pdf files. Done needs the colleague's new mail to hold exactly one attachment with the file's bytes, read over EWS. Live, lnord: patch notes s1.docx to dkoster in 14 steps, same sha256 in the inbox as on the guest. Found live: the Attach File dropdown never opened, so the template pastes the file instead.</span></li>
       <li><time datetime="2026-10-30">30 Oct 2026</time><span>Downloads filed away. explorer_file_download moves a file the persona downloaded on an earlier day from Downloads into Documents with Cut and Paste; done needs the Documents copy to hold the downloaded bytes and the Downloads file to be gone, both read from the guest. Live, lnord: download on 18 Nov, moved on 19 Nov in 8 steps, same sha256 before and after.</span></li>
       <li><time datetime="2026-10-30">30 Oct 2026</time><span>Spreadsheet updates (4a82d70, 71cd98d). excel_add_rows opens an own .xlsx, goes to the first empty row below the table and types new rows, then saves; done needs every old cell unchanged and exactly the planned rows below them, read from the file on the guest. Live, lnord: done in 16 steps, the file holds the old six cells plus db01 4 and mail01 2. Found live: the Decider clicked Add Sheet and typed on a second sheet; both Excel templates now avoid that button.</span></li>
       <li><time datetime="2026-10-30">30 Oct 2026</time><span>Save As reuse and monitor console (bd51a3e, 84e6c33). word_save_as_copy opens an own Word file, saves it under a new name with Save As, appends lines and saves; done needs the new file (absent at start) to hold the old lines plus the new ones and the original byte-unchanged. Enter is refused in the Save As dialog until the File name field holds the new name and the Decider confirms Documents, name and type. Live, lnord: patch notes s2 to s3 in 10 steps, s3 = 2 old + 1 new paragraph, s2 untouched since the earlier run. The monitor console adds Overview, Company, People and Daybook pages and persona portraits.</span></li>

@@ -24,6 +24,7 @@ from ludius.llm import LlmClient
 from ludius.mail import DOMAIN as MAIL_DOMAIN
 from ludius.policy import Policy
 from ludius.tasks import (
+    ATTACHABLE,
     REFERS_TO_EXISTING,
     SENDS,
     Persona,
@@ -365,7 +366,7 @@ def validate(
             why = _reply_thread(it, mail_threads or {}, inbox or set[tuple[str, str]]())
         if not why and cap == "mail.read":
             why = _read_mail(it, colleagues or set[str](), inbox or set[tuple[str, str]](), items[:i])
-        if not why and cap in OWN_FILES and t:
+        if not why and t and (cap in OWN_FILES or t.attaches):
             why = _owned(it, t, owned or {}, day, items)
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
@@ -399,13 +400,16 @@ def _owned(it: PlanItem, t: Template, owned: dict[str, str], day: str, items: li
     shared = [sg.done.file.path for sg in t.subgoals.values() if sg.done and sg.done.file and sg.done.file.share]
     sources = [sg.done.file.source for sg in t.subgoals.values() if sg.done and sg.done.file and sg.done.file.source]
     try:
-        named = t.removes if recycle or t.capability == "file.organize" else shared or sources or t.writes
+        named = t.removes if recycle or t.capability == "file.organize" else shared or sources or t.attaches or t.writes
         paths = [w.format_map({**it.params, **it.content}) for w in named]
     except KeyError:
         return "missing parameters"
     if not paths or any(p.casefold() not in owned for p in paths):
         verb = "recycle" if recycle else "move" if t.removes else "copy" if shared else "reuse" if sources else "edit"
+        verb = "attach" if t.attaches else verb
         return f"file_name: {verb} only one of this persona's own files (Own recent files), named exactly"
+    if t.attaches and not all(p.lower().endswith(ATTACHABLE) for p in paths):
+        return f"file_name: attach only {', '.join(ATTACHABLE)} files"
     if recycle:
         cutoff = (dt.date.fromisoformat(day) - dt.timedelta(days=RECYCLE_AGE_DAYS)).isoformat()
         if any(owned[p.casefold()] > cutoff for p in paths):
@@ -879,7 +883,7 @@ def load_plan(path: Path, *, history: bool = False) -> DayPlan:
     teams = [c for c, members in (world.channels if world else {}).items() if plan.persona in members]
     shares = [c for c, members in (world.shares if world else {}).items() if plan.persona in members]
     edits = [it for it in plan.items
-             if (t := templates.get(it.template)) and t.capability in OWN_FILES]  # fmt: skip
+             if (t := templates.get(it.template)) and (t.capability in OWN_FILES or t.attaches)]  # fmt: skip
     owned = owned_files(path.parent.parent, plan.persona, plan.date) if edits and not history else {}
     for it in [] if history else edits:
         if why := _owned(it, templates[it.template], owned, plan.date, plan.items):

@@ -1,0 +1,90 @@
+task: outlook_send_attachment
+app: outlook
+capability: mail.send
+processes: [outlook.exe, explorer.exe]
+params: [to, to_name, subject, body, file_name]
+about: "Mail one of the persona's own files (a Documents file under Own recent files; .docx, .xlsx, .pptx, .txt or .pdf) to one colleague as an attachment in Outlook. to: the colleague's address <user>@ludius.internal; subject: one line; body: the mail text (ASCII, a few short lines); file_name: the file's name exactly, with its extension, without folder."
+example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga, subject: q4 accruals sheet, body: "hi marcus\nthe accruals sheet is attached\n- anna", file_name: q4 accruals.xlsx}
+variants:
+  - [open_explorer_keys, go_documents, show_extensions, select_file, copy_keys, close_explorer, open_outlook, new_message_shortcut, fill_to, fill_subject, write_body, paste_file, send_shortcut, close_outlook]
+  - [open_explorer_keys, go_documents, show_extensions, select_file, copy_keys, close_explorer, open_outlook, new_message_ribbon, fill_to, fill_subject, write_body, paste_file, send_shortcut, close_outlook]
+budget_steps: 70
+budget_minutes: 14
+on_abandon: close_without_saving
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_documents:
+    goal: "Go to the Documents folder"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {ask: "Does File Explorer show the user's own Documents folder (This PC > Documents or the pinned Documents), not a library, Public Documents or another folder?"}
+  show_extensions:
+    goal: "Turn on File name extensions on File Explorer's View tab, so the file shows as {file_name}"
+    steps: 8
+    avoid: [{role: edit}, {name: '(?i)^(hidden items|item check boxes|hide selected items|options)$'}]
+    done: {element: {role: check box, name: '^File name extensions$', value: '^on$'}}
+  select_file:
+    goal: "Click the file {file_name} once to select it"
+    in_window: &documents {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+    avoid: [{role: edit}]
+    done: {element: {role: list item, name: '^{file_name}$', selected: true}}
+  copy_keys:
+    goal: "Press Ctrl+C to copy the selected file {file_name}"
+    keys: [Ctrl+C]
+    steps: 3
+    in_window: *documents
+    require: [{role: list item, name: '^{file_name}$', selected: true}]
+    forbid: [{role: list item, name: '^(?!{file_name}$)', selected: true}]
+    confirm: "Does File Explorer show the user's own Documents folder with only {file_name} selected?"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {pressed: true}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}
+  open_outlook:
+    goal: "Open Outlook by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    steps: 8
+    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}
+  new_message_shortcut:
+    goal: "Start a new mail with Ctrl+N"
+    keys: [Ctrl+N]
+    done: {window: {process: outlook.exe, title: "^Untitled - Message"}}
+  new_message_ribbon:
+    goal: "Start a new mail with the New Email button on the Home tab"
+    done: {window: {process: outlook.exe, title: "^Untitled - Message"}}
+  fill_to:
+    goal: "Type {to} into the To field of the new mail"
+    text: to
+    done: {typed: true}
+  fill_subject:
+    goal: "Type the subject into the Subject field: {subject}"
+    text: subject
+    done: {typed: true}
+  write_body:
+    goal: "Type the mail text into the message body (below the Subject field)"
+    text: body
+    unreadable_ok: true
+    done: {typed: true}
+  paste_file:
+    goal: "Press Ctrl+V in the message body to attach the copied file {file_name}"
+    keys: [Ctrl+V]
+    steps: 4
+    in_window: {process: outlook.exe, title: " - Message"}
+    require: [{role: document, focused: true}]
+    confirm: "Is the text cursor in the body of the new mail to {to_name}, with no attachment yet?"
+    done: {ask: "Does the new mail show exactly one attachment, {file_name}, and no other?"}
+  send_shortcut:
+    goal: "Send the mail with Alt+S"
+    keys: [send]
+    allow_destructive: ["Send"]
+    confirm: "Does the new mail to {to_name} show exactly one attachment, {file_name}, and no other?"
+    done: {mail: {mailbox: "{to}", attachment: 'Documents\{file_name}'}}
+  close_outlook:
+    goal: "Close Outlook"
+    done: {window: {process: outlook.exe, absent: true}}

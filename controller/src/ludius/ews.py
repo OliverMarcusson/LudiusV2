@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import hashlib
 import os
@@ -43,6 +44,7 @@ class Item(TypedDict):
     msgid: str
     in_reply_to: str
     read: bool
+    attachments: tuple[tuple[str, str], ...] | None
 
 
 def _settings() -> tuple[str, str, str, str] | None:
@@ -165,10 +167,40 @@ def parse(el: ET.Element) -> Item:
         "msgid": text(f"{{{T}}}InternetMessageId").strip(),
         "in_reply_to": text(f"{{{T}}}InReplyTo").strip(),
         "read": text(f"{{{T}}}IsRead") == "true",
+        "attachments": None,
     }
 
 
-def query(mailbox: str, folder: str, subject: str | None) -> list[Item] | None:
+def _attachments(mailbox: str, el: ET.Element) -> tuple[tuple[str, str], ...] | None:
+    box = el.find(f"{{{T}}}Attachments")
+    found = [] if box is None else list(box)
+    ids = [a.find(f"{{{T}}}AttachmentId") for a in found if a.tag == f"{{{T}}}FileAttachment"]
+    if len(ids) != len(found) or any(i is None or not i.get("Id") for i in ids):
+        return None
+    if not ids:
+        return ()
+    msgs = call(mailbox, "<m:GetAttachment><m:AttachmentIds>" + "".join(
+        f"<t:AttachmentId Id={quoteattr(i.get('Id', ''))}/>" for i in ids if i is not None)
+        + "</m:AttachmentIds></m:GetAttachment>")  # fmt: skip
+    if msgs is None or len(msgs) != len(ids):
+        return None
+    got: list[tuple[str, str]] = []
+    for m in msgs:
+        a = m.find(f"{{{M}}}Attachments/{{{T}}}FileAttachment")
+        if a is None:
+            return None
+        content = a.find(f"{{{T}}}Content")
+        if content is None:
+            return None
+        try:
+            data = base64.b64decode(content.text or "", validate=True)
+        except ValueError:
+            return None
+        got.append(((a.findtext(f"{{{T}}}Name", "") or "").strip().casefold(), hashlib.sha256(data).hexdigest()))
+    return tuple(sorted(got))
+
+
+def query(mailbox: str, folder: str, subject: str | None, attachments: bool = False) -> list[Item] | None:
     found = _find(mailbox, folder, subject)
     if found is None:
         return None
@@ -177,7 +209,8 @@ def query(mailbox: str, folder: str, subject: str | None) -> list[Item] | None:
         return None
     if not ids:
         return []
-    props = "".join(f'<t:FieldURI FieldURI="{f}"/>' for f in FIELDS) + "".join(
+    fields = (*FIELDS, "item:Attachments") if attachments else FIELDS
+    props = "".join(f'<t:FieldURI FieldURI="{f}"/>' for f in fields) + "".join(
         f'<t:ExtendedFieldURI PropertyTag="{tag}" PropertyType="String"/>' for tag in EXTENDED
     )
     msgs = call(mailbox, (
@@ -191,7 +224,10 @@ def query(mailbox: str, folder: str, subject: str | None) -> list[Item] | None:
         got = m.find(f"{{{M}}}Items")
         if got is None or len(got) != 1:
             return None
-        items.append(parse(got[0]))
+        item = parse(got[0])
+        if attachments and (subject is None or item["subject"] == subject):
+            item["attachments"] = _attachments(mailbox, got[0])
+        items.append(item)
     return [i for i in items if subject is None or i["subject"] == subject]
 
 

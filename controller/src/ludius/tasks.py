@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import functools
+import hashlib
 import os
 import random
 import re
@@ -61,6 +62,13 @@ class MailCheck(Strict):
     body: str = "{body}"
     above_quote: bool = False
     reply_to: str = ""
+    attachment: str | None = None
+
+    @model_validator(mode="after")
+    def _own_file(self) -> MailCheck:
+        if self.attachment is not None and guestfile.profile_path("u", self.attachment) is None:
+            raise ValueError(f"mail check: attachment {self.attachment!r} is a file in a noise folder")
+        return self
 
 
 class InviteCheck(Strict):
@@ -73,6 +81,8 @@ class InviteCheck(Strict):
 
 
 EDITABLE = (".docx", ".txt", ".xlsx")
+ATTACHABLE = (".docx", ".xlsx", ".pptx", ".txt", ".pdf")
+ATTACH_MAX_BYTES = 5_000_000
 
 
 class FileCheck(Strict):
@@ -198,7 +208,7 @@ Capability = Literal[
 ]
 SENDS: dict[str, Literal["mail", "meeting"]] = {"mail.send": "mail", "mail.reply": "mail", "calendar.invite": "meeting"}
 REFERS_TO_EXISTING: dict[str, set[str]] = {
-    "mail.send": {"to", "to_name"},
+    "mail.send": {"to", "to_name", "file_name"},
     "mail.reply": {"to", "to_name", "subject"},
     "mail.read": {"sender", "subject"},
     "calendar.invite": {"to", "to_name"},
@@ -344,6 +354,11 @@ class Template(Strict):
     key_commits: list[KeyCommit] = Field(default_factory=list[KeyCommit])
 
     @property
+    def attaches(self) -> list[str]:
+        return [sg.done.mail.attachment for sg in self.subgoals.values()
+                if sg.done and sg.done.mail and sg.done.mail.attachment]  # fmt: skip
+
+    @property
     def sends_mail(self) -> bool:
         return self.capability in SENDS
 
@@ -388,7 +403,8 @@ class Template(Strict):
 
     @model_validator(mode="after")
     def _writes_declared(self) -> Template:
-        if set(self.params) & NAME_PARAMS and not self.writes and self.capability not in ("file.recycle", "file.share"):
+        own = self.attaches or self.capability in ("file.recycle", "file.share")
+        if set(self.params) & NAME_PARAMS and not self.writes and not own:
             raise ValueError(f"{self.task}: creates {sorted(set(self.params) & NAME_PARAMS)} but declares no writes")
         for r in self.removes:
             if guestfile.profile_path("u", r.removesuffix(".*")) is None:
@@ -763,8 +779,15 @@ def explorer_crumbs(snap: obs.Snapshot, fg: int | None) -> list[str] | None:
 
 def _mail_ok(c: MailCheck, task: Task) -> bool:
     sender = f"{task.owner}@{mail.DOMAIN}" if task.owner else ""
+    attachment = None
+    if c.attachment is not None:
+        rel = task.fmt(c.attachment)
+        if (data := task.sources_before.get(rel)) is None:
+            return False
+        attachment = _leaf(rel).casefold(), hashlib.sha256(data).hexdigest()
     return mail.delivered(task.fmt(c.mailbox), c.folder, task.fmt(c.subject), task.fmt(c.body), sender,
-                          task.started_ms, c.above_quote, task.mail_before, task.fmt(c.reply_to))  # fmt: skip
+                          task.started_ms, c.above_quote, task.mail_before, task.fmt(c.reply_to),
+                          attachment)  # fmt: skip
 
 
 def local_ms(date: str, hhmm: str, tz: str) -> int:
@@ -833,7 +856,8 @@ def file_reserved(user: str, rel: str, policy: Any) -> bool:
 def file_baseline(task: Task, policy: Any) -> str | None:
     files = [sg.done.file for sg in task.template.subgoals.values() if sg.done and sg.done.file]
     sources = [task.fmt(c.source) for c in files if c.source]
-    for rel in [*write_paths(task), *(task.fmt(r) for r in task.template.removes), *sources]:
+    attached = [task.fmt(a) for a in task.template.attaches]
+    for rel in [*write_paths(task), *(task.fmt(r) for r in task.template.removes), *sources, *attached]:
         if file_reserved(task.owner, rel, policy):
             return f"{rel}: scenario-reserved file"
     absent: set[str] = set()
@@ -866,6 +890,13 @@ def file_baseline(task: Task, policy: Any) -> str | None:
         if not f.exists:
             return f"{src}: not there, nothing to move"
         task.sources_before[src] = f.data
+    for rel in sorted(set(attached)):
+        f = guestfile.read(task.owner, rel)
+        if f is None:
+            return f"{rel}: unreadable on the guest"
+        if not f.exists or len(f.data) > ATTACH_MAX_BYTES:
+            return f"{rel}: not there or over {ATTACH_MAX_BYTES} bytes, nothing to attach"
+        task.sources_before[rel] = f.data
     edits = {task.fmt(c.path): task.fmt(c.source or c.path) for c in files if c.append is not None}
     appends = {task.fmt(c.path): c.append or "" for c in files if c.append is not None}
     for rel, src in sorted(edits.items()):

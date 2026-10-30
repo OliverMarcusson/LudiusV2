@@ -50,6 +50,7 @@ class Message:
     msgid: str = ""
     in_reply_to: str = ""
     read: bool = False
+    attachments: tuple[tuple[str, str], ...] | None = None
 
 
 def _exchange() -> bool:
@@ -96,8 +97,8 @@ def read_state(user: str, message_id: int, folder: str = "inbox") -> bool | None
     return {"0": False, "1": True}.get(out.stdout.decode("ascii", "replace").strip())
 
 
-def messages(user: str, folder: str, subject: str) -> list[Message]:
-    return _query(user, folder, subject) or []
+def messages(user: str, folder: str, subject: str, attachments: bool = False) -> list[Message]:
+    return _query(user, folder, subject, attachments) or []
 
 
 def matching(user: str, folder: str, subject: str) -> list[Message] | None:
@@ -108,11 +109,11 @@ def newest(user: str, folder: str) -> list[Message] | None:
     return _query(user, folder, None)
 
 
-def _query(user: str, folder: str, subject: str | None) -> list[Message] | None:
+def _query(user: str, folder: str, subject: str | None, attachments: bool = False) -> list[Message] | None:
     if not re.fullmatch(r"[a-z0-9]+", user):
         return None
     if _exchange():
-        items = ews.query(f"{user}@{DOMAIN}", folder, subject)
+        items = ews.query(f"{user}@{DOMAIN}", folder, subject, attachments)
         return None if items is None else [Message(**i) for i in items]
     db = f"/var/lib/gromox/user/{DOMAIN}/{user}"
     rcpt = (f"(select group_concat(coalesce(cast(a.propval as text), cast(e.propval as text), '?'), ',') "
@@ -221,6 +222,7 @@ def delivered(
     above_quote: bool = False,
     before: Seen | None = frozenset(),
     reply_to: str = "",
+    attachment: tuple[str, str] | None = None,
 ) -> bool:
     address = address.strip().lower()
     user, _, domain = address.partition("@")
@@ -231,6 +233,7 @@ def delivered(
     seen = before
 
     def ours(m: Message, u: str, f: str) -> bool:
+        attached = attachment is None or (u, f) != (user, folder) or m.attachments == (attachment,)
         text = QUOTE_HEADER.split(m.body, maxsplit=1)[0] if above_quote else m.body
         answers = not reply_to or (m.in_reply_to == reply_to and m.prefix.strip().upper() == "RE:")
         return (
@@ -239,9 +242,10 @@ def delivered(
             and _recent(m, since_ms)
             and want in letters(text)
             and answers
+            and attached
         )
 
-    if not any(ours(m, user, folder) for m in messages(user, folder, subject)):
+    if not any(ours(m, user, folder) for m in messages(user, folder, subject, attachment is not None)):
         return False
     sent = [m for m in messages(me, "sent", subject) if ours(m, me, "sent")]
     return bool(sent) and all(m.recipients == (address,) for m in sent)

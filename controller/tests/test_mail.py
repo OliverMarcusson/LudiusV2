@@ -104,7 +104,7 @@ def test_done_is_read_on_the_server_whatever_the_screen(monkeypatch: pytest.Monk
     assert check_done(done, obs.Snapshot(), task, typed_ok=False) is True
     assert calls == [("mvellinga@ludius.internal", "inbox", "lund accruals q4 status",
                       "hi marcus\nlund accruals for q4 are booked", "aberg@ludius.internal", 1_000,
-                      False, frozenset(), "")]  # fmt: skip
+                      False, frozenset(), "", None)]  # fmt: skip
     assert check_done(done, obs.Snapshot(), task, typed_ok=True) is False
 
 
@@ -163,7 +163,7 @@ def test_sent_copy_must_go_to_the_planned_recipient_alone(
 ) -> None:
     sent = mail.Message("aberg@ludius.internal", 5_000, 0, "Yes, booked.", sent_to)
 
-    def messages(user: str, folder: str, _subject: str) -> list[mail.Message]:
+    def messages(user: str, folder: str, _subject: str, _attachments: bool = False) -> list[mail.Message]:
         return [sent] if (user, folder) == ("aberg", "sent") else [REPLY]
 
     monkeypatch.setattr(mail, "messages", messages)
@@ -506,7 +506,7 @@ def test_mail_from_an_earlier_playback_never_counts_after_a_clock_rewind(monkeyp
     def query(user: str, folder: str, _subject: str) -> list[mail.Message] | None:
         return list(store.get((user, folder), []))
 
-    def messages(user: str, folder: str, subject: str) -> list[mail.Message]:
+    def messages(user: str, folder: str, subject: str, _attachments: bool = False) -> list[mail.Message]:
         return query(user, folder, subject) or []
 
     def unreadable(*_: str) -> None:
