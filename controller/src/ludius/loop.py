@@ -52,6 +52,7 @@ DONE_THRESHOLD = 0.85
 OFF_TRACK_THRESHOLD = 0.8
 NEAR_TIE = 0.05
 BLOCKED_WAIT_S = 1.5
+SLOW_KEY_WAIT_S = 4.0
 LAUNCH_REASON = "the launch query goes into the Start search box only"
 REPLACE_REASON = "replacing text needs a target field that holds the keyboard focus"
 NARRATIVE = requests.ROOT / "world" / "narrative.yaml"
@@ -545,6 +546,9 @@ class Runner:
             refused = self.act(chosen, task, sg)
             guarded = bool(sg.require) and not refused and chosen.kind != "rescan"
             snap = self.observe(timeout_ms=10000 if chosen.kind == "rescan" else 5000)
+            if chosen.kind == "key" and not refused and chosen.keys in sg.keys and fingerprint(snap) == here:
+                time.sleep(SLOW_KEY_WAIT_S)
+                snap = self.observe(timeout_ms=10000)
             after = fingerprint(snap)
             changed, revisit = after != here, after in seen
             seen.add(after)

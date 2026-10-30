@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from ludius import keys, loop
 from ludius.calls import CapReached
 from ludius.cli import load_templates
 from ludius.decisions import Decision
@@ -255,3 +256,40 @@ def test_a_confirm_subgoal_refuses_clicks_and_other_keys(tmp_path: Path) -> None
     assert runner.act(Option("o1", "click", "click Paste"), task, sg) is not None
     assert runner.act(Option("o2", "key", "press Ctrl+Shift+V", keys="Ctrl+Shift+V"), task, sg) is not None
     assert not chords
+
+
+class SlowDialogAgent(ToggleAgent):
+    def __init__(self) -> None:
+        super().__init__()
+        self.since: int | None = None
+
+    def chord(self, vks: list[int]) -> int:
+        self.since = 0 if vks == keys.chord("F12") else None
+        return 0
+
+    def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
+        if self.since is not None:
+            self.since += 1
+        title = "Save As" if self.since is not None and self.since >= 2 else "Book1 - Excel"
+        fg = obs.Window(title=title, process_name="EXCEL.EXE", kind=obs.Window.FOREGROUND)
+        s = obs.Snapshot(screen_width=1920, screen_height=1080, dpi=96, settled=True, windows=[fg])
+        return pb.ObserveResult(snapshot=s)
+
+
+class F12ThenEsc(PrefersStart):
+    def decide(
+        self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
+    ) -> Decision:
+        want = "press Esc" if "no visible change" in json.dumps(state) else "press F12"
+        key = next(k for k, t in options.items() if t == want)
+        return Decision(key, 0.9, {key: 0.9}, 0.0, 0.0, "fake")
+
+
+def test_a_slow_dialog_from_the_subgoal_key_gets_a_second_look(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(loop, "SLOW_KEY_WAIT_S", 0)
+    log = tmp_path / "gt.jsonl"
+    runner = Runner(SlowDialogAgent(), F12ThenEsc(), Persona(name="t", user="t"), GroundTruth(log), seed=1)  # type: ignore[arg-type]
+    tpl = load_templates()["excel_new_workbook"]
+    task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
+    status, steps, _ = runner._subgoal(task, "save_as", task.subgoal("save_as"), budget=4, t0=1e18)  # pyright: ignore[reportPrivateUsage]
+    assert (status, steps) == ("done", 1)
