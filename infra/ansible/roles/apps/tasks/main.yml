@@ -50,3 +50,22 @@
   loop:
     - { path: 'HKLM:\SOFTWARE\Microsoft\Office\16.0\Registration', name: AcceptAllEulas }
     - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Office\16.0\Common\General', name: ShownFirstRunOptin }
+
+- name: New profiles have seen Office's privacy notice and Outlook's feature callouts
+  ansible.windows.win_regedit:
+    hive: C:\Users\Default\NTUSER.DAT
+    path: HKLM:\ANSIBLE\Software\Microsoft\Office\16.0\Common\{{ item.key }}
+    name: "{{ item.name }}"
+    data: 2
+    type: dword
+  loop:
+    - { key: 'Privacy\SettingsStore\Anonymous', name: OptionalConnectedExperiencesNoticeVersion }
+    - { key: TeachingCallouts, name: SLRToggleReplaceTeachingCalloutID }
+    - { key: TeachingCallouts, name: UseTighterSpacingTeachingCallout }
+    - { key: TeachingCallouts, name: MessageExtensionsTeachingCallout }
+    - { key: TeachingCallouts, name: HubBarTeachingCallout }
+    - { key: TeachingCallouts, name: RibbonOverflowTeachingCalloutID }
+    - { key: TeachingCallouts, name: Olk_SearchBoxTitleBar_SLR_Sequence }
+    - { key: TeachingCallouts, name: AccCheckerStatusBarTeachingCallout }
+    - { key: TeachingCallouts, name: RoamingSigTeachingCallout }
+    - { key: TeachingCallouts, name: PPT_RecordVideoPresentation_Callout }
