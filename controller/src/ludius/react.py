@@ -168,6 +168,33 @@ PAIR_SQL = """select coalesce(json_agg(p.id), '[]') from channels c
 where c.type = 'D' and u.username = :'u' and o.username = :'o' and u.id <> o.id and p.deleteat = 0;
 """
 _POST_ID = re.compile(r"[a-z0-9]{26}")
+SHARED_SQL = """select coalesce(json_agg(f.path), '[]') from fileinfo f
+  join channels c on c.id = f.channelid join users u on u.id = f.creatorid
+  join channelmembers m on m.channelid = c.id join users o on o.id = m.userid left join posts p on p.id = f.postid
+where c.type = 'D' and u.username = :'u' and o.username = :'o' and u.id <> o.id and f.deleteat = 0
+  and f.createat >= :s and lower(f.name) = lower(:'n')
+  and case when :'state' = 'posted' then p.deleteat = 0 and p.userid = u.id and p.channelid = c.id
+      else coalesce(f.postid, '') = '' end;
+"""
+_FILE_PATH = re.compile(r"[A-Za-z0-9_-]+(/[A-Za-z0-9_][A-Za-z0-9 ._-]*)+")
+_SHA = re.compile(r"[0-9a-f]{64}")
+
+
+def shared(user: str, other: str, name: str, since_ms: int, posted: bool = True) -> list[str] | None:
+    paths = _query(SHARED_SQL, u=user, o=other, n=name, s=str(since_ms), state="posted" if posted else "staged")
+    if not isinstance(paths, list):
+        return None
+    raw = cast(list[object], paths)
+    ok = [p for p in raw if isinstance(p, str) and _FILE_PATH.fullmatch(p) and ".." not in p]
+    if len(ok) != len(raw):
+        return None
+    if not ok:
+        return []
+    p = _ssh("sudo sha256sum -- " + " ".join(shlex.quote("/opt/mattermost/data/" + x) for x in ok), "")
+    if p is None or p.returncode != 0:
+        return None
+    sums = [line.split(" ", 1)[0] for line in p.stdout.decode("utf-8", "replace").splitlines()]
+    return sums if len(sums) == len(ok) and all(_SHA.fullmatch(x) for x in sums) else None
 
 
 def reset(user: str, other: str) -> int | None:

@@ -647,7 +647,8 @@ def item_problem(
         return "folder: 2-30 letters, digits, spaces or '-', not one of Outlook's own folders"
     if t.capability == "file.share" and task.values.get("share") not in list(shares):
         return f"share {task.values.get('share')!r} is not one of this persona's team shares {sorted(shares)}"
-    if t.capability in ("chat.post", "chat.dm") and not 2 <= len(task.values.get("message", "").strip()) <= 200:
+    message = task.values.get("message", "").strip()
+    if t.capability in ("chat.post", "chat.dm", "chat.file") and not 2 <= len(message) <= 200:
         return "message: one line of 2-200 characters"
     if t.capability == "file.download":
         page = intranet.downloads(skip=policy.page_reserved).get(task.values.get("file_name", ""))

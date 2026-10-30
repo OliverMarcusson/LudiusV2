@@ -1,0 +1,80 @@
+task: chat_share_file
+app: edge
+capability: chat.file
+processes: [msedge.exe]
+params: [to, to_name, file_name, message]
+about: "Send one colleague one of the persona's own files (a Documents file under Own recent files; .docx, .xlsx, .pptx, .txt or .pdf) in a direct message in the team chat, with one line about it. to: the colleague's address <user>@ludius.internal; file_name: the file's name exactly, with its extension, without folder; message: one line, plain ASCII, under 200 characters."
+defaults: {app_query: edge, chat_url: chat.corp.ludius.test}
+example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga, file_name: q4 accruals.xlsx, message: here is the accruals sheet you asked for}
+variants:
+  - [open_edge_start, open_chat, open_conversation, open_upload, go_documents, select_file, upload_file, write_message, send_message, close_edge]
+  - [open_edge_taskbar, open_chat, open_conversation, open_upload, go_documents, select_file, upload_file, write_message, send_message, close_edge]
+key_commits:
+  - {keys: Enter, focus: {name: "^Write to "}}
+  - {keys: Enter, focus: {role: list item}}
+  - {keys: Enter, focus: {name: "^File name:$"}}
+budget_steps: 50
+budget_minutes: 10
+subgoals:
+  open_edge_start:
+    goal: "Open Microsoft Edge from the Start menu"
+    launch: true
+    keys: [Win]
+    text: app_query
+    done: {foreground: {process: msedge.exe}}
+  open_edge_taskbar:
+    goal: "Open Microsoft Edge from its taskbar button"
+    launch: true
+    done: {foreground: {process: msedge.exe}}
+  open_chat:
+    goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click the GitLab button (it signs in with the Windows account; never type a password)"
+    text: chat_url
+    keys: [Ctrl+L, Enter]
+    replace: true
+    field: "^Address and search bar$"
+    done: {ask: "Is the Mattermost team chat open and signed in, showing its list of channels?"}
+  open_conversation:
+    goal: "Open the direct messages with {to_name}: press Ctrl+K, type the name and press Enter, or click the name under Direct Messages"
+    text: to_name
+    keys: [Ctrl+K, Enter]
+    done: {ask: "Is the direct message conversation with {to_name} open in the chat, the name shown above the messages?"}
+  open_upload:
+    goal: "Click the attachment (paperclip) button of the message box in the conversation with {to_name} to choose a file"
+    steps: 6
+    done: {foreground: {process: msedge.exe, title: "^Open$"}}
+  go_documents:
+    goal: "In the Open dialog, go to the Documents folder with the navigation pane on the left, without opening any file"
+    steps: 8
+    in_window: &open {process: msedge.exe, title: "^Open$"}
+    avoid: [{role: list item}, {role: edit}, {role: combo box}, {role: menu item}, {name: '^(Open|Delete|Rename|New folder)$'}]
+    done: {ask: "Does the Open dialog show the persona's own Documents folder ({persona_name} > Documents) with its files listed?"}
+  select_file:
+    goal: "Click the file {file_name} once to select it, without opening it"
+    steps: 6
+    in_window: *open
+    breadcrumb: &crumbs ['This PC|{persona_name}', Documents]
+    avoid: [{role: edit}, {role: combo box}, {role: menu item}, {name: '^(Open|Delete|Rename|New folder)$'}]
+    done: {element: {role: list item, name: '^{file_name}$', selected: true}}
+  upload_file:
+    goal: "Click Open to upload the selected file {file_name}"
+    steps: 3
+    in_window: *open
+    breadcrumb: *crumbs
+    require: [{role: list item, name: '^{file_name}$', selected: true}]
+    forbid: [{role: list item, name: '^(?!{file_name}$)', selected: true}]
+    avoid: [{name: '^Cancel$'}]
+    done: {chat_file: {path: 'Documents\{file_name}', posted: false}}
+  write_message:
+    goal: "Type the message into the message box at the bottom of the conversation with {to_name}: {message}"
+    text: message
+    replace: true
+    done: {element: {name: "^Write to {to_name}$", focused: true, value: "^{message}$"}}
+  send_message:
+    goal: "Send the message and the file with Enter"
+    keys: [Enter]
+    require: [{name: "^Write to {to_name}$", focused: true, value: "^{message}$"}]
+    confirm: "Does the message box at the bottom of the conversation with {to_name}, not yet sent, hold the attached file {file_name} and the message {message}? Files in earlier messages above do not count."
+    done: {chat_file: {path: 'Documents\{file_name}'}}
+  close_edge:
+    goal: "Close Microsoft Edge"
+    done: {window: {process: msedge.exe, absent: true}}

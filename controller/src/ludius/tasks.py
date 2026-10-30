@@ -75,6 +75,18 @@ class MailCheck(Strict):
         return self
 
 
+class ChatFileCheck(Strict):
+    to: str = "{to}"
+    path: str
+    posted: bool = True
+
+    @model_validator(mode="after")
+    def _own_file(self) -> ChatFileCheck:
+        if guestfile.profile_path("u", self.path) is None:
+            raise ValueError(f"chat file check: {self.path!r} is a file in a noise folder")
+        return self
+
+
 class InviteCheck(Strict):
     mailbox: str = "{to}"
     subject: str = "{subject}"
@@ -215,6 +227,7 @@ class Done(Strict):
     file: FileCheck | None = None
     read: bool = False
     filed: bool = False
+    chat_file: ChatFileCheck | None = None
     ask: str | None = None
 
     @model_validator(mode="after")
@@ -276,6 +289,7 @@ Capability = Literal[
     "chat.dm",
     "chat.read",
     "chat.read_channel",
+    "chat.file",
 ]
 SENDS: dict[str, Literal["mail", "meeting"]] = {"mail.send": "mail", "mail.reply": "mail", "calendar.invite": "meeting"}
 REFERS_TO_EXISTING: dict[str, set[str]] = {
@@ -297,6 +311,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "chat.dm": {"to", "to_name"},
     "chat.read": {"to", "to_name"},
     "chat.read_channel": {"channel"},
+    "chat.file": {"to", "to_name", "file_name"},
 }
 APPS = Path(__file__).resolve().parents[2] / "data" / "apps"
 COMMITS = ["send", "send anyway", "save", "yes", "ok", "replace", "delete"]
@@ -424,8 +439,9 @@ class Template(Strict):
 
     @property
     def attaches(self) -> list[str]:
-        return [sg.done.mail.attachment for sg in self.subgoals.values()
-                if sg.done and sg.done.mail and sg.done.mail.attachment]  # fmt: skip
+        done = [sg.done for sg in self.subgoals.values() if sg.done]
+        paths = (p for d in done for p in (d.mail and d.mail.attachment, d.chat_file and d.chat_file.path) if p)
+        return list(dict.fromkeys(paths))
 
     @property
     def sends_mail(self) -> bool:
@@ -471,6 +487,9 @@ class Template(Strict):
         files = any(sg.done and sg.done.filed for sg in self.subgoals.values())
         if files != (self.capability == "mail.file") or (files and set(self.params) != {"sender", "subject", "folder"}):
             raise ValueError(f"{self.task}: mail.file needs a filed done check and params sender, subject, folder")
+        chats = any(sg.done and sg.done.chat_file and sg.done.chat_file.posted for sg in self.subgoals.values())
+        if chats != (self.capability == "chat.file"):
+            raise ValueError(f"{self.task}: chat.file needs a chat_file done check (only it)")
         return self
 
     @model_validator(mode="after")
@@ -728,7 +747,7 @@ def check_done(
 ) -> bool | None:
     if done is None or done.ask:
         return None
-    if (done.mail or done.invite or done.response or done.file or done.read or done.filed) and not (
+    if (done.mail or done.invite or done.response or done.file or done.read or done.filed or done.chat_file) and not (
         done.window
         or done.foreground
         or done.element
@@ -810,7 +829,18 @@ def _outside_ok(done: Done, task: Task) -> bool:
     return ((done.mail is None or _mail_ok(done.mail, task)) and (done.invite is None or _invite_ok(done.invite, task))
             and (done.response is None or _response_ok(done.response, task))
             and (done.file is None or _file_ok(done.file, task)) and (not done.read or _read_ok(task))
-            and (not done.filed or _filed_ok(task)))  # fmt: skip
+            and (not done.filed or _filed_ok(task))
+            and (done.chat_file is None or _chat_file_ok(done.chat_file, task)))  # fmt: skip
+
+
+def _chat_file_ok(c: ChatFileCheck, task: Task) -> bool:
+    from ludius import react
+
+    rel, to = task.fmt(c.path), task.fmt(c.to)
+    user, _, domain = to.lower().partition("@")
+    if (data := task.sources_before.get(rel)) is None or not task.owner or domain != mail.DOMAIN:
+        return False
+    return react.shared(task.owner, user, _leaf(rel), task.started_ms, c.posted) == [hashlib.sha256(data).hexdigest()]
 
 
 def _filed_ok(task: Task) -> bool:
@@ -843,7 +873,10 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
     if sg.in_window and (fg is None or not window_matches(snap.windows[fg], sg.in_window, task)):
         want = sg.in_window.title or sg.in_window.process or ""
         return f"precondition: the foreground window is not {task.fmt(want)!r}"
-    if sg.breadcrumb and (got := explorer_crumbs(snap, fg)) != sg.breadcrumb:
+    got = explorer_crumbs(snap, fg) if sg.breadcrumb else None
+    pairs = zip(sg.breadcrumb, got or [], strict=False)
+    if sg.breadcrumb and (got is None or len(got) != len(sg.breadcrumb)
+                          or not all(re.fullmatch(task.fmt_re(c), g) for c, g in pairs)):  # fmt: skip
         return f"precondition: the folder is {' > '.join(got or ['unknown'])!r}, not {' > '.join(sg.breadcrumb)!r}"
     for c in sg.require:
         ok = guard_matches if c.value is not None else element_matches

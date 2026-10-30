@@ -315,6 +315,7 @@ class Runner:
         t0 = time.monotonic()
         steps = 0
         task.owner, task.tz = self.persona.user, self.persona.tz
+        task.values["persona_name"] = self.persona.name
         task.started_ms = self.observe().guest_time_ms or int(time.time() * 1000)
         self.log.write(
             event="task_start",
