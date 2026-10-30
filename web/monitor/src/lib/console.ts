@@ -120,6 +120,24 @@ function parseRun(value: unknown): RunStatus {
     throw new Error("Malformed run status")
   return r as unknown as RunStatus
 }
+export interface Template {
+  task: string
+  app: string
+  capability?: string
+  about: string
+  params: string[]
+  budget_minutes?: string
+}
+function parseTemplates(value: unknown): Template[] {
+  const valid = (t: Record<string, unknown>) =>
+    strings(t, ["task", "app", "about"]) &&
+    Array.isArray(t.params) &&
+    t.params.every((p) => typeof p === "string") &&
+    ["capability", "budget_minutes"].every((k) => t[k] === undefined || typeof t[k] === "string")
+  if (!Array.isArray(value) || !value.every((t) => valid(object(t)))) throw new Error("Malformed templates")
+  return value as Template[]
+}
+export const useTemplates = () => usePolled("/api/templates", parseTemplates, 60_000)
 export const useRun = () => usePolled("/api/run", parseRun, 3000)
 export const useCatalog = () => usePolled("/api/console", parseCatalog, 15_000)
 export const useDaybook = (date: string, user: string) =>
@@ -130,20 +148,41 @@ export const personLink = (user: string) => `#/people/${encodeURIComponent(user)
 export const humanize = (name: string) => name.replaceAll("_", " ")
 const activities: Record<string, string> = {
   break: "Take a break",
-  notepad_write_note: "Write a note in Notepad",
-  wordpad_formatted_note: "Write a formatted note in WordPad",
+  chat_direct_message: "Send a chat message to a colleague",
+  chat_post_message: "Post in a chat channel",
+  chat_read_channel: "Read a chat channel",
+  chat_read_messages: "Read chat messages from a colleague",
+  edge_download_file: "Download a file from the intranet",
+  edge_web_lookup: "Look up information on the web",
+  excel_add_rows: "Add rows to an Excel workbook",
+  excel_import_csv: "Turn a downloaded CSV into a workbook",
   excel_new_workbook: "Create an Excel workbook",
-  word_short_document: "Write a Word document",
-  powerpoint_short_deck: "Create a PowerPoint presentation",
+  explorer_copy_to_share: "Copy a file to a team share",
+  explorer_extract_zip: "Unpack a ZIP archive",
+  explorer_file_download: "Tidy up Downloads",
+  explorer_new_folder: "Create a folder",
+  explorer_recycle_file: "Recycle an old file",
+  explorer_rename_move: "Rename and move a file",
+  explorer_zip_file: "Pack a file into a ZIP archive",
+  notepad_write_note: "Write a note in Notepad",
+  outlook_answer_invite: "Answer a meeting invitation",
+  outlook_file_mail: "File an email into a folder",
   outlook_read_mail: "Read an email",
   outlook_reply_mail: "Reply to an email",
-  outlook_send_mail: "Send an email",
+  outlook_save_attachment: "Save an email attachment",
+  outlook_send_attachment: "Send a file by email",
   outlook_send_invite: "Send a meeting invitation",
-  edge_web_lookup: "Look up information on the web",
-  explorer_new_folder: "Create a folder",
-  explorer_rename_move: "Rename and move a file",
+  outlook_send_mail: "Send an email",
   paint_quick_sketch: "Draw a sketch in Paint",
-  powershell_admin_check: "Check system health in PowerShell"
+  powerpoint_short_deck: "Create a PowerPoint presentation",
+  powershell_admin_check: "Check system health in PowerShell",
+  word_comment_document: "Comment on a Word document",
+  word_edit_document: "Edit a Word document",
+  word_export_pdf: "Export a Word document as PDF",
+  word_revise_and_mail: "Revise a Word document and email it",
+  word_save_as_copy: "Save a copy of a Word document",
+  word_short_document: "Write a Word document",
+  wordpad_formatted_note: "Write a formatted note in WordPad"
 }
 export const activityName = (name: string) => activities[name] ?? "Other activity"
 

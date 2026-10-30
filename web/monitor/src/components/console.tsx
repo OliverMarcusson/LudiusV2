@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import LiveMonitor from "@/App";
 import { CompanyLogo, LogoButton, Portrait, PortraitButton, PortraitStatus } from "./portraits";
 import { ThemeButton } from "./theme";
+import { Tasks } from "./tasks";
 import {
   type Catalog,
   type Daybook,
@@ -68,7 +69,7 @@ export function SourceNote({ state }: { state: Polled<unknown> }) {
   );
 }
 
-function PageHeading({
+export function PageHeading({
   title,
   children,
 }: {
@@ -123,6 +124,7 @@ const TABS = [
   { key: "company", label: "Company" },
   { key: "people", label: "People" },
   { key: "daybook", label: "Daybook" },
+  { key: "tasks", label: "Tasks" },
 ];
 
 export default function Console() {
@@ -234,6 +236,8 @@ export default function Console() {
                   <Company catalog={catalog} />
                 ) : view === "people" ? (
                   <People catalog={catalog} user={route[1]} />
+                ) : view === "tasks" ? (
+                  <Tasks />
                 ) : view === "daybook" ? (
                   <DaybookPicker
                     catalog={catalog}

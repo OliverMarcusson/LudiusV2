@@ -16,7 +16,9 @@ static class ConsoleData
     {
         var runs = Path.GetFullPath(app.Configuration["Monitor:Runs"] ?? defaultRuns, app.Environment.ContentRootPath);
         var personas = Path.GetFullPath(app.Configuration["Monitor:Personas"] ?? "../../controller/data/personas", app.Environment.ContentRootPath);
+        var templates = Path.GetFullPath(app.Configuration["Monitor:Templates"] ?? "../../controller/data/templates", app.Environment.ContentRootPath);
         Portraits.Map(api, app, runs, personas);
+        api.MapGet("/templates", () => Read(() => Templates(templates)));
         api.MapGet("/console", () => Read(() => Catalog(runs, personas)));
         api.MapGet("/run", () => Read(() => Run(runs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
         api.MapGet("/daybook/{date}/{user}", (string date, string user) =>
@@ -39,6 +41,11 @@ static class ConsoleData
     static readonly string[] TraitFields = ["user", "name", "role", "department", "hours", "style", "risk_profile", "tz", "typing_mean_ms", "typing_jitter_ms", "think_mean_s", "pointer_ms"];
     static readonly string[] ItemFields = ["at", "template", "context", "minutes", "interrupt", "handoff"];
     static readonly string[] EventFields = ["event", "host_ms", "logical", "at", "template", "task", "status", "reason", "subgoal", "steps", "by", "clock", "done", "items"];
+
+    static readonly string[] TemplateFields = ["task", "app", "capability", "about", "params", "budget_minutes"];
+
+    static JsonObject[] Templates(string dir) =>
+        Directory.GetFiles(dir, "*.yaml").Order().Select(p => Pick(Yaml(p) ?? throw new InvalidDataException(), TemplateFields)).ToArray();
 
     public static object Catalog(string runs, string personaDir)
     {
