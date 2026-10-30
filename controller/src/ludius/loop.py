@@ -245,6 +245,9 @@ class Runner:
     def act(self, o: Option, task: Task, sg: Subgoal | None = None) -> str | None:
         """Send the option's input; for typing, the reason it was not sent (_type_target), else None."""
         e = o.element
+        acts = o.kind in ("click", "double_click", "type", "key")
+        if sg is not None and sg.confirm and acts and o.keys not in sg.keys:
+            return "only this step's confirmed keys may act here (a Paste button would skip the confirm question)"
         if o.kind in ("click", "double_click") and e is not None:
             self._move_to(e)
             self.agent.click(count=2 if o.kind == "double_click" else 1)
@@ -283,6 +286,10 @@ class Runner:
                 fresh = self.agent.observe(wait_settle=False).snapshot  # the focus may have moved since the choice
                 if commits_unguarded(o.keys, next((x for x in fresh.elements if x.focused), None), task, sg):
                     return f"{o.keys} commits in the focused field: only the guarded send step may, in its field"
+            if sg is not None and sg.confirm and o.keys in sg.keys:
+                fresh = self.agent.observe(wait_settle=True).snapshot
+                if not self._decider_says_done(task, "confirm", sg.confirm, fresh):
+                    return f"the Decider did not confirm: {task.fmt(sg.confirm)}"
             self.agent.chord(keys.chord(o.keys))
         elif o.kind == "scroll":
             target = next((x for x in self.snap.elements if "list continues" in " ".join(x.hints)), None)
@@ -436,7 +443,7 @@ class Runner:
         verifications = 0
         last_result = "start of subgoal"
         no_change = 0
-        typed_ok = False
+        typed_ok = pressed_ok = False
         recovering = False
         # Progress means reaching a screen not seen before in this subgoal. An action that changed nothing,
         # or only led back to an earlier screen (open/close toggles, dialog loops), is withdrawn on the screen
@@ -464,7 +471,7 @@ class Runner:
                 self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
                                reason="elevation required")  # fmt: skip
                 return "failed", step - 1, "blocked: elevation required"
-            code_done = check_done(sg.done, snap, task, typed_ok)
+            code_done = check_done(sg.done, snap, task, typed_ok, pressed_ok=pressed_ok)
             if code_done:
                 self.log.write(
                     event="subgoal_done",
@@ -476,7 +483,7 @@ class Runner:
                     steps=step - 1,
                 )
                 return "done", step - 1, ""
-            if code_done is False and check_done(sg.done, snap, task, typed_ok, outside=False):
+            if code_done is False and check_done(sg.done, snap, task, typed_ok, outside=False, pressed_ok=pressed_ok):
                 # Done on screen, not yet on the server or the guest disk (Outlook syncs a read flag a little later):
                 # input could only undo it. Wait and look again; the step budget still bounds it.
                 self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
@@ -594,6 +601,7 @@ class Runner:
             seen.add(after)
             if chosen.kind == "type":
                 typed_ok = not refused and _typed_landed(snap, chosen, sg)
+            pressed_ok = pressed_ok or (guarded and chosen.kind == "key" and chosen.keys in sg.keys)
             outcome = "back to an earlier screen" if changed and revisit else "changed" if changed else "no change"
             last_result = "no visible change" if not changed else outcome
             if refused:  # nothing typed: counts as no progress from here, so the ladder (rescan, recovery) applies

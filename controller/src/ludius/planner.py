@@ -51,6 +51,7 @@ _PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")  # the virtual keyboard types ASCII
 VALUE_MAX = 300  # guest observer Snapshotter.MaxValue: longest element value a snapshot carries
 _NAME_KEYS = ("file_name", "folder_name", "new_name")
 RECYCLE_AGE_DAYS = 3  # file.recycle: only a file no done item wrote for this many days
+OWN_FILES = ("file.edit", "file.recycle", "file.share")  # capabilities acting on one of the persona's own files
 _DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)  # Windows reserved, any extension
 # A meeting (date, start, end): a weekday inside the working day, of a sensible length, soon after the plan's day.
 WORK_DAY, MEETING_MINUTES, MEETING_DAYS_AHEAD = ("08:00", "17:00"), (15, 120), 14
@@ -82,6 +83,9 @@ class Narrative(Strict):
     # Private team channels in the team chat (display name -> member accounts), nobody else in them: the range's
     # provisioning creates them; their posts are notified like direct messages (ludius.react).
     channels: dict[str, list[str]] = Field(default_factory=dict[str, list[str]])
+    # Team file shares (share name -> member accounts): the range's provisioning makes \\<share host>\<name>, only
+    # the members may change files there (ludius.share).
+    shares: dict[str, list[str]] = Field(default_factory=dict[str, list[str]])
     projects: list[str]
     events: list[Event]
     revised: str = ""  # YYYY-MM-DD of the last weekly revision (spec section 6); "" until the first
@@ -98,6 +102,11 @@ class Narrative(Strict):
                 raise ValueError(f"team channel {name!r}: a plain name, every member a narrative person's account")
             if handles.count(name.lower().replace(" ", "-")) > 1:
                 raise ValueError(f"team channel {name!r}: its handle is another channel's")
+        for name, members in self.shares.items():
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,30}", name) or name.upper() in ("NETLOGON", "SYSVOL"):
+                raise ValueError(f"team share {name!r}: a plain name without spaces, not a system share")
+            if not members or not set(members) <= users:
+                raise ValueError(f"team share {name!r}: every member a narrative person's account")
         return self
 
 
@@ -237,6 +246,7 @@ def plan_day(
     colleagues = {p.user for p in narrative.people if p.user and p.user != persona.user}
     people = {p.user: p.name for p in narrative.people if p.user}
     teams = [c for c, members in narrative.channels.items() if persona.user in members]
+    shares = [c for c, members in narrative.shares.items() if persona.user in members]
     existing = list(existing)
     names = sorted({_leaf(e) for e in existing if _leaf(e)}, key=str.casefold)[:SHOWN_EXISTING]
     mail_tasks = ", ".join(sorted(k for k, t in templates.items() if t.capability in SENDS)) or "none"
@@ -318,7 +328,7 @@ def plan_day(
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
     fill_recipient_names(draft.items, people)
     rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                       mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned)  # fmt: skip
+                       mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned, shares)  # fmt: skip
     missing = sorted(set(followups) - {it.followup for it in draft.items})
     if rejects or missing:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
@@ -328,7 +338,8 @@ def plan_day(
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
         fill_recipient_names(draft.items, people)
         rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                           mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned)  # fmt: skip
+                           mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned,
+                           shares)  # fmt: skip
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     missing = sorted(set(followups) - {it.followup for it in items})
@@ -352,10 +363,12 @@ def installed(app: str) -> bool:
 
 def role_templates(templates: dict[str, Template], persona: Persona) -> dict[str, Template]:
     """Signal-like templates only for personas whose risk profile includes them; templates of apps the range lacks,
-    and stand-ins (fallback_for) for apps it has, never; the rest are unknown to the plan."""
+    and stand-ins (fallback_for) for apps it has, never, nor templates needing a controller setting that is unset
+    (a "$NAME" default); the rest are unknown to the plan."""
     return {k: t for k, t in templates.items()
             if (not t.resembles or k in persona.risk_profile) and t.capability not in REACTION_ONLY
-            and installed(t.app) and not (t.fallback_for and installed(t.fallback_for))}  # fmt: skip
+            and installed(t.app) and not (t.fallback_for and installed(t.fallback_for))
+            and all(os.environ.get(v[1:]) for v in t.defaults.values() if v.startswith("$"))}  # fmt: skip
 
 
 def validate(
@@ -374,6 +387,7 @@ def validate(
     inbox: set[tuple[str, str]] | None = None,
     teams: Iterable[str] = (),
     owned: dict[str, str] | None = None,
+    shares: Iterable[str] = (),
 ) -> list[tuple[int, str]]:
     """Rejected items with the reason. A reply must answer a mail follow-up in `mail_threads` from its `to`
     colleague with its subject, or a mail in `inbox` (sender account, subject; an empty subject: any mail from that
@@ -386,7 +400,7 @@ def validate(
     seen = list(history)
     taken = taken_names(existing)  # grows with each accepted item: a second item with the same name would overwrite
     for i, it in enumerate(items):
-        why = _check_item(it, templates, seen, policy, user, teams)
+        why = _check_item(it, templates, seen, policy, user, teams, shares)
         if not why:
             why = _recipient(it, colleagues or set[str](), people or {})
         if not why:
@@ -396,7 +410,7 @@ def validate(
             why = _reply_thread(it, mail_threads or {}, inbox or set[tuple[str, str]]())
         if not why and cap == "mail.read":
             why = _read_mail(it, colleagues or set[str](), inbox or set[tuple[str, str]](), items[:i])
-        if not why and cap in ("file.edit", "file.recycle") and t:
+        if not why and cap in OWN_FILES and t:
             why = _owned(it, t, owned or {}, day, items)
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
@@ -427,12 +441,13 @@ def validate(
 
 def _owned(it: PlanItem, t: Template, owned: dict[str, str], day: str, items: list[PlanItem]) -> str | None:
     recycle = t.capability == "file.recycle"
+    shared = [sg.done.file.path for sg in t.subgoals.values() if sg.done and sg.done.file and sg.done.file.share]
     try:
-        paths = [w.format_map({**it.params, **it.content}) for w in (t.removes if recycle else t.writes)]
+        paths = [w.format_map({**it.params, **it.content}) for w in (t.removes if recycle else shared or t.writes)]
     except KeyError:
         return "missing parameters"
     if not paths or any(p.casefold() not in owned for p in paths):
-        verb = "recycle" if recycle else "edit"
+        verb = "recycle" if recycle else "copy" if shared else "edit"
         return f"file_name: {verb} only one of this persona's own files (Own recent files), named exactly"
     if recycle:
         cutoff = (dt.date.fromisoformat(day) - dt.timedelta(days=RECYCLE_AGE_DAYS)).isoformat()
@@ -601,8 +616,9 @@ def _check_item(
     policy: Policy,
     user: str = "",
     teams: Iterable[str] = (),
+    shares: Iterable[str] = (),
 ) -> str | None:
-    if why := item_problem(it, templates, policy, user, teams):
+    if why := item_problem(it, templates, policy, user, teams, shares):
         return why
     for value in content_values(it, templates):
         if dup := near_duplicate(value, seen):
@@ -611,12 +627,17 @@ def _check_item(
 
 
 def item_problem(
-    it: PlanItem, templates: dict[str, Template], policy: Policy, user: str = "", teams: Iterable[str] = ()
+    it: PlanItem,
+    templates: dict[str, Template],
+    policy: Policy,
+    user: str = "",
+    teams: Iterable[str] = (),
+    shares: Iterable[str] = (),
 ) -> str | None:
     """What makes one item unplayable on its own, checked at generation and again at every plan load: the template
     and its parameters, typeable values, spreadsheet rows, and files it would create that the scenario reserves
     (their final path, with the extension the app adds, in `user`'s profile). `teams`: the narrative's team channels
-    `user` is a member of, besides the range's channels."""
+    `user` is a member of, besides the range's channels; `shares` the narrative's team shares `user` is a member of."""
     if it.template == BREAK:
         return None if 1 <= it.minutes <= 120 else "break needs 1-120 minutes"
     t = templates.get(it.template)
@@ -633,6 +654,8 @@ def item_problem(
     channel = task.values.get("channel")
     if t.capability == "chat.post" and channel not in [*CHAT_CHANNELS, *teams]:
         return f"channel {channel!r} is not one of {[*CHAT_CHANNELS, *teams]}"
+    if t.capability == "file.share" and task.values.get("share") not in list(shares):
+        return f"share {task.values.get('share')!r} is not one of this persona's team shares {sorted(shares)}"
     if t.capability in ("chat.post", "chat.dm") and not 2 <= len(task.values.get("message", "").strip()) <= 200:
         return "message: one line of 2-200 characters"
     if t.capability == "file.download":
@@ -974,14 +997,15 @@ def load_plan(path: Path, *, history: bool = False) -> DayPlan:
     narrative = path.parent.parent / "world" / "narrative.yaml"
     world = Narrative.model_validate(yaml.safe_load(narrative.read_text("utf-8"))) if narrative.exists() else None
     teams = [c for c, members in (world.channels if world else {}).items() if plan.persona in members]
+    shares = [c for c, members in (world.shares if world else {}).items() if plan.persona in members]
     edits = [it for it in plan.items
-             if (t := templates.get(it.template)) and t.capability in ("file.edit", "file.recycle")]  # fmt: skip
+             if (t := templates.get(it.template)) and t.capability in OWN_FILES]  # fmt: skip
     owned = owned_files(path.parent.parent, plan.persona, plan.date) if edits and not history else {}
     for it in [] if history else edits:
         if why := _owned(it, templates[it.template], owned, plan.date, plan.items):
             raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
     for it in plan.items:
-        if it.template in templates and (why := item_problem(it, templates, policy, plan.persona, teams)
+        if it.template in templates and (why := item_problem(it, templates, policy, plan.persona, teams, shares)
                                          or _meeting_day(it, plan.date)):  # fmt: skip
             raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
         if it.request and not MESSAGE_ID.fullmatch(it.request):

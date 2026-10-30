@@ -74,4 +74,5 @@ LUDIUS_EWS_URL=https://10.77.0.12/EWS/Exchange.asmx      # by address: the node 
 LUDIUS_EWS_USER=ludiussvc@corp.ludius.test
 LUDIUS_EWS_PASSWORD_FILE=/root/.ludius-ews               # written by range-exchange.yml from the vault, 0600
 LUDIUS_EWS_CA=<checkout>/infra/ansible/build/range-ca.crt
+LUDIUS_SHARE_HOST=dc01                                   # team shares (narrative shares) as personas type them; read at LUDIUS_SRV_HOST
 ```

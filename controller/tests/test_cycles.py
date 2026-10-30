@@ -11,7 +11,8 @@ from ludius.calls import CapReached
 from ludius.cli import load_templates
 from ludius.decisions import Decision
 from ludius.loop import GroundTruth, Runner, image_reason
-from ludius.tasks import Done, Persona, Task, TaskInstance
+from ludius.options import Option
+from ludius.tasks import Done, Persona, Subgoal, Task, TaskInstance
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
@@ -247,3 +248,27 @@ def test_a_done_question_the_decider_answers_on_the_screenshot(tmp_path: Path, y
 def test_done_ask_stands_alone() -> None:
     with pytest.raises(ValueError, match="stands alone"):
         Done(ask="Is it open?", window={"process": "notepad.exe"})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(("yes", "sent"), [(0.95, True), (0.6, False)])
+def test_a_confirm_question_gates_the_subgoals_keys(tmp_path: Path, yes: float, sent: bool) -> None:
+    agent, chords = ToggleAgent(), list[list[int]]()
+    agent.chord = lambda vks: chords.append(vks) or 0  # type: ignore[method-assign]
+    runner = Runner(agent, Answers(yes), Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"), seed=1)  # type: ignore[arg-type]
+    tpl = load_templates()["notepad_write_note"]
+    task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
+    sg = Subgoal(goal="g", keys=["Ctrl+V"], confirm="Is Notepad in front?")
+    refused = runner.act(Option("o1", "key", "press Ctrl+V", keys="Ctrl+V"), task, sg)
+    assert (refused is None) is sent and bool(chords) is sent
+
+
+def test_a_confirm_subgoal_refuses_clicks_and_other_keys(tmp_path: Path) -> None:
+    agent, chords = ToggleAgent(), list[list[int]]()
+    agent.chord = lambda vks: chords.append(vks) or 0  # type: ignore[method-assign]
+    runner = Runner(agent, Answers(0.95), Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"), seed=1)  # type: ignore[arg-type]
+    tpl = load_templates()["notepad_write_note"]
+    task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
+    sg = Subgoal(goal="g", keys=["Ctrl+V"], confirm="Is Notepad in front?")
+    assert runner.act(Option("o1", "click", "click Paste"), task, sg) is not None
+    assert runner.act(Option("o2", "key", "press Ctrl+Shift+V", keys="Ctrl+Shift+V"), task, sg) is not None
+    assert not chords

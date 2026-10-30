@@ -88,6 +88,42 @@
     state: present
   no_log: true
 
+# Narrative shares (ludius.share): \\dc01\<name>; only the members change files, the mail-check account reads them
+# (the controller's outcome checks), nobody else. Rewritten whole on every run, so a removed member loses access.
+- name: Team shares under C:\Shares (members change, the mail-check account reads)
+  ansible.windows.win_powershell:
+    script: |
+      param($shares, $netbios, $reader)
+      $Ansible.Changed = $false
+      foreach ($name in $shares.Keys) {
+        $dir = "C:\Shares\$name"
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir -Force | Out-Null; $Ansible.Changed = $true }
+        $members = @($shares[$name] | ForEach-Object { "$netbios\$_" })
+        $grants = @('*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', "$netbios\${reader}:(OI)(CI)RX")
+        $grants += $members | ForEach-Object { "${_}:(OI)(CI)M" }
+        icacls $dir /inheritance:r /grant:r @grants | Out-Null
+        if ($LASTEXITCODE) { throw "icacls $dir failed" }
+        foreach ($a in (Get-Acl $dir).Access | Where-Object { -not $_.IsInherited }) {
+          $who = $a.IdentityReference.Value
+          if ($who -notin @('BUILTIN\Administrators', 'NT AUTHORITY\SYSTEM', "$netbios\$reader") + $members) {
+            icacls $dir /remove:g $who | Out-Null; $Ansible.Changed = $true
+          }
+        }
+        $s = Get-SmbShare -Name $name -ErrorAction SilentlyContinue
+        if ($s -and $s.Path -ne $dir) { throw "share $name points at $($s.Path)" }
+        $want = (@($members | ForEach-Object { "$_|Change" }) + "$netbios\$reader|Read" | Sort-Object) -join ','
+        $have = if ($s) { (Get-SmbShareAccess -Name $name | ForEach-Object { "$($_.AccountName)|$($_.AccessRight)" } | Sort-Object) -join ',' }
+        if ($have -ne $want) {
+          if ($s) { Remove-SmbShare -Name $name -Force }
+          New-SmbShare -Name $name -Path $dir -ChangeAccess $members -ReadAccess "$netbios\$reader" | Out-Null
+          $Ansible.Changed = $true
+        }
+      }
+    parameters:
+      shares: "{{ team_shares }}"
+      netbios: "{{ domain_netbios }}"
+      reader: "{{ ews_user }}"
+
 - name: Mail and Autodiscover names at ex01, intranet at dc01, chat at chat01
   ansible.windows.win_powershell:
     script: |

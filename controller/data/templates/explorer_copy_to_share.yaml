@@ -1,0 +1,68 @@
+task: explorer_copy_to_share
+app: explorer
+capability: file.share
+processes: [explorer.exe]
+params: [file_name, file_ext, share]
+defaults: {share_host: $LUDIUS_SHARE_HOST, share_path: '\\{share_host}\{share}'}
+about: "Put a copy of one of the persona's own files in Documents (under Own recent files) on a team share the persona is a member of (the company story's shares), for colleagues to pick up. file_name: the file's name exactly, without folder and extension; file_ext: its extension without the dot (docx, xlsx, pptx, txt or rtf); share: the share's name exactly."
+example: {file_name: admission test draft, file_ext: txt, share: Finance}
+variants:
+  - [open_explorer_keys, go_documents, show_extensions, select_file, copy_keys, open_share, paste_keys, close_explorer]
+  - [open_explorer_taskbar, go_documents, show_extensions, select_file, copy_keys, open_share, paste_keys, close_explorer]
+weights: [1, 1]
+budget_steps: 50
+budget_minutes: 8
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  open_explorer_taskbar:
+    goal: "Open File Explorer from its taskbar button"
+    launch: true
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_documents:
+    goal: "Go to the Documents folder"
+    done: {ask: "Does File Explorer show the user's own Documents folder (This PC > Documents or the pinned Documents), not a library, Public Documents or another folder?"}
+  show_extensions:
+    goal: "Turn on File name extensions on File Explorer's View tab, so the file shows as {file_name}.{file_ext}"
+    steps: 8
+    avoid: [{role: edit}, {name: '(?i)^(hidden items|item check boxes|hide selected items|options)$'}]
+    done: {element: {role: check box, name: '^File name extensions$', value: '^on$'}}
+  select_file:
+    goal: "Click the file {file_name}.{file_ext} once to select it"
+    in_window: &documents {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+    avoid: [{role: edit}]
+    done: {element: {role: list item, name: '^{file_name}\.{file_ext}$', selected: true}}
+  copy_keys:
+    goal: "Press Ctrl+C to copy the selected file {file_name}.{file_ext}"
+    keys: [Ctrl+C]
+    steps: 3
+    in_window: *documents
+    require: [{role: list item, name: '^{file_name}\.{file_ext}$', selected: true}]
+    forbid: [{role: list item, name: '^(?!{file_name}\.{file_ext}$)', selected: true}]
+    confirm: "Does File Explorer show the user's own Documents folder with only {file_name}.{file_ext} selected?"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {pressed: true}
+  open_share:
+    goal: "Open the team share: click File Explorer's address bar, type {share_path} and press Enter"
+    text: share_path
+    keys: [Ctrl+L, Enter]
+    replace: true
+    field: '^Address$'
+    steps: 10
+    avoid: [{name: '(?i)^search box$'}]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: '^{share}( \(.*\))?$'}}
+  paste_keys:
+    goal: "Press Ctrl+V to paste the copied file {file_name}.{file_ext} into the share {share}"
+    keys: [Ctrl+V]
+    steps: 6
+    in_window: {process: explorer.exe, class_name: CabinetWClass, title: '^{share}( \(.*\))?$'}
+    forbid: [{name: '(?i)(replace the file|skip this file|replace or skip)'}]
+    confirm: "Does File Explorer show the network share {share_path} (Network > {share_host} > {share}), not a local folder?"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {file: {path: 'Documents\{file_name}.{file_ext}', share: '{share}'}}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}

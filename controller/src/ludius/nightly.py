@@ -206,6 +206,8 @@ def generate_day(
         mail_threads=threads, inbox=set(inbox), owned=owned,
     )  # fmt: skip
     colleagues = {p.user for p in auto.narrative.people if p.user and p.user != persona.user}
+    teams = [c for c, members in auto.narrative.channels.items() if persona.user in members]
+    shares = [c for c, members in auto.narrative.shares.items() if persona.user in members]
     role = planner.role_templates(src.templates, persona)
     stale = [
         x
@@ -225,7 +227,7 @@ def generate_day(
         why = dict(planner.validate(
             [*rest, it], planner.role_templates(src.templates, persona), world.history(persona.user),
             src.policy, colleagues, None, set(followups), existing, threads, people, persona.user, date.isoformat(),
-            set(inbox), owned=owned,
+            set(inbox), teams, owned, shares,
         )).get(len(rest)) or requests.planned(it, src.templates, world.root)  # fmt: skip
         if why:
             requests.remember(world.root, persona.user, it.request, f"rejected: {why}")
@@ -268,7 +270,10 @@ def check_existing(world: World, persona: Persona, date: dt.date, src: Sources) 
     rejects = planner.validate(
         plan.items, planner.role_templates(src.templates, persona), [], src.policy, colleagues,
         followups={i.followup for i in plan.items if i.followup}, mail_threads=threads, inbox=inbox,
-        people=people, user=persona.user,
+        people=people, user=persona.user, day=date.isoformat(),
+        teams=[c for c, members in narrative.channels.items() if persona.user in members],
+        owned=planner.owned_files(world.root, persona.user, date.isoformat()),
+        shares=[c for c, members in narrative.shares.items() if persona.user in members],
     )  # fmt: skip  # no content history: this plan's own content is already in it
     if rejects:
         raise PlanConflict(f"{path} fails validation: " + "; ".join(f"item {i}: {why}" for i, why in rejects))

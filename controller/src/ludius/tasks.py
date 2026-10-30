@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import functools
+import os
 import random
 import re
 from pathlib import Path
@@ -17,7 +18,7 @@ from zoneinfo import ZoneInfo
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ludius import guestfile, intranet, mail
+from ludius import guestfile, intranet, mail, share
 from ludius.v1 import observation_pb2 as obs
 
 
@@ -126,6 +127,8 @@ class FileCheck(Strict):
     task started, its non-empty paragraphs (lines) exactly the start's followed by the appended lines.
     `recycled` instead (file.recycle): a file the persona owns, read present at start; done needs it definitely absent
     (the Recycle Bin is the subgoals' own check: the guest read can't tell it from a permanent delete).
+    `share` instead (file.share): `path` is a file the persona owns, copied to that team share (ludius.share) under its
+    own name; done needs the copy there, definitely absent at start, holding exactly the guest file's bytes.
     """
 
     path: str
@@ -135,16 +138,19 @@ class FileCheck(Strict):
     download: str | None = None
     append: str | None = None
     recycled: bool = False
+    share: str | None = None
 
     @model_validator(mode="after")
     def _noise_folder(self) -> FileCheck:
         need = {".xlsx": "cells", ".docx": "paragraphs", ".pptx": "slides"}
         ext = self.path.lower()[-5:]
-        if self.recycled:
+        if self.recycled or self.share is not None:
+            kind = "recycled" if self.recycled else "share"
             if guestfile.profile_path("u", self.path) is None:
-                raise ValueError(f"file check {self.path!r}: a recycled file is in a noise folder")
-            if self.append is not None or any(getattr(self, k) is not None for k in (*need.values(), "download")):
-                raise ValueError(f"file check {self.path!r}: a recycled check stands alone")
+                raise ValueError(f"file check {self.path!r}: a {kind} file is in a noise folder")
+            others = (*need.values(), "download", "append", *(("share",) if self.recycled else ()))
+            if any(getattr(self, k) is not None for k in others):
+                raise ValueError(f"file check {self.path!r}: a {kind} check stands alone")
             return self
         if self.append is not None:
             if guestfile.profile_path("u", self.path) is None or not self.path.lower().endswith((".docx", ".txt")):
@@ -175,6 +181,8 @@ class Done(Strict):
     element: ElementCheck | None = None
     added: AddedCheck | None = None
     typed: bool = False
+    # One of this subgoal's keys was sent while its require held (a clipboard copy shows nothing to check).
+    pressed: bool = False
     pixels: PixelsCheck | None = None
     mail: MailCheck | None = None
     invite: InviteCheck | None = None
@@ -213,6 +221,9 @@ class Subgoal(Strict):
     # With in_window: File Explorer's address bar reads exactly these folders (explorer_crumbs), e.g. This PC >
     # Documents; a library or another same-named folder has the same window title but other crumbs.
     breadcrumb: list[str] = Field(default_factory=list[str])
+    # Asked of the Decider on a fresh screenshot right before this subgoal sends one of its keys: anything but a sure
+    # yes refuses the key (a state code reads unreliably, e.g. which folder Explorer shows).
+    confirm: str | None = None
     # The text target exposes no readable value (Outlook's Word body): typing there counts as landed and the
     # subgoal's own check decides. Off everywhere else, where an unchanged value means the text did not land.
     unreadable_ok: bool = False
@@ -258,6 +269,8 @@ RECIPIENT = "^({to}|{to_name}|{to_name} <{to}>);?$"
 # read marker
 # file.recycle: a file the persona's own earlier work left, untouched for planner.RECYCLE_AGE_DAYS, sent to the Recycle
 # Bin (never deleted permanently, the Bin never emptied: spec section 5)
+# file.share: a copy of one of the persona's own files put on a team share it is a member of (ludius.share); a new
+# file there, irreversible for noise (never deleted or overwritten)
 Capability = Literal[
     "mail.send",
     "mail.reply",
@@ -267,6 +280,7 @@ Capability = Literal[
     "file.write",
     "file.edit",
     "file.recycle",
+    "file.share",
     "file.download",
     "chat.post",
     "chat.dm",
@@ -284,6 +298,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "file.move": {"file_name", "folder_name"},
     "file.edit": {"file_name"},
     "file.recycle": {"file_name", "file_ext"},
+    "file.share": {"file_name", "file_ext", "share"},
     "chat.post": {"channel"},
     "chat.dm": {"to", "to_name"},
     "chat.read": {"to", "to_name"},
@@ -492,7 +507,7 @@ class Template(Strict):
     def _writes_declared(self) -> Template:
         """A template that names something it creates must declare where it lands; every write is in a noise folder,
         and every file done check reads a declared write."""
-        if set(self.params) & NAME_PARAMS and not self.writes and self.capability != "file.recycle":
+        if set(self.params) & NAME_PARAMS and not self.writes and self.capability not in ("file.recycle", "file.share"):
             raise ValueError(f"{self.task}: creates {sorted(set(self.params) & NAME_PARAMS)} but declares no writes")
         for r in self.removes:
             if guestfile.profile_path("u", r.removesuffix(".*")) is None:
@@ -515,6 +530,9 @@ class Template(Strict):
             if sg.done and sg.done.file and sg.done.file.recycled:
                 if sg.done.file.path not in self.removes or self.capability != "file.recycle":
                     raise ValueError(f"{self.task}: recycled check {sg.done.file.path!r} is not a file.recycle remove")
+            elif sg.done and sg.done.file and sg.done.file.share is not None:
+                if self.capability != "file.share":
+                    raise ValueError(f"{self.task}: share check {sg.done.file.path!r} needs capability file.share")
             elif sg.done and sg.done.file and sg.done.file.path not in self.writes:
                 raise ValueError(f"{self.task}: file check {sg.done.file.path!r} is not a declared write")
         edits = any(sg.done and sg.done.file and sg.done.file.append is not None for sg in self.subgoals.values())
@@ -593,11 +611,17 @@ class Task:
     """A template bound to an instance: formatted subgoals for the chosen variant."""
 
     def __init__(self, template: Template, inst: TaskInstance, rng: random.Random) -> None:
-        have = {**template.defaults, **inst.params, **inst.content}
+        # A default "$NAME" is the controller's setting NAME (the range's share host): unset, the task can't run.
+        env = {k: os.environ.get(v[1:], "") for k, v in template.defaults.items() if v.startswith("$")}
+        if unset := sorted(template.defaults[k] for k, v in env.items() if not v):
+            raise ValueError(f"{template.task}: {', '.join(unset)} unset")
+        have = {**template.defaults, **env, **inst.params, **inst.content}
         # A parameter with a default is optional (a meeting's body); a subgoal typing it is skipped when it is empty.
         missing = [p for p in template.params if not have.get(p) and p not in template.defaults]
         if missing:
             raise ValueError(f"{template.task}: missing parameters {missing}")
+        # A default with {fields} is composed from the others (the share's path from its host and the planned share).
+        have |= {k: v.format_map(have) for k, v in template.defaults.items() if "{" in v and k not in inst.params}
         self.template = template
         self.inst = inst
         self.owner = ""  # persona account and task start (guest clock, Unix ms): set by the runner
@@ -734,13 +758,15 @@ def pixels_region(snap: obs.Snapshot, window: int, task: Task) -> list[obs.Eleme
     ]  # fmt: skip
 
 
-def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool, outside: bool = True) -> bool | None:
+def check_done(
+    done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool, outside: bool = True, pressed_ok: bool = False
+) -> bool | None:
     """True/False when the subgoal has a code check, None when it has none (Decisions decides). `outside=False`: the
     checks on screen only (None when there are none), so the runner can wait for the server instead of acting."""
     if done is None or done.ask:
         return None  # no code check: Decisions, or the Decider's done question (loop), decides
     if (done.mail or done.invite or done.file or done.read) and not (
-        done.window or done.foreground or done.element or done.added or done.typed or done.pixels
+        done.window or done.foreground or done.element or done.added or done.typed or done.pressed or done.pixels
     ):
         return _outside_ok(done, task) if outside else None
     on_pixels = any(pixels_window(w) for w in snap.windows)
@@ -750,7 +776,7 @@ def check_done(done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool
         and not (done.window or done.foreground or done.element or done.added or done.typed)
     ):
         return None  # a completion only pixels mode checks: with an accessibility tree, Decisions decides as before
-    if done.typed and not typed_ok:
+    if (done.typed and not typed_ok) or (done.pressed and not pressed_ok):
         return False
     if on_pixels and not done.pixels:
         return False  # typed/element/window checks can't be seen in pixels: without a visible check, never done
@@ -994,6 +1020,19 @@ def file_baseline(task: Task, policy: Any) -> str | None:
             return f"{rel}: not there, nothing to recycle"
         present.add(rel)
     task.files_present = frozenset(present)
+    for c in (c for c in files if c.share is not None):  # the own file readable there, its copy not yet on the share
+        rel, dest = task.fmt(c.path), task.fmt(c.share or "")
+        copy = share.unc(dest, _leaf(rel))
+        if file_reserved(task.owner, rel, policy) or not copy or policy.path_reserved(copy):
+            return f"{rel} or its copy {copy or '(LUDIUS_SHARE_HOST unset)'}: scenario-reserved or unknown"
+        f, s = guestfile.read(task.owner, rel), share.read(dest, _leaf(rel))
+        if f is None or s is None:
+            return f"{rel if f is None else copy}: unreadable"
+        if not f.exists:
+            return f"{rel}: not there, nothing to copy"
+        if s.exists:
+            return f"{copy}: already exists, never overwritten"
+        absent.add(copy)
     edits = {task.fmt(c.path) for c in files if c.append is not None}
     for rel in sorted(edits):  # an edit needs its file there and readable: its lines at start are the baseline
         f = guestfile.read(task.owner, rel)
@@ -1003,7 +1042,7 @@ def file_baseline(task: Task, policy: Any) -> str | None:
         if lines is None:
             return f"{rel}: unreadable on the guest"
         task.files_before[rel] = lines
-    checked = [task.fmt(c.path) for c in files if c.append is None and not c.recycled]
+    checked = [task.fmt(c.path) for c in files if c.append is None and not c.recycled and c.share is None]
     if task.inst.request:  # the request check (ludius.requests) reads what the task writes: new, never pre-existing
         checked += [w for w in write_paths(task) if not w.endswith(".*") and w not in edits]
     for rel in dict.fromkeys(checked):
@@ -1019,6 +1058,12 @@ def file_baseline(task: Task, policy: Any) -> str | None:
 
 def _file_ok(c: FileCheck, task: Task) -> bool:
     rel = task.fmt(c.path)
+    if c.share is not None:  # absent at start (file_baseline): now there, byte for byte the persona's own file
+        dest, name = task.fmt(c.share), _leaf(rel)
+        if task.files_absent is None or share.unc(dest, name) not in task.files_absent:
+            return False
+        s, f = share.read(dest, name), guestfile.read(task.owner, rel)
+        return s is not None and s.exists and f is not None and f.exists and s.data == f.data
     if c.recycled:  # present at start (file_baseline), definitely gone now: an unreadable file is never gone
         f = guestfile.read(task.owner, rel)
         return rel in task.files_present and f is not None and not f.exists
@@ -1046,6 +1091,10 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
     slides = guestfile.pptx_slides(f.data)
     want = [w for s in c.slides or [] if (w := _lines(task.fmt(s)))]  # a slide whose optional values are empty: none
     return slides is not None and bool(want) and [[x.casefold() for x in s] for s in slides] == want
+
+
+def _leaf(rel: str) -> str:
+    return re.split(r"[\\/]", rel)[-1]
 
 
 def _doc_lines(rel: str, data: bytes) -> list[str] | None:
