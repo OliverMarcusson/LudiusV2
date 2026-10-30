@@ -152,8 +152,10 @@
 
 # Domain GPO, so existing persona clones pick it up at their next policy refresh or boot. The range has no web: Edge's
 # address bar searches the intranet, and a new tab opens it (instead of a news feed that never loads). The chat gets
-# the Windows logon's Kerberos ticket (no sign-in prompt): it is the only server Edge may negotiate with.
-- name: Edge searches the range intranet and signs in to the chat (GPO)
+# the Windows logon's Kerberos ticket (no sign-in prompt): it is the only server Edge may negotiate with. SmartScreen is
+# off: its download check can't reach Microsoft, so Edge held each download under a temporary name for ~16 s (live,
+# eyilmaz) and the persona clicked it again and again.
+- name: Edge searches the range intranet and signs in to the chat, without SmartScreen (GPO)
   ansible.windows.win_powershell:
     script: |
       param($url, $chat)
@@ -164,7 +166,7 @@
       $values = [ordered]@{
         DefaultSearchProviderEnabled = 1; DefaultSearchProviderName = 'Intranet'
         DefaultSearchProviderSearchURL = "$url/?q={searchTerms}"; NewTabPageLocation = "$url/"; HomepageLocation = "$url/"
-        AuthServerAllowlist = $chat
+        AuthServerAllowlist = $chat; SmartScreenEnabled = 0
       }
       foreach ($n in $values.Keys) {
         $v = $values[$n]

@@ -192,5 +192,5 @@ Personas download them with `edge_download_file` (plan params `page`, the exact 
 that page lists; the planner gets the list, without scenario pages, and plan load rejects any other pair). Edge saves
 to the persona's `Downloads` (a noise folder, as Documents and Pictures; the observer reads it too, so this needs the
 observer from the same commit). The task never starts if that file is already there; done is the file in Downloads,
-byte for byte what dc01 serves. Absent at start is what proves it new: Edge sets a download's write time only when
-Edge closes, so the write time is not compared.
+byte for byte what dc01 serves; absent at start is what proves it new. Edge's SmartScreen is off on the range (dc01
+GPO): its download check can't reach Microsoft, so Edge held each download under a temporary name for ~16 s.
