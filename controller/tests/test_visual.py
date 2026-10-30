@@ -1,6 +1,3 @@
-"""Visual fallback (spec section 3): screenshot rows in the observer's element format. The OCR checks use the recorded
-Save As screenshot, with the dialog's UIA rows as ground truth; they skip without the visual dependency group."""
-
 import importlib.util
 import subprocess
 import sys
@@ -28,10 +25,10 @@ def test_rows_map_to_guest_pixels_in_reading_order_with_repeatable_keys() -> Non
         visual.Box(10, 60, 20, 10, "noise", 0.3),
     ]
     rows = visual.elements(boxes, window=2, dx=100, dy=200, scale=2.0)
-    assert [r.name for r in rows] == ["Save", "Cancel", "Save"]  # same line first, low score dropped
+    assert [r.name for r in rows] == ["Save", "Cancel", "Save"]
     assert (rows[0].bounds.x, rows[0].bounds.y, rows[0].bounds.width) == (120, 224, 40)
     assert all(r.framework_id == "visual" and r.window == 2 and visual.HINT in r.hints for r in rows)
-    assert rows[0].key != rows[2].key  # two "Save" on screen stay distinct
+    assert rows[0].key != rows[2].key
     assert [r.key for r in visual.elements(boxes, window=0)] == [r.key for r in rows]
 
 
@@ -62,7 +59,7 @@ def test_pixels_only_settles_on_two_equal_frames_and_passes_input_through() -> N
     snap = agent.observe(quiet_ms=1).snapshot
     assert snap.settled and screens.shots == 3
     assert (snap.screen_width, snap.screen_height) == (1920, 1080)
-    assert snap.windows[0].no_tree and snap.windows[0].process_name == ""  # pixels carry no process identity
+    assert snap.windows[0].no_tree and snap.windows[0].process_name == ""
     assert [e.name for e in snap.elements] == ["Start"]
     assert agent.click() == "clicked"
 
@@ -95,7 +92,6 @@ def test_ocr_fallback_finds_the_dialog_controls_where_uia_had_them() -> None:
         assert hit, f"OCR missed {name!r}; got {[e.name for e in rows]}"
         cx, cy = hit[0].bounds.x + hit[0].bounds.width // 2, hit[0].bounds.y + hit[0].bounds.height // 2
         assert t.x <= cx <= t.x + t.width and t.y <= cy <= t.y + t.height, f"{name!r} at {cx},{cy}, UIA {t}"
-    # Rows stay inside the dialog: nothing from the desktop behind it.
     w = snap.windows[0].bounds
     assert all(w.x <= e.bounds.x and e.bounds.x + e.bounds.width <= w.x + w.width + 1 for e in rows)
 
@@ -105,7 +101,7 @@ def test_password_masks_are_dropped_and_ids_stay_stable_across_snapshots() -> No
     words = [[visual.Box(1, 1, 5, 5, "Save", 0.9), visual.Box(1, 20, 5, 5, "•••• ••", 0.99)]]
     agent = visual.VisualAgent(FakeScreens(frames), "pixels", read=lambda png: words[0])
     first = agent.observe(quiet_ms=1).snapshot
-    assert [e.name for e in first.elements] == ["Save"]  # masked password text never becomes a row
+    assert [e.name for e in first.elements] == ["Save"]
     words[0] = [visual.Box(1, 1, 5, 5, "Cancel", 0.9), visual.Box(9, 1, 5, 5, "Save", 0.9)]
     second = agent.observe(quiet_ms=1).snapshot
     ids = {e.name: e.id for e in second.elements}
@@ -116,7 +112,7 @@ def test_password_masks_are_dropped_and_ids_stay_stable_across_snapshots() -> No
 def test_fallback_reads_only_the_on_screen_part_of_a_window() -> None:
     snap, _ = _save_as_without_tree()
     w = snap.windows[0].bounds
-    w.x, w.width = -300, w.width + 300  # hangs 300 px off the left edge
+    w.x, w.width = -300, w.width + 300
     seen: list[tuple[int, int]] = []
 
     def read(png: bytes) -> list[visual.Box]:
@@ -126,7 +122,7 @@ def test_fallback_reads_only_the_on_screen_part_of_a_window() -> None:
     visual.fill_no_tree(snap, (SAVE_AS / "screen.png").read_bytes(), read)
     assert seen == [(w.width - 300, w.height)]
     row = next(e for e in snap.elements if e.framework_id == "visual")
-    assert (row.bounds.x, row.bounds.y) == (0, w.y)  # the crop's origin is the screen edge, not the window's
+    assert (row.bounds.x, row.bounds.y) == (0, w.y)
 
 
 def _head(grid: int, stride: int, cells: dict[tuple[int, int], tuple[float, list[float]]]) -> visual.Head:
@@ -141,13 +137,12 @@ def _head(grid: int, stride: int, cells: dict[tuple[int, int], tuple[float, list
 
 def test_raw_detector_head_decodes_to_image_pixels_with_duplicates_suppressed() -> None:
     r = visual.letterbox(1920, 1080)
-    assert r == 1280 / 1920  # top-left letterbox: the width fills the input
-    # Stride 8, cell (row 50, col 40): centre (324, 404) in input pixels; 2 cells left/up, 3 right/down.
+    assert r == 1280 / 1920
     s8 = _head(160, 8, {(50, 40): (2.0, [2, 2, 3, 3]), (50, 41): (1.0, [3, 2, 2, 3]), (10, 10): (-4.0, [1, 1, 1, 1])})
-    s32 = _head(40, 32, {(5, 30): (0.0, [0.5, 0.5, 0.5, 0.5])})  # an icon, score 0.5
+    s32 = _head(40, 32, {(5, 30): (0.0, [0.5, 0.5, 0.5, 0.5])})
     got = visual.decode([s8, s32], r)
     assert [(b.x, b.y, b.width, b.height) for b in got] == [(462, 582, 60, 60), (1440, 240, 48, 48)]
-    assert all(b.control for b in got) and abs(got[0].score - 0.8808) < 1e-3  # sigmoid(2); the 0.73 twin suppressed
+    assert all(b.control for b in got) and abs(got[0].score - 0.8808) < 1e-3
 
 
 def test_words_inside_a_control_name_it_and_icons_keep_their_place() -> None:
@@ -158,10 +153,10 @@ def test_words_inside_a_control_name_it_and_icons_keep_their_place() -> None:
     assert [(e.role, e.name) for e in rows] == [("button", "Save copy"), ("button", ""), ("text", "Status: ready")]
     assert "icon without text" in rows[1].hints
     moved = visual.elements(visual.merge([], [visual.Box(402, 101, 30, 30, "", 0.8, True)]), window=0)
-    assert moved[0].key == rows[1].key  # same 16 px cell: same icon across snapshots
+    assert moved[0].key == rows[1].key
     faint = [visual.Box(10 * i, 500, 8, 8, "", 0.15 if i == 0 else 0.5, True) for i in range(visual.MAX_ICONS + 2)]
     kept = visual.merge([], faint)
-    assert len(kept) == visual.MAX_ICONS and faint[0] not in kept  # unnamed icons: likely ones only, capped
+    assert len(kept) == visual.MAX_ICONS and faint[0] not in kept
 
 
 def test_cli_agent_adds_visual_rows_only_in_fallback_mode(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -204,7 +199,7 @@ def test_detector_inference_waits_for_another_process_holding_the_slot(tmp_path:
     with visual.inference_slot(lock):
         waited = time.monotonic() - start
     other.wait(10)
-    assert waited > 0.8  # the second VM's inference ran only after the first one's
+    assert waited > 0.8
 
 
 def test_pixels_snapshot_never_passes_window_checks_never_gets_alt_f4_and_normalize_only_escapes(
@@ -224,7 +219,7 @@ def test_pixels_snapshot_never_passes_window_checks_never_gets_alt_f4_and_normal
     snap = screen("Untitled - Notepad", "File")
     fg = snap.windows[0]
     assert pixels_window(fg) and not alt_f4_safe(fg)
-    task: Any = None  # never consulted: the pixels guard decides first
+    task: Any = None
     for done in [Done(window=WindowCheck(process="notepad.exe")), Done(foreground=WindowCheck(absent=True, title="x"))]:
         assert check_done(done, snap, task, typed_ok=True) is False
 
@@ -242,7 +237,7 @@ def test_pixels_snapshot_never_passes_window_checks_never_gets_alt_f4_and_normal
     agent = Screens([screen("Shut Down Windows", "OK"), screen("Shut Down Windows", "OK"), screen("Recycle Bin")])
     s = Session(agent, GroundTruth(tmp_path / "gt.jsonl"), "pw")  # pyright: ignore[reportArgumentType]
     assert s.normalize(rounds=4)
-    assert agent.chords == [keys.chord("Esc")]  # Esc for Shut Down, never Alt+F4, never a click
+    assert agent.chords == [keys.chord("Esc")]
 
 
 DETECTOR = ROOT / "models" / "omniparser-v2.0" / "icon_detect_v3" / "model.onnx"
@@ -252,7 +247,6 @@ DETECTOR = ROOT / "models" / "omniparser-v2.0" / "icon_detect_v3" / "model.onnx"
     not HAS_OCR or not DETECTOR.exists(), reason="needs the visual group and the ignored detector model"
 )
 def test_custom_drawn_dark_dense_window_reads_icons_buttons_and_table() -> None:
-    # guest/drawnapp/Ledger.cs, client area captured with PrintWindow: all painted, UIA sees one empty pane.
     png = (ROOT / "fixtures" / "ledger-drawn" / "client.png").read_bytes()
     rows = visual.elements(visual.merge(visual.ocr_reader()(png), visual.detector_reader(str(DETECTOR))(png)), 0)
 
@@ -267,7 +261,7 @@ def test_custom_drawn_dark_dense_window_reads_icons_buttons_and_table() -> None:
         assert any(e.name == name and e.role == "button" and inside(e, *box) for e in rows), name
     names = {e.name for e in rows}
     cells = [f"2026-10-{d:02d}" for d in range(1, 25)] + [f"Invoice {4100 + r * 7}" for r in range(24)]
-    assert sum(c in names for c in cells) >= 46  # 8 pt grey-on-dark table
+    assert sum(c in names for c in cells) >= 46
 
 
 def test_pixels_factory_reads_only_screenshots_and_rows_need_the_template_opt_in(
@@ -287,7 +281,7 @@ def test_pixels_factory_reads_only_screenshots_and_rows_need_the_template_opt_in
     def screenshot(self: HostAgent) -> bytes:
         return _png(1920, 1080, b"n")
 
-    def read(png: bytes) -> list[visual.Box]:  # OCR readings from the notepad-empty fixture
+    def read(png: bytes) -> list[visual.Box]:
         names = ["Untitled-Notepad", "FileEdit Format View Help", "New folder"]
         return [visual.Box(10, 10 + 30 * i, 200, 20, n, 0.99) for i, n in enumerate(names)]
 
@@ -304,12 +298,11 @@ def test_pixels_factory_reads_only_screenshots_and_rows_need_the_template_opt_in
         s, p = task.subgoal(sg), Policy()
         return [o.text for o in build_options(view(snap, task, s, p), task, s, p) if o.kind == "click"]
 
-    assert clicks("explorer_new_folder", "go_documents") == []  # no pixels block: nothing, even "New folder"
-    assert clicks("notepad_write_note", "write_body")  # opted in, title and anchor visible
+    assert clicks("explorer_new_folder", "go_documents") == []
+    assert clicks("notepad_write_note", "write_body")
 
 
 def _caption(dx: int = 0) -> list[visual.Box]:
-    # Reported geometry: the outer caption button and its inner glyph fall in the same 16 px origin cell.
     return [
         visual.Box(1603 + dx, 209, 33, 30, "", 0.9, control=True),
         visual.Box(1612 + dx, 214, 12, 12, "", 0.9, control=True),
@@ -323,7 +316,7 @@ def test_nested_unnamed_icons_in_one_grid_cell_keep_distinct_keys_and_ids_across
     agent = visual.VisualAgent(FakeScreens([_png(1920, 1080, b"a")] * 9), "pixels", read=lambda png: scene[0])
     first = agent.observe(quiet_ms=1).snapshot
     assert len({e.id for e in first.elements}) == 2
-    scene[0] = _caption(dx=2)  # small jitter keeps the same cells, hence the same identities
+    scene[0] = _caption(dx=2)
     again = agent.observe(quiet_ms=1).snapshot
     assert [e.id for e in again.elements] == [e.id for e in first.elements]
     assert [e.key for e in again.elements] == [e.key for e in first.elements]
@@ -332,7 +325,7 @@ def test_nested_unnamed_icons_in_one_grid_cell_keep_distinct_keys_and_ids_across
 def test_same_named_and_same_cell_rows_in_several_fallback_windows_stay_distinct(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def no_crop(png: bytes, *_: int) -> bytes:  # synthetic reader needs no pixels
+    def no_crop(png: bytes, *_: int) -> bytes:
         return png
 
     monkeypatch.setattr(visual, "crop", no_crop)
@@ -341,7 +334,7 @@ def test_same_named_and_same_cell_rows_in_several_fallback_windows_stay_distinct
     class Tree(FakeScreens):
         def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
             snap = obs.Snapshot(screen_width=1920, screen_height=1080)
-            for _ in range(2):  # two stacked windows at the same place, so even icon cells coincide
+            for _ in range(2):
                 w = snap.windows.add(no_tree=True)
                 w.bounds.width, w.bounds.height = 800, 600
             return pb.ObserveResult(snapshot=snap)

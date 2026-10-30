@@ -1,6 +1,3 @@
-# Offline check of set-clock.ps1's all-or-nothing rules: Hyper-V cmdlets, PowerShell Direct and ssh are stubbed (no VM
-# is touched). Each case runs a copy of the script in a temp tree with its own .env and build\srv marker.
-#   pwsh -NoProfile -File infra/hyperv/test-set-clock.ps1
 $ErrorActionPreference = 'Stop'
 $dir = Join-Path ([IO.Path]::GetTempPath()) "ludius-set-clock-$PID"
 $hv = Join-Path $dir 'infra\hyperv'

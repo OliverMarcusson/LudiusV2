@@ -1,6 +1,3 @@
-"""Session.normalize on the clean source-VM desktop (runs/hygiene/20261027-123759-normalize.txt).
-The agent below answers only observe: any input or escalation fails the test before it could reach a VM."""
-
 from pathlib import Path
 
 import pytest
@@ -22,7 +19,6 @@ def _win(
 
 
 def clean_desktop() -> obs.Snapshot:
-    """Sanitized live Observe of ludius-win10-01, 2026-10-27, unlocked and idle (1920x1080, 96 dpi)."""
     return obs.Snapshot(
         screen_width=1920, screen_height=1080, dpi=96,
         windows=[
@@ -35,8 +31,6 @@ def clean_desktop() -> obs.Snapshot:
 
 
 class ObserveOnly:
-    """Every attribute but observe raises: chord, click, move, type, ctrl_alt_del, lifecycle all fail the test."""
-
     def __init__(self, snaps: list[obs.Snapshot]) -> None:
         self.snaps, self.chords = snaps, list[list[int]]()
 
@@ -73,8 +67,6 @@ def test_clean_desktop_with_tray_worker_window_normalizes_with_no_input(tmp_path
 
 
 def test_file_operation_window_left_in_front_is_never_closed(tmp_path: Path) -> None:
-    """Live 2026-10-30 (lnord): after a Delete, Explorer's invisible Progress window kept the foreground; Alt+F4 or
-    Esc on it only asks to cancel all transfers."""
     ghost = clean_desktop()
     ghost.windows[0].CopyFrom(_win(obs.Window.FOREGROUND, "OperationStatusWindow", 104, 104, 1440, 759, "Progress"))
     assert Session(ObserveOnly([ghost]), GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize()  # pyright: ignore[reportArgumentType]
@@ -84,7 +76,7 @@ def test_real_menu_over_the_desktop_still_gets_esc(tmp_path: Path) -> None:
     menu = clean_desktop()
     menu.windows.append(_win(obs.Window.POPUP, "#32768", 800, 400, 200, 300))
     menu.elements.append(obs.Element(id=2, role="menu item", name="View", window=3))
-    agent = EscOnly([menu, menu, clean_desktop()])  # unlock reads first, then the round
+    agent = EscOnly([menu, menu, clean_desktop()])
     assert Session(agent, GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize()  # pyright: ignore[reportArgumentType]
     assert agent.chords == [keys.chord("Esc")]
 
@@ -99,8 +91,6 @@ def test_worker_window_with_a_readable_tree_is_still_a_popup(tmp_path: Path) -> 
 
 
 def test_minimized_edge_is_brought_forward_by_its_taskbar_button(tmp_path: Path) -> None:
-    """Live 2026-10-29 (dkoster): Edge minimized behind the desktop; its title has a zero-width space, its taskbar
-    button none. Alt+Tab never restored it, so normalize failed 12 rounds without closing anything."""
     edge = clean_desktop()
     edge.apps.append(
         obs.Window(
@@ -108,7 +98,7 @@ def test_minimized_edge_is_brought_forward_by_its_taskbar_button(tmp_path: Path)
             process_name="msedge.exe",
             bounds=obs.Rect(x=-32000, y=-32000, width=160, height=28),
         )
-    )  # minimized
+    )
     edge.elements.append(obs.Element(id=79, role="button", name="Microsoft Edge – 1 running window", window=2,
                                      bounds=obs.Rect(x=500, y=1040, width=48, height=40)))  # fmt: skip
     clicks: list[str] = []
@@ -125,17 +115,15 @@ def test_minimized_edge_is_brought_forward_by_its_taskbar_button(tmp_path: Path)
     agent = ClickOnly([edge, edge, clean_desktop()])
     assert Session(agent, GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize()  # pyright: ignore[reportArgumentType]
     assert clicks == ["move 524,1060", "click"]
-    # Live (aberg): focus on the taskbar's chevron, the tree only that button: a desktop click comes first.
     tray = obs.Snapshot(screen_width=1920, screen_height=1080, apps=edge.apps,
                         windows=[_win(obs.Window.FOREGROUND, "Shell_TrayWnd", 0, 1040, 1920, 40),
                                  _win(obs.Window.SHELL, "Progman", 0, 0, 1920, 1080)],
                         elements=[obs.Element(id=15, role="button", name="Notification Chevron")])  # fmt: skip
-    tray.windows.append(_win(obs.Window.POPUP, "SysShadow", 1713, 1020, 118, 25, no_tree=True))  # a tooltip's
+    tray.windows.append(_win(obs.Window.POPUP, "SysShadow", 1713, 1020, 118, 25, no_tree=True))
     clicks.clear()
     agent = ClickOnly([tray, tray, edge, edge, clean_desktop()])
     assert Session(agent, GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize()  # pyright: ignore[reportArgumentType]
     assert clicks == ["move 1440,360", "click", "move 524,1060", "click"]
-    # Any other window under the point (a maximized app), or one of unknown bounds: no blind click, Alt+Tab.
     for bounds in (obs.Rect(width=1920, height=1040), obs.Rect()):
         tray.apps.append(obs.Window(title="Outlook", process_name="olk.exe", bounds=bounds))
         clicks.clear()
@@ -146,8 +134,6 @@ def test_minimized_edge_is_brought_forward_by_its_taskbar_button(tmp_path: Path)
 
 
 def test_a_hidden_task_window_is_offered_its_taskbar_button_only_from_the_desktop() -> None:
-    """Live (aberg, dkoster): close_edge closed one Edge window; a second, minimized, was out of reach and the
-    subgoal spent its step budget on the bare desktop."""
     import random
 
     from ludius.cli import DATA
@@ -166,19 +152,16 @@ def test_a_hidden_task_window_is_offered_its_taskbar_button_only_from_the_deskto
     task = Task(tpl, TaskInstance(template=tpl.task, params={"to": "a@b", "to_name": "A"}), random.Random(0))
     close = task.subgoal("close_edge")
     assert [e.id for e in view(snap, task, close, Policy()).allowed] == [79]
-    # The same name in Start (it would launch another window) is not the taskbar's.
     start = obs.Snapshot()
     start.CopyFrom(snap)
     start.windows[2].class_name = "Windows.UI.Core.CoreWindow"
     assert view(start, task, close, Policy()).allowed == []
-    # Edge in front: the button would minimize it, so it is not offered.
     snap.windows[0].CopyFrom(obs.Window(kind=obs.Window.FOREGROUND, title="Chat - Microsoft\u200b Edge",
                                         process_name="msedge.exe"))  # fmt: skip
     assert 79 not in [e.id for e in view(snap, task, close, Policy()).allowed]
 
 
 def test_a_kept_app_may_stay_in_front(tmp_path: Path) -> None:
-    """A reaction keeps the chat open between its tasks (ludius.react): Edge in front is clean, with no input."""
     chat = clean_desktop()
     edge = obs.Window(kind=obs.Window.FOREGROUND, class_name="Chrome_WidgetWin_1", process_name="msedge.exe",
                       title="Mattermost - Edge", bounds=obs.Rect(width=1920, height=1040))  # fmt: skip

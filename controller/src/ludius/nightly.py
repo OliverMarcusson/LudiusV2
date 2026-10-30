@@ -1,15 +1,3 @@
-"""Nightly day-plan generation: the planning lane the playback schedule (`ScheduledDay`) only reads from.
-
-A separate paused-by-default schedule (`plan-<persona>`) starts `NightlyPlan` on the host-side `ludius-plan`
-queue. Its explicitly started worker never touches a desktop or VM: it runs the same generation as
-`ludius plan day` for the local day after the intended occurrence. An existing plan file for that day is kept
-(retries are idempotent) and never overwritten; one that is malformed, misnamed or fails validation stops the
-run without retries for an operator to resolve.
-
-Weekends: every calendar day gets a plan, matching the daily playback schedule; the prompt names the weekday, so a
-weekend day's content is the planner's choice. Restricting both schedules to workdays is a later, joint change.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -45,8 +33,6 @@ if TYPE_CHECKING:
     from ludius.loop import Decider
 
 with workflow.unsafe.imports_passed_through():
-    # `import ludius.x as x`, not `from ludius import x`: the sandbox already holds its own `ludius` package (this
-    # module's parent), so a from-import would run the submodules inside the sandbox (mail's Path.resolve fails).
     import ludius.calls as calls
     import ludius.durable as durable
     import ludius.mail as mail
@@ -62,15 +48,15 @@ with workflow.unsafe.imports_passed_through():
     from ludius.tasks import Persona, Template
 
 NIGHTLY_PLAN = "NightlyPlan"
-TASK_QUEUE = "ludius-plan"  # host-side: no desktop, so one queue serves every persona's planning schedule
-CATCHUP = dt.timedelta(hours=8)  # a late night fire still plans the right day (from its occurrence) before morning
-TIMEOUT = dt.timedelta(minutes=30)  # weekly revision plus up to two planner calls
-PARALLEL = 8  # plans at once: one per range persona; the shared steps of each still run one at a time
+TASK_QUEUE = "ludius-plan"
+CATCHUP = dt.timedelta(hours=8)
+TIMEOUT = dt.timedelta(minutes=30)
+PARALLEL = 8
 
 
 class NightlyInput(BaseModel):
     persona: str
-    tz: str  # IANA zone of the persona's day
+    tz: str
 
 
 class PlanFire(BaseModel):
@@ -83,26 +69,22 @@ class Planned(BaseModel):
     persona: str
     date: str
     path: str
-    generated: bool  # False: an existing valid plan was kept
+    generated: bool
     items: int
     rejects: list[str] = []
-    note: str = ""  # what the weekly revision did
+    note: str = ""
 
 
 class PlanConflict(ValueError):
-    """An existing plan file is not a valid plan of this persona and date. Never overwritten; fix it by hand."""
+    pass
 
 
 class Sources(NamedTuple):
-    """What `ludius plan day` loads: every persona, the admitted templates and the scenario policy."""
-
     personas: list[Persona]
     templates: dict[str, Template]
     policy: Policy
-    inbox: Callable[[str], list[mail.Message] | None] = lambda _: []  # a persona's Inbox on the range server
-    decider: Callable[[], Decider] | None = (
-        None  # maps manager requests to task types (ludius.requests); None: not mapped
-    )
+    inbox: Callable[[str], list[mail.Message] | None] = lambda _: []
+    decider: Callable[[], Decider] | None = None
 
 
 class Generated(NamedTuple):
@@ -112,12 +94,11 @@ class Generated(NamedTuple):
 
 
 def schedule_id(persona: str) -> str:
-    durable.schedule_id(persona)  # same account-name check as the day schedule
+    durable.schedule_id(persona)
     return f"plan-{persona}"
 
 
 def schedule_for(persona: str, at: str, tz: str, *, paused: bool = True) -> Schedule:
-    """Every evening at `at` (HH:MM) in `tz`, plan that persona's next local day. Paused unless asked; SKIP overlap."""
     sid = schedule_id(persona)
     ZoneInfo(tz)
     if not re.fullmatch(r"\d{2}:\d{2}", at):
@@ -137,7 +118,6 @@ def schedule_for(persona: str, at: str, tz: str, *, paused: bool = True) -> Sche
 
 
 def planning_date(occurrence: dt.datetime, tz: str) -> dt.date:
-    """The persona's local day after the intended occurrence (never worker wall time); schedule it in the evening."""
     return dt.date.fromisoformat(durable.plan_date(occurrence, tz)) + dt.timedelta(days=1)
 
 
@@ -148,12 +128,8 @@ def generate_day(
     src: Sources,
     date: dt.date,
     scenario: planner.Scenario | None = None,
-    shared: Callable[[], AbstractContextManager[object]] = nullcontext,  # entered once per shared step
+    shared: Callable[[], AbstractContextManager[object]] = nullcontext,
 ) -> Generated:
-    """`ludius plan day`: due weekly revision first (raises RevisionBusy), world state, the manager's requests (sent
-    server-side, ludius.requests), then the validated plan with the persona's new requests mapped into it."""
-    # Shared across personas (narrative revision, world state, the manager's requests, which send mail): one
-    # planner at a time. The rest reads only this persona's files and runs in parallel with the others.
     with shared():
         auto = revision.revise_if_due(llm, world, src.personas, date)
         state = world_state.build(world, auto.narrative, src.personas, date)
@@ -179,7 +155,7 @@ def generate_day(
     if not isinstance(boss, str) and src.decider is not None:
         decider = src.decider()
         try:
-            with shared():  # reads every request day, which ensure() rewrites in place
+            with shared():
                 mails = requests.pending(world, persona.user, boss, inbox_mails, src.policy, date)
             role = planner.role_templates(src.templates, persona)
             mapped, more = requests.candidates(llm, decider, world, persona, boss, mails, role, date, people)
@@ -216,10 +192,10 @@ def generate_day(
         and t.capability == "mail.read"
         and (x.params.get("sender", "").strip().lower().partition("@")[0], x.params.get("subject")) not in unread
     ]
-    plan.items = [x for x in plan.items if x not in stale]  # a mail read already can't be read by the task: drop it
+    plan.items = [x for x in plan.items if x not in stale]
     rejects += [f"{x.template} at {x.at}: dropped, the mail is not unread" for x in stale]  # fmt: skip
-    for it in mapped:  # the same validation as the planner's own items, after them
-        dups = requests.duplicates(plan.items, it, world.root)  # the planner did the request again: the mapped one wins
+    for it in mapped:
+        dups = requests.duplicates(plan.items, it, world.root)
         rest = [x for x in plan.items if x not in dups]
         while it.at in {x.at for x in rest}:
             it.at = f"{(int(it.at[:2]) * 60 + int(it.at[3:]) + 1) // 60 % 24:02d}:{(int(it.at[3:]) + 1) % 60:02d}"
@@ -235,7 +211,7 @@ def generate_day(
         else:
             plan.items = sorted([*rest, it], key=lambda x: x.at)
             rejects += [f"{x.template} at {x.at}: dropped, it repeats the request {it.request}" for x in dups]
-            if read := requests.read_first(it, inbox_mails, role, plan.items):  # the mail is read before the work
+            if read := requests.read_first(it, inbox_mails, role, plan.items):
                 others = [
                     x
                     for x in plan.items
@@ -254,7 +230,6 @@ def generate_day(
 
 
 def check_existing(world: World, persona: Persona, date: dt.date, src: Sources) -> DayPlan:
-    """An existing plan must parse, name this persona and date, and pass item/policy validation as written."""
     path = world.plan_path(persona.user, date.isoformat())
     try:
         plan = planner.load_plan(path)
@@ -286,23 +261,18 @@ def ensure_day(
     persona: Persona,
     src: Sources,
     date: dt.date,
-    shared: Callable[[], AbstractContextManager[object]] = nullcontext,  # entered once per shared step
+    shared: Callable[[], AbstractContextManager[object]] = nullcontext,
 ) -> Planned:
-    """Keep a valid existing plan (no model call, history repaired), refuse an invalid one, else create one."""
     path = world.plan_path(persona.user, date.isoformat())
     if path.exists():
         plan = check_existing(world, persona, date, src)
-        try:  # a crash after publishing, before the history append, left its content out of the duplicate check
+        try:
             world.repair_history(plan, src.templates)
         except ValueError as e:
             raise PlanConflict(f"cannot restore the content history of {path}: {e}") from e
         return Planned(persona=persona.user, date=plan.date, path=str(path), generated=False, items=len(plan.items))
     with closing(llm()) as client:
         g = generate_day(client, world, persona, src, date, shared=shared)
-    # A plan written meanwhile (a manual `ludius plan day`) wins: FileExistsError, and the retry keeps it.
-    # A crash between this write and the history append is repaired by the retry's existing-plan path.
-    # ponytail: manual `ludius plan day` takes no nightly lock and appends unconditionally; the journal lock keeps
-    # reads whole, but a manual save after a repair still duplicates (never loses) rows. HistoryBusy is retryable.
     world.save_plan(g.plan, src.templates, new=True)
     return Planned(
         persona=persona.user, date=g.plan.date, path=str(path), generated=True,
@@ -341,10 +311,10 @@ class PlanActivities:
             persona = next((p for p in src.personas if p.user == fire.persona), None)
             if persona is None:
                 raise ValueError(f"no persona {fire.persona}")
-        except (ValueError, KeyError) as e:  # bad input or setup does not get better by retrying
+        except (ValueError, KeyError) as e:
             raise ApplicationError(str(e), non_retryable=True) from e
         try:
-            with calls.for_persona(fire.persona):  # this persona's daily budget pays for its plan (per thread)
+            with calls.for_persona(fire.persona):
                 return ensure_day(self.llm, self.world, persona, src, date, shared=self._shared)
         except durable.DeskBusy as e:
             raise RuntimeError("another nightly planner is running; retrying") from e
@@ -353,13 +323,11 @@ class PlanActivities:
 
     @contextmanager
     def _shared(self) -> Generator[None]:
-        """The shared steps of a plan: one planner thread at a time (waits), and one plan worker process (DeskBusy)."""
         with self._lock, durable.desk_lock(self.world.root / "locks" / "nightly.lock"):
             yield
 
 
 async def serve(client: Client, runs: Path, load: Callable[[], Sources], llm: Callable[[], LlmClient]) -> None:
-    """Poll only while explicitly running. Generates plans; never starts a desktop, VM or day."""
     acts = PlanActivities(runs, load, llm)
     with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
         async with Worker(

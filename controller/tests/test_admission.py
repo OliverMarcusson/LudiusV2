@@ -15,7 +15,6 @@ from ludius.loop import GroundTruth, Outcome
 
 
 def _validate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runs: list[Any], restores: list[Any]) -> Any:
-    """Run admission on explorer_new_folder (3 variants) with scripted run and restore outcomes."""
 
     def fake_run(runner: Any, session: Any, task: Any) -> Outcome:
         r = runs.pop(0)
@@ -48,7 +47,7 @@ def test_operational_error_is_a_failed_run_and_admission_continues(
     )
     assert stopped == ""
     assert results == {0: ["done", "error"], 1: ["done", "done"], 2: ["done", "done"]}
-    assert not admission.reliable(results[0].count("done"), len(results[0]))  # 1/2: an error never counts as a pass
+    assert not admission.reliable(results[0].count("done"), len(results[0]))
     err = [e for e in events if e["event"] == "admission_run" and e["status"] == "error"]
     assert err and err[0]["variant"] == 0 and err[0]["run"] == 2 and "DecisionError" in err[0]["reason"]
 
@@ -60,7 +59,7 @@ def test_failed_restore_stops_and_keeps_completed_runs(tmp_path: Path, monkeypat
     (results, stopped), events = _validate(
         tmp_path, monkeypatch, ["done", "done", "failed"], [None, None, None, Unavailable()]
     )
-    assert results == {0: ["done", "done"], 1: ["failed"]}  # the fourth run never started
+    assert results == {0: ["done", "done"], 1: ["failed"]}
     assert "restore failed before variant 1 run 2" in stopped
     assert events[-1]["event"] == "admission_stopped"
 

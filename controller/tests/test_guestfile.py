@@ -1,6 +1,3 @@
-"""guestfile.read: the observer's answer through the host agent; PowerShell Direct only for an agent or observer that
-predates ReadGuestFile (UNIMPLEMENTED) while the agent drives Hyper-V on this machine. Everything else is unknown."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -78,10 +75,8 @@ def test_an_old_agent_on_local_hyperv_falls_back_to_powershell_direct(
 
 
 def test_no_fallback_to_a_machine_the_agent_does_not_drive(env: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
-    # UNIMPLEMENTED from an agent that is not Hyper-V here (Proxmox, a remote host): unknown, never a local read.
     monkeypatch.setattr(guestfile, "HostAgent", _agent(_Rpc(grpc.StatusCode.UNIMPLEMENTED), env, local_hyperv=False))
     assert guestfile.read("aberg", REL) is None
-    # Any other error, even from a local Hyper-V agent: unknown, and the backend is not even asked.
     for code in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.INTERNAL, grpc.StatusCode.PERMISSION_DENIED):
         monkeypatch.setattr(guestfile, "HostAgent", _agent(_Rpc(code), env, local_hyperv=True))
         assert guestfile.read("aberg", REL) is None
@@ -92,10 +87,10 @@ def test_no_fallback_to_a_machine_the_agent_does_not_drive(env: list[str], monke
 def test_unknown_stays_unknown(env: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
     big = obs.FileContent(exists=True, data=b"x" * (guestfile.MAX_BYTES + 1))
     monkeypatch.setattr(guestfile, "HostAgent", _agent(big, env))
-    assert guestfile.read("aberg", REL) is None  # over the limit: unknown, never parsed
+    assert guestfile.read("aberg", REL) is None
 
     env.clear()
-    assert guestfile.read("aberg", r"Desktop\a.txt") is None  # outside the noise folders: nothing is asked
+    assert guestfile.read("aberg", r"Desktop\a.txt") is None
     monkeypatch.delenv("LUDIUS_VM")
     assert guestfile.read("aberg", REL) is None
     assert env == []

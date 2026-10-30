@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Offline tests for check.sh and bring-up.sh's identity gate, against stubbed ss, ip and tailscale.
-# Needs bash, jq, python3 (a throwaway listener for the probe cases).   infra/monitor/test.sh
-# shellcheck disable=SC2016,SC2329,SC2001,SC2015 # stub bodies are literal; helpers run through expect; A && B || fail is intended
+# shellcheck disable=SC2016,SC2329,SC2001,SC2015
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -30,7 +28,6 @@ printf '%s\n' "${IP_OUT-2: eth0    inet 192.0.2.10/24 brd 192.0.2.255 scope glob
 2: eth0    inet6 2001:db8::10/64 scope global
 3: tailscale0    inet 100.100.1.1/32 scope global tailscale0}"
 EOF
-# serve status as tailscaled prints it: <part> builds the monitor (8452) and Proxmox (8453) halves, serve <extra> joins them
 m_tcp='"8452":{"HTTP":true}'
 m_web='"h.ts.net:8452":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:7452"}}}'
 p_tcp='"8453":{"HTTP":true}'
@@ -53,7 +50,6 @@ EOF
 export SERVE_JSON=$good_serve TS_STATUS=$good_status TS_PREFS=$good_prefs PROBE_TIMEOUT=0.3
 
 fails=0
-# expect <name> <exit code wanted, or "nonzero"> <command...>
 expect() {
   local name=$1 want=$2 rc; shift 2
   "$@" >"$tmp/out" 2>&1; rc=$?
@@ -61,7 +57,6 @@ expect() {
   else echo "FAIL: $name: exit $rc, wanted $want"; sed 's/^/      /' "$tmp/out"; fails=$((fails + 1)); fi
 }
 check() { "$here/check.sh"; }
-# the same call with one variable changed
 with() { env "$@" "$here/check.sh"; }
 
 expect "check: clean box passes" 0 check
@@ -86,7 +81,6 @@ expect "check: foreground session with its own port" 1 with "SERVE_JSON=$(serve 
 expect "check: foreground session with funnel" 1 with "SERVE_JSON=$(serve ',"Foreground":{"s1":{"AllowFunnel":{"h:443":true}}}')"
 expect "check: empty Foreground is fine" 0 with "SERVE_JSON=$(serve ',"Foreground":{}')"
 
-# the Proxmox mapping: exactly :8453 -> https+insecure://127.0.0.1:8006
 expect "check: Proxmox mapping missing" 1 with "SERVE_JSON={\"TCP\":{$m_tcp},\"Web\":{$m_web}}"
 expect "check: only the Proxmox mapping, monitor missing" 1 with "SERVE_JSON={\"TCP\":{$p_tcp},\"Web\":{$p_web}}"
 expect "check: Proxmox mapping without +insecure" 1 with "SERVE_JSON=$(echo "$good_serve" | sed 's|https+insecure://127.0.0.1:8006|https://127.0.0.1:8006|')"
@@ -97,7 +91,6 @@ expect "check: Proxmox mapping has a second path" 1 with 'SERVE_JSON={"TCP":{"84
 expect "check: a third port mapped" 1 with 'SERVE_JSON={"TCP":{"8452":{"HTTP":true},"8453":{"HTTP":true},"8454":{"HTTP":true}},"Web":{"h:8452":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:7452"}}},"h:8453":{"Handlers":{"/":{"Proxy":"https+insecure://127.0.0.1:8006"}}},"h:8454":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:22"}}}}}'
 expect "check: a Service is configured" 1 with "SERVE_JSON=$(serve ',"Services":{"svc:x":{}}')"
 
-# Proxmox ports are loopback-only: pveproxy 8006, spiceproxy 3128, pvedaemon 85
 expect "check: pveproxy on 0.0.0.0:8006" 1 with "SS_OUT=LISTEN 0 4096 0.0.0.0:8006 0.0.0.0:*"
 expect "check: pveproxy on [::]:8006" 1 with "SS_OUT=LISTEN 0 4096 [::]:8006 [::]:*"
 expect "check: pveproxy on a public address" 1 with "SS_OUT=LISTEN 0 4096 192.0.2.10:8006 0.0.0.0:*"
@@ -108,7 +101,6 @@ LISTEN 0 4096 [::1]:8006 [::]:*
 LISTEN 0 128 0.0.0.0:22 0.0.0.0:*')"
 expect "check: custom Proxmox ports are probed (8453 wildcard)" 1 with "SS_OUT=LISTEN 0 4096 0.0.0.0:8453 0.0.0.0:*"
 
-# any other public TCP listener (rpcbind, postfix, ...) fails; loopback, tailnet and the range bridges do not
 expect "check: rpcbind on 0.0.0.0:111" 1 with "SS_OUT=$(printf 'LISTEN 0 128 0.0.0.0:22 0.0.0.0:*
 LISTEN 0 4096 0.0.0.0:111 0.0.0.0:*')"
 expect "check: rpcbind on [::]:111" 1 with "SS_OUT=$(printf 'LISTEN 0 128 0.0.0.0:22 0.0.0.0:*
@@ -123,7 +115,6 @@ LISTEN 0 4096 100.100.1.1:9999 0.0.0.0:*
 LISTEN 0 4096 10.77.0.1:7451 0.0.0.0:*
 LISTEN 0 4096 [::1]:25 [::]:*')"
 
-# a probe that cannot run is an abort, never a pass; malformed ip output is an abort, never a probed address
 mkdir "$tmp/noprobe" "$tmp/oddprobe"
 printf '#!/usr/bin/env bash
 exit 126
@@ -142,8 +133,7 @@ expect "check: ip IPv6 literal under inet -> abort" 2 with "IP_OUT=2: eth0    in
 expect "check: ip unknown family -> abort" 2 with "IP_OUT=2: eth0    link/ether 192.0.2.10/24 scope global"
 expect "check: no global address at all fails" 1 with "IP_OUT=3: tailscale0    inet 100.100.1.1/32 scope global tailscale0"
 
-# a connect that succeeds on a global address fails the check, in both families
-for py in python3 python; do "$py" -c "" 2>/dev/null && break; done # the Windows python3 is a Store shim
+for py in python3 python; do "$py" -c "" 2>/dev/null && break; done
 for fam in "127.0.0.1 inet" "::1 inet6"; do
   read -r addr inet <<<"$fam"
   "$py" -c 'import socket,sys
@@ -157,7 +147,6 @@ while True: s.accept()' "$addr" &
   kill "$lpid"; wait "$lpid" 2>/dev/null; lpid=
 done
 
-# bring-up: an enrolled box must have exactly the box identity before serve is published
 bring() { DRY_RUN=1 "$here/bring-up.sh"; }
 expect "bring-up: tagged box proceeds to serve" 0 bring
 grep -q '^+ tailscale serve --bg --http=8452 http://127.0.0.1:7452$' "$tmp/out" || { echo "FAIL: monitor serve not printed for a good identity"; fails=$((fails + 1)); }
@@ -165,7 +154,6 @@ grep -q '^+ tailscale serve --bg --http=8453 https+insecure://127.0.0.1:8006$' "
 [[ $(grep -n -m1 '^+ bind_pve_loopback' "$tmp/out" | cut -d: -f1) -lt $(grep -n -m1 '^+ tailscale serve' "$tmp/out" | cut -d: -f1) ]]   || { echo "FAIL: pveproxy must be bound to loopback before serve is published"; fails=$((fails + 1)); }
 bad_id() { env "$@" DRY_RUN=1 "$here/bring-up.sh"; }
 no_serve() { grep -q 'tailscale serve' "$tmp/out" && { echo "FAIL: serve printed after abort"; fails=$((fails + 1)); }; }
-# Tailscale 1.104.4 on the box: a tagged device's own login is its MagicDNS name, not "tagged-devices"
 expect "bring-up: tagged box, 1.104 login shape" 0 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box"],"UserID":77,"HostName":"ludius-box"},"User":{"77":{"LoginName":"ludius-box.tailec5e26.ts.net"},"5":{"LoginName":"owner@example.com"}}}'
 expect "bring-up: login that only ends in ts.net" 1 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box"],"UserID":5},"User":{"5":{"LoginName":"someone@x.tailnet.ts.net"}}}'
 no_serve
@@ -183,7 +171,6 @@ expect "bring-up: advertises an exit node" 1 bad_id 'TS_PREFS={"AdvertiseRoutes"
 no_serve
 expect "bring-up: uses an exit node" 1 bad_id 'TS_PREFS={"AdvertiseRoutes":null,"ExitNodeID":"nabc","ExitNodeIP":""}'
 no_serve
-# a field that is missing or the wrong type is "cannot tell", not "safe"
 expect "bring-up: status has no User map" 1 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box"],"UserID":123}}'
 no_serve
 expect "bring-up: status has no UserID" 1 bad_id 'TS_STATUS={"Self":{"Tags":["tag:ludius-box"]},"User":{"123":{"LoginName":"tagged-devices"}}}'
@@ -208,7 +195,6 @@ expect "bring-up: AdvertiseRoutes is a string" 1 bad_id 'TS_PREFS={"AdvertiseRou
 no_serve
 expect "bring-up: empty AdvertiseRoutes array is fine" 0 bad_id 'TS_PREFS={"AdvertiseRoutes":[],"ExitNodeID":"","ExitNodeIP":""}'
 
-# homelab removal: only an ordered marker pair is touched; a failed validate puts the file back
 cat >"$tmp/caddy.sh" <<'STUB'
 echo "caddy $*" >>"$STUB_DIR/caddy.log"
 [[ $1 != validate || ${CADDY_VALIDATE_RC:-0} -eq 0 ]]
@@ -216,7 +202,6 @@ STUB
 site=$'a.example {\n}\n'
 block=$'# BEGIN ludius-monitor\nmonitor.ludius.se {\n}\n# END ludius-monitor\n'
 remove() { env CADDY="bash $tmp/caddy.sh" "$@" "$here/homelab/remove-monitor.sh" "$tmp/Caddyfile"; }
-# fixture <content>: a fresh Caddyfile and no leftovers
 fixture() { rm -f "$tmp"/Caddyfile* "$tmp/caddy.log"; printf '%s' "$1" >"$tmp/Caddyfile"; cp "$tmp/Caddyfile" "$tmp/before"; }
 untouched() { if cmp -s "$tmp/before" "$tmp/Caddyfile" && [[ ! -e $tmp/caddy.log ]]; then :; else echo "FAIL: $1: file changed or caddy ran"; fails=$((fails + 1)); fi; }
 
@@ -254,11 +239,10 @@ expect "remove: BLOCK=ludius-pve without a Proxmox block -> abort" 1 remove BLOC
 expect "remove: bad BLOCK name -> abort" 1 remove 'BLOCK=a b'; untouched "bad BLOCK"
 grep -q 'claustra_forward http://127.0.0.1:18453' "$here/homelab/pve.caddy" && grep -q 'header_up Host __BOX_DNS_NAME__:__PVE_TS_PORT__' "$here/homelab/pve.caddy" || { echo "FAIL: pve.caddy lost its forward or its Host hop"; fails=$((fails + 1)); }
 
-# bring-up: pveproxy is bound to loopback (only restarted when it changed), SPICE proxy and rpcbind masked
 cat >"$tmp/bin/systemctl" <<'STUB'
 #!/usr/bin/env bash
 echo "systemctl $*" >>"$STUB_DIR/sysctl.log"
-[[ $1 != cat ]] || [[ $2 != rpcbind.socket ]] # no rpcbind.socket on this box
+[[ $1 != cat ]] || [[ $2 != rpcbind.socket ]]
 STUB
 chmod +x "$tmp/bin/systemctl"
 eval "$(sed -n '/^bind_pve_loopback() {/,/^}/p' "$here/bring-up.sh")"
@@ -277,7 +261,6 @@ printf 'LISTEN_IP="0.0.0.0"\n' >"$tmp/pveproxy"; rm -f "$tmp/sysctl.log"
 expect "bring-up: bind_pve_loopback replaces a wider LISTEN_IP" 0 bind_pve_loopback
 [[ $(cat "$tmp/pveproxy") == *'LISTEN_IP="127.0.0.1"'* && $(cat "$tmp/pveproxy") != *0.0.0.0* ]] || { echo "FAIL: wider LISTEN_IP left in place"; fails=$((fails + 1)); }
 
-# teardown: both mappings go, and a missing one does not stop the logout
 tear() { env "$@" "$here/teardown.sh"; }
 expect "teardown: dry run lists both mappings and the logout" 0 tear DRY_RUN=1
 grep -q 'http=8452 off' "$tmp/out" && grep -q 'http=8453 off' "$tmp/out" && grep -q 'tailscale logout' "$tmp/out" || { echo "FAIL: teardown dry run incomplete"; fails=$((fails + 1)); }

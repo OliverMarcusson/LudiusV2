@@ -1,5 +1,3 @@
-"""Regenerate src/ludius/v1 from ../proto (uv run python scripts/gen_proto.py)."""
-
 import pathlib
 
 from grpc_tools import protoc

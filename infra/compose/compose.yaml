@@ -1,9 +1,3 @@
-# Temporal + PostgreSQL for `ludius day --temporal` and `ludius store sync`. Config only: NOT run or pulled yet.
-# Checked against the v1.32.1 sources, not by running containers: no bash in the server/admin-tools images (all
-# commands here are POSIX sh), temporal-sql-tool create/setup/update are rerun-safe, the dynamic config file is mounted below.
-# Layout follows temporalio/samples-server compose/docker-compose-postgres.yml (auto-setup is stale at 1.23, so
-# schema setup is its own one-shot). Pins: tags verified on Docker Hub 2026-10-27, digests are the multi-arch index.
-# Host ports bind loopback only. Data lives in the named volume `pgdata`; never remove it with `down -v`.
 name: ludius
 
 services:
@@ -11,22 +5,22 @@ services:
     image: postgres:16.15-alpine3.24@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
     restart: unless-stopped
     environment:
-      POSTGRES_USER: temporal # superuser; owns the temporal + temporal_visibility databases
+      POSTGRES_USER: temporal
       POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD in .env}
       LUDIUS_DB_PASSWORD: ${LUDIUS_DB_PASSWORD:?set LUDIUS_DB_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./initdb:/docker-entrypoint-initdb.d:ro # creates role + database `ludius`, first start of an empty volume only
+      - ./initdb:/docker-entrypoint-initdb.d:ro
     ports:
       - "127.0.0.1:${LUDIUS_PG_PORT:-5432}:5432"
-    healthcheck: # -h 127.0.0.1: the init-time server listens on the socket only, so this waits for the real one
+    healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U temporal -d postgres"]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 10s
 
-  temporal-setup: # one-shot, runs again on every `up`
+  temporal-setup:
     image: temporalio/admin-tools:1.32.1@sha256:9ef0dc5b063bf4ffd5c1512de72e0e73e225bd2c7006a18ce69bd592a8862a83
     depends_on:
       postgres: {condition: service_healthy}
@@ -55,7 +49,7 @@ services:
       POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD in .env}
       POSTGRES_SEEDS: postgres
       BIND_ON_IP: 0.0.0.0
-    volumes: # 1.32.1 ships no dynamic config file but its env-built config points at this path; a missing file aborts startup
+    volumes:
       - ./dynamicconfig/docker.yaml:/etc/temporal/config/dynamicconfig/docker.yaml:ro
     ports:
       - "127.0.0.1:${LUDIUS_TEMPORAL_PORT:-7233}:7233"
@@ -66,7 +60,7 @@ services:
       retries: 30
       start_period: 20s
 
-  temporal-namespace: # one-shot: the `default` namespace the CLI uses (the server does not create it)
+  temporal-namespace:
     image: temporalio/admin-tools:1.32.1@sha256:9ef0dc5b063bf4ffd5c1512de72e0e73e225bd2c7006a18ce69bd592a8862a83
     depends_on:
       temporal: {condition: service_healthy}

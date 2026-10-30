@@ -14,7 +14,6 @@ from ludius.loop import GroundTruth, Outcome
 
 
 def test_canary_states_retry_and_health(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Per app, scripted runs: notepad passes on the retry, paint fails twice, explorer only loses runs to Decisions.
     script: dict[str, list[Any]] = {
         "notepad": ["failed", "done"],
         "paint": ["abandoned", "failed"],
@@ -36,7 +35,7 @@ def test_canary_states_retry_and_health(tmp_path: Path, monkeypatch: pytest.Monk
                         health, apps={"notepad", "paint", "explorer"}, report=lambda _: None)  # fmt: skip
     gt.close()
     assert states == {"explorer": "unknown", "notepad": "ok", "paint": "drift"}
-    assert ("explorer_new_folder", 0) in seen  # first admitted template by name, first admitted variant
-    assert all(not v for v in script.values())  # every app ran twice: one retry, no more
+    assert ("explorer_new_folder", 0) in seen
+    assert all(not v for v in script.values())
     assert canary.drifted(health) == {"paint"}
     assert json.loads(health.read_text(encoding="utf-8"))["notepad"]["runs"] == ["failed", "done"]

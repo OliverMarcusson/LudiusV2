@@ -1,7 +1,4 @@
 ---
-# observer, machine part (provision.ps1): the range's code-signing root in LocalMachine\Root and the signed uiAccess
-# observer under Program Files (uiAccess needs a secure location and a trusted signature). The logon task is per
-# persona: persona.yml, run by range-up.yml.
 - name: Observer folder
   ansible.windows.win_file:
     path: "{{ observer_dir }}"

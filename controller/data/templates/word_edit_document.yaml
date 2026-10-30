@@ -1,18 +1,6 @@
-# Add a few lines to the end of one of the persona's own Word documents and save it in place (Ctrl+S).
-# Edits one existing file, Documents\{file_name}.docx: at plan load it must be one the persona's own earlier work
-# left (planner.owned_files); at start it must be there and readable, and its paragraphs are kept as the baseline.
-# Irreversible: the saved file replaces the old version (only a noise file of the persona's own). On abandon Word is
-# closed with Don't Save, so the file keeps its old content. Done is read on the guest's disk, not in the UI: the
-# saved document's non-empty paragraphs are exactly the old ones followed by each line of {body}.
-# The file is opened in File Explorer's Documents with a double-click. Not with its context menu: the menu is a
-# popup whose owner window the observer can't prove. Never from Word's Recent list: it names a file by its name
-# alone, and a same-named one elsewhere could be overwritten. The opening click counts only in the Explorer window
-# showing This PC > Documents (in_window, breadcrumb), so a same-named file in another folder or the Documents
-# library is never opened; typing and saving only in the Word window titled with the file. Variants: Explorer
-# opened with Win+E or from its taskbar button.
 task: word_edit_document
 app: word
-capability: file.edit  # changes one of the persona's own files in place
+capability: file.edit
 processes: [winword.exe, explorer.exe]
 writes: ['Documents\{file_name}.docx']
 params: [file_name, body]
@@ -40,26 +28,23 @@ subgoals:
     done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
   open_file:
     goal: "Open the document {file_name} with a double-click"
-    steps: 14  # Word takes a while to start
-    in_window: &documents {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}  # never elsewhere
-    breadcrumb: &crumbs ['This PC', Documents]  # the profile's own folder, not the Documents library
+    steps: 14
+    in_window: &documents {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+    breadcrumb: &crumbs ['This PC', Documents]
     done: {foreground: {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}}
   append_body:
     goal: "Add the new lines at the end of the document, at the keyboard focus (each line is its own paragraph)"
-    text: body_line  # starts with Enter: a new paragraph after the last one
-    caret: append  # Ctrl+End before typing: the document opens with the caret at its start
-    unreadable_ok: true  # Word's document has no UIA value; the file check decides
+    text: body_line
+    caret: append
+    unreadable_ok: true
     in_window: &word {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}
-    avoid: [{role: edit}, {role: combo box}, {name: '^(File Tab|Save As)$'}]  # no other file opened from here
+    avoid: [{role: edit}, {role: combo box}, {name: '^(File Tab|Save As)$'}]
     done: {typed: true}
   save_keys:
     goal: "Save the document with Ctrl+S"
     keys: [Ctrl+S]
     in_window: *word
-    # Save in place only: the File tab and Save As would offer another name or place.
     avoid: [{name: '^(File Tab|Save As)$'}]
-    # The file check alone: an on-screen part (Word in front) holds before the save too, and the runner then waits
-    # for the disk instead of pressing Ctrl+S (live, dkoster). in_window keeps the keys in this document's window.
     done: {file: {path: 'Documents\{file_name}.docx', append: "{body}"}}
   close_app:
     goal: "Close Word"

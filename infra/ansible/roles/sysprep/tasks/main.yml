@@ -1,12 +1,9 @@
 ---
-# sysprep, last: stage the clones' answer file and take the build's own access back out of the image. Packer's
-# last provisioner then runs sysprep /generalize /oobe /shutdown with this file (spec: run by Packer).
 - name: Clones' answer file
   ansible.windows.win_copy:
     src: unattend.xml
     dest: C:\Windows\System32\Sysprep\ludius-unattend.xml
 
-# The answer file's one-time autologon of the build admin leaves its password in Winlogon.
 - name: No build admin autologon or stored password in the image
   ansible.windows.win_regedit:
     path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon
@@ -21,10 +18,6 @@
     data: "0"
     type: string
 
-# The build's WinRM (Basic over HTTP, on the NAT build bridge) is reverted by the clones' answer file (specialize, on
-# first boot): WinRM applies its registry settings live, so reverting them here cut off this very connection. From
-# the clones' first boot WinRM is disabled until range-up.yml enables it with the default (Negotiate, encrypted)
-# settings.
 - name: WinRM disabled from next boot
   ansible.windows.win_regedit:
     path: HKLM:\SYSTEM\CurrentControlSet\Services\WinRM

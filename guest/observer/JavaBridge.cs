@@ -3,10 +3,6 @@ using Microsoft.Win32;
 
 namespace Ludius.Observer;
 
-// Java Access Bridge client. Swing and AWT windows show UIA almost nothing; the bridge exposes their accessibility
-// tree. The JRE's WindowsAccessBridge-64.dll loads into this process and talks to each JVM over window messages and
-// shared memory: no child process, no disk, no network. Its handshake needs a message pump on the thread that called
-// Windows_run, so one background thread owns that. No JRE on the machine means no Java support, never a failure.
 static unsafe class JavaBridge
 {
     public const int MaxString = 1024, ShortString = 256, MaxVisibleChildren = 256;
@@ -43,8 +39,6 @@ static unsafe class JavaBridge
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterWindowMessageW(string name);
     [DllImport("user32.dll")] static extern int ChangeWindowMessageFilter(uint msg, uint flag);
 
-    // A uiAccess observer sits above the JVMs for UIPI, which drops their replies to the bridge's window. Let
-    // exactly the bridge's messages through (OpenJDK AccessBridgeMessages.h/.cpp), nothing else.
     static void AllowBridgeMessages()
     {
         const uint WM_USER = 0x0400, WM_COPYDATA = 0x004A, MSGFLT_ADD = 1;
@@ -94,11 +88,10 @@ static unsafe class JavaBridge
             while (GetMessageW(out var m, 0, 0, 0) > 0) { TranslateMessage(ref m); DispatchMessageW(ref m); }
         }) { IsBackground = true, Name = "jab" }.Start();
         started.Wait();
-        Thread.Sleep(1000); // running JVMs answer the bridge's announcement asynchronously
+        Thread.Sleep(1000);
         Ready = true;
     }
 
-    // The bridge DLL ships in the JRE's bin folder; older installers also copied it to System32.
     static IntPtr Load()
     {
         const string name = "WindowsAccessBridge-64.dll";
@@ -126,7 +119,6 @@ static unsafe class JavaBridge
 
     public static bool Info(int vm, long ac, out ContextInfo info)
     {
-        // The struct is about 5 KB of UTF-16; marshal through a native buffer.
         var buf = NativeMemory.AllocZeroed((nuint)Marshal.SizeOf<ContextInfo>());
         try
         {
@@ -137,7 +129,6 @@ static unsafe class JavaBridge
         finally { NativeMemory.Free(buf); }
     }
 
-    // Children to walk: all of them for ordinary containers; for lists, tables and very wide nodes only the visible ones.
     public static List<long> Children(int vm, long ac, int count, bool visibleOnly)
     {
         var kids = new List<long>();

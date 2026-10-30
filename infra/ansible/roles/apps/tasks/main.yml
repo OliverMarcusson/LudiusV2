@@ -1,6 +1,4 @@
 ---
-# apps: Office 2024 through the Office Deployment Tool. Installed, not activated: activation before sysprep is not
-# carried into clones; activate.yml runs per clone (KMS), or the volume grace period covers a short test.
 - name: Office Deployment Tool folder
   ansible.windows.win_file:
     path: C:\Windows\Temp\odt
@@ -11,7 +9,6 @@
     url: https://officecdn.microsoft.com/pr/wsus/setup.exe
     dest: C:\Windows\Temp\odt\setup.exe
 
-# The URL is Microsoft's unversioned ODT, so no pinned hash: require a valid Microsoft Authenticode signature instead.
 - name: Office Deployment Tool is signed by Microsoft
   ansible.windows.win_powershell:
     script: |
@@ -21,13 +18,11 @@
         throw "setup.exe signature: $($s.Status) $($s.SignerCertificate.Subject)"
       }
 
-# Rendered on the controller: win_template (ansible.windows 2.8.0 under ansible-core 2.21) wrote the raw Jinja, and
-# setup.exe then sat for good on an invisible "bad configuration" dialog.
 - name: Office configuration
   ansible.windows.win_copy:
     content: "{{ lookup('ansible.builtin.template', 'office.xml.j2') }}"
     dest: C:\Windows\Temp\odt\office.xml
-  no_log: true # may hold the MAK
+  no_log: true
 
 - name: Office configuration is rendered (no template variable names left)
   ansible.windows.win_shell: (Select-String -Path C:\Windows\Temp\odt\office.xml -Pattern 'office_' -Quiet) -eq $true
@@ -35,7 +30,6 @@
   changed_when: false
   failed_when: odt_raw.stdout | trim != 'False'
 
-# Bounded: setup.exe waits for good on an error it can only show in an (invisible) dialog.
 - name: Install Office (downloads about 3 GB from Microsoft's CDN)
   ansible.windows.win_command: C:\Windows\Temp\odt\setup.exe /configure C:\Windows\Temp\odt\office.xml
   args:

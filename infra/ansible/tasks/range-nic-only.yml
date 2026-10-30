@@ -1,9 +1,4 @@
 ---
-# Before any start (srv01 and every clone): net0 on the range bridge with its MAC kept (a new MAC is a new NIC to the
-# guest, which loses its static address), every other NIC removed (a leftover uplink included), plus the caller's
-# extra settings (nic_extra: list of qm set arguments). Then the effective (running) config is read back and asserted:
-# only net0, on the range bridge. A running VM whose pending changes aren't live is refused, never started around.
-# In: nic_vmid. Out: nic_cfg (effective config) for the caller's own checks.
 - name: Config before, VM {{ nic_vmid }}
   ansible.builtin.command: pvesh get /nodes/{{ pve_node }}/qemu/{{ nic_vmid }}/config --output-format json
   register: nic_before

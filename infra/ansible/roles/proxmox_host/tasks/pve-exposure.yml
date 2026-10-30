@@ -1,19 +1,8 @@
 ---
-# Nothing of Proxmox listens on a public address: the web UI (pveproxy 8006) is reached over the tailnet only, through
-# `tailscale serve` (infra/monitor). Included twice from main.yml: before proxmox-ve is installed, so pveproxy's very
-# first start is already on loopback, and after, to restart what is running and to switch off what has no use here.
-# - pveproxy: LISTEN_IP in /etc/default/pveproxy. The Packer build and the host agent reach it on 127.0.0.1.
-# - spiceproxy (3128): masked. SPICE is not used (noVNC and xterm.js go through pveproxy), and masking does not depend
-#   on spiceproxy honouring LISTEN_IP.
-# - rpcbind (111) and rpc.statd: masked. They come with nfs-common; no NFS storage is used.
-# - postfix is "Local only" (main.yml), pvedaemon (85) is loopback by default, sshd (22) stays.
-# A firewall was not chosen: a host firewall on a box with no console can lock the operator out, and it would sit beside
-# the range bridges' iptables rules. infra/monitor/check.sh fails on any other public TCP listener instead.
 - name: pveproxy listens on loopback only
   ansible.builtin.copy:
     dest: /etc/default/pveproxy
     content: |
-      # Managed by infra/ansible (proxmox_host role). Reached over the tailnet via tailscale serve.
       LISTEN_IP="127.0.0.1"
     mode: "0644"
   register: pveproxy_listen
@@ -30,8 +19,6 @@
     state: restarted
   when: pveproxy_listen is changed and pveproxy_unit.rc == 0
 
-# Masked by symlink (what `systemctl mask` writes), so it holds before the packages exist: on the first pass the
-# proxmox-ve install pulls in rpcbind, whose socket would otherwise bind 111 on every address until the second pass.
 - name: SPICE proxy and rpcbind masked, installed or not
   ansible.builtin.file:
     src: /dev/null

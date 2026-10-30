@@ -1,16 +1,3 @@
-"""Counts of outgoing OpenRouter requests for the operator monitor, shared by every controller process.
-
-One count per HTTP request actually sent: a retry or a validation re-ask that posts again counts again.
-Totals are cumulative in runs/openrouter-calls.json until that file is deleted; the host agent serves it read-only.
-A deployment caps spend with LUDIUS_CAP_DECISION / LUDIUS_CAP_LLM: absolute ceilings on these shared totals, so the cap
-holds across every controller process and restart (set them to the current total plus the budget).
-
-Per persona (multi-persona runs, `ludius range`): a request made for a persona (`persona`, from LUDIUS_PERSONA in a
-persona's worker; for_persona, per thread, in the plan worker) is also counted in runs/calls/<persona>.json per local
-day, and LUDIUS_CAP_PERSONA_DECISION / LUDIUS_CAP_PERSONA_LLM cap each persona's day, so one runaway persona stops
-itself, not the others, and starts again the next day.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -24,13 +11,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 PATH = Path(__file__).resolve().parents[3] / "runs" / "openrouter-calls.json"
-persona: str | None = os.environ.get("LUDIUS_PERSONA") or None  # whose daily budget a request also counts against
-_local = threading.local()  # for_persona: the plan worker plans several personas at once, one per thread
+persona: str | None = os.environ.get("LUDIUS_PERSONA") or None
+_local = threading.local()
 
 
 @contextmanager
 def for_persona(user: str) -> Generator[None]:
-    """Requests from this thread count against `user`'s budget (over `persona`) until the block ends."""
     _local.persona = user
     try:
         yield
@@ -45,7 +31,7 @@ def _lock(fd: int) -> None:
     if os.name == "nt":
         import msvcrt
 
-        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # retries for about 10 s, then raises
+        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
     else:
         import fcntl
 
@@ -53,12 +39,10 @@ def _lock(fd: int) -> None:
 
 
 class CapReached(RuntimeError):
-    """The request would pass LUDIUS_CAP_<KIND>; it is not sent."""
+    pass
 
 
 def count(kind: Kind) -> None:
-    """Add one request of `kind`, called before sending it. Uncapped it never raises: a monitor counter must not
-    break a run. Capped, it raises CapReached at the ceiling, and fails closed when the counter is unusable."""
     cap = os.environ.get(f"LUDIUS_CAP_{kind.upper()}")
     who = getattr(_local, "persona", None) or persona
     mine = os.environ.get(f"LUDIUS_CAP_PERSONA_{kind.upper()}") if who else None
@@ -66,14 +50,14 @@ def count(kind: Kind) -> None:
         PATH.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(PATH.with_suffix(".lock"), os.O_RDWR | os.O_CREAT)
         try:
-            _lock(fd)  # released when fd closes
+            _lock(fd)
             try:
                 old: dict[str, Any] = json.loads(PATH.read_text(encoding="utf-8"))
             except (OSError, ValueError):
-                if cap is not None:  # a lost counter would restart from 0 and grant the whole ceiling again
+                if cap is not None:
                     raise
                 old = {}
-            if "decision" not in old and "jev" in old:  # counter files from before the rename keep their count
+            if "decision" not in old and "jev" in old:
                 old["decision"] = old.pop("jev")
             if cap is not None:
                 total = old.get(kind)
@@ -81,7 +65,7 @@ def count(kind: Kind) -> None:
                     raise ValueError(f"{kind} total {total!r} is not a count")
                 if total >= int(cap):
                     raise CapReached(f"{kind} request cap LUDIUS_CAP_{kind.upper()}={cap} reached; nothing sent")
-            if who is not None:  # before the total is written: a refused request is counted nowhere
+            if who is not None:
                 _persona_count(who, kind, mine)
             now = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
             data = {
@@ -92,7 +76,7 @@ def count(kind: Kind) -> None:
             }
             tmp = PATH.with_suffix(f".{os.getpid()}.tmp")
             tmp.write_text(json.dumps(data), encoding="utf-8")
-            for attempt in range(5):  # Windows refuses the replace while a reader holds the file
+            for attempt in range(5):
                 try:
                     os.replace(tmp, PATH)
                     break
@@ -103,7 +87,7 @@ def count(kind: Kind) -> None:
         finally:
             os.close(fd)
     except Exception as e:  # noqa: BLE001
-        if cap is not None or mine is not None:  # an uncounted request could pass a ceiling
+        if cap is not None or mine is not None:
             raise e if isinstance(e, CapReached) else CapReached(f"{kind} counter unusable: {e}") from e
 
 
@@ -112,7 +96,6 @@ def persona_path(user: str) -> Path:
 
 
 def persona_day(user: str, day: dt.date | None = None) -> dict[str, int]:
-    """A persona's requests on a local day (default today): {"decision": n, "llm": n}; zeros when none."""
     try:
         data: dict[str, Any] = json.loads(persona_path(user).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -122,14 +105,13 @@ def persona_day(user: str, day: dt.date | None = None) -> dict[str, int]:
 
 
 def _persona_count(user: str, kind: Kind, cap: str | None) -> None:
-    """Under count()'s lock: one more `kind` request today for `user`; CapReached at LUDIUS_CAP_PERSONA_<KIND>."""
     path = persona_path(user)
     try:
         data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        data = {}  # a persona's first request ever
+        data = {}
     except (OSError, ValueError):
-        if cap is not None:  # a lost counter would grant the whole day again
+        if cap is not None:
             raise
         data = {}
     day = dt.date.today().isoformat()

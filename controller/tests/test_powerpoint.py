@@ -1,6 +1,3 @@
-"""PowerPoint deck template: planner validation of the slides, the .pptx reader and the guest-side done check
-(offline)."""
-
 from __future__ import annotations
 
 import io
@@ -25,9 +22,6 @@ REL = 'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"'
 
 
 def pptx(*slides: list[str], order: list[int] | None = None) -> bytes:
-    """A minimal deck as PowerPoint writes it: slide i is slides/slide{i}.xml, listed in presentation.xml in `order`;
-    each slide's first line is its title placeholder (written after the body, as tree order may be), the rest
-    bullets, and every slide has an empty subtitle-like shape."""
 
     def sp(ph: str, lines: list[str]) -> str:
         paras = "".join(f"<a:p><a:r><a:t>{x[:2]}</a:t></a:r><a:r><a:t>{x[2:]}</a:t></a:r></a:p>" for x in lines)
@@ -59,17 +53,17 @@ def check(**content: str) -> list[str]:
 
 
 def test_planner_slides() -> None:
-    assert check() == [] and check(slide2_title="", bullets2="") == []  # one or two bullet slides
-    assert check(bullets2="") and check(slide2_title="")  # a slide is planned whole or not at all
-    assert check(bullets="a point\n" * 7)  # bounded bullets
-    assert check(slide_title="two\nlines") and check(title="it's q4")  # one-line titles, no smart quotes
-    assert check(bullets="fine\n1. numbered") and check(bullets2="q4 - close")  # AutoFormat would change these
+    assert check() == [] and check(slide2_title="", bullets2="") == []
+    assert check(bullets2="") and check(slide2_title="")
+    assert check(bullets="a point\n" * 7)
+    assert check(slide_title="two\nlines") and check(title="it's q4")
+    assert check(bullets="fine\n1. numbered") and check(bullets2="q4 - close")
 
 
 def test_pptx_reader() -> None:
     assert guestfile.pptx_slides(SAVED) == [["Q4 close status"], ["Open points", "Accruals by friday",
                                             "Vat return filed"], ["Next steps", "Review on 31/10"]]  # fmt: skip
-    moved = pptx(["a title"], ["b title", "b point"], order=[2, 1])  # presentation order, not file names
+    moved = pptx(["a title"], ["b title", "b point"], order=[2, 1])
     assert guestfile.pptx_slides(moved) == [["b title", "b point"], ["a title"]]
     assert guestfile.pptx_slides(b"not a zip") is None
 
@@ -103,19 +97,19 @@ def test_file_done_needs_a_new_deck_written_in_the_task(task: tuple[Task, dict[s
     tk, disk = task
     done = tk.template.subgoals["confirm_save"].done
     disk["file"] = guestfile.GuestFile(True, 2_000_000, SAVED)
-    assert check_done(done, saved_snap(), tk, False) is False  # no baseline taken: could be pre-existing
+    assert check_done(done, saved_snap(), tk, False) is False
     assert file_baseline(tk, Policy()) == "Documents\\q4 close status.pptx: already exists, never overwritten"
     disk["file"] = guestfile.GuestFile(False)
     assert file_baseline(tk, Policy()) is None
     disk["file"] = guestfile.GuestFile(True, 2_000_000, SAVED)
     assert check_done(done, saved_snap(), tk, False) is True
     disk["file"] = guestfile.GuestFile(True, 999_999, SAVED)
-    assert check_done(done, saved_snap(), tk, False) is False  # written before the task started
+    assert check_done(done, saved_snap(), tk, False) is False
     for wrong in (pptx(["Q4 close status"], ["Open points", "Accruals by friday", "Vat return filed"]),
                   pptx(["Q4 close status"], ["Open points Accruals by friday", "Vat return filed"],
-                       ["Next steps", "Review on 31/10"]),  # bullets typed into the title
+                       ["Next steps", "Review on 31/10"]),
                   pptx(["Q4 close status"], ["Open points", "Accruals by friday", "Vat return filed"],
-                       ["Next steps", "Review on 31/10"], [])):  # a stray empty slide # fmt: skip
+                       ["Next steps", "Review on 31/10"], [])):  # fmt: skip
         disk["file"] = guestfile.GuestFile(True, 2_000_000, wrong)
         assert check_done(done, saved_snap(), tk, False) is False
 
@@ -133,7 +127,6 @@ def test_one_bullet_slide_skips_the_second(task: tuple[Task, dict[str, Any]]) ->
 
 
 def deck_snap(*thumbs: tuple[str, bool]) -> obs.Snapshot:
-    """PowerPoint with these thumbnails (name, selected), top to bottom, and the slide's text box."""
     s = obs.Snapshot()
     s.windows.add(process_name="POWERPNT.EXE", title="Presentation1 - PowerPoint", kind=obs.Window.FOREGROUND)
     s.elements.add(id=99, role="image", name="Content Placeholder", window=0)
@@ -144,8 +137,6 @@ def deck_snap(*thumbs: tuple[str, bool]) -> obs.Snapshot:
 
 
 def test_slide_checks_on_screen(task: tuple[Task, dict[str, Any]]) -> None:
-    """Thumbnails are named "Slide <title>" ("Slide" while untitled). A new slide counts only when the subgoal added
-    it; the title and bullet checks then read that slide, selected; the text box counts only with the focus."""
     tk, _ = task
     sgs = tk.template.subgoals
     before = deck_snap(("Slide Q4 close status", True))
@@ -158,30 +149,27 @@ def test_slide_checks_on_screen(task: tuple[Task, dict[str, Any]]) -> None:
     assert check_done(sgs["focus_bullets"].done, after, tk, False) is True
     titled = deck_snap(("Slide Q4 close status", False), ("Slide Open points", True))
     assert check_done(sgs["write_slide_title"].done, titled, tk, True) is True
-    assert check_done(sgs["write_slide_title"].done, titled, tk, False) is False  # nothing typed yet
+    assert check_done(sgs["write_slide_title"].done, titled, tk, False) is False
     assert check_done(sgs["write_bullets"].done, titled, tk, True) is True
     sg = tk.subgoal("write_slide_title")
-    assert any(element_matches(obs.Element(name="New Slide"), c, tk) for c in sg.avoid)  # run1: added a stray slide
-    thumb = obs.Element(role="list item", name="Slide")  # run3: a click moved the focus to the thumbnails
+    assert any(element_matches(obs.Element(name="New Slide"), c, tk) for c in sg.avoid)
+    thumb = obs.Element(role="list item", name="Slide")
     assert all(any(element_matches(thumb, c, tk) for c in tk.subgoal(n).avoid) for n in tk.subgoal_names[2:11])
 
 
 def test_no_new_slide_is_not_done(task: tuple[Task, dict[str, Any]]) -> None:
-    """Sol repro 1: a stale blank slide is selected when new_slide2 starts and nothing is added: not done."""
     tk, _ = task
     sg = tk.template.subgoals["new_slide2"]
     stale = deck_snap(("Slide Q4 close status", False), ("Slide", True))
     added_baseline(sg.done, stale, tk)
     assert check_done(sg.done, stale, tk, False) is False
     assert check_done(sg.done, deck_snap(("Slide Q4 close status", False), ("Slide", True)), tk, False) is False
-    tk.added_base = None  # no baseline taken: unknown, never done
+    tk.added_base = None
     assert check_done(sg.done, deck_snap(("Slide Q4 close status", False), ("Slide", False), ("Slide", True)), tk,
                       False) is False  # fmt: skip
 
 
 def test_text_on_another_slide_is_not_done(task: tuple[Task, dict[str, Any]]) -> None:
-    """Sol repro 2: an older, unselected thumbnail carries the planned title while the new slide (marked) does not,
-    or the new slide carries it but another slide is the one being edited: not done."""
     tk, _ = task
     sgs = tk.template.subgoals
     added_baseline(sgs["new_slide"].done, deck_snap(("Slide Q4 close status", False), ("Slide Open points", True)), tk)

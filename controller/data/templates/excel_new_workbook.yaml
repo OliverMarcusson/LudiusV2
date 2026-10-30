@@ -1,13 +1,6 @@
-# Make a small new workbook in Excel (classic desktop, Microsoft 365) and save it in Documents as .xlsx.
-# Writes one new file, Documents\{file_name}.xlsx (a noise folder), declared by confirm_save's file check: the runner
-# refuses to start if it exists, so the task never overwrites. Nothing it does is irreversible; on abandon Excel is
-# closed with Don't Save. Done is read on the guest's disk, not in the UI: the saved workbook's only sheet holds
-# exactly {rows} from A1 (ludius.guestfile).
-# Variants cover launch method (Start search vs Run) and how the blank workbook is opened (Enter on the focused
-# Blank workbook tile vs a click on it). Save is F12: Ctrl+S on a new workbook opens the Backstage first.
 task: excel_new_workbook
 app: excel
-capability: file.write  # creates one new file (writes); manager requests may ask for it
+capability: file.write
 processes: [excel.exe]
 writes: ['Documents\{file_name}.xlsx']
 params: [file_name, rows]
@@ -17,7 +10,6 @@ example: {file_name: admission test sheet, rows: "item\tcount\npens\t12\npads\t3
 variants:
   - [open_from_start, new_blank_enter, write_rows, save_as, name_file, confirm_save, close_app]
   - [open_from_run, new_blank_click, write_rows, save_as, name_file, confirm_save, close_app]
-# Run dialog (Win+R) variants are rare (about 5%): few users launch apps that way; it stays in as a lookalike.
 weights: [1, 0.05]
 budget_steps: 40
 budget_minutes: 8
@@ -44,7 +36,6 @@ subgoals:
   write_rows:
     goal: "Cell A1 of the new sheet is selected: type the rows at the keyboard focus (the text moves to the next cell on Tab and to the next row on Enter)"
     text: rows_enter
-    # Into the grid only: never a ribbon field (Font, Name Box, Formula Bar, search), never a cell other than A1.
     avoid:
       - {role: edit}
       - {role: combo box}
@@ -53,15 +44,13 @@ subgoals:
   save_as:
     goal: "Open the Save As dialog with F12"
     keys: [F12]
-    # For a new workbook the File tab and the toolbar Save open the Backstage, where F12 does nothing (run1:
-    # 12 steps there); only F12 reaches the dialog. The search box (run2) is the shared no-text rule (options).
     avoid:
       - {name: '^(File Tab|Save)$'}
     done: {window: {process: excel.exe, title: "^Save As$"}}
   name_file:
     goal: "Enter {file_name} as the file name in the Save As dialog"
     text: file_name
-    replace: true  # the box may hold a filter (*.txt) or a name typed before
+    replace: true
     done: {typed: true, element: {name: "^File name", value: '^{file_name}(\.xlsx)?$'}}
   confirm_save:
     goal: "Save the workbook as {file_name}"

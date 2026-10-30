@@ -64,7 +64,7 @@ static partial class Native
 
     public static string ProcessName(uint pid)
     {
-        var h = OpenProcess(0x1000 /* QUERY_LIMITED_INFORMATION */, false, pid);
+        var h = OpenProcess(0x1000 , false, pid);
         if (h == IntPtr.Zero) return "";
         try
         {
@@ -74,16 +74,14 @@ static partial class Native
         finally { CloseHandle(h); }
     }
 
-    // True when the process is elevated, or its token is out of reach (which,
-    // from a medium-integrity observer, means the same thing).
     public static bool Elevated(uint pid)
     {
         var h = OpenProcess(0x1000, false, pid);
         if (h == IntPtr.Zero) return true;
         try
         {
-            if (!OpenProcessToken(h, 0x0008 /* TOKEN_QUERY */, out var token)) return true;
-            try { return GetTokenInformation(token, 20 /* TokenElevation */, out var elevated, 4, out _) && elevated != 0; }
+            if (!OpenProcessToken(h, 0x0008 , out var token)) return true;
+            try { return GetTokenInformation(token, 20 , out var elevated, 4, out _) && elevated != 0; }
             finally { CloseHandle(token); }
         }
         finally { CloseHandle(h); }
@@ -92,7 +90,7 @@ static partial class Native
     public static bool SelfUiAccess()
     {
         if (!OpenProcessToken(GetCurrentProcess(), 0x0008, out var token)) return false;
-        try { return GetTokenInformation(token, 26 /* TokenUIAccess */, out var ui, 4, out _) && ui != 0; }
+        try { return GetTokenInformation(token, 26 , out var ui, 4, out _) && ui != 0; }
         finally { CloseHandle(token); }
     }
 
@@ -100,28 +98,22 @@ static partial class Native
     public static partial bool WTSQuerySessionInformation(IntPtr server, uint session, int infoClass, out IntPtr buffer, out int bytes);
     [LibraryImport("wtsapi32.dll")] public static partial void WTSFreeMemory(IntPtr memory);
 
-    // WTSSessionInfoEx -> WTSINFOEX_LEVEL1_W.SessionFlags: 0 = locked, 1 = unlocked.
-    // The Windows 10 lock screen (LockApp) runs on the user's own desktop, so the
-    // input desktop alone does not reveal it.
     public static bool SessionLocked()
     {
         if (!ProcessIdToSessionId((uint)Environment.ProcessId, out var session)) return false;
         if (!WTSQuerySessionInformation(0, session, 25, out var buf, out _)) return false;
-        // Level (4) + padding: the union holds LARGE_INTEGERs, so Data starts at 8; Flags follow Id and State.
         try { return Marshal.ReadInt32(buf, 16) == 0; }
         finally { WTSFreeMemory(buf); }
     }
 
-    // The input desktop is "Default" while the user is at the desktop; Winlogon
-    // (lock screen, UAC secure desktop) cannot even be opened from the session.
     public static bool InputDesktopIsDefault()
     {
-        var d = OpenInputDesktop(0, false, 0x0001 /* DESKTOP_READOBJECTS */);
+        var d = OpenInputDesktop(0, false, 0x0001 );
         if (d == IntPtr.Zero) return false;
         try
         {
             var buf = new char[64];
-            return GetUserObjectInformation(d, 2 /* UOI_NAME */, buf, buf.Length * 2, out _) &&
+            return GetUserObjectInformation(d, 2 , buf, buf.Length * 2, out _) &&
                    new string(buf).TrimEnd('\0').Equals("Default", StringComparison.OrdinalIgnoreCase);
         }
         finally { CloseDesktop(d); }

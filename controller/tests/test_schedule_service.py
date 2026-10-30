@@ -1,8 +1,3 @@
-"""The real ScheduledDay worker (scheduled.serve) against one private loopback Temporal dev server.
-
-Uses only the Temporal CLI the SDK already cached; never downloads one. Fake desktop, temporary SQLite.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -44,8 +39,6 @@ STARTED = SearchAttributeKey.for_datetime("TemporalScheduledStartTime")
 
 
 class GateRunner(FakeRunner):
-    """The 09:30 slot blocks on its first attempt until the worker shuts down under it."""
-
     blocked = threading.Event()
 
     def run(self, task: Task, between: Any = None) -> Outcome:
@@ -53,7 +46,7 @@ class GateRunner(FakeRunner):
             self.calls.append("blocked")
             self.blocked.set()
             deadline = time.monotonic() + 60
-            while time.monotonic() < deadline:  # the SDK raises its cancellation into this thread
+            while time.monotonic() < deadline:
                 time.sleep(0.05)
             raise AssertionError("worker shutdown never cancelled the slot")
         return super().run(task, between)
@@ -147,7 +140,6 @@ async def _scheduled_worker(tmp_path: Path) -> None:
             desc = await sched.describe()
             assert desc.schedule.state.paused and desc.info.num_actions == 0 and calls == []
 
-            # Explicit trigger: the intended time is now, so today's existing plan runs as day-aberg-<today>.
             await sched.trigger()
             first = await fired(1)
             assert [d.status for d in await result(first)] == ["done"]
@@ -157,7 +149,6 @@ async def _scheduled_worker(tmp_path: Path) -> None:
             assert reservation() is None
             print("trigger", first, "->", child.id, child.run_id)
 
-            # A repeat fire for the same date fails on the child id and never touches the desktop again.
             await sched.trigger()
             again = await fired(2)
             assert again[1] != first[1]
@@ -167,20 +158,18 @@ async def _scheduled_worker(tmp_path: Path) -> None:
             assert calls.count("run note 0900") == 1
             print("repeat", again, "rejected:", why)
 
-            # Backfill emits a past intended timestamp: that date's plan is chosen, not today's.
             await sched.backfill(window(d2))
             pending = await fired(3)
             info = await client.get_workflow_handle(pending[0], run_id=pending[1]).describe()
             assert info.typed_search_attributes.get(STARTED) == at_nine(d2)
             await asyncio.to_thread(GateRunner.blocked.wait, 60)
-            await stop(task)  # worker shutdown mid-slot: local resources close, the day keeps its desktop
+            await stop(task)
             assert calls[-2:] == ["blocked", f"close {d2}"]
             assert reservation() == f"default/day-aberg-{d2}"
 
-            # A different date fired (overlap forced) while d2 is pending cannot take the reserved desktop.
             await sched.backfill(window(d3, ScheduleOverlapPolicy.ALLOW_ALL))
             competing = await fired(4)
-            task = worker(client)  # restart: reloads d2's frozen input from the reservation
+            task = worker(client)
             why = await failure(competing)
             assert f"desktop reserved by default/day-aberg-{d2}" in why, why
             assert [d.status for d in await result(pending)] == ["done", "done"]
@@ -190,7 +179,7 @@ async def _scheduled_worker(tmp_path: Path) -> None:
             print("pending", pending, "competing", competing, "rejected:", why, "calls", calls)
             await stop(task)
             await sched.delete()
-        finally:  # a failed assertion must not leave a worker polling a stopped server
+        finally:
             for t in live:
                 t.cancel()
             await asyncio.gather(*live, return_exceptions=True)
@@ -207,10 +196,9 @@ def test_realtime_day_waits_on_a_durable_timer_across_a_worker_restart(tmp_path:
 
 
 async def _timer_across_restart(tmp_path: Path, now: dt.datetime) -> None:
-    """Real wait, no clock tricks: the slot is due at the next whole minute (plus the workflow's own 0-120 s jitter)."""
     runs, desk, calls = tmp_path / "runs", tmp_path / "desk" / "vm.lock", list[str]()
     today = durable.plan_date(dt.datetime.now(dt.UTC), TZ)
-    later = (now + dt.timedelta(minutes=1)).strftime("%H:%M")  # at least a few seconds ahead
+    later = (now + dt.timedelta(minutes=1)).strftime("%H:%M")
     plan = tmp_path / "runs" / "plans" / f"{today}-aberg.yaml"
     plan.parent.mkdir(parents=True)
     plan.write_text(DayPlan(persona="aberg", date=today, items=[note("00:00"), note(later)]).model_dump_json(),
@@ -253,7 +241,6 @@ async def _timer_across_restart(tmp_path: Path, now: dt.datetime) -> None:
             async def events() -> list[Any]:
                 return [e async for e in child.fetch_history_events()]
 
-            # Server ground truth: the 00:00 slot finished, then the slot-B timer started; nothing else happened.
             started: list[Any] = []
             for _ in range(300):
                 try:
@@ -273,14 +260,14 @@ async def _timer_across_restart(tmp_path: Path, now: dt.datetime) -> None:
             )
             assert calls == ["open", "normalize", "run note 0000"] and reservation() == f"default/day-aberg-{today}"
 
-            await stop(live[0])  # the workflow stays open on the server while no worker exists
+            await stop(live[0])
             assert (await child.describe()).status == WorkflowExecutionStatus.RUNNING
             assert (
                 calls == ["open", "normalize", "run note 0000", "close"]
                 and reservation() == f"default/day-aberg-{today}"
             )
             live.append(asyncio.create_task(scheduled.serve(client, runs, "aberg", desk, factory, lambda d, a: {})))
-            await asyncio.sleep(2)  # worker back, replaying with the timer still pending
+            await asyncio.sleep(2)
             assert (
                 "run note" + later.replace(":", "") not in calls
                 and (await child.describe()).status == WorkflowExecutionStatus.RUNNING
@@ -289,11 +276,9 @@ async def _timer_across_restart(tmp_path: Path, now: dt.datetime) -> None:
             assert [d.status for d in await asyncio.wait_for(child.result(), 300)] == ["done", "done"]
             fired = dt.datetime.now(dt.UTC)
             assert fired >= fire_at - dt.timedelta(seconds=1), "the slot ran before its durable timer was due"
-            # Slot A is never replayed onto the desktop; B runs once after the restart, then the owner is released.
             runs_seen = [c for c in calls if c.startswith("run")]
             assert runs_seen == ["run note 0000", f"run note {later.replace(':', '')}"] and calls[-1] == "close", calls
             assert calls.index("close") < calls.index(runs_seen[1]) and reservation() is None
-            # Server order: slot A scheduled, TimerStarted, TimerFired, slot B scheduled; one timer, no second slot A.
             seq: list[str] = []
             for e in await events():
                 if e.HasField("timer_started_event_attributes"):

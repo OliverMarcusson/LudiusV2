@@ -8,8 +8,6 @@ using static Interop.UIAutomationClient.UIA_PropertyIds;
 
 namespace Ludius.Observer;
 
-// Turns the foreground window, its owned and popup windows and the shell into
-// one capped element table. Read-only: nothing here invokes a pattern.
 sealed partial class Snapshotter
 {
     const int Cap = 200;
@@ -32,7 +30,6 @@ sealed partial class Snapshotter
         UIA_LegacyIAccessibleValuePropertyId,
     ];
 
-    // UIA_ButtonControlTypeId -> "button", from the interop's own constants.
     static readonly Dictionary<int, string> Roles = typeof(UIA_ControlTypeIds).GetFields()
         .Where(f => f.Name.EndsWith("ControlTypeId"))
         .ToDictionary(f => (int)f.GetValue(null)!, f => Lower(f.Name["UIA_".Length..^"ControlTypeId".Length]));
@@ -74,7 +71,7 @@ sealed partial class Snapshotter
         public bool Actionable;
         public string Context = "";
         public bool Busy;
-        public Rect? Content; // a list's row viewport, when its bounds are known
+        public Rect? Content;
     }
 
     public Snapshot Take()
@@ -88,8 +85,6 @@ sealed partial class Snapshotter
             ScreenHeight = Native.GetSystemMetrics(1),
             Dpi = (int)Native.GetDpiForSystem(),
             User = Environment.UserName,
-            // Locked: the WTS session flag (LockApp runs on the user's own desktop, so the input desktop can't
-            // tell). Unlocked but input elsewhere means the secure desktop: a UAC prompt, which noise never answers.
             Locked = locked,
             SecureDesktop = !locked && !Native.InputDesktopIsDefault(),
         };
@@ -112,15 +107,12 @@ sealed partial class Snapshotter
             if (w.Unresponsive || w.ElevatedUnreadable) continue;
             Watchdog.Step = $"read {w.ClassName} ({w.ProcessName}) {kind}";
             var found = ReadWindow(hwnd, w, (uint)(snap.Windows.Count - 1), keys);
-            // No usable tree: nothing beyond the title bar (canvas and custom-drawn apps still have one).
             if (found.All(r => r.E.Role == "title bar" || r.E.AncestorPath.StartsWith("title bar"))) w.NoTree = true;
             raws.AddRange(found);
         }
         snap.IndeterminateProgress = raws.Any(r => r.Busy);
         foreach (var r in raws.Where(r => r.Context != "").Take(60)) snap.Context.Add(r.Context);
 
-        // Priority: focused element, then an open modal or popup (and almost
-        // nothing else), else actionable foreground elements in reading order, then the shell.
         var actionable = raws.Where(r => r.Actionable).ToList();
         var ordered = new List<Raw>();
         ordered.AddRange(actionable.Where(r => r.E.Focused));
@@ -138,7 +130,6 @@ sealed partial class Snapshotter
         return snap;
     }
 
-    // Dev only (--once --title): read this window as if it were in front, without taking focus on the dev machine.
     public static IntPtr Foreground;
 
     static List<(IntPtr, Window.Types.Kind)> CollectWindows()
@@ -153,17 +144,14 @@ sealed partial class Snapshotter
         {
             if (h == fg || !Native.IsWindowVisible(h) || Native.Cloaked(h)) return true;
             var cls = Native.ClassName(h);
-            // Office's drop shadows (four per window or callout, same pid, WS_POPUP): decoration, never an overlay.
             if (cls == "MSO_BORDEREFFECT_WINDOW_CLASS") return true;
             for (var o = Native.Owner(h); o != 0; o = Native.Owner(o))
                 if (o == fg) { owned.Add((h, Window.Types.Kind.Owned)); return true; }
             Native.GetWindowThreadProcessId(h, out var pid);
             bool popup = (Native.GetWindowLongPtr(h, Native.GWL_STYLE) & Native.WS_POPUP) != 0;
-            // Shell first: the taskbar, desktop and Start share explorer's pid with popup styles.
             if (cls is "Shell_TrayWnd" or "NotifyIconOverflowWindow" or "Windows.UI.Core.CoreWindow"
                 or "TopLevelWindowForOverflowXamlIsland" or "Progman" or "WorkerW")
             {
-                // The desktop (icons) only matters when nothing else covers it.
                 if (cls is not ("Progman" or "WorkerW") || Native.ClassName(fg) is "Shell_TrayWnd" or "Progman" or "WorkerW" || fg == 0)
                     shell.Add((h, Window.Types.Kind.Shell));
             }
@@ -179,7 +167,6 @@ sealed partial class Snapshotter
         return all;
     }
 
-    // Taskbar-style app windows: visible, uncloaked, unowned, titled, not tool windows or the shell.
     static List<IntPtr> AppWindows()
     {
         var list = new List<IntPtr>();
@@ -236,21 +223,16 @@ sealed partial class Snapshotter
                 var winRect = w.Bounds;
                 bool sparseDocument = false;
                 Walk(root, "", winRect, false, null, w, index, found, keys, ref sparseDocument);
-                // Chromium builds its tree lazily once a client asks; give it one more look.
                 if (sparseDocument && attempt == 0) { Thread.Sleep(200); continue; }
                 return found;
             }
             catch (COMException e) when (e.HResult == UIA_E_TIMEOUT) { w.Unresponsive = true; return found; }
             catch (COMException e) when (e.HResult == UIA_E_ELEMENTNOTAVAILABLE) { return found; }
-            // E_INVALIDARG arrives as ArgumentException: the window closed between enumeration and reading.
             catch (ArgumentException) { return found; }
-            // E_ACCESSDENIED arrives as UnauthorizedAccessException: a window we may not read
-            // (integrity level, a closing window). One such window never fails the snapshot.
             catch (Exception e) when (e is UnauthorizedAccessException or COMException) { w.ElevatedUnreadable = true; return found; }
         }
     }
 
-    // `content` is set when `e` is a list: its rows and their cells clip to it, its header keeps `clip`.
     void Walk(IUIAutomationElement e, string path, Rect clip, bool inList, Rect? content, Window w, uint index, List<Raw> found, HashSet<string> keys, ref bool sparseDocument)
     {
         var kids = e.GetCachedChildren();
@@ -266,7 +248,7 @@ sealed partial class Snapshotter
             var childClip = rowClip;
             if (role == "document" && Str(c, UIA_FrameworkIdPropertyId) == "Chrome")
             {
-                childClip = raw.E.Bounds; // off-screen nodes are exposed: clip to the viewport
+                childClip = raw.E.Bounds;
                 if ((c.GetCachedChildren()?.Length ?? 0) == 0) sparseDocument = true;
             }
             if (raw.E.Bounds.Width > 0 || raw.E.Focused) found.Add(raw);
@@ -307,7 +289,7 @@ sealed partial class Snapshotter
 
         e.Value = ValueOf(c, e);
         e.Selected = Bool(c, UIA_SelectionItemIsSelectedPropertyId);
-        e.Expanded = Int(c, UIA_ExpandCollapseExpandCollapseStatePropertyId) is 1 or 2; // Expanded, PartiallyExpanded
+        e.Expanded = Int(c, UIA_ExpandCollapseExpandCollapseStatePropertyId) is 1 or 2;
 
         var key = Hash($"{role}|{e.AutomationId}|{e.Name}|{path}");
         if (!keys.Add(key)) { key = Hash($"{key}#{sibling}"); keys.Add(key); }
@@ -325,7 +307,7 @@ sealed partial class Snapshotter
         }
         Hints(c, e, w, rowsShown);
         bool actionable = e.Actions.Count > 0 || (e.KeyboardFocusable && Interactive.Contains(role));
-        if (role is "list" or "tree" or "data grid") actionable = e.Hints.Count > 0 || e.Focused; // containers matter only when they scroll
+        if (role is "list" or "tree" or "data grid") actionable = e.Hints.Count > 0 || e.Focused;
         var raw = new Raw { E = e, Kind = w.Kind, Actionable = actionable && e.Enabled, Content = content };
         if (!raw.Actionable && e.Name != "" && role is "text" or "status bar" or "header" or "title bar" or "group")
             raw.Context = $"{role}: {Trim(e.Name, 160)}";
@@ -333,7 +315,6 @@ sealed partial class Snapshotter
         return raw;
     }
 
-    // Name -> LabeledBy.Name -> LegacyIAccessible.Name -> preceding text sibling -> HelpText.
     static string NameOf(IUIAutomationElement c, string role, string lastText)
     {
         var name = Str(c, UIA_NamePropertyId);
@@ -362,13 +343,12 @@ sealed partial class Snapshotter
     static void Hints(IUIAutomationElement c, Element e, Window w, int rowsShown)
     {
         CommonHints(e, w);
-        if ((Int(c, UIA_LegacyIAccessibleStatePropertyId) & 0x100) != 0) e.Hints.Add("Enter triggers this"); // STATE_SYSTEM_DEFAULT
+        if ((Int(c, UIA_LegacyIAccessibleStatePropertyId) & 0x100) != 0) e.Hints.Add("Enter triggers this");
         if (Lists.Contains(e.Role) && Bool(c, UIA_ScrollVerticallyScrollablePropertyId) &&
             c.GetCachedPropertyValue(UIA_ScrollVerticalScrollPercentPropertyId) is double pct && pct < 99.5)
             e.Hints.Add(ListShown(rowsShown, pct));
     }
 
-    // Hints from the element's own fields, shared by UIA and Java rows.
     static void CommonHints(Element e, Window w)
     {
         var label = e.Name.Replace("&", "").Trim();
@@ -383,7 +363,6 @@ sealed partial class Snapshotter
         if (Destructive().IsMatch(label)) e.Hints.Add("destructive");
     }
 
-    // Java windows (Swing, AWT) read through the Access Bridge: same element format, framework "Java".
     List<Raw> ReadJava(IntPtr hwnd, Window w, uint index, HashSet<string> keys)
     {
         var found = new List<Raw>();
@@ -391,7 +370,7 @@ sealed partial class Snapshotter
         if (!JavaBridge.Root(hwnd, out var vm, out var root)) return found;
         try
         {
-            int budget = 3000; // nodes per window: a runaway tree never stalls the snapshot
+            int budget = 3000;
             if (JavaBridge.Info(vm, root, out var info))
                 WalkJava(vm, JavaBridge.Children(vm, root, info.ChildrenCount, false), "", "", w.Bounds, w, index, found, keys, ref budget);
         }
@@ -399,7 +378,6 @@ sealed partial class Snapshotter
         return found;
     }
 
-    // Each child in `kids` is released here, walked or not.
     void WalkJava(int vm, List<long> kids, string parentRole, string path, Rect clip, Window w, uint index, List<Raw> found, HashSet<string> keys, ref int budget)
     {
         string lastText = "";
@@ -413,9 +391,8 @@ sealed partial class Snapshotter
                 if (!states.Contains("showing")) continue;
                 var bounds = Clip(new Rect { X = info.X, Y = info.Y, Width = info.Width, Height = info.Height }, clip);
                 var role = JavaRole(info.RoleEnUs, states);
-                if (parentRole == "list" && role == "text") role = "list item"; // JList rows report "label"
+                if (parentRole == "list" && role == "text") role = "list item";
                 bool listLike = role is "list" or "table" or "tree";
-                // Long lists and tables: only the rows on screen. Scroll bars: their arrow buttons say nothing.
                 var grand = info.RoleEnUs == "scroll bar" ? [] : JavaBridge.Children(vm, c, info.ChildrenCount, listLike);
                 if (role is not null)
                 {
@@ -429,7 +406,6 @@ sealed partial class Snapshotter
                     if (bounds.Width > 0 || raw.E.Focused) found.Add(raw);
                     if (role == "text" && raw.E.Name != "") lastText = raw.E.Name;
                 }
-                // A scroll pane's viewport shows part of its content: clip to it, like a Chromium document.
                 var childClip = info.RoleEnUs == "viewport" ? bounds : clip;
                 WalkJava(vm, grand, role ?? "", path == "" ? info.RoleEnUs : $"{path}/{info.RoleEnUs}", childClip, w, index, found, keys, ref budget);
             }
@@ -448,7 +424,7 @@ sealed partial class Snapshotter
         "label" => "text",
         "page tab" => "tab item",
         "spinbox" => "spinner",
-        _ => null, // panes, panels, fillers: structure only
+        _ => null,
     };
 
     Raw DescribeJava(int vm, long c, JavaBridge.ContextInfo info, string role, HashSet<string> s, string path, Rect bounds, Window w, uint index, string lastText, int sibling, HashSet<string> keys)
@@ -477,7 +453,6 @@ sealed partial class Snapshotter
         if (role is "radio button" or "list item" or "tab item") e.Actions.Add("select");
         if (role == "combo box" || info.RoleEnUs == "menu") e.Actions.Add("expand");
 
-        // Password text is never read: only whether it has any.
         if (e.Password) e.Value = JavaBridge.TextLength(vm, c) > 0 ? "filled" : "empty";
         else if (e.Actions.Contains("toggle")) e.Value = s.Contains("checked") ? "on" : "off";
         else if (role is "edit" or "combo box" && info.AccessibleText != 0) e.Value = Trim(JavaBridge.Text(vm, c, MaxValue + 1), MaxValue);
@@ -498,10 +473,6 @@ sealed partial class Snapshotter
         return raw;
     }
 
-    // Spec: virtualized lists report "items 1–14 shown, list continues". `visible` counts the rows on screen.
-    // The first one is item 1 only when the list is scrolled exactly to the top. Elsewhere the ordinal is unknown:
-    // a virtualizing provider's own row count (GridPattern) is the realised rows, not the list's total, so it is
-    // never used as a total or to estimate an ordinal. An unknown percent (negative, NaN) does not claim the top.
     internal static string ListShown(int visible, double pct)
     {
         if (visible == 0) return "list continues";
@@ -516,8 +487,6 @@ sealed partial class Snapshotter
         return list;
     }
 
-    // Where a list's rows show: its bounds below a column header in its upper half (Explorer's details view
-    // puts the header inside the list, over the first row). Unknown list bounds: unknown viewport, no clipping.
     internal static Rect? ContentViewport(Rect list, IEnumerable<(string Role, Rect Bounds)> kids)
     {
         if (list.Width <= 0 || list.Height <= 0) return null;
@@ -531,12 +500,9 @@ sealed partial class Snapshotter
         return top < bottom ? new Rect { X = list.X, Y = top, Width = list.Width, Height = bottom - top } : new Rect();
     }
 
-    // A row partly under the header or past the bottom keeps only its visible part, and only when enough of it
-    // shows to click: the centre of what is left is then on the row, not on the header.
     internal static Rect VisibleRow(Rect row, Rect content)
     {
         var v = Clip(row, content);
-        // ponytail: half the row or 16 px, a fixed floor; tune to the measured pointer tolerance if rows get missed
         return v.Height * 2 >= row.Height || v.Height >= 16 ? v : new Rect();
     }
 
@@ -564,6 +530,5 @@ sealed partial class Snapshotter
     static string Trim(string s, int max) => s.Length <= max ? s : s[..max] + "…";
     static string Hash(string s) => Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(s)), 0, 8).ToLowerInvariant();
 
-    // "SplitButton" -> "split button", "DataItem" -> "data item"
     static string Lower(string pascal) => Regex.Replace(pascal, "(?<=[a-z])([A-Z])", " $1").ToLowerInvariant();
 }

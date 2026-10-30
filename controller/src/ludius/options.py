@@ -1,5 +1,3 @@
-"""Decisions state and option set, built in code from one settled snapshot."""
-
 from __future__ import annotations
 
 import re
@@ -25,31 +23,29 @@ CLICKABLE = {
     "combo box", "tree item", "data item", "edit", "document", "header item", "spinner", "slider",
 }  # fmt: skip
 EDITABLE = {"edit", "document", "combo box"}
-OPENABLE = {"list item", "data item"}  # double-click opens files and shell items
+OPENABLE = {"list item", "data item"}
 BASE_KEYS = ["Enter", "Esc", "Tab", "Shift+Tab", "Up", "Down", "Left", "Right", "Alt+F4"]
 MAX_ELEMENT_LINES = 120
 COPY_SOURCES = {"text", "hyperlink", "list item", "data item", "heading", "tree item"}
 MAX_COPY = 12
-LAUNCH_PROCESSES = {"searchapp.exe", "searchui.exe", "startmenuexperiencehost.exe"}  # Start search, not Explorer
-_ASCII = re.compile(r"^[\x20-\x7e]{3,200}$")  # the virtual keyboard types ASCII only
+LAUNCH_PROCESSES = {"searchapp.exe", "searchui.exe", "startmenuexperiencehost.exe"}
+_ASCII = re.compile(r"^[\x20-\x7e]{3,200}$")
 
 
 @dataclass
 class Option:
-    key: str  # Decisions choice key: o1, o2, ...
-    kind: str  # click | double_click | type | key | scroll | rescan
-    text: str  # what Decisions reads
+    key: str
+    kind: str
+    text: str
     element: obs.Element | None = None
     keys: str = ""
-    content: str = ""  # content key for type
-    literal: str = ""  # type:copy text read from an on-screen element, or the subgoal's template `search` text
+    content: str = ""
+    literal: str = ""
     notches: int = 0
 
 
 @dataclass
 class StepView:
-    """What the controller knows about the screen for one step."""
-
     snapshot: obs.Snapshot
     allowed: list[obs.Element] = field(default_factory=list[obs.Element])
     windows: dict[int, obs.Window] = field(default_factory=dict[int, obs.Window])
@@ -63,7 +59,7 @@ def describe(e: obs.Element) -> str:
                              ("read-only", e.read_only), ("disabled", not e.enabled)) if on]  # fmt: skip
     if flags:
         s += " " + ",".join(flags)
-    if e.framework_id == "visual":  # pixels have only a place to be known by: unnamed icons look alike without it
+    if e.framework_id == "visual":
         s += f" at {e.bounds.x},{e.bounds.y} {e.bounds.width}x{e.bounds.height}"
     if e.hints:
         s += " hint=" + "; ".join(e.hints)
@@ -75,12 +71,6 @@ def window_line(w: obs.Window) -> str:
 
 
 def view(snap: obs.Snapshot, task: Task, sg: Subgoal, policy: Policy) -> StepView:
-    """Elements the task may touch: its apps' windows, the shell when launching, never refused elements.
-
-    A window read from pixels has no process to match: it is in scope only while the template's pixels title and
-    structural anchors are visible in it (tasks.Pixels), never as the shell, and then only its rows inside the
-    title-to-taskbar region (tasks.pixels_region).
-    """
     v = StepView(snapshot=snap)
     region: set[int] = set()
     apps = {p.lower() for p in task.template.processes}
@@ -91,23 +81,20 @@ def view(snap: obs.Snapshot, task: Task, sg: Subgoal, policy: Policy) -> StepVie
                 region.update(e.id for e in rows)
             continue
         proc = w.process_name.lower()
-        dialog_of_app = w.kind in (obs.Window.OWNED, obs.Window.POPUP)  # common dialogs and menus of the app
+        dialog_of_app = w.kind in (obs.Window.OWNED, obs.Window.POPUP)
         shell = w.kind == obs.Window.SHELL or proc in SHELL_PROCESSES
         if proc in apps or (dialog_of_app and _owner_is_app(snap, apps)) or (sg.launch and shell):
             v.windows[i] = w
-    # Live (aberg, dkoster): a second Edge window, minimized or behind the desktop, was never reachable once the
-    # first was closed, and close_edge spent its budget on the bare desktop. With only the shell in front, the
-    # app's taskbar button brings it back (never while an app window is in front: the click would minimize it).
     fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
     hidden = set[str]()
     if not sg.launch and (fg is None or fg.process_name.lower() in SHELL_PROCESSES):
         hidden = {_plain(a.title.split(" - ")[-1]) for a in snap.apps if a.process_name.lower() in apps} - {""}
-    scope = dict(v.windows)  # the shell window a button is in stays out of scope for its other elements
+    scope = dict(v.windows)
     for e in snap.elements:
         in_region = e.window in scope and (e.id in region or not pixels_window(v.windows[e.window]))
         w = snap.windows[e.window] if 0 <= e.window < len(snap.windows) else None
         button = (hidden and w is not None and e.role == "button"
-                  and w.class_name in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd")  # the taskbar, not Start
+                  and w.class_name in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd")
                   and any(h in _plain(e.name) for h in hidden))  # fmt: skip
         if (in_region or button) and policy.element_allowed(e, sg.allow_destructive, snap) is None:
             if button and w is not None:
@@ -117,7 +104,7 @@ def view(snap: obs.Snapshot, task: Task, sg: Subgoal, policy: Policy) -> StepVie
 
 
 def _plain(s: str) -> str:
-    return s.replace("\u200b", "").strip().lower()  # Edge's title says "Microsoft\u200b Edge", its button not
+    return s.replace("\u200b", "").strip().lower()
 
 
 def _owner_is_app(snap: obs.Snapshot, apps: set[str]) -> bool:
@@ -136,7 +123,6 @@ def build_state(v: StepView, task: Task, sg: Subgoal, history: list[str], last_r
         "task_context": task.inst.context or task.fmt(task.template.task.replace("_", " ")),
         "window": window_line(fg) if fg else "desktop",
         "other_windows": [window_line(w) for w in snap.windows if w.kind in (obs.Window.OWNED, obs.Window.POPUP)],
-        # Pixels carry no focus: "none" would assert what nobody observed.
         "focused": "unknown (read from pixels)" if on_pixels else f"[{focused.id}]" if focused else "none",
         "history": history[-8:],
         "last_result": last_result,
@@ -151,9 +137,6 @@ def build_state(v: StepView, task: Task, sg: Subgoal, history: list[str], last_r
 
 
 def search_target(e: obs.Element | None, snap: obs.Snapshot, task: Task) -> bool:
-    """Where a subgoal's template `search` text may go: an enabled, writable edit field in the foreground
-    window of one of the task's own apps, never the keyboard focus unseen (it could be a password field, a reserved
-    field or another app). The element's policy (password, reserved) is checked by the caller as for planner text."""
     if (
         e is None
         or e.role != "edit"
@@ -169,22 +152,15 @@ def search_target(e: obs.Element | None, snap: obs.Snapshot, task: Task) -> bool
 
 
 def launch_target(e: obs.Element | None, snap: obs.Snapshot) -> bool:
-    """Where the launch query (LAUNCH_TEXT) may go: the shell's Start search box, an enabled writable edit of the
-    Start/search process, or the Run dialog's Open box; never an app's field (a draft's Subject in front)."""
     if e is None or e.role != "edit" or e.read_only or not e.enabled or e.password:
         return False
     if not 0 <= e.window < len(snap.windows) or pixels_window(w := snap.windows[e.window]):
         return False
-    # or the Run dialog's "Open:" box (Win+R; Notepad, WordPad, Excel and PowerShell launch from it).
     run = w.process_name.lower() == "explorer.exe" and w.class_name == "#32770" and w.title == "Run"
     return w.process_name.lower() in LAUNCH_PROCESSES or (run and e.name == "Open:")
 
 
 def commits_unguarded(k: str, focused: obs.Element | None, task: Task, sg: Subgoal) -> bool:
-    """The key commits here (Enter sends a chat line: template key_commits) and the subgoal has no guard: only a
-    subgoal with `require` checks may press it, and never with the focus unknown. A guarded subgoal presses it only
-    in a focused field its checks still accept, read fresh: the focus can move after the checks held (live team4,
-    the old conversation's box)."""
     commits = any(
         c.keys.lower() == k.lower() and (focused is None or element_matches(focused, c.focus, task))
         for c in task.template.key_commits
@@ -205,11 +181,8 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
     for e in v.allowed:
         if any(element_matches(e, c, task) for c in sg.avoid):
             continue
-        # Nothing to type: Decisions never writes text, so an edit field (a search box) leads nowhere (Excel run2: 12
-        # clicks on Microsoft search over F12). No template subgoal without text needs one focused by a click.
         if content is None and not sg.copy_text and e.role == "edit":
             continue
-        # Words read from pixels (visual fallback) carry no role: clicking them is the only way in.
         if (e.role in CLICKABLE or (e.role == "text" and e.framework_id == "visual")) and e.bounds.width > 0:
             add("click", f"click {describe(e)}", element=e)
             if e.role in OPENABLE:
@@ -229,11 +202,9 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
     focused = next((e for e in v.snapshot.elements if e.focused), None)
     if (sg.text and content is not None and policy.text_allowed(content, None) is None
             and (sg.text != LAUNCH_TEXT or launch_target(focused, v.snapshot))):  # fmt: skip
-        # Where focus already is (Start search, a field without a usable tree).
         add("type", "type the text to enter at the keyboard focus", content=sg.text or "", literal=literal)
     focus = next((e for e in v.allowed if e.focused and e.role in EDITABLE and not e.read_only), None)
     if sg.copy_text and focus is not None:
-        # Visible text: element names, and the observer's non-actionable text lines ("role: text").
         sources = [(f"[{e.id}] ", e.name) for e in v.allowed if e.role in COPY_SOURCES and e.key != focus.key]
         sources += [("", line.split(": ", 1)[-1]) for line in v.snapshot.context]
         seen: set[str] = set()
@@ -256,8 +227,6 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
         add("scroll", "scroll up", notches=3)
     add("rescan", "rescan: wait for the screen to finish loading and look again")
     if len(opts) > MAX_OPTIONS:
-        # Over the decision model's limit, element options give way: cutting the tail lost the keys, F12 among them,
-        # behind Excel's ~250 ribbon controls (runs 2 and 4 never saw the subgoal's own key).
         opts = opts[: elements - (len(opts) - MAX_OPTIONS)] + opts[elements:]
         for i, o in enumerate(opts, start=1):
             o.key = f"o{i}"

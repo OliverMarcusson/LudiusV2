@@ -1,5 +1,3 @@
-"""outlook_send_invite: the shared send contract on the meeting form, plan-load checks, the server-side done check."""
-
 from __future__ import annotations
 
 import dataclasses
@@ -41,7 +39,6 @@ def task(**params: str) -> Task:
 def test_template_gets_the_meeting_send_contract() -> None:
     t = cli.load_templates()["outlook_send_invite"]
     send = t.subgoals["send_shortcut"]
-    # As hardcoded before app profiles (d5620c0); the forbid regex ^(Optional|Location|Resources)$ is now one per field.
     required = "^({to}|{to_name}|{to_name} <{to}>);?$"
     meeting_require = [ElementCheck(role="edit", name="^Required$", value=required),
                        ElementCheck(role="edit", name="^Optional$", value="^$"),
@@ -76,16 +73,16 @@ def test_planned_meeting_is_valid_and_bounded() -> None:
         ({"to": "someone@example.com"}, "not a colleague"),
     ):
         assert any(why in r for r in check(item(**bad))), bad
-    assert any("after 2026-11-05" in r for r in check(item(), day="2026-11-05"))  # not on the plan's own day
+    assert any("after 2026-11-05" in r for r in check(item(), day="2026-11-05"))
     assert any("within 14 days" in r for r in check(item(), day="2026-10-20"))
 
 
 def test_dates_typed_as_the_guest_reads_them_and_empty_body_skipped() -> None:
     t = task()
-    assert t.values["date_ui"] == "05/11/2026"  # Outlook read 2026-11-05 as 11 May on the en-GB guest
+    assert t.values["date_ui"] == "05/11/2026"
     assert "write_body" not in t.subgoal_names
     assert "write_body" in task(body="agenda").subgoal_names
-    assert AT == (1793871000000, 1793873700000)  # 09:30Z-10:15Z: CET, the guest's zone in November
+    assert AT == (1793871000000, 1793873700000)
 
 
 def test_send_needs_the_planned_meeting_in_the_form() -> None:
@@ -128,9 +125,9 @@ def test_invite_done_only_on_new_request_and_appointment(monkeypatch: pytest.Mon
     t.mail_before = mail_baseline(t)
     assert t.mail_before == frozenset() and not check_done(done, obs.Snapshot(), t, typed_ok=False)
     store[("mvellinga", "inbox")] = [req]
-    assert not check_done(done, obs.Snapshot(), t, typed_ok=False)  # no appointment in the organiser's Calendar
+    assert not check_done(done, obs.Snapshot(), t, typed_ok=False)
     store[("aberg", "calendar")] = [dataclasses.replace(appt, organizer=guest)]
-    assert not check_done(done, obs.Snapshot(), t, typed_ok=False)  # organised by someone else
+    assert not check_done(done, obs.Snapshot(), t, typed_ok=False)
     store[("aberg", "calendar")] = [appt]
     assert check_done(done, obs.Snapshot(), t, typed_ok=False)
     for bad in (dataclasses.replace(req, start_ms=AT[0] + 3_600_000), dataclasses.replace(req, cls="IPM.Note"),
@@ -139,16 +136,16 @@ def test_invite_done_only_on_new_request_and_appointment(monkeypatch: pytest.Mon
         store[("mvellinga", "inbox")] = [bad]
         assert not check_done(done, obs.Snapshot(), t, typed_ok=False), bad
     store[("mvellinga", "inbox")] = [req]
-    t.mail_before = mail_baseline(t)  # both present at task start: never done
+    t.mail_before = mail_baseline(t)
     assert not check_done(done, obs.Snapshot(), t, typed_ok=False)
     t.mail_before = None
     assert not check_done(done, obs.Snapshot(), t, typed_ok=False)
     t2 = task(body="walk through the lund accruals")
     t2.mail_before = frozenset()
-    assert not check_done(done, obs.Snapshot(), t2, typed_ok=False)  # planned body missing from the request
+    assert not check_done(done, obs.Snapshot(), t2, typed_ok=False)
     store[("mvellinga", "inbox")] = [dataclasses.replace(req, body="Walk through the Lund accruals.\r\n")]
     assert check_done(done, obs.Snapshot(), t2, typed_ok=False)
-    t3 = task(body="???")  # no letters: can't be told from an empty body
+    t3 = task(body="???")
     t3.mail_before = frozenset()
     store[("mvellinga", "inbox")] = [req]
     assert not check_done(done, obs.Snapshot(), t3, typed_ok=False)
@@ -192,7 +189,7 @@ def test_abandon_discards_the_meeting_with_dont_save_and_ok(tmp_path: Path) -> N
     agent = FakeAgent([prompt(False), prompt(True), desktop])
     runner = Runner(agent, None, cli.load_persona(None), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
     runner.abandon(task(), "test")
-    assert [y // 40 for _, y in agent.clicked] == [1, 2]  # "Don't save changes", then OK; never the send choice
+    assert [y // 40 for _, y in agent.clicked] == [1, 2]
 
 
 def test_replace_selects_the_prefilled_value_before_typing(tmp_path: Path) -> None:
@@ -237,21 +234,18 @@ def test_abandon_leaves_a_modal_that_ignores_close_keys_by_dont_send_or_cancel(t
     fg = obs.Window(kind=obs.Window.FOREGROUND, process_name="OUTLOOK.EXE", title="Microsoft Outlook")
     desktop = obs.Snapshot(windows=[obs.Window(kind=obs.Window.FOREGROUND, process_name="explorer.exe")])
     runner_of = lambda agent: Runner(agent, None, cli.load_persona(None), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]  # noqa: E731
-    # Run 1's prompt: Don't Send is the discard answer; Send Anyway is never clicked.
     nolocation = obs.Snapshot(windows=[fg], elements=[
         obs.Element(role="button", name="Don't Send", bounds=box(50)),
         obs.Element(role="button", name="Send Anyway", bounds=box(90))])  # fmt: skip
     agent = FakeAgent([nolocation, desktop])
     runner_of(agent).abandon(task(), "test")
     assert [y // 40 for _, y in agent.clicked] == [1]
-    # A modal without a discard answer that ignores Alt+F4: its Cancel button, after the key changed nothing.
     stuck = obs.Snapshot(windows=[fg], elements=[
         obs.Element(role="button", name="Send", bounds=box(10)),
         obs.Element(role="button", name="Cancel", bounds=box(50))])  # fmt: skip
     agent = FakeAgent([stuck, stuck, desktop])
     runner_of(agent).abandon(task(), "test")
     assert agent.chords == [keys.chord("Alt+F4")] and [y // 40 for _, y in agent.clicked] == [1]
-    # No Cancel or Close either: give up (operator), never another button.
     agent = FakeAgent([obs.Snapshot(windows=[fg], elements=[obs.Element(role="button", name="Send", bounds=box(10))])])
     runner_of(agent).abandon(task(), "test")
     assert agent.clicked == [] and len(agent.chords) == 1
@@ -275,11 +269,10 @@ def test_the_guarded_sends_own_prompt_is_confirmed_once_and_nothing_else(tmp_pat
     mail_task = Task(cli.load_templates()["outlook_send_mail"], PlanItem.model_validate(
         {"at": "09:00", "template": "outlook_send_mail", "params": {"to": "mvellinga@ludius.internal",
          "to_name": "Marcus Vellinga", "subject": "s", "body": "b"}}), random.Random(0))  # fmt: skip
-    assert send_confirmation(prompt, mail_task) is None  # only the meeting form's prompt
+    assert send_confirmation(prompt, mail_task) is None
 
 
 def test_a_save_name_typed_at_the_focus_replaces_the_box(tmp_path: Path) -> None:
-    """Live run 11 (dkoster): Save As's File name held '*.txt', and each retry appended the name to it."""
     from ludius.options import Option
     from ludius.tasks import TaskInstance
 
@@ -295,7 +288,6 @@ def test_a_save_name_typed_at_the_focus_replaces_the_box(tmp_path: Path) -> None
              params={"file_name": "maintenance", "body": "x"}, variant=0), random.Random(0))  # fmt: skip
     assert runner.act(Option("o1", "type", "type", content="file_name"), t, t.subgoal("name_file")) is None
     assert agent.chords == [keys.chord("Ctrl+A"), [-1]]
-    # Never select-all in another field: the note's body would be replaced by the name.
     body = obs.Element(key="b", role="document", name="Text Editor", value="press 3 oil leak", focused=True,
                        enabled=True, actions=["value"], bounds=obs.Rect(x=1, y=1, width=50, height=20))  # fmt: skip
     runner.snap = obs.Snapshot(windows=[fg], elements=[body])
@@ -305,7 +297,6 @@ def test_a_save_name_typed_at_the_focus_replaces_the_box(tmp_path: Path) -> None
 
 
 def test_a_url_typed_again_replaces_what_the_address_bar_holds(tmp_path: Path) -> None:
-    """Live team4: each retry appended chat_url to the address bar ('intranet...testchat...testchat...test')."""
     from ludius.options import Option
     from ludius.tasks import TaskInstance
 
@@ -326,7 +317,6 @@ def test_a_url_typed_again_replaces_what_the_address_bar_holds(tmp_path: Path) -
         agent.snaps, agent.chords = [runner.snap], []
         assert runner.act(o, t, t.subgoal("open_chat")) is None
         assert agent.chords == [keys.chord("Ctrl+A"), [-1]]
-    # Another field holding the focus: never select-all there.
     box = edit("Search the web", "")
     runner.snap = obs.Snapshot(windows=[fg], elements=[box])
     agent.snaps, agent.chords = [runner.snap], []

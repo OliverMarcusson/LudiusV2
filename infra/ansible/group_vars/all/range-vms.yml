@@ -1,6 +1,4 @@
 ---
-# Persona -> VM. The VM id is also the vsock CID; addresses are on the range bridge. Committed and explicit: a persona's
-# VM never moves when personas are added or removed. range-up.yml refuses duplicates and anything outside these ranges.
 range_personas:
   - { user: aberg, vmid: 121, ip: 10.77.0.21 }
   - { user: lnord, vmid: 122, ip: 10.77.0.22 }

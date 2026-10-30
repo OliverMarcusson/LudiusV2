@@ -1,29 +1,3 @@
-"""Manager requests (spec section 6, cross-persona interaction): managers mail work to the personas who report to them.
-
-Org chart: the narrative's people, each with `manager` (an account). A persona's manager is a narrative person with
-a range mailbox. The request is sent server-side either way, also when the manager is itself a persona (has a VM):
-deterministic and checkable by Message-ID, at the cost of no Outlook send on the manager's desktop and no copy in its
-Sent Items (writing it in Outlook would need subject-based correlation and a day's delay). Adding people is data.
-
-Manager side, while a report's nightly plan is made (ensure()): one LLM call per manager and day writes requests
-for its persona reports, grounded in the narrative and each report's world state; only weekdays, at most one per
-report a day and WEEKLY per ISO week, and the model may send none. Code validates each before anything is sent:
-the recipient is one of this manager's persona reports and not scenario-reserved, the task is a request-capable
-template of that report's role, the text is typeable and policy-clean, the subject is new in the report's Inbox,
-and what the outcome check compares (file name, phrases to include, colleague) is named in the mail itself.
-Effects: runs/world/requests/<date>-<manager>.yaml is written first (each request with its own Message-ID), then
-each valid request is sent from the manager's mailbox through srv01's local LDA (mail.deliver: ludius.internal
-only). A sent mail is irreversible; a retry finds it by Message-ID and never sends twice.
-
-Persona side (candidates()): each new mail from the persona's manager in the persona's real Inbox is mapped to one
-request-capable template or "none" by one Decisions choice (fail closed: "none", a weak choice or error maps nothing),
-then one LLM call writes that item's parameters from the mail; the item goes through planner.validate with the
-rest of the day (nightly.generate_day) and carries `request`, the mail's Message-ID. Mails decided "none" or
-rejected are remembered in runs/world/requests/seen-<user>.yaml and never cost a call again.
-
-Outcome: the template's own done check, then fulfilled(): the produced work matches what the manager asked.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -55,15 +29,15 @@ if TYPE_CHECKING:
     from ludius.loop import Decider
     from ludius.policy import Policy
 
-REQUESTABLE = ("file.write", "mail.send", "mail.reply", "calendar.invite")  # capabilities a request may ask for
-WEEKLY = 3  # requests per report and ISO week, at most
-MAPPED_MAX = 2  # manager mails mapped per persona and night, at most (bounded calls)
-DECISION_MIN = 0.6  # the decision model's choice must be at least this probable
-READ_LEAD = 5  # minutes: a request mail is read (mail.read) this long before the task it asks for
-SHOWN = 2000  # characters of a mail Decisions and the LLM see
+REQUESTABLE = ("file.write", "mail.send", "mail.reply", "calendar.invite")
+WEEKLY = 3
+MAPPED_MAX = 2
+DECISION_MIN = 0.6
+READ_LEAD = 5
+SHOWN = 2000
 _LINE = re.compile(r"[\x20-\x7e]+")
 _TEXT = re.compile(r"[\x20-\x7e\n]+")
-_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _-]{0,59}")  # a requested file name: plain, no extension
+_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _-]{0,59}")
 ROOT = mail.ROOT / "runs"
 
 SYSTEM = (
@@ -80,15 +54,15 @@ MAP_SYSTEM = (
 
 
 class Ask(Strict):
-    model_config = ConfigDict(extra="ignore")  # a key the model adds (a template parameter) is dropped, not fatal
+    model_config = ConfigDict(extra="ignore")
 
-    to: str  # the report's account
-    task: str  # a request-capable template
+    to: str
+    task: str
     subject: str
     body: str
-    file_name: str = ""  # file.write: the file to save, without extension; named in the body
-    include: list[str] = []  # short phrases the work must contain; each written in the body
-    colleague: str = ""  # mail.send / calendar.invite: the account it goes to; named in the body
+    file_name: str = ""
+    include: list[str] = []
+    colleague: str = ""
 
 
 class _Asks(Strict):
@@ -98,7 +72,7 @@ class _Asks(Strict):
 class Request(Ask):
     manager: str
     msgid: str
-    status: Literal["planned", "sent", "failed", "rejected"] = "planned"  # rejected: unsafe under today's policy
+    status: Literal["planned", "sent", "failed", "rejected"] = "planned"
 
 
 class Day(Strict):
@@ -115,7 +89,6 @@ class _Item(Strict):
 
 
 def manager_of(n: Narrative, user: str, personas: list[Persona]) -> Person | str:
-    """The persona's manager from the org chart (a persona too, or not), or why it has none that may send."""
     people = {p.user: p for p in n.people if p.user}
     me = people.get(user)
     boss = people.get(me.manager) if me and me.manager else None
@@ -152,8 +125,6 @@ def problem(
     subjects: dict[str, set[str] | None],
     existing: dict[str, list[str]],
 ) -> str | None:
-    """Why the request must not be sent (exact rules). Per report account: `left` requests this week, `subjects`
-    in the Inbox (casefolded; None: unreadable) and `existing` files."""
     if left.get(a.to, 0) <= 0:
         return f"{a.to!r} is not a report with requests left this week"
     address = f"{a.to}@{mail.DOMAIN}"
@@ -212,8 +183,6 @@ def ensure(
     inbox: dict[str, list[mail.Message] | None],
     existing: dict[str, list[str]],
 ) -> Day:
-    """The manager's requests for `date`: made once (one LLM call, none at weekends or with no budget left), every
-    planned one sent. `briefs`, `inbox` and `existing` are per report account (world state, server Inbox, files)."""
     path = _dir(world.root) / f"{date.isoformat()}-{boss.user}.yaml"
     if path.exists():
         day = Day.model_validate(yaml.safe_load(path.read_text("utf-8")))
@@ -223,7 +192,7 @@ def ensure(
     people = {p.user: p for p in n.people if p.user}
     for r in day.requests:
         if r.status == "planned" and (why := _unsafe_now(r, boss, people, templates, policy)):
-            r.status = "rejected"  # recorded under an earlier policy (a retry after an interruption)
+            r.status = "rejected"
             day.rejects.append(f"to {r.to} {r.subject!r}: {why}")
             _dump(path, day.model_dump())
         if r.status == "planned":
@@ -236,7 +205,6 @@ def ensure(
 
 def _unsafe_now(r: Request, boss: Person, people: dict[str, Person], templates: dict[str, Template],
                 policy: Policy) -> str | None:  # fmt: skip
-    """The policy-dependent part of problem(), again right before sending: a recorded request may predate it."""
     for who in (r.to, r.colleague):
         if who and (who not in people or policy.reserved(f"{who}@{mail.DOMAIN}")):
             return f"{who!r} is not a colleague's account or is scenario-reserved"
@@ -313,14 +281,11 @@ def _plan(
         if why := problem(a, left, allowed, people, boss, policy, subjects, existing):
             day.rejects.append(f"to {a.to} {a.subject!r}: {why}")
             continue
-        left[a.to] = 0  # one per report today
-        (subjects[a.to] or set[str]()).add(a.subject.casefold())  # no two requests share a subject
+        left[a.to] = 0
+        (subjects[a.to] or set[str]()).add(a.subject.casefold())
         msgid = f"<{uuid.uuid4().hex}.{boss.user}@{mail.DOMAIN}>"
         day.requests.append(Request(**a.model_dump(), manager=boss.user, msgid=msgid))
     return day
-
-
-# Persona side -------------------------------------------------------------------------
 
 
 def _seen_path(root: Path, user: str) -> Path:
@@ -333,16 +298,12 @@ def seen(root: Path, user: str) -> dict[str, str]:
 
 
 def remember(root: Path, user: str, msgid: str, why: str) -> None:
-    """A manager mail that maps to nothing: never decided again."""
     _dump(_seen_path(root, user), {**seen(root, user), msgid: why})
 
 
 def pending(
     world: World, user: str, boss: Person, inbox: list[mail.Message] | None, policy: Policy, date: dt.date
 ) -> list[mail.Message]:
-    """The manager's requests in the persona's Inbox (as read on the server; a request is a mail this module sent,
-    so its outcome can be checked): recent, not reserved, neither planned before (an item's `request`) nor decided
-    before (seen); newest first (older ones were earlier nights' to take), at most MAPPED_MAX."""
     done = set(seen(world.root, user))
     for p in sorted(world.root.glob(f"plans/*-{user}.yaml")):
         try:
@@ -368,8 +329,6 @@ def candidates(
     date: dt.date,
     people: dict[str, str],
 ) -> tuple[list[PlanItem], list[str]]:
-    """Plan items for the manager's mails (`templates`: the persona's role templates; `people`: account -> name, the
-    address book a mail or invite is addressed from), unvalidated, and notes."""
     kinds = requestable(templates)
     book = ", ".join(f"{name} <{u}@{mail.DOMAIN}>" for u, name in people.items() if u != persona.user)
     items: list[PlanItem] = []
@@ -418,8 +377,6 @@ def candidates(
 def read_first(
     it: PlanItem, inbox: list[mail.Message] | None, templates: dict[str, Template], items: list[PlanItem]
 ) -> PlanItem | None:
-    """A mail.read item for request item `it`'s mail, READ_LEAD minutes before it (earlier when that time is taken);
-    None without a mail.read template, or when the mail is not unread in `inbox` (a read can't be shown then)."""
     kind = next((k for k, t in templates.items() if t.capability == "mail.read"), None)
     m = next((m for m in inbox or [] if m.msgid == it.request and not m.read), None)
     if kind is None or m is None:
@@ -434,16 +391,11 @@ def read_first(
                     context=f"Reads the manager's mail {m.subject!r} before doing what it asks.")  # fmt: skip
 
 
-# Outcome ------------------------------------------------------------------------------
-
-
 def mismatch(ask: Request, template: Template, values: dict[str, str]) -> str | None:
-    """How the planned task differs from the request (exact rules): another task, file name or recipient, or a
-    phrase the request names that the planned content lacks. Checked at plan time and again on the outcome."""
     if template.task != ask.task:
         return f"asked for {ask.task}, planned {template.task}"
     if template.capability == "mail.reply":
-        return None  # the reply's text is written at task time; the outcome checks it answers this very mail
+        return None
     if template.capability == "file.write":
         if values.get("file_name", "").casefold() != ask.file_name.casefold():
             return f"file {values.get('file_name')!r}, asked for {ask.file_name!r}"
@@ -457,7 +409,6 @@ def mismatch(ask: Request, template: Template, values: dict[str, str]) -> str | 
 
 
 def planned(it: PlanItem, templates: dict[str, Template], root: Path = ROOT) -> str | None:
-    """Plan-time check of a request item against its record (none: refused, its outcome could not be checked)."""
     ask = find(it.request, root)
     t = templates.get(it.template)
     if ask is None or t is None:
@@ -466,8 +417,6 @@ def planned(it: PlanItem, templates: dict[str, Template], root: Path = ROOT) -> 
 
 
 def duplicates(items: list[PlanItem], it: PlanItem, root: Path = ROOT) -> list[PlanItem]:
-    """The planner's own items doing request `it`'s work again (it sees the mail too): same template, and every
-    phrase the request names in their content. A request naming no phrase has none."""
     ask = find(it.request, root)
     if ask is None or not ask.include:
         return []
@@ -477,8 +426,6 @@ def duplicates(items: list[PlanItem], it: PlanItem, root: Path = ROOT) -> list[P
 
 
 def _text(rel: str, data: bytes) -> str:
-    """A written file's words: workbook cells, document paragraphs, slide text, plain text (UTF-8 or UTF-16), or RTF
-    without its control words."""
     if rel.lower().endswith(".xlsx"):
         return " ".join((guestfile.xlsx_cells(data) or {}).values())
     if rel.lower().endswith(".docx"):
@@ -489,15 +436,11 @@ def _text(rel: str, data: bytes) -> str:
         return data.decode("utf-16", "replace")
     text = data.decode("utf-8-sig", "replace")
     if rel.lower().endswith(".rtf"):
-        # ponytail: strips control words and groups' braces, enough for WordPad's plain runs; not an RTF parser.
         text = re.sub(r"\\'[0-9a-f]{2}|\\[a-z]+-?\d* ?|[{}]", " ", re.sub(r"\{\\\*[^{}]*\}", " ", text), flags=re.I)
     return text
 
 
 def fulfilled(task: Task, root: Path = ROOT) -> tuple[bool, str]:
-    """After the template's own done check: does the work match the request (task.inst.request)? Files are read
-    on the guest and must be new since the task started (proven absent at start, written after); mail and meetings
-    are proven by their done check on the server, so their planned values are compared here."""
     try:
         ask = find(task.inst.request, root)
     except (OSError, ValueError, yaml.YAMLError) as e:

@@ -1,4 +1,3 @@
-# One-shot: Temporal's schema in postgres (rerun-safe).
 [Unit]
 Description=Ludius Temporal schema setup
 Requires=ludius-postgres.service

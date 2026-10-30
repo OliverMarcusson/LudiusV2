@@ -1,18 +1,3 @@
-"""A real calendar-fired nightly planning occurrence, then the playback workflow reading its plan, on one private
-loopback Temporal dev server.
-
-Nightly side (real): `nightly.schedule_for` is created paused at the next local minute (a morning minute here, to
-exercise the date computation; production stays 22:00), unpaused normally, and the server's own clock fires it. No
-trigger, backfill, clock change or time skipping. The scripted model and sources factory are injected into the real
-`nightly.serve`; the plan is generated for the intended occurrence's local date + 1.
-
-Playback side (SYNTHETIC start): the next day's calendar is not fired. `ScheduledDay` is started directly with an
-explicit TemporalScheduledStartTime of occurrence + 1 day, only to prove it reads the plan nightly wrote and runs it
-once on a fake desktop.
-
-Uses only the Temporal CLI the SDK already cached; never downloads one. No VM, Decisions, LLM network or paid call.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -42,7 +27,7 @@ from ludius.day import DayRunner
 CLI = Path(tempfile.gettempdir()) / f"temporal-sdk-python-{importlib.metadata.version('temporalio')}.exe"
 TZ = "Europe/Stockholm"
 STARTED = SearchAttributeKey.for_datetime("TemporalScheduledStartTime")
-HEADROOM = dt.timedelta(seconds=25)  # worker start + a paused check + unpause must fit before the occurrence
+HEADROOM = dt.timedelta(seconds=25)
 ITEM = {"at": "09:00", "template": "notepad_write_note",
         "params": {"file_name": "lease memo", "body": "Draft the lease accounting memo."},
         "context": "Writes up the lease rules before the close."}  # fmt: skip
@@ -64,7 +49,7 @@ def test_calendar_fired_nightly_plan_is_read_by_the_scheduled_day(tmp_path: Path
 async def _nightly_then_playback(tmp_path: Path, target: dt.datetime) -> None:
     runs, desk, calls = tmp_path / "runs", tmp_path / "desk" / "vm.lock", list[str]()
     save_world(runs)
-    day = target.date() + dt.timedelta(days=1)  # the local day after the intended occurrence
+    day = target.date() + dt.timedelta(days=1)
     path = runs / "plans" / f"{day}-aberg.yaml"
     llm, made = ScriptedLlm({"items": [ITEM]}), list[str]()
 
@@ -95,7 +80,7 @@ async def _nightly_then_playback(tmp_path: Path, target: dt.datetime) -> None:
         dev_server_existing_path=str(CLI), dev_server_database_filename=str(tmp_path / "temporal.db"),
     ) as env:  # fmt: skip
         client = env.client
-        sched = await client.create_schedule(  # paused by default
+        sched = await client.create_schedule(
             nightly.schedule_id("aberg"), nightly.schedule_for("aberg", target.strftime("%H:%M"), TZ)
         )
         try:
@@ -124,7 +109,7 @@ async def _nightly_then_playback(tmp_path: Path, target: dt.datetime) -> None:
             run = client.get_workflow_handle(
                 started.workflow_id, run_id=started.first_execution_run_id, result_type=nightly.Planned
             )
-            planned = await asyncio.wait_for(run.result(), 120)  # pydantic in/out through the real converter
+            planned = await asyncio.wait_for(run.result(), 120)
             assert (await run.describe()).typed_search_attributes.get(STARTED) == target
             assert planned == nightly.Planned(
                 persona="aberg", date=day.isoformat(), path=str(path), generated=True, items=1,
@@ -139,7 +124,6 @@ async def _nightly_then_playback(tmp_path: Path, target: dt.datetime) -> None:
             assert len(llm.prompts) == 1 and made == ["llm"] and f"{day:%A} {day}" in llm.prompts[0]
             before = path.read_bytes()
 
-            # An unchanged retry (a second workflow with the same intended occurrence) keeps the plan, no model call.
             retry = await client.execute_workflow(
                 "NightlyPlan", nightly.NightlyInput(persona="aberg", tz=TZ), id="nightly-retry-aberg",
                 task_queue=nightly.TASK_QUEUE, result_type=nightly.Planned,
@@ -148,8 +132,6 @@ async def _nightly_then_playback(tmp_path: Path, target: dt.datetime) -> None:
             assert (retry.generated, retry.path, retry.date, retry.items) == (False, str(path), day.isoformat(), 1)
             assert path.read_bytes() == before and len(llm.prompts) == 1 and made == ["llm"]
 
-            # SYNTHETIC playback start (not a calendar fire): occurrence + 1 day so ScheduledDay reads this plan;
-            # compressed pacing, since the plan's 09:00 is tomorrow and a realtime day would sleep until then.
             workers.append(asyncio.create_task(scheduled.serve(client, runs, "aberg", desk, factory, lambda d, a: {})))
             synthetic = target + dt.timedelta(days=1)
             play = await client.start_workflow(

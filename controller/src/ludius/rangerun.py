@@ -1,18 +1,3 @@
-"""Multi-persona run: one command starts the whole range playing and keeps it playing (`ludius range up`).
-
-Each persona's days and nightly plans are the existing Temporal lanes (durable.py, scheduled.py, nightly.py): a day
-schedule (`day-<persona>`) and a nightly-plan schedule (`plan-<persona>`) per persona, created active if missing and
-otherwise left as they are (an operator's pause survives a restart). The supervisor then runs one desktop worker
-process per persona (`ludius worker`: its own VM, desk lock, task queue and environment) and one plan worker, and
-restarts any that exits, after a backoff, without stopping the others. A restarted worker resumes its durable day
-after the last finished slot; a slot cut off mid-way runs again from its start (at-least-once, logged item_retry).
-
-Isolation is the process boundary: the guest file reads (LUDIUS_VM) and the per-persona decision budget
-(LUDIUS_PERSONA, calls.py) read the process environment, so personas never share a runner, a VM or a budget scope.
-Persona -> VM comes from the committed map (infra/ansible/group_vars/all/range-vms.yml): VM `ludius-<user>`.
-`ludius range status` prints the run: per persona, the current task, today's done/abandoned counts and budget used.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -35,26 +20,23 @@ from ludius.planner import World
 
 VMS = Path(__file__).resolve().parents[3] / "infra" / "ansible" / "group_vars" / "all" / "range-vms.yml"
 CAPS = ("LUDIUS_CAP_DECISION", "LUDIUS_CAP_LLM", "LUDIUS_CAP_PERSONA_DECISION", "LUDIUS_CAP_PERSONA_LLM")
-BACKOFF = (5.0, 300.0)  # first and longest wait before a worker that exited is started again
-STEADY_S = 600.0  # a worker that ran this long before exiting starts again after the first backoff
+BACKOFF = (5.0, 300.0)
+STEADY_S = 600.0
 
 
 def personas(path: Path = VMS) -> list[str]:
-    """The range's persona accounts, in map order."""
     return [str(p["user"]) for p in yaml.safe_load(path.read_text(encoding="utf-8"))["range_personas"]]
 
 
 def vmids(path: Path = VMS) -> dict[str, int]:
-    """Persona -> Proxmox VMID, in map order."""
     return {str(p["user"]): int(p["vmid"]) for p in yaml.safe_load(path.read_text(encoding="utf-8"))["range_personas"]}
 
 
 def vm_of(user: str) -> str:
-    return f"ludius-{user}"  # range-up.yml's clone name
+    return f"ludius-{user}"
 
 
 def refusals(users: list[str], env: dict[str, str], persona_files: Path) -> list[str]:
-    """Why an unattended run must not start: an unbudgeted LLM spend, a persona without a file or unlock password."""
     why = [f"{k} is not set (unattended runs are budgeted, in total and per persona and day)" for k in CAPS
            if not env.get(k, "").isdigit()]  # fmt: skip
     for u in users:
@@ -77,7 +59,6 @@ class Spec:
 
 
 def specs(users: list[str], agent: str, temporal: str, model: str, env: dict[str, str]) -> list[Spec]:
-    """One desktop worker per persona (its own VM and environment), one plan worker for every persona's nights."""
     cli = [sys.executable, "-m", "ludius.cli", "--agent", agent]
     base = {k: v for k, v in env.items() if k not in ("LUDIUS_PERSONA", "LUDIUS_VM")}
     out = [Spec("plan", [*cli, "plan-worker", "--temporal", temporal], base)]
@@ -102,7 +83,7 @@ class Child:
     spec: Spec
     proc: Proc | None = None
     started: float = 0.0
-    due: float = 0.0  # when a stopped worker may start (again)
+    due: float = 0.0
     wait: float = BACKOFF[0]
     starts: int = 0
     last_exit: int | None = None
@@ -110,9 +91,6 @@ class Child:
 
 @dataclass
 class Supervisor:
-    """Keeps every worker running: one that exits is recorded and restarted after a backoff that doubles while it
-    keeps failing fast. The others are never touched. State goes to <dir>/state.json, events to supervisor.jsonl."""
-
     children: list[Child]
     dir: Path
     spawn: Callable[[Spec, Path], Proc]
@@ -131,7 +109,7 @@ class Supervisor:
             if c.proc is None and not self.stopping and t >= c.due:
                 try:
                     c.proc = self.spawn(c.spec, self.dir / f"{c.spec.name}.log")
-                except OSError as e:  # e.g. no python on PATH: retried like an exit, never fatal to the others
+                except OSError as e:
                     c.due, c.wait = t + c.wait, min(c.wait * 2, BACKOFF[1])
                     self._event(c, "spawn_failed", error=str(e)[:300])
                     continue
@@ -140,24 +118,23 @@ class Supervisor:
         self._save()
 
     def stop(self, grace_s: float = 120) -> None:
-        """Ask every worker to stop as Ctrl+C would (its finally blocks run, reservations stay); kill stragglers."""
         self.stopping = True
         live = [c for c in self.children if c.proc is not None and c.proc.poll() is None]
         for c in live:
             assert c.proc is not None
-            if os.name == "nt":  # no Ctrl+C to one child on Windows (the owner's desktop runs `ludius worker` instead)
+            if os.name == "nt":
                 c.proc.kill()
             else:
                 c.proc.send_signal(signal.SIGINT)
-        deadline = time.monotonic() + grace_s  # one grace for all: they stop in parallel
+        deadline = time.monotonic() + grace_s
         for c in live:
             assert c.proc is not None
             try:
                 c.proc.wait(max(0.0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 c.proc.kill()
-                c.proc.wait()  # reaped: the caller resets clocks next, never under a live worker
-            with suppress(OSError):  # a log write must never skip reaping the rest: clocks reset after this
+                c.proc.wait()
+            with suppress(OSError):
                 self._event(c, "stopped")
         with suppress(OSError):
             self._save()
@@ -180,8 +157,7 @@ class Supervisor:
 
 def popen(spec: Spec, log: Path) -> Proc:
     log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a", encoding="utf-8") as out:  # the child keeps its own handle
-        # Own session: a terminal's Ctrl+C reaches the supervisor only, which stops the workers in order.
+    with log.open("a", encoding="utf-8") as out:
         return subprocess.Popen(spec.argv, env=spec.env, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 start_new_session=os.name != "nt")  # fmt: skip
 
@@ -198,7 +174,6 @@ class Row:
 
 
 def row(world: World, user: str, day: dt.date, workers: dict[str, Any]) -> Row:
-    """One persona's line in the run summary, from its ground-truth day log and its budget counter."""
     current, done, abandoned = "-", 0, 0
     log = world.day_log(user, day.isoformat())
     lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
@@ -206,7 +181,7 @@ def row(world: World, user: str, day: dt.date, workers: dict[str, Any]) -> Row:
         try:
             e = json.loads(line)
         except ValueError:
-            continue  # a line cut off by a crash
+            continue
         ev = e.get("event")
         if ev == "item_start":
             current = f"{e.get('at')} {e.get('template')}"

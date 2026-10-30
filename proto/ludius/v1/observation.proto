@@ -4,7 +4,6 @@ package ludius.v1;
 
 option csharp_namespace = "Ludius.V1";
 
-// Guest physical pixels (Per-Monitor-V2), origin top-left of the primary screen.
 message Rect {
   int32 x = 1;
   int32 y = 2;
@@ -13,25 +12,25 @@ message Rect {
 }
 
 message Element {
-  uint32 id = 1;             // short id, stable for the observer's lifetime
-  string key = 2;            // hash of control type, automation id, name, ancestor path
-  string role = 3;           // ControlType name, LocalizedControlType fallback
+  uint32 id = 1;
+  string key = 2;
+  string role = 3;
   string name = 4;
-  string value = 5;          // passwords: only "empty" or "filled"
+  string value = 5;
   bool enabled = 6;
   bool focused = 7;
   bool read_only = 8;
   bool password = 9;
   bool expanded = 10;
   bool selected = 11;
-  Rect bounds = 12;          // clipped to window and viewport
-  repeated string actions = 13; // invoke, value, toggle, select, expand, scroll
+  Rect bounds = 12;
+  repeated string actions = 13;
   string automation_id = 14;
   string class_name = 15;
   string framework_id = 16;
   string ancestor_path = 17;
   repeated string hints = 18;
-  uint32 window = 19;        // index into Snapshot.windows
+  uint32 window = 19;
   bool keyboard_focusable = 20;
 }
 
@@ -46,40 +45,39 @@ message Window {
   enum Kind {
     KIND_UNSPECIFIED = 0;
     FOREGROUND = 1;
-    OWNED = 2;   // modal dialogs owned by the foreground window
-    POPUP = 3;   // menus, dropdowns, flyouts, tooltips
-    SHELL = 4;   // taskbar, tray overflow, Start/search, toasts
+    OWNED = 2;
+    POPUP = 3;
+    SHELL = 4;
   }
   Kind kind = 8;
   bool modal = 9;
   bool unresponsive = 10;
   bool elevated_unreadable = 11;
-  bool no_tree = 12;         // no usable UIA tree: needs the visual fallback
+  bool no_tree = 12;
 }
 
 message Snapshot {
   uint64 seq = 1;
-  int64 guest_time_ms = 2;   // guest UTC, Unix ms
+  int64 guest_time_ms = 2;
   int32 screen_width = 3;
   int32 screen_height = 4;
   int32 dpi = 5;
   repeated Window windows = 6;
   repeated Element elements = 7;
-  repeated string context = 8;    // non-actionable text lines
-  bool settled = 9;               // false: hard timeout hit ("unsettled")
+  repeated string context = 8;
+  bool settled = 9;
   uint32 settle_ms = 10;
   bool busy_cursor = 11;
   bool indeterminate_progress = 12;
   bool locked = 13;
   int32 cursor_x = 14;
   int32 cursor_y = 15;
-  uint32 dropped_elements = 16;   // elements beyond the cap
+  uint32 dropped_elements = 16;
   string user = 17;
-  repeated Window apps = 18;      // all open top-level app windows (no elements), z-order
-  bool secure_desktop = 19;       // unlocked, but input is on the secure desktop: a UAC prompt
+  repeated Window apps = 18;
+  bool secure_desktop = 19;
 }
 
-// Controller/host → observer, framed on the guest channel.
 message ObserverRequest {
   uint64 id = 1;
   oneof body {
@@ -89,9 +87,6 @@ message ObserverRequest {
   }
 }
 
-// One file in the observer's own user profile, read-only with full sharing. A missing folder, a path outside the
-// profile, a directory or a file over max_bytes is an error (unknown), never "absent"; only a missing file in an
-// existing folder reads as absent.
 message ReadFile {
   string path = 1;
   uint32 max_bytes = 2;
@@ -99,13 +94,13 @@ message ReadFile {
 
 message FileContent {
   bool exists = 1;
-  int64 written_ms = 2;  // last write, Unix ms on the guest's clock
+  int64 written_ms = 2;
   bytes data = 3;
 }
 
 message SnapshotRequest {
-  uint32 quiet_ms = 1;    // default 300
-  uint32 timeout_ms = 2;  // default 5000
+  uint32 quiet_ms = 1;
+  uint32 timeout_ms = 2;
   bool wait_settle = 3;
 }
 
@@ -116,13 +111,12 @@ message Hello {
   string user = 2;
   uint32 session_id = 3;
   bool ui_access = 4;
-  bool pixel_settle = 5;  // DXGI desktop duplication available
+  bool pixel_settle = 5;
   string computer = 6;
 }
 
-// Observer → host, framed on the guest channel.
 message ObserverResponse {
-  uint64 id = 1;  // 0 for unsolicited messages
+  uint64 id = 1;
   oneof body {
     Hello hello = 2;
     Snapshot snapshot = 3;

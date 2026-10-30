@@ -1,11 +1,3 @@
-"""Day runner (spec sections 6 and 7): plays a day plan on its logical timeline through a clock adapter.
-
-Realtime waits for each item's wall-clock time (delivery). Compressed runs items back to back (testing).
-Time-jump is compressed plus the guest clock set to each regular item's logical time (testing only).
-Interrupt items form the task stack: they are pushed onto the task running in their slot at its next
-subgoal boundary (realtime: once their time has come), run to completion, and the task resumes.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -34,13 +26,6 @@ def run_task(
     hygiene: bool = True,
     keep: set[str] | None = None,
 ) -> Outcome:
-    """One task with session hygiene around it and its side effects logged.
-
-    Interruptions run without hygiene: normalizing would close the interrupted task's window. `keep`: apps
-    normalizing leaves open (a reaction's chat, open from its read to its end).
-    An unclean desktop with escalation denied (LUDIUS_NO_ESCALATE=1) abandons this task, recorded, and the day goes
-    on; raising failed the slot, its retries, then the whole persona-day (live: pvanloon's warp day 1 lost 10:00 on).
-    """
     if hygiene and not session.normalize(keep):
         try:
             session.escalate()
@@ -55,16 +40,12 @@ def run_task(
     runner.log.write(event="side_effects", host_ms=_now(), task=task.template.task,
                      opened=[a for a in apps_after if a not in apps_before], left=apps_after)  # fmt: skip
     if hygiene and out.status != "done" and not session.normalize(keep):
-        with suppress(EscalationDenied):  # logged (escalate_blocked); this task's outcome stands
+        with suppress(EscalationDenied):
             session.escalate()
     return out
 
 
 def slots(plan: DayPlan) -> list[tuple[PlanItem, list[PlanItem]]]:
-    """The day's slots in logical-time order: each regular item with the interrupts due while it runs.
-
-    An interrupt before the first regular item has no task to cut into: it is a slot of its own at its time.
-    """
     items = sorted(plan.items, key=lambda i: i.at)
     regular = [i for i in items if not i.interrupt]
     pending = [i for i in items if i.interrupt]
@@ -78,7 +59,7 @@ def slots(plan: DayPlan) -> list[tuple[PlanItem, list[PlanItem]]]:
 
 
 class BreakUnlockFailed(RuntimeError):
-    """Back from a break, the screen did not unlock: nothing later in the day may act on the desktop."""
+    pass
 
 
 @dataclass
@@ -98,8 +79,8 @@ class DayRunner:
         seed: int,
         sleep: Callable[[float], None] = time.sleep,
         now: Callable[[], dt.datetime] = dt.datetime.now,
-        set_clock: Callable[[dt.datetime | None], None] | None = None,  # None resets to host time
-        reactor: Reactor | None = None,  # same-day chat notifications (ludius.react)
+        set_clock: Callable[[dt.datetime | None], None] | None = None,
+        reactor: Reactor | None = None,
     ) -> None:
         self.runner = runner
         self.session = session
@@ -120,7 +101,7 @@ class DayRunner:
             for item, interrupts in slots(plan):
                 self._wait_for(day, item.at)
                 self.slot(day, item, interrupts)
-        except BreakUnlockFailed:  # the day stops: no day_end, and the range goes back on host time
+        except BreakUnlockFailed:
             if self.clock == "time-jump" and self.set_clock:
                 self.set_clock(None)
             raise
@@ -140,12 +121,10 @@ class DayRunner:
     def slot(
         self, day: dt.date, item: PlanItem, interrupts: list[PlanItem], jump_at: str | None = None
     ) -> list[ItemResult]:
-        """One slot: the item at its logical time (or `jump_at`), then the interrupts it had no subgoal boundary
-        left for. Time-jump sets the clock every slot: a resumed day can't know its clock survived (clocklease)."""
         first = len(self.results)
-        if item.template != BREAK:  # a break sets its own clock, at both ends
+        if item.template != BREAK:
             self._jump(day, jump_at or item.at)
-            if self.reactor:  # new chat messages first, as a notification would have it
+            if self.reactor:
                 self.reactor.react(day.isoformat(), item.at, lambda it: self._reaction(day, it))
         self._item(item, day, interrupts)
         for late in interrupts:
@@ -168,8 +147,6 @@ class DayRunner:
             return {w.casefold() for w in write_paths(Task(self.templates[i.template], i, random.Random(0)))}
 
         def between() -> None:
-            # An interrupt that writes what this task writes waits until after it (the late loop): its file would
-            # pass this task's outcome check, which proves only that the file was absent at start.
             due = [i for i in interrupts if (self.clock != "realtime" or self._clock_reached(day, i.at))
                    and (i.template == BREAK or not writes(i) & mine)]  # fmt: skip
             for i in due:
@@ -182,11 +159,10 @@ class DayRunner:
         self._ended(day, item, status)
 
     def _reaction(self, day: dt.date, item: PlanItem) -> str:
-        """One reaction item: logged as reaction_*, never item_end, and not in the day's results (not a plan item)."""
         logical = f"{day.isoformat()}T{item.at}"
         self.log.write(event="reaction_start", host_ms=_now(), logical=logical, template=item.template,
                        context=item.context, params=item.params)  # fmt: skip
-        chat = set(self.templates["chat_read_messages"].processes)  # left open through the reaction (ludius.react)
+        chat = set(self.templates["chat_read_messages"].processes)
         status = run_task(
             self.runner, self.session, Task(self.templates[item.template], item, self.rng), keep=chat
         ).status
@@ -208,18 +184,15 @@ class DayRunner:
         return item.minutes * 60 if self.clock == "realtime" else 5
 
     def begin_break(self, day: dt.date, item: PlanItem) -> None:
-        """Away from the desk: lock the screen (a real lock logon event); end_break comes back and unlocks."""
         self._jump(day, item.at)
         self._started(day, item)
         if not self.session.normalize():
-            with suppress(EscalationDenied):  # logged; locking a desktop that is not clean is still a break
+            with suppress(EscalationDenied):
                 self.session.escalate()
         self.runner.agent.chord(keys.chord("Win+L"))
         self.log.write(event="break", host_ms=_now(), minutes=item.minutes, away_s=self.away_s(item))
 
     def end_break(self, day: dt.date, item: PlanItem) -> ItemResult:
-        # Back at the desk at the break's logical end; set first, so a clock reset while away can't leak into the
-        # unlock (a set_clock failure fails the break: no acting on an unknown clock).
         self._jump(day, f"{back_at(day, item):%H:%M}")
         return self._ended(day, item, "done" if self.session.unlock() else "failed")
 
@@ -236,14 +209,12 @@ class DayRunner:
     def _wait_for(self, day: dt.date, at: str) -> None:
         if self.clock != "realtime":
             return
-        # Late items run at once (a late start); early ones wait, with a minute or two of human slack.
         target = dt.datetime.combine(day, dt.time.fromisoformat(at)) + dt.timedelta(seconds=self.rng.uniform(0, 120))
         while (left := (target - self.now()).total_seconds()) > 0:
             self.sleep(min(left, 60))
 
 
 def back_at(day: dt.date, brk: PlanItem) -> dt.datetime:
-    """A break's logical end: when the persona is back at the desk."""
     return dt.datetime.combine(day, dt.time.fromisoformat(brk.at)) + dt.timedelta(minutes=brk.minutes)
 
 

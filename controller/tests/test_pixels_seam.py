@@ -1,5 +1,3 @@
-"""Pixels-only scope and completion (tasks.Pixels). Row names are OCR readings from the recorded fixtures."""
-
 from __future__ import annotations
 
 import json
@@ -27,7 +25,6 @@ UNSAVED_PROMPT = ["*Untitled -Notepad", "Do you want to save changes to Untitled
 
 
 def screen(names: list[str]) -> obs.Snapshot:
-    """A pixels-only snapshot: one whole-screen window, no process identity, OCR rows."""
     w = obs.Window(title="screen", framework_id="visual", kind=obs.Window.FOREGROUND, no_tree=True)
     rows = [obs.Element(id=n + 1, key=f"v{n}", role="text", name=name, framework_id="visual", window=0,
                         bounds=obs.Rect(x=10, y=20 * n, width=60, height=14))
@@ -36,7 +33,6 @@ def screen(names: list[str]) -> obs.Snapshot:
 
 
 def real(name: str) -> obs.Snapshot:
-    """A fixture screen as the production reader (OCR + detector) emits it, with bounds."""
     sc = json.loads(BOUNDS.read_text(encoding="utf-8"))["screens"][name]
     w = obs.Window(title="screen", framework_id="visual", kind=obs.Window.FOREGROUND, no_tree=True)
     rows = [obs.Element(id=n + 1, key=f"v{n}", role=r["role"], name=r["name"], framework_id="visual", window=0,
@@ -59,12 +55,11 @@ def clicks(snap: obs.Snapshot, t: Task, sg: str, policy: Policy | None = None) -
 def test_scope_needs_title_and_structural_anchor() -> None:
     t = task()
     assert clicks(screen(DESKTOP), t, "write_body") == []
-    assert clicks(screen(["Untitled-Notepad", "Recycle Bin"]), t, "write_body") == []  # title alone: out
-    assert clicks(screen(["notes", "FileEdit Format View Help"]), t, "write_body") == []  # anchor alone: out
+    assert clicks(screen(["Untitled-Notepad", "Recycle Bin"]), t, "write_body") == []
+    assert clicks(screen(["notes", "FileEdit Format View Help"]), t, "write_body") == []
     for rows in (NOTEPAD_EMPTY, SAVE_AS, UNSAVED_PROMPT):
-        assert clicks(screen(rows), t, "close_app")  # all three Notepad screens are in scope
+        assert clicks(screen(rows), t, "close_app")
     assert any("Don't Save" in c for c in clicks(screen(UNSAVED_PROMPT), t, "close_app"))
-    # Launching gets no shell rows from pixels: keys only.
     assert clicks(screen(DESKTOP), t, "open_from_start") == []
 
 
@@ -92,8 +87,7 @@ def test_completion_is_visible_text_and_fails_closed() -> None:
     assert done("close_app", DESKTOP) is True
     assert done("close_app", [*DESKTOP, "Untitled-Notepad"]) is False
     for sg in ("open_from_start", "save_shortcut", "confirm_save", "close_app"):
-        assert done(sg, []) is False  # empty or failed OCR never completes anything
-    # With an accessibility tree the pixels check is ignored: the usual process checks apply.
+        assert done(sg, []) is False
     tree = obs.Snapshot(windows=[obs.Window(title="Untitled - Notepad", process_name="notepad.exe",
                                             kind=obs.Window.FOREGROUND)])  # fmt: skip
     assert check_done(t.subgoal("close_app").done, tree, t, typed_ok=True) is False
@@ -102,13 +96,13 @@ def test_completion_is_visible_text_and_fails_closed() -> None:
 def test_schema_enforces_title_anchors_and_present() -> None:
     base = load_templates()["notepad_write_note"].model_dump(exclude={"pixels"})
     cases: list[dict[str, Any]] = [
-        {"title": "-Notepad$", "anchors": []},  # no structural anchor
-        {"anchors": ["^FileEdit"]},  # no title
+        {"title": "-Notepad$", "anchors": []},
+        {"anchors": ["^FileEdit"]},
         {
             "title": "-Notepad$",
             "anchors": ["^FileEdit"],
             "done": {"close_app": {"absent": ["-Notepad$"]}},
-        },  # no present
+        },
     ]
     for bad in cases:
         with pytest.raises(pydantic.ValidationError):
@@ -120,7 +114,6 @@ def test_schema_enforces_title_anchors_and_present() -> None:
 
 
 def test_confirm_save_matches_the_real_saved_title_reading() -> None:
-    # Guest OCR of a saved note (runs/visual/20261026-223919-saved-title.txt): the title icon reads as "I".
     real = ["I pixels-title-20261026-223919 - Notepad", "File   Edit  Format   View  Help", "Type here to search"]
     done = task(file_name="pixels-title-20261026-223919", body="x").subgoal("confirm_save").done
     assert check_done(done, screen(real), task(file_name="pixels-title-20261026-223919", body="x"), True) is True
@@ -129,7 +122,6 @@ def test_confirm_save_matches_the_real_saved_title_reading() -> None:
 
 
 def test_unsaved_prompt_stays_in_scope_when_the_detector_merges_its_title_into_the_question() -> None:
-    # Production reader (OCR + detector) on notepad-unsaved-prompt: one control box holds the dialog title and question.
     merged = ["*Untitled -Notepad", "Notepad Do you want to save changes to Untitled?", "Save", "Don't Save", "Cancel"]
     assert any("Don't Save" in c for c in clicks(screen(merged), task(), "close_app"))
 
@@ -150,7 +142,6 @@ def test_region_keeps_the_notepad_rows_and_drops_desktop_and_taskbar() -> None:
     assert len(view(real("notepad-save-as"), t, t.subgoal("close_app"), Policy()).allowed) == 63
     for name in ("desktop", "start-menu"):
         assert clicks(real(name), t, "close_app") == []
-    # Without the search row the taskbar is assumed to be its 96 dpi height (48 px) at the bottom of the screen.
     empty = real("notepad-empty")
     bar = [e for e in empty.elements if "search" in e.name]
     for e in bar:
@@ -179,7 +170,7 @@ def test_pixels_focus_is_unknown_and_the_hint_is_pixels_only() -> None:
     sg = t.subgoal("write_body")
     snap = real("notepad-empty")
     state = build_state(view(snap, t, sg, Policy()), t, sg, [], "")
-    assert state["focused"] == "unknown (read from pixels)"  # pixels carry no focus: never "none"
+    assert state["focused"] == "unknown (read from pixels)"
     assert state["goal"].endswith(hint)
     tree = obs.Snapshot(windows=[obs.Window(title="Untitled - Notepad", process_name="notepad.exe",
                                             kind=obs.Window.FOREGROUND)])  # fmt: skip
@@ -202,12 +193,10 @@ def test_filename_hint_is_conditional_pixels_only_and_does_not_recommend_alt_n()
             windows=[obs.Window(title="Save As", process_name="notepad.exe", kind=obs.Window.FOREGROUND)]
         )
         assert hint not in build_state(view(tree, t, sg, Policy()), t, sg, [], "")["goal"]
-    # The completion checks stay strict: nothing relaxed by the hint.
     assert check_done(t.subgoal("name_file").done, real("notepad-save-as"), t, typed_ok=True) is False
 
 
 def test_pixels_never_pass_on_typed_alone() -> None:
-    # Typing at focus counts as landed with no element to read back: on pixels only a visible check can pass.
     t = task(file_name="meeting notes", body="x")
     assert check_done(Done(typed=True), real("notepad-empty"), t, typed_ok=True) is False
     assert check_done(t.subgoal("name_file").done, real("notepad-save-as"), t, typed_ok=True) is False
@@ -215,7 +204,7 @@ def test_pixels_never_pass_on_typed_alone() -> None:
 
 def test_head_of_a_multi_line_value_is_its_first_visible_line() -> None:
     body = Done(typed=True, pixels=PixelsCheck(present=["^{body_head}"]))
-    prompt = real("notepad-unsaved-prompt")  # its body row reads "Short note for the fixture."
+    prompt = real("notepad-unsaved-prompt")
 
     def done(value: str, snap: obs.Snapshot = prompt, typed_ok: bool = True) -> bool | None:
         return check_done(body, snap, task(file_name="n", body=value), typed_ok)
@@ -223,12 +212,12 @@ def test_head_of_a_multi_line_value_is_its_first_visible_line() -> None:
     head = task(file_name="n", body="Short note for the fixture, then a long tail\nline 2").values["body_head"]
     assert head == "Short note for the fixtu"
     assert done("Short note for the fixture.\nline 2") is True
-    assert done("\n\n  Short note for the fixture.") is True  # leading blank lines are skipped
-    assert done("Short note for the fixture.", typed_ok=False) is False  # the typing must have landed too
+    assert done("\n\n  Short note for the fixture.") is True
+    assert done("Short note for the fixture.", typed_ok=False) is False
     assert done("A different note\nline 2") is False
-    assert done("   \n ") is False  # no visible line: no head, the check can't match
+    assert done("   \n ") is False
     assert done("Short note for the fixture.", real("notepad-empty")) is False
-    assert done("Short note for the fixture.", screen([])) is False  # empty OCR read
+    assert done("Short note for the fixture.", screen([])) is False
 
 
 def test_notepad_template_pixels_checks_for_body_and_file_name_on_real_rows() -> None:
@@ -238,7 +227,7 @@ def test_notepad_template_pixels_checks_for_body_and_file_name_on_real_rows() ->
             s.elements.remove(e)
         for e in s.elements:
             if value is not None and e.name == "*.txt":
-                e.name = value  # the field's value row, as read live (runs/visual/20261026-230211-pixels-walk.txt)
+                e.name = value
         return s
 
     def done(t: Task, sg: str, snap: obs.Snapshot) -> bool | None:
@@ -260,7 +249,7 @@ def test_notepad_template_pixels_checks_for_body_and_file_name_on_real_rows() ->
     typo = t.values["file_name_typo"]
     assert done(t, "name_file", rows("notepad-save-as", rf"C:\Users\aberg\Documents\{name}")) is True
     assert done(t, "name_file", rows("notepad-save-as", name)) is True
-    assert done(t, "name_file", real("notepad-save-as")) is False  # '*.txt' before typing
+    assert done(t, "name_file", real("notepad-save-as")) is False
     assert done(task(file_name=name + "-other", body="x"), "name_file", rows("notepad-save-as", name)) is False
     assert done(t, "name_file", empty_ocr) is False
     assert done(t, "name_file_typo", rows("notepad-save-as", typo)) is True
@@ -271,7 +260,6 @@ def test_notepad_template_pixels_checks_for_body_and_file_name_on_real_rows() ->
 
 
 def _step_log(snap: obs.Snapshot, t: Task, sg: str, typed_ok: bool, kind: str = "type") -> dict[str, Any]:
-    """The step event Runner._log_step writes after an action, without a live loop."""
     events: list[dict[str, Any]] = []
 
     def write(**kw: Any) -> None:
@@ -293,7 +281,7 @@ def _row(i: int, name: str, x: int, y: int, w: int, h: int = 20, password: bool 
 def test_filename_step_logs_the_verdict_and_bounded_rows_beside_the_label() -> None:
     name = "pixels-walk-20261026-230211"
     t = task(file_name=name, body="x")
-    typed = rf"C:\Users\aberg\Documents\{name}"  # as read live (runs/visual/20261026-230211-pixels-walk.txt)
+    typed = rf"C:\Users\aberg\Documents\{name}"
     snap = real("notepad-save-as")
     for e in snap.elements:
         if e.name == "*.txt":
@@ -302,10 +290,8 @@ def test_filename_step_logs_the_verdict_and_bounded_rows_beside_the_label() -> N
     f = ev["filename"]
     assert f["verdict"] is True and f["typed_ok"] is True and f["geometry_only"] is True
     assert f["labels"] == 1 and f["label"]["name"] == "File name:"
-    # Level with the label and reaching right of it: the value row only, not "Save as type:" below.
     assert [c["name"] for c in f["candidates"]] == [typed]
     assert "Save as type:" not in json.dumps(f)
-    # The verdict is check_done with the loop's typed_ok; this check has no `typed` condition, so it is unaffected.
     assert _step_log(snap, t, "name_file", typed_ok=False)["filename"]["typed_ok"] is False
     assert _step_log(snap, task(file_name=name + "-other", body="x"), "name_file", True)["filename"]["verdict"] is False
 
@@ -314,7 +300,6 @@ def test_filename_step_before_typing_shows_the_placeholder_and_misread_rows() ->
     t = task(file_name="meeting notes", body="x")
     f = _step_log(real("notepad-save-as"), t, "name_file", True)["filename"]
     assert f["verdict"] is False and [c["name"] for c in f["candidates"]] == ["*.txt"]
-    # A label merged with an appended-extension value: it is the label row itself, shown as read.
     snap = screen([])
     snap.elements.extend(
         [
@@ -325,7 +310,7 @@ def test_filename_step_before_typing_shows_the_placeholder_and_misread_rows() ->
     )
     f = _step_log(snap, t, "name_file", True)["filename"]
     assert f["label"]["name"] == "File name: meeting notes.txt.txt" and f["labels"] == 1
-    assert [c["name"] for c in f["candidates"]] == ["meeting notes.txt", "meeting notes"]  # by x
+    assert [c["name"] for c in f["candidates"]] == ["meeting notes.txt", "meeting notes"]
 
 
 def test_filename_step_missing_label_empty_ocr_and_bounds() -> None:
@@ -338,14 +323,13 @@ def test_filename_step_missing_label_empty_ocr_and_bounds() -> None:
     del empty.elements[:]
     f = _step_log(empty, t, "name_file", True)["filename"]
     assert f == {"verdict": False, "typed_ok": True, "rows": 0, "labels": 0, "label": None, "geometry_only": True}
-    # Capped rows and text; masked or password rows beside the label are never listed.
     snap = real("notepad-save-as")
     label = next(e for e in snap.elements if e.name == "File name:").bounds
     snap.elements.extend(_row(900 + i, "y" * 200, 400 + i, label.y, 50) for i in range(10))
     snap.elements.extend(_row(950 + i, n, 300, label.y, 90, password=n == "hunter2")
                          for i, n in enumerate(["••••••", "***", "hunter2"]))  # fmt: skip
     f = _step_log(snap, t, "name_file", True)["filename"]
-    assert len(f["candidates"]) == FILENAME_ROWS and f["candidates_dropped"] == 11 - FILENAME_ROWS  # 10 + '*.txt'
+    assert len(f["candidates"]) == FILENAME_ROWS and f["candidates_dropped"] == 11 - FILENAME_ROWS
     assert all(len(c["name"]) <= FILENAME_TEXT for c in f["candidates"])
     assert not {"••••••", "***", "hunter2"} & {c["name"] for c in f["candidates"]}
 
@@ -354,16 +338,11 @@ def test_only_pixels_filename_steps_get_the_diagnostic() -> None:
     t = task(file_name="meeting notes", body="x")
     for sg in ("save_shortcut", "write_body", "confirm_save", "close_app"):
         assert "filename" not in _step_log(real("notepad-save-as"), t, sg, True)
-    # With an accessibility tree there is no pixels diagnostic either.
     tree = obs.Snapshot(windows=[obs.Window(title="Save As", process_name="notepad.exe", kind=obs.Window.FOREGROUND)])
     assert "filename" not in _step_log(tree, t, "name_file", True)
 
 
 def test_unnamed_title_bar_icons_are_told_apart_by_their_visible_bounds() -> None:
-    # Live saved-note Notepad (runs/visual/20261027-close-perception.txt, UIA ground truth: Minimise 1501,209,
-    # Maximise 1548,209, Close 1594,209): the detector's unnamed caption icons, two of them with the same id
-    # (outer button and glyph share a 16 px key cell). Without bounds their lines were identical, Decisions could not
-    # pick the Close icon, and the merged menu row's 52 px box (284,239) said nothing about where File is.
     icons = [(50003, 1511, 209, 34, 31), (50004, 1555, 209, 34, 30), (50004, 1566, 215, 14, 16),
              (50005, 1603, 209, 33, 30), (50005, 1612, 214, 14, 18)]  # fmt: skip
     rows = [obs.Element(id=i, key=f"i{n}", role="button", enabled=True, framework_id="visual", window=0,
@@ -376,9 +355,8 @@ def test_unnamed_title_bar_icons_are_told_apart_by_their_visible_bounds() -> Non
     s = t.subgoal("close_app")
     st = build_state(view(named, t, s, p), t, s, [], "")
     icon_lines = [e for e in st["elements"] if "icon without text" in e]
-    assert len(icon_lines) == 5 and len(set(icon_lines)) == 5  # no two options read the same
-    assert any("at 1603,209 33x30" in e for e in icon_lines)  # the far-right caption button, as a fact
+    assert len(icon_lines) == 5 and len(set(icon_lines)) == 5
+    assert any("at 1603,209 33x30" in e for e in icon_lines)
     assert len({o.text for o in build_options(view(named, t, s, p), t, s, p) if o.kind == "click"}) == 7
-    # An accessibility-tree element is unchanged: bounds are only added where pixels are all there is.
     uia = obs.Element(id=1, role="button", name="Close", enabled=True, bounds=obs.Rect(x=1, y=2, width=3, height=4))
     assert describe(uia) == "[1] button 'Close'"

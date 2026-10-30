@@ -5,8 +5,6 @@ using Xunit;
 
 namespace Ludius.HostAgent.Tests;
 
-// The observer's read_file: fail-closed like the PowerShell Direct read (guestfile.py), confined to the noise folders,
-// and a link anywhere on the way is unknown, never content from elsewhere and never "absent".
 public class GuestFileTests : IDisposable
 {
     readonly string root = Directory.CreateTempSubdirectory("ludius-gf").FullName;
@@ -21,13 +19,12 @@ public class GuestFileTests : IDisposable
         Directory.CreateDirectory(Path.Combine(profile, "Desktop"));
         File.WriteAllText(Path.Combine(docs, "a.txt"), "hello");
         File.WriteAllText(Path.Combine(profile, "Desktop", "a.txt"), "desk");
-        outside = Directory.CreateDirectory(Path.Combine(root, "other", "Documents")).FullName; // another profile
+        outside = Directory.CreateDirectory(Path.Combine(root, "other", "Documents")).FullName;
         File.WriteAllText(Path.Combine(outside, "secret.txt"), "secret");
     }
 
     public void Dispose()
     {
-        // Unlink first: a recursive delete must not walk into (or trip over) a link's target.
         foreach (var d in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).Where(d => new DirectoryInfo(d).LinkTarget is not null).ToList())
             Directory.Delete(d);
         Directory.Delete(root, true);
@@ -35,7 +32,6 @@ public class GuestFileTests : IDisposable
 
     FileContent Read(string path, uint max = 1000) => GuestFiles.Read(new ReadFile { Path = path, MaxBytes = max }, profile);
 
-    // A directory link: a junction on Windows (what a user can make without privileges), a symlink elsewhere.
     static void DirectoryLink(string link, string target)
     {
         if (!OperatingSystem.IsWindows()) { Directory.CreateSymbolicLink(link, target); return; }
@@ -56,7 +52,6 @@ public class GuestFileTests : IDisposable
         Assert.False(Read(Path.Combine(profile, "Pictures", "missing.png")).Exists);
         Assert.False(Read(Path.Combine(profile, "Downloads", "missing.pdf")).Exists);
 
-        // An app holding the file open for writing does not make it unreadable.
         using var held = new FileStream(Path.Combine(docs, "a.txt"), FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
         Assert.True(Read(Path.Combine(docs, "a.txt")).Exists);
     }
@@ -86,9 +81,8 @@ public class GuestFileTests : IDisposable
     {
         DirectoryLink(Path.Combine(docs, "j"), outside);
         Assert.Throws<IOException>(() => Read(Path.Combine(docs, "j", "secret.txt")));
-        Assert.Throws<IOException>(() => Read(Path.Combine(docs, "j", "missing.txt"))); // never "absent" through a link
+        Assert.Throws<IOException>(() => Read(Path.Combine(docs, "j", "missing.txt")));
 
-        // The noise folder itself a link into another profile.
         Directory.Delete(Path.Combine(profile, "Pictures"));
         DirectoryLink(Path.Combine(profile, "Pictures"), outside);
         Assert.Throws<IOException>(() => Read(Path.Combine(profile, "Pictures", "secret.txt")));
@@ -98,7 +92,7 @@ public class GuestFileTests : IDisposable
     public void A_file_symlink_is_unknown_and_a_dangling_one_is_not_absent()
     {
         try { File.CreateSymbolicLink(Path.Combine(docs, "link.txt"), Path.Combine(outside, "secret.txt")); }
-        catch (IOException) when (OperatingSystem.IsWindows()) { return; } // needs a privilege here: runs on Linux
+        catch (IOException) when (OperatingSystem.IsWindows()) { return; }
         Assert.Throws<IOException>(() => Read(Path.Combine(docs, "link.txt")));
         File.CreateSymbolicLink(Path.Combine(docs, "dangling.txt"), Path.Combine(outside, "gone.txt"));
         Assert.Throws<IOException>(() => Read(Path.Combine(docs, "dangling.txt")));

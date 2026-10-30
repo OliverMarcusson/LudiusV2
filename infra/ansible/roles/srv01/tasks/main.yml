@@ -1,11 +1,4 @@
 ---
-# srv01 on stock Debian 13 (provision-srv.ps1, same steps): Samba AD DC for corp.ludius.test with internal DNS bound
-# to the range address only; chrony as the range's own NTP source (no upstream, MS-SNTP signing) so time-jump sets
-# range time here first; one AD user per narrative person; grommunio (MAPI/HTTP + Autodiscover) with gromox's LDA on
-# IPv6 loopback only and no Postfix, plus an outbound SMTP drop: mail never leaves corp.ludius.test.
-# Expects srv01_ip on the range NIC, people (narrative: user, name) and personas (log-in mailboxes), validated by
-# range-up.yml before any VM is touched, and srv01_uplink_if (the temporary uplink, attached by range-up.yml).
-# The guest's hostname is srv01 whatever the VM is called (ludius-srv01): the domain is provisioned under it.
 - name: Domain state
   ansible.builtin.stat:
     path: /var/lib/samba/private/sam.ldb
@@ -161,8 +154,6 @@
 - name: Grommunio
   ansible.builtin.import_tasks: grommunio.yml
 
-# Range boundary: nothing on srv01 has a reason to speak SMTP off the box. Clients use MAPI/HTTP, delivery is
-# gromox's LDA on [::1]:25.
 - name: Outbound SMTP dropped
   ansible.builtin.copy:
     dest: /etc/nftables.conf

@@ -12,21 +12,19 @@ using Op = Ludius.V1.LifecycleRequest.Types.Op;
 
 namespace Ludius.HostAgent.Tests;
 
-// A QEMU QMP socket: greets, accepts qmp_capabilities, records every command and answers {"return": {}}, with an
-// asynchronous event before each answer (QEMU may interleave them). Unix sockets work on Windows 10+ as on Linux.
 sealed class FakeQmp : IDisposable
 {
     public readonly string Dir = Directory.CreateTempSubdirectory("ludius-qmp").FullName;
     public readonly List<JsonObject> Commands = [];
     public int Connections;
-    public Func<JsonObject, JsonObject>? Answer; // default: {"return": {}}
+    public Func<JsonObject, JsonObject>? Answer;
     readonly Socket listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
 
     public FakeQmp(int vmid)
     {
         listener.Bind(new UnixDomainSocketEndPoint(Path.Combine(Dir, $"{vmid}.qmp")));
         listener.Listen(4);
-        File.WriteAllText(Path.Combine(Dir, $"{vmid}.pid"), $"{Environment.ProcessId}\n"); // its QEMU runs
+        File.WriteAllText(Path.Combine(Dir, $"{vmid}.pid"), $"{Environment.ProcessId}\n");
         _ = Task.Run(Serve);
     }
 
@@ -62,11 +60,9 @@ sealed class FakeQmp : IDisposable
     }
 }
 
-// The Proxmox API: a VM list, configs, snapshots and tasks, recording every call.
 sealed class FakePve : IPveApi
 {
     public readonly List<(string Method, string Path, IReadOnlyDictionary<string, string>? Args)> Calls = [];
-    // Range VMs are in pool "ludius"; 200 and 201 are not range VMs, 300 runs on another node.
     public JsonArray Vms = JsonNode.Parse("""
         [{"vmid": 101, "name": "ludius-win10-01", "status": "running", "node": "pve1", "type": "qemu", "pool": "ludius"},
          {"vmid": 9000, "name": "ludius-golden", "status": "stopped", "template": 1, "node": "pve1", "type": "qemu", "pool": "ludius"},
@@ -80,20 +76,18 @@ sealed class FakePve : IPveApi
     public Dictionary<int, string> Args = new() { [101] = "-device vhost-vsock-pci,guest-cid=101", [9000] = "-device vhost-vsock-pci,guest-cid=9000" };
     public JsonArray Snapshots = JsonNode.Parse("""[{"name": "clean"}, {"name": "current"}]""")!.AsArray();
     public string TaskExit = "OK";
-    public string TaskStatus = "stopped"; // "running": a worker task that never finishes
+    public string TaskStatus = "stopped";
     public string NextId = "104";
-    public Dictionary<int, string> Status = []; // a VM's own (QMP) status; unset: its resource-list status
-    public Dictionary<int, long> Ctime = []; // a VM created anew under a VMID gets a new ctime
+    public Dictionary<int, string> Status = [];
+    public Dictionary<int, long> Ctime = [];
 
-    // Race tests hold a call open here (method, path) until they let it go.
     public Func<string, string, Task>? Gate;
     public bool IgnoreSet;
-    public HashSet<int> Pending = []; // VMs whose config file carries a [PENDING] section
-    public Dictionary<int, string> ConfTail = []; // raw lines right after a VM's current section
-    public string UserCfgTail = ""; // raw lines appended to user.cfg
+    public HashSet<int> Pending = [];
+    public Dictionary<int, string> ConfTail = [];
+    public string UserCfgTail = "";
     public readonly List<string> Reads = [];
 
-    // The pmxcfs files, rendered from the same state the API answers from.
     public string? Read(string file)
     {
         lock (Calls) Reads.Add(file);
@@ -163,7 +157,7 @@ public class ProxmoxTests
     {
         Assert.Equal(0, Proxmox.Abs(0, 1920));
         Assert.Equal(32767, Proxmox.Abs(1919, 1920));
-        Assert.Equal(16375, Proxmox.Abs(959, 1920)); // 959 * 32767 / 1919, rounded
+        Assert.Equal(16375, Proxmox.Abs(959, 1920));
         Assert.Equal(32767, Proxmox.Abs(1079, 1080));
     }
 
@@ -179,9 +173,9 @@ public class ProxmoxTests
         Assert.Equal(32767, (int)ev[0]["data"]!["value"]!);
         Assert.Equal("y", (string)ev[1]["data"]!["axis"]!);
         Assert.Equal(0, (int)ev[1]["data"]!["value"]!);
-        Assert.Equal(1, qmp.Connections); // never held open: Proxmox needs the socket too
+        Assert.Equal(1, qmp.Connections);
 
-        await px.Move(vm, 100, 100, 300, CancellationToken.None); // a path: many steps, ending on the target
+        await px.Move(vm, 100, 100, 300, CancellationToken.None);
         var last = qmp.Events().TakeLast(2).ToList();
         Assert.Equal(Proxmox.Abs(100, 1920), (int)last[0]["data"]!["value"]!);
         Assert.Equal(Proxmox.Abs(100, 1080), (int)last[1]["data"]!["value"]!);
@@ -225,12 +219,11 @@ public class ProxmoxTests
         const string probe = "Ludius contract 0123 ~!@#$%^&*()_+{}|:<>?\n";
         await px.Type(vm, probe, 0, 0, CancellationToken.None);
         var keys = qmp.Events().Select(e => ((string)e["data"]!["key"]!["data"]!, (bool)e["data"]!["down"]!)).ToList();
-        // Balanced: every key that went down came up.
         Assert.All(keys.GroupBy(k => k.Item1), g => Assert.Equal(g.Count(k => k.Item2), g.Count(k => !k.Item2)));
         Assert.Equal([("shift", true), ("l", true), ("l", false), ("shift", false), ("u", true)], keys.Take(5));
         Assert.Equal(("ret", true), keys[^2]);
-        Assert.Contains(("bracket_left", true), keys); // '{'
-        Assert.Contains(("backslash", true), keys); // '|'
+        Assert.Contains(("bracket_left", true), keys);
+        Assert.Contains(("backslash", true), keys);
         Assert.Equal(probe.Count(c => char.IsUpper(c) || "~!@#$%^&*()_+{}|:<>?".Contains(c)), keys.Count(k => k == ("shift", true)));
     }
 
@@ -250,7 +243,7 @@ public class ProxmoxTests
     {
         var (px, _, qmp) = Make();
         using var _q = qmp;
-        await px.Chord(px.Get("ludius-win10-01"), [0x5B, 0x52], CancellationToken.None); // Win+R
+        await px.Chord(px.Get("ludius-win10-01"), [0x5B, 0x52], CancellationToken.None);
         Assert.Equal(["meta_l:true", "r:true", "r:false", "meta_l:false"],
             qmp.Events().Select(e => $"{e["data"]!["key"]!["data"]}:{e["data"]!["down"]}"));
     }
@@ -270,7 +263,6 @@ public class ProxmoxTests
     {
         var (px, _, qmp) = Make();
         using var _q = qmp;
-        // A PNG header with width 1920, height 1080 written where QEMU was told to.
         qmp.Answer = o =>
         {
             var png = new byte[33];
@@ -292,7 +284,7 @@ public class ProxmoxTests
         using var _q = qmp;
         Assert.Equal(101, px.Get("ludius-win10-01").Id);
         Assert.Throws<KeyNotFoundException>(() => px.Get("ludius-nope"));
-        Assert.Throws<InvalidOperationException>(() => px.Get("ludius-dup")); // two VMs, one name: neither is meant
+        Assert.Throws<InvalidOperationException>(() => px.Get("ludius-dup"));
         Assert.Throws<ArgumentException>(() => px.Get("bad;name"));
         Assert.Equal(7u, Proxmox.Cid("-cpu host -device vhost-vsock-pci,id=v0,guest-cid=7"));
         Assert.Null(Proxmox.Cid("-cpu host"));
@@ -306,15 +298,15 @@ public class ProxmoxTests
         var (px, pve, qmp) = Make();
         using var _q = qmp;
         Assert.Equal("Running", await px.Lifecycle("ludius-win10-01", Op.Start, "", "", CancellationToken.None));
-        Assert.DoesNotContain(pve.Calls, c => c.Path.EndsWith("/status/start")); // already running: nothing to do
+        Assert.DoesNotContain(pve.Calls, c => c.Path.EndsWith("/status/start"));
         await px.Lifecycle("ludius-win10-01", Op.Stop, "", "", CancellationToken.None);
         Assert.Contains(pve.Calls, c => c.Path == "/nodes/pve1/qemu/101/status/shutdown" && c.Args!["forceStop"] == "1");
         await px.Lifecycle("ludius-win10-01", Op.Checkpoint, "aged", "", CancellationToken.None);
         var snap = pve.Calls.Single(c => c.Method == "create" && c.Path.EndsWith("/snapshot"));
-        Assert.Equal(("aged", "1"), (snap.Args!["snapname"], snap.Args["vmstate"])); // running: with memory, as Hyper-V
+        Assert.Equal(("aged", "1"), (snap.Args!["snapname"], snap.Args["vmstate"]));
         await px.Lifecycle("ludius-win10-01", Op.Restore, "clean", "", CancellationToken.None);
         Assert.Contains(pve.Calls, c => c.Path == "/nodes/pve1/qemu/101/snapshot/clean/rollback");
-        Assert.Contains(pve.Calls, c => c.Path.Contains("/tasks/UPID:")); // every worker task is waited for
+        Assert.Contains(pve.Calls, c => c.Path.Contains("/tasks/UPID:"));
     }
 
     [Fact]
@@ -336,7 +328,6 @@ public class ProxmoxTests
         foreach (var (id, name) in new[] { (105, "ludius-b"), (106, "ludius-c"), (110, "ludius-srv01"), (111, "ludius-impostor") })
             pve.Vms.Add(JsonNode.Parse($$"""{"vmid": {{id}}, "name": "{{name}}", "status": "stopped", "node": "pve1", "type": "qemu", "pool": "ludius"}"""));
         pve.Status[110] = "running";
-        // 101 runs; srv01 (110) runs too and is exempt by VMID and name; 111 has an exempt VMID but another name.
         return (pve, max => new Proxmox(pve, "pve1", new ProxmoxOptions { RunDir = qmp.Dir, ScratchDir = qmp.Dir, PollMs = 1,
             Pool = "ludius", MaxRunning = max, CapExempt = [(110, "ludius-srv01"), (111, "ludius-ex01")] }));
     }
@@ -348,12 +339,12 @@ public class ProxmoxTests
         var (pve, px) = Capped(qmp);
         var e = await Assert.ThrowsAsync<InvalidOperationException>(() => px(1).Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None));
         Assert.Contains("ludius-win10-01", e.Message);
-        Assert.DoesNotContain("ludius-srv01", e.Message); // other pools, nodes and the exempt server don't count
+        Assert.DoesNotContain("ludius-srv01", e.Message);
         await Assert.ThrowsAsync<InvalidOperationException>(() => px(1).Lifecycle("ludius-b", Op.Restore, "clean", "", CancellationToken.None));
         Assert.DoesNotContain(pve.Calls, c => c.Method == "create");
         await px(2).Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None);
         Assert.Contains(pve.Calls, c => c.Path == "/nodes/pve1/qemu/105/status/start");
-        await px(9).Lifecycle("ludius-srv01", Op.Start, "", "", CancellationToken.None); // exempt: never capped
+        await px(9).Lifecycle("ludius-srv01", Op.Start, "", "", CancellationToken.None);
     }
 
     [Fact]
@@ -363,7 +354,7 @@ public class ProxmoxTests
         var (pve, px) = Capped(qmp);
         var agent = px(2);
         await agent.Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None);
-        pve.Status[105] = "running"; // up now; /cluster/resources still says stopped until its next refresh
+        pve.Status[105] = "running";
         var e = await Assert.ThrowsAsync<InvalidOperationException>(() => agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None));
         Assert.Contains("ludius-b", e.Message);
     }
@@ -387,17 +378,17 @@ public class ProxmoxTests
         var agent = px(2);
         var now = DateTime.UtcNow;
         agent.Now = () => now;
-        pve.TaskStatus = "running"; // the start task never confirms
+        pve.TaskStatus = "running";
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => agent.Lifecycle("ludius-b", Op.Start, "", "", cts.Token));
         pve.TaskStatus = "stopped";
         var e = await Assert.ThrowsAsync<InvalidOperationException>(() => agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None));
-        Assert.Contains("ludius-b", e.Message); // still stopped by its state, but its start may be under way
+        Assert.Contains("ludius-b", e.Message);
         pve.TaskExit = "start failed";
         now += TimeSpan.FromMinutes(6);
         await Assert.ThrowsAsync<PveTaskFailed>(() => agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None));
         pve.TaskExit = "OK";
-        await agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None); // a failed start held no room
+        await agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None);
     }
 
     [Fact]
@@ -410,7 +401,7 @@ public class ProxmoxTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => agent.Lifecycle("ludius-b", Op.Start, "", "", CancellationToken.None));
         pve.Gate = null;
         var e = await Assert.ThrowsAsync<InvalidOperationException>(() => agent.Lifecycle("ludius-c", Op.Start, "", "", CancellationToken.None));
-        Assert.Contains("ludius-b", e.Message); // its start may still complete
+        Assert.Contains("ludius-b", e.Message);
     }
 
     [Fact]
@@ -429,7 +420,7 @@ public class ProxmoxTests
     {
         var (px, pve, qmp) = Make();
         using var _q = qmp;
-        pve.Args[104] = pve.Args[9000]; // the clone copies its source's args
+        pve.Args[104] = pve.Args[9000];
         await px.Lifecycle("ludius-golden", Op.Clone, "", "ludius-win10-02", CancellationToken.None);
         var clone = pve.Calls.Single(c => c.Path.EndsWith("/clone"));
         Assert.Equal("/nodes/pve1/qemu/9000/clone", clone.Path);
@@ -438,7 +429,6 @@ public class ProxmoxTests
         var set = pve.Calls.Single(c => c.Method == "set");
         Assert.Equal(("/nodes/pve1/qemu/104/config", "-device vhost-vsock-pci,guest-cid=104"), (set.Path, set.Args!["args"]));
 
-        // A VM (not a template) clones as a full copy of a named snapshot; targets are ludius-* and new.
         await px.Lifecycle("ludius-win10-01", Op.Clone, "clean", "ludius-win10-03", CancellationToken.None);
         var full = pve.Calls.Last(c => c.Path.EndsWith("/clone"));
         Assert.Equal(("1", "clean"), (full.Args!["full"], full.Args["snapname"]));
@@ -467,9 +457,9 @@ public class ProxmoxTests
         var vms = px.ListVms();
         Assert.DoesNotContain(vms, v => v.Name == "ludius-golden");
         Assert.Contains(new VmInfo("ludius-win10-01", "running", 1920, 1080), vms);
-        Assert.DoesNotContain(vms, v => v.Name is "web-prod" or "ludius-stray" or "ludius-elsewhere"); // not the range
-        Assert.Contains(new VmInfo("ludius-dup", "off", 0, 0), vms); // no QEMU pid
-        Assert.Empty(pve.Calls); // read from pmxcfs, no pvesh per poll
+        Assert.DoesNotContain(vms, v => v.Name is "web-prod" or "ludius-stray" or "ludius-elsewhere");
+        Assert.Contains(new VmInfo("ludius-dup", "off", 0, 0), vms);
+        Assert.Empty(pve.Calls);
     }
 
     [Fact]
@@ -481,7 +471,7 @@ public class ProxmoxTests
         Assert.DoesNotContain(px.ListVms(), v => v.Name == "ludius-win10-01");
         var e = Assert.Throws<InvalidOperationException>(() => px.Frame("ludius-win10-01", 640));
         Assert.Contains("range server", e.Message);
-        Assert.Equal(0, qmp.Connections); // no capture opened
+        Assert.Equal(0, qmp.Connections);
     }
 
     public static TheoryData<Op, string, string> EveryOp() => new()
@@ -490,8 +480,6 @@ public class ProxmoxTests
         { Op.Restore, "clean", "" }, { Op.Clone, "clean", "ludius-new" },
     };
 
-    // VMs outside the range pool (no pool, another pool, a ludius-* name or template outside the pool) are refused
-    // for every operation, as clone sources too, and nothing reaches the API but the VM list.
     [Theory]
     [MemberData(nameof(EveryOp))]
     public async Task Vms_outside_the_range_pool_are_refused(Op op, string checkpoint, string target)
@@ -511,8 +499,8 @@ public class ProxmoxTests
         var (px, pve, qmp) = Make();
         using var _q = qmp;
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => px.Lifecycle("ludius-stray", Op.Delete, "", "ludius-stray", CancellationToken.None));
-        Assert.Throws<UnauthorizedAccessException>(() => px.Get("web-prod")); // input, observation, screenshots
-        Assert.Throws<KeyNotFoundException>(() => px.Get("ludius-elsewhere")); // another node's VM is not this agent's
+        Assert.Throws<UnauthorizedAccessException>(() => px.Get("web-prod"));
+        Assert.Throws<KeyNotFoundException>(() => px.Get("ludius-elsewhere"));
         Assert.DoesNotContain(pve.Calls, c => c.Method != "get" || c.Path != "/cluster/resources");
         Assert.Empty(qmp.Commands);
 
@@ -540,11 +528,10 @@ public class ProxmoxTests
         Assert.Equal(["set", "/nodes/pve1/qemu/104/config", "--output-format", "json", "--args", hostile], psi.ArgumentList);
     }
 
-    // A fake pvesh: records its argv one per line and prints a UPID as pvesh's JSON output would.
     [Fact]
     public async Task Pvesh_runs_the_process_and_values_arrive_verbatim()
     {
-        if (OperatingSystem.IsWindows()) return; // a .cmd fake would go through cmd.exe: run in the Linux container
+        if (OperatingSystem.IsWindows()) return;
         var dir = Directory.CreateTempSubdirectory("ludius-pvesh").FullName;
         try
         {
@@ -562,8 +549,6 @@ public class ProxmoxTests
     }
 }
 
-// The guest channel over a connected socket (vsock on Proxmox): hello first, answers matched by id, reconnect after
-// a drop. A TCP loopback stands in for vsock, since only the connect differs.
 public class GuestChannelTests
 {
     static void Send(Stream s, IMessage m)
@@ -600,9 +585,9 @@ public class GuestChannelTests
                 var s = c.GetStream();
                 Send(s, new ObserverResponse { Hello = new Hello { Version = $"v{n}", User = "aberg" } });
                 var req = Read(s);
-                Send(s, new ObserverResponse { Id = 999, Error = "stale" }); // an answer to an older request
+                Send(s, new ObserverResponse { Id = 999, Error = "stale" });
                 Send(s, new ObserverResponse { Id = req.Id, File = new FileContent { Exists = false } });
-                if (n == 1) continue; // first observer "restarts": drops the link after one answer
+                if (n == 1) continue;
                 Read(s);
             }
         });
@@ -616,7 +601,7 @@ public class GuestChannelTests
         var a = await ch.Request(req, TimeSpan.FromSeconds(5), CancellationToken.None);
         Assert.Equal(ObserverResponse.BodyOneofCase.File, a.BodyCase);
         Assert.Equal("v1", ch.Hello!.Version);
-        var b = await ch.Request(req, TimeSpan.FromSeconds(5), CancellationToken.None); // reconnects once
+        var b = await ch.Request(req, TimeSpan.FromSeconds(5), CancellationToken.None);
         Assert.Equal(ObserverResponse.BodyOneofCase.File, b.BodyCase);
         Assert.Equal("v2", ch.Hello!.Version);
     }
@@ -631,7 +616,7 @@ public class GuestChannelTests
     [Fact]
     public async Task Vsock_connect_fails_as_io_not_as_an_unsupported_family()
     {
-        if (!OperatingSystem.IsLinux()) return; // libc vsock: run in the Linux container (see docs/proxmox-bringup.md)
+        if (!OperatingSystem.IsLinux()) return;
         await Assert.ThrowsAsync<IOException>(() => Vsock.Connect(4_000_000, 4555, CancellationToken.None));
     }
 }

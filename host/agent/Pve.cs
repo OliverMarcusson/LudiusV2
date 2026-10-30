@@ -6,21 +6,15 @@ using System.Text.RegularExpressions;
 
 namespace Ludius.HostAgent;
 
-// The Proxmox API, node-local. Faked in the tests.
 interface IPveApi
 {
-    // method: get, create (POST), set (PUT), delete. Returns the API's data.
     Task<JsonNode?> Call(string method, string path, IReadOnlyDictionary<string, string>? args, CancellationToken ct);
 
-    // A file under /etc/pve (pmxcfs, e.g. ".vmlist"), null when there is none.
     string? Read(string file);
 }
 
-// The API through pvesh, as root on the node the agent runs on: no API token to keep, no TLS to pin, and root@pam may
-// set a VM's `args` (the vsock device), which an API token may not.
 sealed partial class Pvesh(string exe = "pvesh") : IPveApi
 {
-    // No shell: every value is its own argv entry, so spaces, quotes or `$(...)` in a value stay literal.
     public static ProcessStartInfo StartInfo(string exe, string method, string path, IReadOnlyDictionary<string, string>? args)
     {
         var psi = new ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
@@ -45,7 +39,6 @@ sealed partial class Pvesh(string exe = "pvesh") : IPveApi
         if (p.ExitCode != 0) throw new InvalidOperationException($"pvesh {method} {path}: {(await stderr).Trim()}");
         var text = (await stdout).Trim();
         if (text == "") return null;
-        // A worker task (start, clone, snapshot ...) may print its log before the UPID: keep the UPID.
         if (Upid().Match(text) is { Success: true } m && !text.StartsWith('{') && !text.StartsWith('[')) return JsonValue.Create(m.Value);
         return JsonNode.Parse(text);
     }
@@ -60,17 +53,14 @@ sealed partial class Pvesh(string exe = "pvesh") : IPveApi
     private static partial Regex Upid();
 }
 
-// AF_VSOCK on Linux. .NET's Socket rejects the family ("address family not supported"), so the socket is made and
-// connected through libc and only then wrapped, connected, into a Socket. The kernel bounds the connect (2 s default).
 static class Vsock
 {
     const int AF_VSOCK = 40, SOCK_STREAM = 1;
 
     public static Task<Socket> Connect(uint cid, uint port, CancellationToken ct) => Task.Run(() =>
     {
-        int fd = socket(AF_VSOCK, SOCK_STREAM | 0x80000 /* SOCK_CLOEXEC */, 0);
+        int fd = socket(AF_VSOCK, SOCK_STREAM | 0x80000 , 0);
         if (fd < 0) throw new IOException($"vsock socket: errno {Marshal.GetLastPInvokeError()}");
-        // struct sockaddr_vm: family, reserved, port, cid, zero[4]
         var addr = new byte[16];
         BitConverter.TryWriteBytes(addr.AsSpan(0, 2), (ushort)AF_VSOCK);
         BitConverter.TryWriteBytes(addr.AsSpan(4, 4), port);

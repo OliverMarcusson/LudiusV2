@@ -1,5 +1,3 @@
-"""World.save_plan(new=True) publishes a complete plan atomically and never replaces an existing one."""
-
 from __future__ import annotations
 
 import os
@@ -58,7 +56,7 @@ def test_write_failure_leaves_destination_absent_and_retry_works(
     assert not world.plan_path("aberg", "2026-10-28").exists()
     _no_scratch(world)
     monkeypatch.setattr(os, "fsync", real)
-    assert planner.load_plan(_save(world)) == PLAN  # the failure left nothing that blocks a retry
+    assert planner.load_plan(_save(world)) == PLAN
 
 
 def test_publication_failure_leaves_destination_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -69,7 +67,7 @@ def test_publication_failure_leaves_destination_absent(tmp_path: Path, monkeypat
 
     monkeypatch.setattr(os, "link", no_links)
     with pytest.raises(OSError, match="hard links unavailable"):
-        _save(world)  # fails closed; no replace fallback
+        _save(world)
     assert not world.plan_path("aberg", "2026-10-28").exists()
     _no_scratch(world)
 
@@ -80,7 +78,7 @@ def test_concurrent_winner_is_never_clobbered(tmp_path: Path, monkeypatch: pytes
     winner = "persona: aberg\ndate: '2026-10-28'\nitems: []\n# winner\n"
     real = os.link
 
-    def racing_link(src: Any, dst: Any) -> None:  # the other writer lands between our temp write and publish
+    def racing_link(src: Any, dst: Any) -> None:
         Path(dst).write_text(winner, encoding="utf-8")
         real(src, dst)
 

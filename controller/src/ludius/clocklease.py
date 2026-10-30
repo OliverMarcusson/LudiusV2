@@ -1,19 +1,3 @@
-"""Clock lease: a jumped range clock must not outlive the controller that jumped it.
-
-Before a time-jump the controller takes a lease, runs/locks/clock-<vm>.json, and a daemon thread renews it every
-RENEW_S. A reset drops it. If the controller is killed the renewals stop; the host agent's sweeper
-(infra/hyperv/clock-sweep.ps1) treats a lease not renewed for STALE_S as orphaned, resets the range clocks through
-set-clock.ps1 -Reset and only then deletes the lease. Heartbeats rather than pids: a reused pid can't keep a dead
-controller's lease alive. Host and LAN time are never touched; the reset is the same one a finishing day runs.
-The guarantee is bounded by the sweeper: an orphaned jump lasts up to STALE_S plus one 60 s sweep after the last
-renewal while the host agent runs, and until the agent is back (or the VM is up again) when it isn't.
-
-A lease proves who may hold a jumped clock, not that the clock is still jumped, so the day never relies on it:
-since efbb23e every time-jump step that acts on the desktop sets the clock first (each slot, both ends of a break,
-a break's late interrupts at its logical end), and a failed set stops the step before the desktop. Covered by
-test_day/test_durable with a simulated sweep; not yet by a live time-jump run.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -23,7 +7,7 @@ import threading
 from pathlib import Path
 
 RENEW_S = 30
-STALE_S = 120  # the sweeper's threshold (clock-sweep.ps1 -StaleSeconds); four missed renewals
+STALE_S = 120
 
 
 class Lease:
@@ -31,15 +15,13 @@ class Lease:
         self.path, self.vm, self.renew_s = path, vm, renew_s
         self._stop: threading.Event | None = None
         self._thread: threading.Thread | None = None
-        self._lock = threading.Lock()  # a renewal never lands after release() unlinked the lease
+        self._lock = threading.Lock()
 
     @property
     def held(self) -> bool:
-        """This process is renewing the lease; a file left by a different controller does not count."""
         return self._stop is not None
 
     def hold(self) -> None:
-        """Write the lease now and keep renewing it until release(); a second hold() only renews."""
         with self._lock:
             self._write()
         if self._stop is None:
@@ -48,7 +30,6 @@ class Lease:
             self._thread.start()
 
     def release(self) -> None:
-        """Stop renewing and drop the lease; once this returns no renewal can write it again."""
         with self._lock:
             if self._stop is not None:
                 self._stop.set()
@@ -60,7 +41,7 @@ class Lease:
     def _renew(self, stop: threading.Event) -> None:
         while not stop.wait(self.renew_s):
             with self._lock:
-                if stop.is_set():  # released while this renewal waited for the lock
+                if stop.is_set():
                     return
                 self._write()
 
@@ -69,4 +50,4 @@ class Lease:
         now = dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"vm": self.vm, "pid": os.getpid(), "renewed": now}), encoding="utf-8")
-        tmp.replace(self.path)  # the sweeper never reads a half-written lease
+        tmp.replace(self.path)

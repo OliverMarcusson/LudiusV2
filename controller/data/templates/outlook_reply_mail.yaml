@@ -1,12 +1,6 @@
-# Reply in Outlook (classic) to a colleague's real mail in the Inbox, found by its subject.
-# The mail and the reply text are chosen at task time (capability mail.reply, ludius.reply): the newest unanswered
-# mail from the planned colleague, read on the range server; one LLM call writes the reply to its text, code and a
-# Decisions yes/no check validate it, and the recipient is that mail's sender. Done is checked on the range server, not
-# in the UI (ludius.mail): an "RE:" message answering that mail (In-Reply-To = its message id) in the sender's
-# inbox and the persona's Sent Items, with the typed text above the quote. Variants: Ctrl+R vs the Reply button.
 task: outlook_reply_mail
 app: outlook
-capability: mail.reply  # the shared send contract on the profile's mail form (data/apps/outlook.yaml, ludius.tasks.Form)
+capability: mail.reply
 params: [to, to_name, subject]
 about: "Reply in Outlook to a colleague's mail in the Inbox. to: the address of the colleague who sent it (<user>@ludius.internal); subject: that mail's exact subject without RE:, as listed in the inbox, or empty for their newest unanswered mail. The reply text is written when the task runs, from the mail itself."
 defaults: {subject: ""}
@@ -24,7 +18,7 @@ subgoals:
     keys: [Win]
     text: launch_query
     steps: 8
-    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}  # the main window, not "Opening - Microsoft Outlook"
+    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}
   open_message:
     goal: "In the Inbox, open the mail with the subject {subject} in its own window (double-click it)"
     keys: [Enter]
@@ -39,8 +33,8 @@ subgoals:
   write_reply:
     goal: "Type the reply at the top of the message body, above the quoted mail"
     text: body
-    unreadable_ok: true  # Word body: no UIA value; the server-side body check decides
-    caret: start  # a click lands anywhere, often in the quote: Ctrl+Home back to the top of the reply
+    unreadable_ok: true
+    caret: start
     done: {typed: true}
   send_shortcut:
     goal: "Send the reply with Alt+S"

@@ -28,7 +28,6 @@ visual = [
 ]
 
 [tool.uv]
-# durable (Temporal) and state (PostgreSQL) are light and typed: installed by default so CI typechecks and tests them.
 default-groups = ["dev", "durable", "state"]
 
 [build-system]

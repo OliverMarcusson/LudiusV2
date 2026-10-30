@@ -10,11 +10,11 @@ import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "infra" / "compose" / "initdb" / "10-ludius.sh"
 BASH = shutil.which("bash")
-PW = "p'w\"x$y;z"  # quoting stress: the compose passwords are URL-safe, the script must not rely on it
+PW = "p'w\"x$y;z"
 
 
 def _run(env: dict[str, str], bin_dir: Path | None = None) -> subprocess.CompletedProcess[str]:
-    assert BASH is not None  # callers are skipif(BASH is None)
+    assert BASH is not None
     path = os.pathsep.join(filter(None, [str(bin_dir) if bin_dir else None, os.environ["PATH"]]))
     base = {k: v for k, v in os.environ.items() if k != "LUDIUS_DB_PASSWORD"}
     return subprocess.run([BASH, str(SCRIPT)], env={**base, "PATH": path, **env},  # noqa: S603
@@ -37,8 +37,6 @@ def test_missing_password_fails_before_psql(env: dict[str, str], tmp_path: Path)
 @pytest.mark.service
 @pytest.mark.skipif(BASH is None, reason="no bash")
 def test_init_script_against_real_postgres(tmp_path: Path) -> None:
-    """The init script on a scram-auth server like the image's: role + database exist,
-    and the role owns the database and can work in it."""
     if not (bin_env := os.environ.get("LUDIUS_PG_BIN")):
         pytest.skip("set LUDIUS_PG_BIN to a PostgreSQL bin directory")
     bin_dir = Path(bin_env)
@@ -77,9 +75,7 @@ def test_init_script_against_real_postgres(tmp_path: Path) -> None:
             == 0
         )
         assert psql("select 1", "ludius", "wrong").returncode != 0
-        # least privilege: the store role is not a superuser
         assert psql("select rolsuper from pg_roles where rolname='ludius'", "ludius", PW).stdout.strip() == "f"
-        # rerun on the same server fails (role exists): the script is first-start-only by design
         assert (
             _run(
                 {**conn, "POSTGRES_USER": "temporal", "PGPASSWORD": "superuser-pw", "LUDIUS_DB_PASSWORD": PW}, bin_dir

@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# Install or update the host agent on the Proxmox box: /opt/ludius-agent, systemd unit `ludius-agent`, and the small
-# Caddy (127.0.0.1:7453) that fixes Host for the monitor. Run as root on the box from a checkout of this repo, with
-# the agent published (no dotnet needed on the box) and the monitor UI built (infra/monitor/bring-up.sh does that):
-#   desktop:  dotnet publish host/agent -f net10.0 -r linux-x64 --self-contained -c Release -o out/agent-linux-x64
-#             then copy out/agent-linux-x64 to <checkout>/out/agent-linux-x64 on the box
-#   box:      infra/box/install.sh [publish dir]
-# Re-runnable. Does not touch tailscale, pveproxy or the firewall; switching `serve` to :7453 is
-#   AGENT_MONITOR=http://127.0.0.1:7453 infra/monitor/bring-up.sh
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -16,8 +8,6 @@ dist=$repo/web/monitor/dist
 [[ -f $pub/ludius-host-agent ]] || { echo "no published agent in $pub" >&2; exit 1; }
 [[ -f $dist/index.html ]] || { echo "monitor UI not built in $dist (infra/monitor/bring-up.sh)" >&2; exit 1; }
 
-# The package ships a default site on :80. Caddy stays masked (no start now, none at boot) until our loopback
-# Caddyfile is installed and validated, so a run that stops anywhere before that leaves nothing listening.
 ln -sf /dev/null /etc/systemd/system/caddy.service
 systemctl daemon-reload
 if ! command -v caddy >/dev/null; then

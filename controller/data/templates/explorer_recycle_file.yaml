@@ -1,19 +1,6 @@
-# Clear out an old draft: select one of the persona's own files in Documents, press Delete (to the Recycle Bin), then
-# look it up in the Recycle Bin. At plan load the file must be one the persona's own earlier work left and no done
-# item wrote for planner.RECYCLE_AGE_DAYS days, and no other item of the day may name it; at start it must be there.
-# Irreversible for noise: the file leaves Documents (it stays restorable in the Recycle Bin; the Bin is never emptied
-# and nothing is deleted permanently, spec section 5). Delete is offered only in the Explorer window showing This PC >
-# Documents (in_window, breadcrumb) with exactly that file selected, read by its full name: with extensions hidden
-# 'old draft' could be another file (old draft.docx next to the own old draft.txt), so show_extensions turns on File
-# name extensions first (done when its View tab check box reads on); a "permanently delete" prompt (a Bin that
-# deletes at once) allows no input, so the task abandons and its discard answers No. Done is read on the guest's
-# disk (the file is gone; an unreadable file never counts as gone) and on screen (the Recycle Bin lists it).
-# ponytail: the Bin listing matches by name; a same-named file recycled on an earlier day also matches. The disk
-# check is the outcome check, the listing only tells the Bin from a permanent delete. Key the Bin's item by its
-# original location and deletion date if that ever matters.
 task: explorer_recycle_file
 app: explorer
-capability: file.recycle  # sends one of the persona's own old files to the Recycle Bin
+capability: file.recycle
 processes: [explorer.exe]
 removes: ['Documents\{file_name}.{file_ext}']
 params: [file_name, file_ext]
@@ -41,16 +28,13 @@ subgoals:
   show_extensions:
     goal: "Turn on File name extensions on File Explorer's View tab, so the file shows as {file_name}.{file_ext}"
     steps: 8
-    # No in_window: the View tab of a collapsed ribbon opens as an untitled popup (live, lnord). Only a view setting.
     avoid: [{role: edit}, {name: '(?i)^(hidden items|item check boxes|hide selected items|options)$'}]
-    # The setting itself, never the file's row: with extensions hidden a reserved 'old draft.txt.docx' shows as
-    # 'old draft.txt' (Sol).
     done: {element: {role: check box, name: '^File name extensions$', value: '^on$'}}
   select_file:
     goal: "Click the file {file_name}.{file_ext} once to select it"
     in_window: &documents {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
     breadcrumb: &crumbs ['This PC', Documents]
-    avoid: [{role: edit}]  # no rename box, no search
+    avoid: [{role: edit}]
     done: {element: {role: list item, name: '^{file_name}\.{file_ext}$', selected: true}}
   recycle_keys:
     goal: "Press Delete to move the selected file {file_name} to the Recycle Bin"
@@ -58,10 +42,9 @@ subgoals:
     steps: 6
     in_window: *documents
     breadcrumb: *crumbs
-    # Delete acts on the selection: exactly this file, nothing else selected (Ctrl+A is never offered).
     require: [{role: list item, name: '^{file_name}\.{file_ext}$', selected: true}]
     forbid:
-      - {role: list item, name: '^(?!{file_name}\.{file_ext}$)', selected: true}  # full names are unique in a folder
+      - {role: list item, name: '^(?!{file_name}\.{file_ext}$)', selected: true}
       - {name: '(?i)permanently delete'}
     avoid: [{role: edit}, {role: menu item}]
     done: {file: {path: 'Documents\{file_name}.{file_ext}', recycled: true}}
@@ -70,10 +53,6 @@ subgoals:
     search: Recycle Bin
     keys: [Enter]
     steps: 10
-    # No in_window: after Delete an invisible "Progress" window (OperationStatusWindow) keeps the foreground until
-    # the persona clicks back into Explorer, and Esc on it asks to cancel all transfers (live, lnord).
-    # Look only: nothing restored, deleted for good or emptied there (policy refuses Empty Recycle Bin anyway).
-    # Not the Search Box: it searches Documents for the words (live, lnord).
     avoid: [{name: '(?i)^(delete|restore.*|empty recycle bin|properties|search box)$'}, {role: menu item}]
     done:
       foreground: {process: explorer.exe, class_name: CabinetWClass, title: '^Recycle Bin$'}

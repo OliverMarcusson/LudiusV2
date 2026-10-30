@@ -7,9 +7,6 @@ using System.Text.RegularExpressions;
 
 namespace Ludius.HostAgent;
 
-// Hyper-V backend: synthetic keyboard and mouse through WMI (root\virtualization\v2),
-// lifecycle through the Hyper-V PowerShell module, console frames through the
-// thumbnail API. Coordinates are guest physical pixels.
 sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRunning = 1) : IHypervisor
 {
     public string Backend => "hyperv";
@@ -66,14 +63,12 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
         var s = new System.Net.Sockets.Socket(Ludius.Observer.HyperVEndPoint.Family, System.Net.Sockets.SocketType.Stream, Ludius.Observer.HyperVEndPoint.RawProtocol);
         try
         {
-            // ConnectEx (ConnectAsync) is TCP-only: WSAEINVAL on AF_HYPERV.
             await Task.Run(() => s.Connect(new Ludius.Observer.HyperVEndPoint(vmId, observerService)), ct).WaitAsync(ct);
             return s;
         }
         catch { s.Dispose(); throw; }
     }
 
-    // Lifecycle changes invalidate device handles and the guest channel.
     public void Forget(string name)
     {
         lock (vms)
@@ -91,8 +86,6 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
     static void Call(ManagementObject o, string method, params object[] args)
     {
         object rc;
-        // WMI occasionally fails a call with a bare COM status (0xC0000002 seen mid-TypeText). A failed call sent
-        // nothing to the guest, so retrying it can't double a keystroke.
         for (int attempt = 1; ; attempt++)
         {
             try { rc = o.InvokeMethod(method, args); break; }
@@ -102,7 +95,6 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
         if (rc is bool ok && !ok) throw new InvalidOperationException($"{method} failed");
     }
 
-    // Input --------------------------------------------------------------
 
     public async Task Move(Vm vm, int x, int y, uint durationMs, CancellationToken ct)
     {
@@ -115,7 +107,6 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
         vm.Pointer = (x, y);
     }
 
-    // ButtonIndex: 1 left, 2 right, 3 middle (verified by the contract test).
     public async Task Click(Vm vm, int button, uint count, CancellationToken ct)
     {
         for (uint i = 0; i < Math.Max(1, count); i++)
@@ -162,10 +153,7 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
         }
     }
 
-    // Lifecycle (PowerShell, as in spec section 4) --------------------------
 
-    // Clone: export the checkpoint into a scratch folder next to the new VM, import a copy with a new VM id, then
-    // remove only that scratch export. The source VM and its checkpoints are untouched.
     const string CloneScript = """
         if (Get-VM -Name $env:LUDIUS_TARGET -ErrorAction SilentlyContinue) { throw "a VM named $env:LUDIUS_TARGET exists" }
         $dest = Join-Path (Get-VMHost).VirtualHardDiskPath $env:LUDIUS_TARGET
@@ -179,15 +167,11 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
         $env:LUDIUS_VM = $env:LUDIUS_TARGET
         """;
 
-    // Checkpoint: never under an existing name. Hyper-V accepts duplicates, and a second "clean" makes every later
-    // Restore-VMSnapshot -Name clean fail as ambiguous; a baseline is never replaced either (provision.ps1 alike).
     const string CheckpointScript = """
         if (Get-VMSnapshot -VMName $env:LUDIUS_VM -Name $env:LUDIUS_CP -ErrorAction SilentlyContinue) { throw "checkpoint '$env:LUDIUS_CP' exists on $env:LUDIUS_VM and is never duplicated or replaced: use a new name" }
         Checkpoint-VM -Name $env:LUDIUS_VM -SnapshotName $env:LUDIUS_CP
         """;
 
-    // Delete: merge checkpoints, unregister, then remove the VM's current disks. Only ludius-* VMs, only with the
-    // name repeated as confirmation.
     const string DeleteScript = """
         Stop-VM -Name $env:LUDIUS_VM -TurnOff -Force
         Get-VMSnapshot -VMName $env:LUDIUS_VM | Remove-VMSnapshot
@@ -197,9 +181,6 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
         'Deleted'
         """;
 
-    // Host's cap (Agent:MaxRunningVms, default 1: the owner's limit on this machine). Start and restore (a checkpoint of a running VM comes back running) go
-    // through infra/hyperv/one-vm.ps1, which rechecks and activates under a host-wide lock shared with the scripts.
-    // A missing script fails the call: no activation without the lock.
     static string OneVm(string activate) => $". $env:LUDIUS_ONEVM; Invoke-OneVm $env:LUDIUS_VM {{ {activate} }} -Max $env:LUDIUS_MAXVMS";
 
     public async Task<string> Lifecycle(string vm, Ludius.V1.LifecycleRequest.Types.Op op, string checkpoint, string target, CancellationToken ct)
@@ -212,8 +193,6 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
             throw new ArgumentException("checkpoint and restore need a checkpoint name");
         if (op == Ludius.V1.LifecycleRequest.Types.Op.Delete && (!vm.StartsWith("ludius-") || target != vm))
             throw new ArgumentException("delete is limited to ludius-* VMs and needs the VM name repeated as confirmation");
-        // Stop: a failing cmdlet (e.g. Restore-VMSnapshot of a checkpoint that doesn't exist) must fail the call;
-        // otherwise the trailing state query exits 0 and a run silently continues on the unrestored VM.
         var script = "$ErrorActionPreference = 'Stop'; " + op switch
         {
             Ludius.V1.LifecycleRequest.Types.Op.Start => OneVm("Start-VM -Name $env:LUDIUS_VM"),
@@ -238,7 +217,6 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
         return (await stdout).Trim().Split('\n')[^1].Trim();
     }
 
-    // Console frame ----------------------------------------------------------
 
     public (byte[] Png, int Width, int Height) Screenshot(Vm vm)
     {
@@ -251,9 +229,7 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
         return (ms.ToArray(), w, h);
     }
 
-    // Monitoring (view only) ------------------------------------------------
 
-    // Every VM on the host: Msvm_ComputerSystem rows named by GUID (the host's own row carries its computer name).
     public List<VmInfo> ListVms() =>
         Query("SELECT * FROM Msvm_ComputerSystem")
             .Where(s => Guid.TryParse((string)s["Name"], out _))
@@ -268,8 +244,6 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
 
     public static bool ValidName(string name) => SafeName().IsMatch(name);
 
-    // Per VM, cached between frames: the realized settings path the thumbnail call needs and the guest resolution
-    // (re-read every 5 s). Without the cache every frame paid ~350 ms of WMI queries; the call itself is ~20 ms.
     sealed class Screen
     {
         public required ManagementObject System;
@@ -282,12 +256,11 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
     static readonly ThreadLocal<ManagementObject> Service = new(() => Query("SELECT * FROM Msvm_VirtualSystemManagementService").Single());
     static readonly ImageCodecInfo JpegCodec = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
 
-    // One console frame as JPEG, scaled by Hyper-V to at most maxWidth. Read-only: never touches input.
     public byte[] Frame(string name, int maxWidth)
     {
         if (!ValidName(name)) throw new ArgumentException("invalid VM name");
         var s = ScreenOf(name);
-        int tw = Math.Clamp(maxWidth, 160, s.W) & ~1; // even width: RGB565 rows then need no stride padding
+        int tw = Math.Clamp(maxWidth, 160, s.W) & ~1;
         int th = Math.Max(2, (int)Math.Round((double)s.H * tw / s.W)) & ~1;
         try
         {
@@ -349,9 +322,9 @@ sealed partial class HyperV(Guid observerService, string oneVmScript, int maxRun
 
     static Bitmap Thumbnail(string settingsPath, int w, int h)
     {
-        var svc = Service.Value!; // one per thread: overlapping captures don't share a WMI object
+        var svc = Service.Value!;
         var inParams = svc.GetMethodParameters("GetVirtualSystemThumbnailImage");
-        inParams["TargetSystem"] = settingsPath; // a REF parameter: the object path
+        inParams["TargetSystem"] = settingsPath;
         inParams["WidthPixels"] = (ushort)w;
         inParams["HeightPixels"] = (ushort)h;
         var outParams = svc.InvokeMethod("GetVirtualSystemThumbnailImage", inParams, null);

@@ -1,5 +1,3 @@
-"""Write a one-file ISO holding autounattend.xml: make-iso.py <xml> <out.iso>."""
-
 import sys
 
 import pycdlib

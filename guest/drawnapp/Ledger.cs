@@ -1,7 +1,3 @@
-// A custom-drawn app for the visual fallback: everything inside the window is painted, so UIA sees one empty pane.
-// Dark and dense on purpose (icon-only toolbar, a small-type table), the cases OCR alone handles worst.
-// Repo-owned test fixture. Builds with the .NET Framework compiler every Windows 10/11 has:
-//   C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /target:winexe /out:Ledger.exe Ledger.cs
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -37,7 +33,6 @@ class Ledger : Form
         using (var pen = new Pen(Ink, 2))
         using (var ink = new SolidBrush(Ink))
         {
-            // Icon-only toolbar: new, open, save, print, cut, copy, paste, undo, redo, search, filter, settings.
             for (int i = 0; i < 12; i++)
             {
                 var r = Tool(i);

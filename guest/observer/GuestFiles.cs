@@ -5,14 +5,9 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Ludius.Observer;
 
-// A done-check's file, read-only: only in this user's noise folders (Documents, Pictures, Downloads, as the controller's
-// guestfile.NOISE_FOLDERS), opened for reading with full sharing (an app may still hold it). Fails closed like the
-// PowerShell Direct read it replaces: anything that is not a definite answer throws (unknown). A reparse point
-// (symlink, junction, mount point) anywhere from the profile down, or a handle that ends up elsewhere, is unknown; only
-// a missing file, itself no link, in an existing folder chain without links reads as absent.
 static class GuestFiles
 {
-    public const int Max = 8 << 20; // the guest channel's frame limit is 16 MB
+    public const int Max = 8 << 20;
     public static readonly string[] NoiseFolders = ["Documents", "Pictures", "Downloads"];
 
     public static FileContent Read(ReadFile r, string profile)
@@ -25,7 +20,6 @@ static class GuestFiles
         if (parts.Length < 2 || !NoiseFolders.Contains(parts[0], StringComparer.OrdinalIgnoreCase) || parts.Any(p => p == ""))
             throw new UnauthorizedAccessException("not in a noise folder");
 
-        // The profile and every folder below it down to the file's: real folders, no links.
         var dir = root;
         foreach (var part in parts[..^1].Prepend(""))
         {
@@ -51,7 +45,6 @@ static class GuestFiles
         return new FileContent { Exists = true, WrittenMs = written, Data = ByteString.CopyFrom(data.ToArray()) };
     }
 
-    // A symlink (also dangling), junction or other reparse point. Attributes are the entry's own, not its target's.
     static bool IsLink(FileSystemInfo i)
     {
         if (i.LinkTarget is not null) return true;
@@ -59,7 +52,6 @@ static class GuestFiles
         catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException) { return false; }
     }
 
-    // Where the open handle really points, links resolved.
     static string FinalPath(SafeFileHandle h)
     {
         if (!OperatingSystem.IsWindows()) return new FileInfo($"/proc/self/fd/{h.DangerousGetHandle()}").LinkTarget ?? "";

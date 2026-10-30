@@ -7,17 +7,14 @@ using Xunit;
 
 namespace Ludius.HostAgent.Tests;
 
-// A QEMU VNC server as the monitor sees it: RFB 3.8, security None, raw full-screen updates where pixel (x, y) is
-// B = x, G = y, R = Fill. It records every client message type and request; anything but SetPixelFormat (0),
-// SetEncodings (2) and FramebufferUpdateRequest (3) after the handshake is a violation and ends the connection.
 sealed class FakeRfb : IDisposable
 {
     public readonly int W, H;
     public byte Fill = 0x40;
-    public volatile bool Changing; // answer incremental requests too (a desktop that keeps changing)
-    public volatile bool Mute; // answer no request at all: a QEMU that stops answering without closing
-    public volatile bool SilentHandshake; // accept, then never greet
-    public int Closed; // sessions the client ended
+    public volatile bool Changing;
+    public volatile bool Mute;
+    public volatile bool SilentHandshake;
+    public int Closed;
     public readonly List<byte> ClientTypes = [];
     public readonly List<bool> Incremental = [];
     public string? Violation;
@@ -60,7 +57,7 @@ sealed class FakeRfb : IDisposable
         if (SilentHandshake) { await Read(1); return; }
         await s.WriteAsync("RFB 003.008\n"u8.ToArray());
         if (System.Text.Encoding.ASCII.GetString(await Read(12)) != "RFB 003.008\n") { Violation = "version"; return; }
-        await s.WriteAsync(new byte[] { 2, 2, 1 }); // VNC auth and None offered: the client must pick None
+        await s.WriteAsync(new byte[] { 2, 2, 1 });
         if ((await Read(1))[0] != 1) { Violation = "security"; return; }
         await s.WriteAsync(new byte[4]);
         if ((await Read(1))[0] != 1) { Violation = "not shared"; return; }
@@ -106,7 +103,6 @@ sealed class FakeRfb : IDisposable
     public void Dispose() => listener.Stop();
 }
 
-// Only Frame matters to the hub; every frame is a new byte[] like Hyper-V's thumbnails.
 sealed class FrameOnlyHv : IHypervisor
 {
     int n;
@@ -155,13 +151,11 @@ public class RfbTests
     [Fact]
     public async Task Client_never_sends_anything_but_format_encodings_and_update_requests()
     {
-        // Structural: the writer has no method that could emit KeyEvent, PointerEvent or ClientCutText.
         var methods = typeof(RfbWriter).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
             .Select(m => m.Name).Where(n => !n.StartsWith('<')).Order().ToArray();
         Assert.Equal(new[] { "ClientInit", "SecurityNone", "SetEncodings", "SetPixelFormat", "UpdateRequest", "Version", "Write" }, methods);
         Assert.Single(typeof(RfbClient).GetFields(BindingFlags.Instance | BindingFlags.NonPublic), f => f.FieldType == typeof(RfbWriter));
 
-        // On the wire, through the shared capture.
         using var server = new FakeRfb(64, 32) { Changing = true };
         var captures = new Captures { Interval = TimeSpan.FromMilliseconds(5) };
         for (int i = 0; i < 20; i++) captures.Frame("ludius-a", "1", server.Connect, 64);
@@ -184,10 +178,10 @@ public class RfbTests
         Assert.Equal(1, server.Connections);
         Assert.Equal((320, 180), JpegSize(small));
         Assert.Equal((640, 360), JpegSize(large));
-        Assert.Same(small, captures.Frame("ludius-a", "100|x", server.Connect, 320)); // nothing changed: no new encode
-        Assert.Equal((1280, 720), JpegSize(captures.Frame("ludius-a", "100|x", server.Connect, 1920))); // never upscaled
+        Assert.Same(small, captures.Frame("ludius-a", "100|x", server.Connect, 320));
+        Assert.Equal((1280, 720), JpegSize(captures.Frame("ludius-a", "100|x", server.Connect, 1920)));
 
-        captures.Frame("ludius-a", "101|y", server.Connect, 320); // VMID reused by another VM: a new session
+        captures.Frame("ludius-a", "101|y", server.Connect, 320);
         Assert.Equal(2, server.Connections);
     }
 
@@ -195,13 +189,13 @@ public class RfbTests
     public async Task A_viewer_that_stops_reading_does_not_stall_the_others()
     {
         var hub = new FeedHub(new FrameOnlyHv());
-        using var stuck = hub.Subscribe("ludius-a", 640); // never read
+        using var stuck = hub.Subscribe("ludius-a", 640);
         using var live = hub.Subscribe("ludius-a", 640);
         var seen = new HashSet<byte>();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
         while (seen.Count < 10) seen.Add((await live.Reader.ReadAsync(timeout.Token)).Jpeg![0]);
-        Assert.True(stuck.Reader.Count <= 1); // its slot holds the latest frame only
+        Assert.True(stuck.Reader.Count <= 1);
     }
 
     [Fact]
@@ -210,29 +204,29 @@ public class RfbTests
         using var server = new FakeRfb(64, 32) { SilentHandshake = true };
         var captures = new Captures { Handshake = TimeSpan.FromMilliseconds(300), FirstFrame = TimeSpan.FromMilliseconds(100), IdleAfter = TimeSpan.FromMinutes(5) };
         Assert.Equal("no console frame yet", Assert.Throws<InvalidOperationException>(() => captures.Frame("ludius-a", "1", server.Connect, 64)).Message);
-        await Until(() => Volatile.Read(ref server.Closed) == 1); // no further request: the deadline alone ends it
+        await Until(() => Volatile.Read(ref server.Closed) == 1);
         Assert.Equal("console capture did not start", Assert.Throws<InvalidOperationException>(() => captures.Frame("ludius-a", "1", server.Connect, 64)).Message);
     }
 
     [Fact]
     public async Task A_session_that_stops_answering_reports_stalled_instead_of_its_last_frame()
     {
-        using var server = new FakeRfb(64, 32); // an unchanged desktop: only full requests get answers
+        using var server = new FakeRfb(64, 32);
         var captures = new Captures { Probe = TimeSpan.FromMilliseconds(100), Stall = TimeSpan.FromMilliseconds(400) };
         captures.Frame("ludius-a", "1", server.Connect, 64);
         for (var end = DateTime.UtcNow.AddSeconds(1); DateTime.UtcNow < end; await Task.Delay(50, Ct))
-            captures.Frame("ludius-a", "1", server.Connect, 64); // healthy and still: the probes keep it alive
+            captures.Frame("ludius-a", "1", server.Connect, 64);
         lock (server.ClientTypes) Assert.True(server.Incremental.Count(i => !i) > 3);
         Assert.Equal(1, server.Connections);
 
         server.Mute = true;
         await Until(() =>
         {
-            try { captures.Frame("ludius-a", "1", server.Connect, 64); return false; } // the last frame, until the deadline
+            try { captures.Frame("ludius-a", "1", server.Connect, 64); return false; }
             catch (InvalidOperationException e) { Assert.Equal("capture stalled", e.Message); return true; }
         });
         await Until(() => Volatile.Read(ref server.Closed) == 1);
-        Assert.Throws<InvalidOperationException>(() => captures.Frame("ludius-a", "1", server.Connect, 64)); // a new session, still unanswered: no old frame
+        Assert.Throws<InvalidOperationException>(() => captures.Frame("ludius-a", "1", server.Connect, 64));
     }
 
     [Fact]

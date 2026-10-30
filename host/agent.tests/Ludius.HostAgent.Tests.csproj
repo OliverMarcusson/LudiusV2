@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The Proxmox backend (net10.0 build of the agent) against fakes: QMP socket, Proxmox API, guest channel. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
@@ -10,7 +9,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\agent\Ludius.HostAgent.csproj" />
-    <!-- The observer's file read (fail-closed rules), compiled here: the observer itself is Windows-only. -->
     <Compile Include="..\..\guest\observer\GuestFiles.cs" Link="GuestFiles.cs" />
   </ItemGroup>
 

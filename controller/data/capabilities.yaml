@@ -1,5 +1,3 @@
-# Capability catalog for template growth (spec section 6): what is installed on the image and what a
-# person does with it. The planner LLM proposes templates from this; only admitted ones reach plans.
 apps:
   - name: notepad
     process: notepad.exe
@@ -46,7 +44,6 @@ apps:
     process: powerpnt.exe
     start_query: powerpoint
     features: [make a short deck (title slide, one or two bullet slides), save as .pptx]
-# Subgoal vocabulary: what a subgoal may contain (the Subgoal schema), and the code-checkable completions.
 checks:
   window: "{process, title (regex), class_name, absent} - such a window exists (or not), foreground or background"
   foreground: "{process, title (regex), class_name, absent} - the foreground window matches"

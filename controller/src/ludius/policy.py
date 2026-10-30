@@ -1,5 +1,3 @@
-"""Code-enforced guardrails. Decisions never sees an option this module would refuse."""
-
 from __future__ import annotations
 
 import os
@@ -13,13 +11,11 @@ from ludius import intranet
 from ludius.tasks import COMMITS, Strict, pixels_window, profile
 from ludius.v1 import observation_pb2 as obs
 
-# Actions noise must never take, whatever the task says (spec section 5).
 NEVER = re.compile(
     r"clear (browsing )?(history|cache|data)|empty recycle bin|disk clean-?up|uninstall|clear (the )?log|"
     r"clear (all )?events|log size|format (disk|drive)|delete browsing",
     re.I,
 )
-# Apps that are never noise targets even when visible.
 SHELL_PROCESSES = {
     "explorer.exe",
     "searchapp.exe",
@@ -27,62 +23,50 @@ SHELL_PROCESSES = {
     "startmenuexperiencehost.exe",
     "shellexperiencehost.exe",
 }
-# Alt+F4 on the desktop or taskbar opens Shut Down Windows; one Enter or OK there powers the VM off.
 DESKTOP_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd"}
-# Shortcuts that open, rename or delete whatever is selected or focused; navigation and Esc are never in here.
 ACTIVATION_KEYS = {"enter", "space", "ctrl+o", "alt+enter", "ctrl+enter", "shift+enter", "f2", "delete", "shift+delete"}
-# Of those, the keys that press whatever control has the focus (a focused Send or Delete button sends or deletes).
 FOCUS_KEYS = {"enter", "space", "ctrl+enter", "shift+enter", "alt+enter"}
 EDITABLE_ROLES = {"edit", "document", "combo box"}
 
 
 def commits(e: obs.Element) -> bool:
-    """A control that commits or destroys something: a committing name (tasks.COMMITS) or the destructive hint."""
     name = e.name.replace("&", "").strip()
     return "destructive" in e.hints or any(re.fullmatch(c, name, re.I) for c in COMMITS)
 
 
-# A replace/overwrite confirmation (Windows' Confirm Save As, Office's "already exists ... replace it?"): its
-# confirming button or Enter would overwrite an existing file, wherever Save As was navigated to. While one is on
-# screen only these may be clicked, only Esc pressed, and the runner abandons the task (loop.Runner._subgoal).
-_OW = profile("default").overwrite  # the English words (data/apps/default.yaml), range-wide
+_OW = profile("default").overwrite
 OVERWRITE = re.compile(_OW.text, re.I | re.S)
-OVERWRITE_TITLES = re.compile(f"(?:{_OW.titles})", re.I)  # whole title
-OVERWRITE_SAFE = re.compile(f"(?:{_OW.safe})", re.I)  # whole button name
+OVERWRITE_TITLES = re.compile(f"(?:{_OW.titles})", re.I)
+OVERWRITE_SAFE = re.compile(f"(?:{_OW.safe})", re.I)
 OVERWRITE_REASON = "overwrite confirmation: abandon, never replace"
 
 
 def overwrite_prompt(snap: obs.Snapshot) -> bool:
-    """A replace/overwrite confirmation is on screen, by window title or by its text (element names, context)."""
     return (any(OVERWRITE_TITLES.fullmatch(w.title) for w in snap.windows)
             or any(OVERWRITE.search(e.name) for e in snap.elements)
             or any(OVERWRITE.search(c) for c in snap.context))  # fmt: skip
 
 
 def alt_f4_safe(fg: obs.Window | None) -> bool:
-    # Read from pixels, the window could be the desktop itself: no Alt+F4 without a known class and process.
     if fg is None or pixels_window(fg) or fg.process_name == "":
         return False
     return fg.class_name not in DESKTOP_CLASSES
 
 
 def shell_dialog(fg: obs.Window | None) -> bool:
-    """A dialog of the shell itself (Shut Down Windows, Run): leave it with Esc, never click its buttons."""
     return fg is not None and fg.class_name == "#32770" and fg.process_name.lower() in SHELL_PROCESSES
 
 
 class ReservedPath(Strict):
-    path: str  # Windows path glob, case-insensitive: * and ? stay within one path component
-    red_herring: bool = False  # the scenario wants noise to overlap here
+    path: str
+    red_herring: bool = False
 
 
 class Scenario(Strict):
-    """Scenario file (LUDIUS_SCENARIO): what noise must not touch (spec section 5, policy)."""
-
     reserved: list[ReservedPath] = []
-    mailboxes: list[str] = []  # addresses or globs noise must not write to
-    messages: list[str] = []  # subjects (globs, without RE:) of scenario mails noise must not open or answer
-    pages: list[str] = []  # titles (globs) of scenario intranet pages noise must not open or search for
+    mailboxes: list[str] = []
+    messages: list[str] = []
+    pages: list[str] = []
 
 
 def _glob(g: str) -> str:
@@ -94,12 +78,12 @@ def _glob(g: str) -> str:
 
 @dataclass
 class Policy:
-    reserved_paths: list[str] = field(default_factory=list[str])  # regexes searched in typed text and values
-    reserved_names: list[str] = field(default_factory=list[str])  # regexes an element's whole name must not match
-    reserved_stems: list[str] = field(default_factory=list[str])  # reserved paths without their extension
-    reserved_name_stems: list[str] = field(default_factory=list[str])  # reserved leaf names without their extension
-    reserved_subjects: list[str] = field(default_factory=list[str])  # regexes a scenario mail's whole subject matches
-    reserved_pages: list[str] = field(default_factory=list[str])  # regexes searched in names and typed text
+    reserved_paths: list[str] = field(default_factory=list[str])
+    reserved_names: list[str] = field(default_factory=list[str])
+    reserved_stems: list[str] = field(default_factory=list[str])
+    reserved_name_stems: list[str] = field(default_factory=list[str])
+    reserved_subjects: list[str] = field(default_factory=list[str])
+    reserved_pages: list[str] = field(default_factory=list[str])
 
     @classmethod
     def load(cls, path: Path) -> Policy:
@@ -124,7 +108,6 @@ class Policy:
             names.append(_glob(m.strip()))
         subjects = [_glob(m.strip()) for m in s.messages if m.strip()]
         pages = [_glob(t.strip()) for t in s.pages if t.strip()]
-        # The page's own address too: a typed intranet URL (`/?a=<id>`) opens it without its title anywhere.
         pages += [rf"[?&]a={re.escape(p.id)}(?![a-z0-9-])" for p in intranet.load()
                   if any(re.search(g, p.title, re.I) for g in pages)]  # fmt: skip
         return cls(reserved_paths=paths, reserved_names=names, reserved_stems=stems, reserved_name_stems=name_stems,
@@ -132,14 +115,10 @@ class Policy:
 
     @classmethod
     def from_env(cls) -> Policy:
-        """The scenario file in LUDIUS_SCENARIO (no reservations when unset)."""
         path = os.environ.get("LUDIUS_SCENARIO")
         return cls.load(Path(path)) if path else cls()
 
     def path_reserved(self, path: str) -> bool:
-        """A file path (as the app will write it) is reserved: by a path glob, or by its leaf name. A path ending in
-        ".*" keeps an extension nobody knows (an Explorer rename): its stem is compared with reserved paths and leaf
-        names, each without their extension too."""
         if path.endswith(".*"):
             stem = path[:-2]
             leaf = re.split(r"[\\/]", stem.strip())[-1]
@@ -153,34 +132,20 @@ class Policy:
         return any(re.search(p, text, re.I) for p in self.reserved_paths)
 
     def page_reserved(self, text: str) -> bool:
-        """A scenario intranet page's title in the text: a result link, its tab or window, or a search for it."""
         return any(re.search(p, text, re.I) for p in self.reserved_pages)
 
     def mail_reserved(self, sender: str, subject: str, body: str) -> bool:
-        """A mail noise must not open or answer: a reserved sender, subject, or path or mailbox named in it."""
         return any(self.reserved(x) for x in (sender, subject, body)) or any(
             re.fullmatch(p, subject.strip(), re.I) for p in self.reserved_subjects
         )
 
     def reserved_element(self, e: obs.Element) -> bool:
-        """A reserved leaf name (whole name), or a reserved path, mailbox, scenario mail subject or intranet page
-        title anywhere in its name or value: a mail list row is named "From ..., Subject ..., Received ...", and
-        opening it reads it; a search result link is named by its page's title."""
         name = e.name.strip()
         return (any(re.fullmatch(p, name, re.I) for p in self.reserved_names) or self.reserved(e.value)
                 or self.reserved(name) or any(re.search(p, name, re.I) for p in self.reserved_subjects)
                 or self.page_reserved(name))  # fmt: skip
 
     def key_allowed(self, keys: str, snap: obs.Snapshot, declared: list[str] | None = None) -> str | None:
-        """Keyboard activation acts on the selection or focus, which click filtering never sees.
-
-        Refused while a visible reserved element is selected or focused in the window that receives keys (a modal
-        dialog, else the foreground window and any open menu), unless a non-reserved text field has the focus.
-        A key that presses the focus (FOCUS_KEYS) is refused on a focused committing or destructive control
-        (commits) unless its name matches `declared` (tasks.declared_commits, the clicks' allowlist), and with the
-        focus unknown (none reported, or read from pixels) unless the subgoal declares such an effect at all.
-        Any key but Esc is refused while an overwrite confirmation is on screen.
-        """
         if overwrite_prompt(snap) and keys.lower() != "esc":
             return OVERWRITE_REASON
         if keys.lower() not in ACTIVATION_KEYS:
@@ -207,7 +172,6 @@ class Policy:
     def element_allowed(
         self, e: obs.Element, allow_destructive: list[str], snap: obs.Snapshot | None = None
     ) -> str | None:
-        """None if the element may be acted on, else the reason. `snap`: the screen it is on (overwrite rule)."""
         if (
             snap is not None
             and overwrite_prompt(snap)

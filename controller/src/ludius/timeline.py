@@ -1,9 +1,3 @@
-"""Instructor timeline (spec section 8, ground truth): one CSV row per noise event, from ground-truth logs.
-
-Answers "is this relevant?" for a trainee's finding: every input Ludius sent, with guest time where the
-guest reported it, persona, host, task, subgoal, window and target.
-"""
-
 from __future__ import annotations
 
 import csv

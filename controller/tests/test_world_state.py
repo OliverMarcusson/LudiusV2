@@ -49,16 +49,15 @@ def test_handoff_becomes_a_scheduled_followup_until_done(tmp_path: Path) -> None
     _day(world, "aberg", MON, [note, failed], done=["09:00"])
 
     state = world_state.build(world, NARRATIVE, [ANNA, LARS], TUE)
-    assert [d.path for d in state.documents] == ["Documents\\erp access list.txt"]  # failed item left nothing
+    assert [d.path for d in state.documents] == ["Documents\\erp access list.txt"]
     assert [(m.sender, m.to) for m in state.messages] == [("aberg", "lnord")]
     [f] = world_state.due(state, "lnord", TUE)
     assert (f.due, f.document) == ("2026-11-03", "Documents\\erp access list.txt")
-    assert world_state.due(state, "lnord", MON) == []  # not before it is due
+    assert world_state.due(state, "lnord", MON) == []
     text = world_state.brief(state, "lnord", TUE)
-    assert "Inbox:" in text and f.id in text and "ERP user access" in text  # calendar names Lars
+    assert "Inbox:" in text and f.id in text and "ERP user access" in text
     assert world_state.save(state, world).exists()
 
-    # Planning: a draft without the follow-up is sent back; the corrected one schedules it by id.
     item = {"at": "08:30", "template": "edge_web_lookup", "params": {"search_query": "erp role based access finance"},
             "context": "Checks role options for Anna's list."}  # fmt: skip
     llm = ScriptedLlm({"items": [item]}, {"items": [item | {"followup": f.id}]})
@@ -80,7 +79,6 @@ def test_unknown_followup_id_is_rejected() -> None:
 
 
 def test_chat_request_is_no_followup(tmp_path: Path) -> None:
-    """The colleague learns a chat request by reading it the same day (ludius.react), never from the sender's plan."""
     world = World(tmp_path)
     world.save_narrative(NARRATIVE)
     ask = PlanItem(at="09:00", template="chat_direct_message", handoff="lnord",

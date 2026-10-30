@@ -1,8 +1,4 @@
 ---
-# Guest side of a Debian range server's temporary uplink (srv01; chat01 with uplink_mac), as that host, become. The NIC
-# itself is attached and detached on the Proxmox host (range-srv01.yml, range-chat.yml). present: DHCP on the uplink
-# MAC (networkd unit), wait for a default route, report the interface. absent (after the host-side detach; best effort
-# if the guest is unreachable): drop the unit, then prove no default route and no IPv4 route off the range subnet.
 - name: DHCP on the uplink NIC
   ansible.builtin.copy:
     dest: /etc/systemd/network/10-ludius-uplink.network

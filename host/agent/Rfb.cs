@@ -4,23 +4,17 @@ using System.Text;
 
 namespace Ludius.HostAgent;
 
-// The monitor's console capture on Proxmox: one view-only RFB (VNC, RFC 6143) client per watched VM, on a private
-// socket QEMU was handed over QMP (Qmp.VncClient). Raw encoding (a local socket: bandwidth is free, decoding is not),
-// the framebuffer kept here, scaled and JPEG-encoded per requested width. Persona screenshots don't use this.
 
-// Everything the client ever sends. There is deliberately no way to write KeyEvent (4), PointerEvent (5),
-// ClientCutText (6) or any other message: the capture is view-only by construction (RfbTests checks this surface).
 sealed class RfbWriter(Stream s)
 {
     public Task Version(CancellationToken ct) => Write("RFB 003.008\n"u8.ToArray(), ct);
     public Task SecurityNone(CancellationToken ct) => Write([1], ct);
-    public Task ClientInit(CancellationToken ct) => Write([1], ct); // shared: Proxmox's own console stays connected
+    public Task ClientInit(CancellationToken ct) => Write([1], ct);
 
-    // 32 bpp, depth 24, little-endian true colour, red 16 green 8 blue 0: pixels arrive as B, G, R, X.
     public Task SetPixelFormat(CancellationToken ct) =>
         Write([0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0], ct);
 
-    public Task SetEncodings(CancellationToken ct) => Write([2, 0, 0, 2, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0x21], ct); // Raw, DesktopSize (-223)
+    public Task SetEncodings(CancellationToken ct) => Write([2, 0, 0, 2, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0x21], ct);
 
     public Task UpdateRequest(bool incremental, int width, int height, CancellationToken ct)
     {
@@ -43,11 +37,11 @@ sealed class RfbClient
 {
     const int MaxSide = 8192;
 
-    public readonly object Lock = new(); // Pixels, Width, Height and Version change together under it
+    public readonly object Lock = new();
     public int Width { get; private set; }
     public int Height { get; private set; }
-    public byte[] Pixels { get; private set; } = []; // B, G, R, X rows of Width pixels
-    public long Version { get; private set; } // complete framebuffer updates applied
+    public byte[] Pixels { get; private set; } = [];
+    public long Version { get; private set; }
 
     readonly Stream s;
     readonly RfbWriter writer;
@@ -78,10 +72,6 @@ sealed class RfbClient
         return c;
     }
 
-    // Requests an update, applies it, waits out the rest of interval, requests the next: at most one update per
-    // interval. QEMU answers an incremental request only once something changed, so a still desktop costs nothing;
-    // after probe without a message a full (non-incremental) request goes out, which QEMU always answers. HeardAt is
-    // when the last update arrived: Captures ends a session that stays silent despite the probes.
     public long HeardAt { get; private set; } = Environment.TickCount64;
 
     public async Task Run(TimeSpan interval, TimeSpan probe, Action updated, CancellationToken ct)
@@ -110,14 +100,14 @@ sealed class RfbClient
                     updated();
                     if (interval - asked.Elapsed is { Ticks: > 0 } wait) await Task.Delay(wait, ct);
                     asked.Restart();
-                    await writer.UpdateRequest(!resized, Width, Height, ct); // after a resize: the whole new screen
+                    await writer.UpdateRequest(!resized, Width, Height, ct);
                     break;
-                case 1: // SetColourMapEntries: not sent for true colour, skipped if it is
+                case 1:
                     var map = await Bytes(5, ct);
                     await Bytes(BinaryPrimitives.ReadUInt16BigEndian(map.AsSpan(3)) * 6, ct);
                     break;
-                case 2: break; // Bell
-                case 3: // ServerCutText: read past, never used
+                case 2: break;
+                case 3:
                     var cut = await Bytes(7, ct);
                     var length = BinaryPrimitives.ReadUInt32BigEndian(cut.AsSpan(3));
                     if (length > 1 << 20) throw new IOException("RFB: cut text too long");
@@ -129,7 +119,6 @@ sealed class RfbClient
         }
     }
 
-    // One FramebufferUpdate; true if the desktop changed size.
     async Task<bool> Update(CancellationToken ct)
     {
         var n = BinaryPrimitives.ReadUInt16BigEndian((await Bytes(3, ct)).AsSpan(1));
@@ -178,19 +167,14 @@ sealed class RfbClient
     }
 }
 
-// One RFB session per VM, shared by every viewer and width, ended IdleAfter after the last frame request. Each width is
-// scaled and encoded once per framebuffer update; until the next update the same byte[] comes back (FeedHub relies on it).
-// A watchdog bounds every session from before it connects: no first frame within Handshake, or no update within Stall
-// once running (probes included), ends it with an error the next frame request gets, never the last frame as if live.
-// Ending a session disposes its socket.
 sealed class Captures
 {
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(1.0 / 15);
     public TimeSpan IdleAfter { get; init; } = TimeSpan.FromSeconds(10);
-    public TimeSpan FirstFrame { get; init; } = TimeSpan.FromSeconds(3); // how long one frame request waits for a new session
-    public TimeSpan Handshake { get; init; } = TimeSpan.FromSeconds(10); // connect, handshake and first update
-    public TimeSpan Probe { get; init; } = TimeSpan.FromSeconds(2); // silence before a full update request
-    public TimeSpan Stall { get; init; } = TimeSpan.FromSeconds(5); // no update for this long, probes included: ended
+    public TimeSpan FirstFrame { get; init; } = TimeSpan.FromSeconds(3);
+    public TimeSpan Handshake { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan Probe { get; init; } = TimeSpan.FromSeconds(2);
+    public TimeSpan Stall { get; init; } = TimeSpan.FromSeconds(5);
     const int Quality = 80;
 
     sealed class Capture(string tag)
@@ -199,14 +183,12 @@ sealed class Captures
         public readonly CancellationTokenSource Stop = new();
         public readonly TaskCompletionSource<RfbClient> Ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public long AskedAt = Environment.TickCount64;
-        public volatile Exception? Error; // why the session ended, unless idle, replaced or closed
+        public volatile Exception? Error;
         public readonly Dictionary<int, (long Version, byte[] Jpeg)> Encoded = [];
     }
 
     readonly Dictionary<string, Capture> live = [];
 
-    // tag: the VM identity the caller just validated. A session only serves the tag it was opened for; another tag for
-    // the name ends the old session and opens a new one with the caller's connect.
     public byte[] Frame(string vm, string tag, Func<CancellationToken, Task<Stream>> connect, int maxWidth)
     {
         Capture? c;
@@ -214,7 +196,7 @@ sealed class Captures
         {
             if (live.TryGetValue(vm, out c) && c.Tag == tag && c.Error is { } failed)
             {
-                live.Remove(vm); // reported once; the next request opens a new session
+                live.Remove(vm);
                 ExceptionDispatchInfo.Throw(failed);
             }
             if (c is null || c.Tag != tag || c.Stop.IsCancellationRequested)
@@ -229,18 +211,16 @@ sealed class Captures
         catch (AggregateException e) { ExceptionDispatchInfo.Throw(e.InnerException!); }
         Ended(c);
         var jpeg = Encode(c, c.Ready.Task.Result, maxWidth);
-        Ended(c); // it may have ended while this request waited on another width's encode, or during its own
+        Ended(c);
         return jpeg;
     }
 
-    // Ended: its last frame is no longer known to be current.
     static void Ended(Capture c)
     {
         if (c.Stop.IsCancellationRequested)
             throw c.Error as InvalidOperationException ?? new InvalidOperationException("console capture ended");
     }
 
-    // Ends the name's session now (its VM failed validation).
     public void Close(string vm)
     {
         lock (live) if (live.Remove(vm, out var c)) c.Stop.Cancel();
@@ -253,7 +233,7 @@ sealed class Captures
         try
         {
             await using var s = await connect(ct);
-            await using var close = ct.Register(s.Dispose); // also unblocks a read that would never return
+            await using var close = ct.Register(s.Dispose);
             var client = await RfbClient.Connect(s, ct);
             await client.Run(Interval, Probe, () => c.Ready.TrySetResult(client), ct);
         }
@@ -288,7 +268,6 @@ sealed class Captures
         }
     }
 
-    // ponytail: one encode at a time per VM (widths of one VM wait on each other); per-width locks if a mixed grid lags.
     static byte[] Encode(Capture c, RfbClient client, int maxWidth)
     {
         lock (c.Encoded)
@@ -311,11 +290,8 @@ sealed class Captures
     }
 }
 
-// Baseline JPEG (4:2:0, standard Annex K tables) and an area-average downscale: enough for a view-only feed, and no
-// image library on linux-x64 (System.Drawing is Windows-only).
 static class Jpeg
 {
-    // B, G, R, X at sw x sh to R, G, B at w x h (w <= sw): each output pixel averages the source pixels it covers.
     public static byte[] Scale(byte[] bgrx, int sw, int sh, int w, int h)
     {
         var rgb = new byte[w * h * 3];
@@ -391,7 +367,6 @@ static class Jpeg
 
     static readonly float[] Aan = [1f, 1.387039845f, 1.306562965f, 1.175875602f, 1f, 0.785694958f, 0.541196100f, 0.275899379f];
 
-    // Canonical Huffman codes by symbol, from the per-length counts.
     static (ushort, byte)[] Codes(byte[] bits, byte[] values)
     {
         var codes = new (ushort, byte)[256];
@@ -401,14 +376,12 @@ static class Jpeg
         return codes;
     }
 
-    // IJG quality scaling; the table stays in natural order, written out in zigzag.
     static byte[] Scaled(byte[] table, int quality)
     {
         int s = quality < 50 ? 5000 / quality : 200 - quality * 2;
         return table.Select(q => (byte)Math.Clamp((q * s + 50) / 100, 1, 255)).ToArray();
     }
 
-    // Quantisation divisors folded with the AAN DCT's output scale.
     static float[] Divisors(byte[] q)
     {
         var d = new float[64];
@@ -427,7 +400,7 @@ static class Jpeg
         o.Bytes(1);
         foreach (var z in Zigzag) o.Bytes(cq[z]);
         o.Bytes(0xFF, 0xC0, 0, 17, 8, (byte)(h >> 8), (byte)h, (byte)(w >> 8), (byte)w, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1);
-        o.Bytes(0xFF, 0xC4, 418 >> 8, 418 & 0xFF); // 2 + 4 x (class + 16 counts) + 12 + 162 + 12 + 162 values
+        o.Bytes(0xFF, 0xC4, 418 >> 8, 418 & 0xFF);
         foreach (var (cls, bits, values) in new[] { (0x00, DcLumaBits, DcValues), (0x10, AcLumaBits, AcLumaValues), (0x01, DcChromaBits, DcValues), (0x11, AcChromaBits, AcChromaValues) })
         {
             o.Bytes((byte)cls);
@@ -449,7 +422,7 @@ static class Jpeg
                 for (int y = 0; y < 16; y++)
                     for (int x = 0; x < 16; x++)
                     {
-                        int i = (Math.Min(my + y, h - 1) * w + Math.Min(mx + x, w - 1)) * 3; // edges repeat
+                        int i = (Math.Min(my + y, h - 1) * w + Math.Min(mx + x, w - 1)) * 3;
                         float r = rgb[i], g = rgb[i + 1], b = rgb[i + 2];
                         Y[y * 16 + x] = 0.299f * r + 0.587f * g + 0.114f * b - 128f;
                         Cb[y * 16 + x] = -0.168736f * r - 0.331264f * g + 0.5f * b;
@@ -477,13 +450,12 @@ static class Jpeg
         return o.ToArray();
     }
 
-    // Forward DCT (AAN, float), quantise, Huffman-code one 8x8 block; returns its DC for the next block's difference.
     static int Block(BitWriter o, float[] d, float[] divisors, int lastDc, (ushort, byte)[] dc, (ushort, byte)[] ac)
     {
         for (int pass = 0; pass < 2; pass++)
             for (int k = 0; k < 8; k++)
             {
-                int b = pass == 0 ? k * 8 : k, s = pass == 0 ? 1 : 8; // rows, then columns
+                int b = pass == 0 ? k * 8 : k, s = pass == 0 ? 1 : 8;
                 float t0 = d[b] + d[b + 7 * s], t7 = d[b] - d[b + 7 * s], t1 = d[b + s] + d[b + 6 * s], t6 = d[b + s] - d[b + 6 * s];
                 float t2 = d[b + 2 * s] + d[b + 5 * s], t5 = d[b + 2 * s] - d[b + 5 * s], t3 = d[b + 3 * s] + d[b + 4 * s], t4 = d[b + 3 * s] - d[b + 4 * s];
                 float t10 = t0 + t3, t13 = t0 - t3, t11 = t1 + t2, t12 = t1 - t2;
@@ -512,12 +484,12 @@ static class Jpeg
         for (int i = 1; i < 64; i++)
         {
             if (q[i] == 0) { run++; continue; }
-            for (; run >= 16; run -= 16) o.Code(ac[0xF0]); // ZRL
+            for (; run >= 16; run -= 16) o.Code(ac[0xF0]);
             o.Code(ac[(run << 4) | Magnitude(q[i])]);
             o.Value(q[i]);
             run = 0;
         }
-        if (run > 0) o.Code(ac[0x00]); // EOB
+        if (run > 0) o.Code(ac[0x00]);
         return q[0];
     }
 
@@ -533,7 +505,6 @@ static class Jpeg
 
         public void Code((ushort Code, byte Length) c) => Bits(c.Code, c.Length);
 
-        // The magnitude's bits; negative values as v - 1 in that many bits.
         public void Value(int v)
         {
             var m = Magnitude(v);
@@ -548,14 +519,14 @@ static class Jpeg
             {
                 var b = (byte)(acc >> (n - 8));
                 ms.WriteByte(b);
-                if (b == 0xFF) ms.WriteByte(0); // byte stuffing
+                if (b == 0xFF) ms.WriteByte(0);
                 n -= 8;
             }
         }
 
         public void Flush()
         {
-            if (n > 0) Bits((1u << (8 - n)) - 1, 8 - n); // pad with ones
+            if (n > 0) Bits((1u << (8 - n)) - 1, 8 - n);
         }
 
         public byte[] ToArray() => ms.ToArray();

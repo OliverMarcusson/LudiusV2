@@ -1,6 +1,3 @@
-# An IT administrator's routine read-only check in Windows PowerShell (not elevated). Legitimate work that
-# looks like the PowerShell signal: powershell.exe launched from Start or Run, 4103/4104 script block and
-# PSReadLine history artifacts. Commands are fixed defaults, never planner text.
 task: powershell_admin_check
 app: powershell
 processes: [powershell.exe]
@@ -18,7 +15,6 @@ variants:
   - [open_from_start, check_services, check_disk, exit_shell]
   - [open_from_run, check_admins, check_disk, exit_shell]
   - [open_from_start, check_admins, check_services, close_window]
-# Run dialog (Win+R) variants are rare (about 5%): few users launch apps that way; it stays in as a lookalike.
 weights: [1, 0.1, 1]
 budget_steps: 30
 budget_minutes: 6

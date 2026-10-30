@@ -1,5 +1,3 @@
-# Create a project folder in Documents with File Explorer.
-# Variants: launch via Win+E or the taskbar; create via Ctrl+Shift+N or the ribbon/"New folder" button.
 task: explorer_new_folder
 app: explorer
 processes: [explorer.exe]
@@ -10,7 +8,6 @@ example: {folder_name: admission test folder}
 variants:
   - [open_explorer_keys, go_documents, new_folder_shortcut, name_folder, close_explorer]
   - [open_explorer_taskbar, go_documents, new_folder_button, name_folder, close_explorer]
-  # Mistake: the folder is named with a stray key, then renamed with F2.
   - [open_explorer_keys, go_documents, new_folder_shortcut, name_folder_typo, rename_folder, close_explorer]
 weights: [1, 1, 0.3]
 budget_steps: 35

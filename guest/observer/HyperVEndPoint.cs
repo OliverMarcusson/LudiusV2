@@ -3,11 +3,10 @@ using System.Net.Sockets;
 
 namespace Ludius.Observer;
 
-// SOCKADDR_HV: family, reserved, VM id, service id (36 bytes).
 sealed class HyperVEndPoint(Guid vmId, Guid serviceId) : EndPoint
 {
-    public const AddressFamily Family = (AddressFamily)34; // AF_HYPERV
-    public const ProtocolType RawProtocol = (ProtocolType)1; // HV_PROTOCOL_RAW
+    public const AddressFamily Family = (AddressFamily)34;
+    public const ProtocolType RawProtocol = (ProtocolType)1;
 
     public Guid VmId { get; } = vmId;
     public Guid ServiceId { get; } = serviceId;

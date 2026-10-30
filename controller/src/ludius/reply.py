@@ -1,18 +1,3 @@
-"""Task-time reply content (template capability mail.reply): the reply answers a real mail on the range server.
-
-Before any input the runner calls Composer.prepare(), which
-1. picks the mail: the newest recent one in the persona's Inbox (read on the server, ludius.mail) from the planned
-   colleague (and with the planned subject, when the plan names one), unanswered, unambiguous by subject, and
-   neither from nor about anything the scenario reserves;
-2. makes ONE LLM call (ludius.llm, counted) that writes a short reply to that mail's text in the persona's voice;
-3. checks the text in code where an exact rule does better (typeable ASCII, one paragraph, length, scenario policy,
-   no reserved person's name), and asks Decisions one yes/no question, failing closed: does it answer the mail?
-4. fills the task's to, to_name (from the narrative), subject, body and reply_to (the mail's Internet message id,
-   which the server-side done check requires as In-Reply-To).
-Any failure is a reason: the task is abandoned before its first input and the reason recorded. Unreadable is
-unknown, never empty. Decisions never writes text; it only answers yes or no.
-"""
-
 from __future__ import annotations
 
 import json
@@ -31,12 +16,12 @@ if TYPE_CHECKING:
     from ludius.loop import Decider
     from ludius.policy import Policy
 
-RECENT_DAYS = 7  # a mail older than this (by the guest's clock) is not answered any more
+RECENT_DAYS = 7
 DAY_MS = 86_400_000
 TEXT_MIN, TEXT_MAX, LINES_MAX = 20, 300, 4
-SHOWN = 2000  # characters of the mail the LLM and Decisions see
-DECISION_MIN = 0.6  # the decision model's "yes" must be chosen and at least this probable
-_TYPEABLE = re.compile(r"[\x20-\x7e\n]+")  # the virtual keyboard types ASCII only
+SHOWN = 2000
+DECISION_MIN = 0.6
+_TYPEABLE = re.compile(r"[\x20-\x7e\n]+")
 
 SYSTEM = (
     "You write one short work email reply for an employee of a fictional, ordinary company. The mail you answer "
@@ -56,8 +41,6 @@ class Draft(Strict):
 
 
 def _colleague(address: str, owner: str, people: dict[str, str], policy: Policy) -> str | None:
-    """Why `address` is not a noise colleague to answer: a narrative person's range account, not the persona,
-    not scenario-reserved."""
     user, _, domain = address.strip().lower().partition("@")
     if domain != mail.DOMAIN or user == owner or user not in people:
         return f"{address!r} is not a colleague's address"
@@ -67,7 +50,6 @@ def _colleague(address: str, owner: str, people: dict[str, str], policy: Policy)
 
 
 def pick(owner: str, to: str, subject: str, now_ms: int, people: dict[str, str], policy: Policy) -> mail.Message | str:
-    """The mail to answer, or why there is none (see the module docstring, step 1)."""
     if why := _colleague(to, owner, people, policy):
         return why
     inbox = mail.newest(owner, "inbox")
@@ -92,7 +74,7 @@ def pick(owner: str, to: str, subject: str, now_ms: int, people: dict[str, str],
         if any(s.in_reply_to == m.msgid for s in sent):
             skipped.append(f"{m.id} already answered")
             continue
-        if len(same) != 1:  # the mail is opened by its subject: another one with it could be opened instead
+        if len(same) != 1:
             skipped.append(f"{m.id} shares its subject with {len(same) - 1} other inbox mail(s)")
             continue
         return m
@@ -101,9 +83,6 @@ def pick(owner: str, to: str, subject: str, now_ms: int, people: dict[str, str],
 
 
 def to_read(owner: str, sender: str, subject: str, people: dict[str, str], policy: Policy) -> mail.Message | str:
-    """The Inbox mail a mail.read task opens, or why there is none: from a noise colleague (a narrative person with a
-    mailbox, a manager included; not reserved), the only Inbox mail with this subject (it is opened by its subject),
-    not scenario-reserved, and unread now on the server: a mail read before the task can't show the task's read."""
     if why := _colleague(sender, owner, people, policy):
         return why
     same = mail.matching(owner, "inbox", subject)
@@ -122,8 +101,6 @@ def to_read(owner: str, sender: str, subject: str, people: dict[str, str], polic
 
 
 def prepare_read(task: Task, policy: Policy, narrative: Path) -> tuple[str | None, dict[str, Any]]:
-    """mail.read, before any input: pick the mail (to_read), remember its id for the done check (Task.read_id) and
-    fill sender_name for the goals; (why not, record for the ground-truth log)."""
     try:
         people = {p["user"]: p["name"] for p in yaml.safe_load(narrative.read_text(encoding="utf-8"))["people"]
                   if p.get("user")}  # fmt: skip
@@ -140,8 +117,6 @@ def prepare_read(task: Task, policy: Policy, narrative: Path) -> tuple[str | Non
 def hints(
     inbox: list[mail.Message] | None, owner: str, people: dict[str, str], policy: Policy
 ) -> list[tuple[str, str]]:
-    """(colleague account, subject) of the inbox mails a plan may reply to: plan-time hints, re-picked at task time.
-    An unread inbox (None) offers none."""
     return [
         (m.sender.partition("@")[0], m.subject)
         for m in inbox or []
@@ -151,8 +126,6 @@ def hints(
 
 
 def problem(text: str, people: dict[str, str], policy: Policy) -> str | None:
-    """Why the reply text must not be typed (exact rules only; whether it answers the mail is for the decision
-    model)."""
     if not _TYPEABLE.fullmatch(text):
         return "not plain ASCII"
     lines = text.split("\n")
@@ -162,7 +135,7 @@ def problem(text: str, people: dict[str, str], policy: Policy) -> str | None:
         return f"length {len(text)} outside {TEXT_MIN}-{TEXT_MAX}"
     if r := policy.text_allowed(text, None):
         return r
-    flat = " ".join(text.split())  # a name split over a line break is still that name
+    flat = " ".join(text.split())
     for user, name in people.items():
         if policy.reserved(f"{user}@{mail.DOMAIN}") and any(
             re.search(rf"\b{re.escape(' '.join(x.split()))}\b", flat, re.I) for x in (name, user)
@@ -174,13 +147,12 @@ def problem(text: str, people: dict[str, str], policy: Policy) -> str | None:
 @dataclass
 class Composer:
     llm: LlmClient
-    narrative: Path  # world/narrative.yaml: who the colleagues are and their names
-    confirm: bool = True  # the decision model's yes/no check
+    narrative: Path
+    confirm: bool = True
 
     def prepare(
         self, task: Task, persona: Persona, decider: Decider, policy: Policy
     ) -> tuple[str | None, dict[str, Any]]:
-        """Fill the task's reply values; (why not, record for the ground-truth log)."""
         rec: dict[str, Any] = {}
         try:
             people = {

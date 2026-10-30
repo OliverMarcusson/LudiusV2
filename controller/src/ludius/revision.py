@@ -1,12 +1,3 @@
-"""Weekly narrative revision (spec section 6: company narrative "per range, revised weekly").
-
-The LLM only proposes changes from what really happened (the day ground-truth logs of every persona): a dated
-summary of the week, finished and new projects, new people and new dated events. Code applies them, so
-continuity holds by construction: company, city, summary, existing people and past events never change, and
-every current persona (e.g. a newly added IT admin) is in the org chart. Proposals are validated; invalid parts
-are sent back once, then dropped and reported.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -19,12 +10,12 @@ from ludius.llm import LlmClient
 from ludius.planner import NARRATIVE_SYSTEM, Event, Narrative, Person, World, near_duplicate
 from ludius.tasks import Persona, Strict
 
-HORIZON_DAYS = 28  # new events land within four weeks of the revision
+HORIZON_DAYS = 28
 MAX_PROJECTS = 8
 
 
 class Revision(Strict):
-    summary: str  # what changed in the company this week, 1-3 sentences
+    summary: str
     finished_projects: list[str] = []
     new_projects: list[str] = []
     new_people: list[Person] = []
@@ -36,12 +27,10 @@ def week_start(day: dt.date) -> dt.date:
 
 
 def due(n: Narrative, day: dt.date) -> bool:
-    """A revision is due once per calendar week (Monday-based); never twice in the same week."""
     return not n.revised or week_start(dt.date.fromisoformat(n.revised)) < week_start(day)
 
 
 def with_personas(n: Narrative, personas: list[Persona]) -> Narrative:
-    """Every persona appears in people with its account; added by code, never left to the LLM."""
     have = {p.user for p in n.people if p.user}
     extra = [Person(name=p.name, role=p.role, department=p.department, user=p.user)
              for p in personas if p.user not in have]  # fmt: skip
@@ -99,7 +88,6 @@ def apply(r: Revision, n: Narrative, day: dt.date) -> Narrative:
 def revise(
     llm: LlmClient, n: Narrative, personas: list[Persona], day: dt.date, happened: str
 ) -> tuple[Narrative, list[str]]:
-    """One weekly revision. Returns the new narrative and the problems that made parts of the proposal drop."""
     if not due(n, day):
         raise ValueError(f"narrative already revised this week ({n.revised})")
     n = with_personas(n, personas)
@@ -119,7 +107,6 @@ def revise(
                      + "\nSend the corrected JSON object.")  # fmt: skip
         problems = check(r, n, day)
     if problems:
-        # Keep what is valid on its own; drop the rest and report it.
         room = max(0, MAX_PROJECTS - len(n.projects))
         r = r.model_copy(update={
             "finished_projects": [p for p in r.finished_projects if p in n.projects],
@@ -133,8 +120,7 @@ def revise(
 
 
 def happened(world: World, personas: list[Persona], day: dt.date) -> str:
-    """The last week of every persona's day logs and handed-off threads, as the revision's evidence."""
-    start = (day - dt.timedelta(days=7)).isoformat()  # World.summary keeps the last N items, however old
+    start = (day - dt.timedelta(days=7)).isoformat()
     parts: list[str] = []
     for p in personas:
         lines = [x for x in world.summary(p.user, day, days=7).splitlines() if x[2:12] >= start or x[:2] != "- "]
@@ -144,19 +130,18 @@ def happened(world: World, personas: list[Persona], day: dt.date) -> str:
 
 
 class RevisionBusy(RuntimeError):
-    """Another planner holds the revision lock; it may be mid-revision, so this one must not start a second."""
+    pass
 
 
 class AutoRevision(NamedTuple):
-    narrative: Narrative  # the narrative the day plan must use: freshly revised, or re-read unchanged
+    narrative: Narrative
     revised: bool
-    note: str  # one line saying what happened and why
+    note: str
     dropped: list[str]
 
 
 @contextmanager
 def revision_lock(world: World) -> Generator[None]:
-    """Exclusive, non-blocking, cross-process lock (OS drops it with the process) around due check, revise, save."""
     path = world.root / "world" / "revision.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT)
@@ -174,18 +159,10 @@ def revision_lock(world: World) -> Generator[None]:
             raise RevisionBusy(f"another planner is revising the narrative (lock {path}); try again shortly") from e
         yield
     finally:
-        os.close(fd)  # closing drops the lock
+        os.close(fd)
 
 
 def revise_if_due(llm: LlmClient, world: World, personas: list[Persona], day: dt.date) -> AutoRevision:
-    """Revise the narrative before planning `day` when it is due, at most once per week across all planners.
-
-    Under the lock the narrative is re-read from disk, so a planner that waited behind a revision sees it and does
-    not spend a second one. A revision dated this week or later (including after `day`) is never repeated or
-    rewound, and nothing is revised without logged evidence: an unrevised narrative (no revision yet) or a quiet
-    week keeps the story as is rather than letting the model invent what happened. Raises RevisionBusy if the lock
-    is held; the manual `plan revise` stays the way to force the first revision.
-    """
     with revision_lock(world):
         n = world.narrative()
         if not due(n, day):

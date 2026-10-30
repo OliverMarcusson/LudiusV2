@@ -1,22 +1,3 @@
-"""Durable persona days on Temporal (spec section 9): the day is a workflow, each slot an activity.
-
-The workflow holds the day's timeline: durable timers wait for each slot's time (realtime) and for the time
-away on a break, so a controller crash or restart resumes after the last finished slot instead of replaying
-the day. The GUI work stays in DayRunner (day.py), called from activities on one worker per desktop.
-
-Delivery is at-least-once, not exactly-once: a slot whose controller died, hung or lost its connection is
-run again from the start (after session hygiene), so its GUI effects may happen twice, as when a person
-retries. Each retry is logged (item_retry) so ground truth shows it. Two guards keep a retry from typing
-into the desktop while an earlier attempt still does:
-- one controller per desktop: play() holds an OS file lock for the desktop while its worker runs, and the
-  worker runs one activity at a time;
-- a hung attempt stops heartbeating (heartbeats come from ground-truth writes, i.e. steps, not from a
-  timer), so Temporal times it out; the SDK then raises cancellation inside the activity's thread, which
-  stops it at its next Python statement (a call blocked inside the agent RPC returns first), and the
-  retry only starts in this worker once that thread has returned.
-Needs the `durable` dependency group and a Temporal server (`ludius day --temporal host:port`).
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -59,34 +40,31 @@ with workflow.unsafe.imports_passed_through():
 
 ITEM_TIMEOUT = dt.timedelta(hours=2)
 QUICK = dt.timedelta(minutes=5)
-# Template or plan errors do not get better by retrying; nor does a spent budget (calls.CapReached): the day stops.
 NOT_RETRYABLE = ["KeyError", "ValueError", "CapReached"]
 
 
 class DayInput(BaseModel):
     plan: DayPlan
-    clock: Clock  # realtime | compressed | time-jump
-    utc_offset_s: int  # the plan's times are wall-clock times in this offset
-    heartbeat_s: int = 300  # longest a slot may go without a ground-truth write before it counts as hung
-    retry_s: int = 30  # first retry backoff; at most 3 attempts per slot
-    canary: bool = False  # run the day's apps' drift canaries first and skip the items of drifted apps
+    clock: Clock
+    utc_offset_s: int
+    heartbeat_s: int = 300
+    retry_s: int = 30
+    canary: bool = False
 
 
 class ScheduledInput(BaseModel):
-    """What a recurring schedule starts each day: the day's plan is chosen when it fires, never generated."""
-
     persona: str
-    tz: str  # IANA zone the persona's day (and the plan's date) lives in
+    tz: str
     clock: Clock = "realtime"
     canary: bool = False
-    day_offset: int = 0  # play the plan this many days after the fire's local date (time warp with time-jump)
+    day_offset: int = 0
 
 
 class SlotInput(BaseModel):
     date: str
     item: PlanItem
     interrupts: list[PlanItem] = []
-    jump_at: str | None = None  # time-jump: logical HH:MM to set first; None means the item's own time
+    jump_at: str | None = None
 
 
 class Done(BaseModel):
@@ -105,8 +83,6 @@ def _done(r: ItemResult) -> Done:
 
 
 class HeartbeatLog(GroundTruth):
-    """Ground truth whose every write inside an activity is a heartbeat: a slot is alive while it makes steps."""
-
     def write(self, **rec: Any) -> None:
         super().write(**rec)
         if activity.in_activity():
@@ -114,14 +90,12 @@ class HeartbeatLog(GroundTruth):
 
 
 class DayActivities:
-    """The desktop side: one DayRunner, one activity at a time (there is one keyboard and mouse)."""
-
     def __init__(
         self, day: DayRunner, canary: Callable[[set[str]], dict[str, str]] | None = None, *, plan: DayPlan | None = None
     ) -> None:
         self._fixed_day = day
         self._expected_plan = plan
-        self.canary_run = canary  # apps -> state (ok, drift, unknown): canary.run bound to this desktop
+        self.canary_run = canary
 
     def _owns_activity(self) -> bool:
         return (
@@ -138,7 +112,6 @@ class DayActivities:
 
     @activity.defn(name="canary")
     def canary(self, plan: DayPlan) -> list[Done]:
-        """Drift canaries for the plan's apps on this desktop; the items of drifted apps are skipped, and logged."""
         if self.canary_run is None:
             raise ValueError("this worker has no canary runner")
         apps = {self.day.templates[i.template].app for i in plan.items if i.template in self.day.templates}
@@ -177,8 +150,6 @@ class DayActivities:
             self.mark_aborted()
 
     def mark_aborted(self) -> None:
-        """The workflow failed or was cancelled before day_end: the day log records that it stopped.
-        Monitoring only, after the cleanup: an unwritable log never blocks a clock reset or a release."""
         try:
             self.day.log.write(event="day_aborted", host_ms=_now())
         except Exception as e:  # noqa: BLE001 - the abort path must finish whatever the log does
@@ -191,7 +162,6 @@ class DayActivities:
 
     @activity.defn(name="clock_reset")
     def clock_reset(self) -> None:
-        """The day failed or was cancelled before day_end: put the range back on host time (time-jump only)."""
         if self.day.clock == "time-jump" and self.day.set_clock:
             self.day.set_clock(None)
             self.day.log.write(event="clock_reset", host_ms=_now(), reason="day stopped before its end")
@@ -243,11 +213,9 @@ class PersonaDay:
             return await workflow.execute_activity(
                 "slot", s, result_type=list[Done], start_to_close_timeout=ITEM_TIMEOUT,
                 heartbeat_timeout=dt.timedelta(seconds=inp.heartbeat_s), retry_policy=retry,
-                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,  # the desktop is free after
+                cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
             )  # fmt: skip
 
-        # Version markers keep existing histories replayable. New workers need the complete input to bind
-        # a lazy runner to this workflow, and cleanup must cover prepare/canary/finish failures too.
         lazy_day = workflow.patched("lazy-day-v1")
 
         async def prepare() -> DayPlan:
@@ -280,7 +248,6 @@ class PersonaDay:
             gone = {(d.at, d.template) for d in skipped}
             return plan.model_copy(update={"items": [i for i in plan.items if (i.at, i.template) not in gone]})
 
-        # Preserve the old histories' failure boundaries as well as their activity names.
         todo = plan
         if not lazy_day:
             todo = await prepare()
@@ -289,7 +256,6 @@ class PersonaDay:
                 todo = await prepare()
             for item, interrupts in slots(todo):
                 if inp.clock == "realtime":
-                    # Late slots run at once (a late start); early ones wait, with a minute or two of human slack.
                     due = dt.datetime.combine(day, dt.time.fromisoformat(item.at), tz)
                     wait = (due - workflow.now()).total_seconds() + rnd.uniform(0, 120)
                     if wait > 0:
@@ -302,15 +268,11 @@ class PersonaDay:
                         "break_end", s, result_type=Done, start_to_close_timeout=QUICK, retry_policy=retry,
                     )  # fmt: skip
                     self.done.append(back_in)
-                    # A failed unlock stops the day (no later slot acts on a locked desktop). Patched: histories
-                    # recorded before this ran on after a failed break_end and still replay that way.
                     if back_in.status != "done" and workflow.patched("break-unlock-fail-closed-v1"):
                         raise ApplicationError(
                             f"break at {item.at}: unlock failed, day stopped", type="BreakUnlockFailed",
                             non_retryable=True,
                         )  # fmt: skip
-                    # They came due while away: run them on return, at the break's logical end. The clock is set
-                    # again, since a lease sweep may have reset it while this worker was gone.
                     back = back_at(day, item)
                     for late in interrupts:
                         self.done += await slot(SlotInput(date=plan.date, item=late, jump_at=f"{back:%H:%M}"))
@@ -320,7 +282,7 @@ class PersonaDay:
                 await workflow.execute_activity(
                     "day_end", DayEnd(plan=plan, done=self.done), start_to_close_timeout=QUICK
                 )
-        except (Exception, asyncio.CancelledError):  # do not leave a jumped clock or another day's active context
+        except (Exception, asyncio.CancelledError):
             if lazy_day or inp.clock == "time-jump":
                 await workflow.execute_activity(
                     "day_abort" if lazy_day else "clock_reset",
@@ -335,7 +297,7 @@ class PersonaDay:
 
 @dataclass
 class Target:
-    address: str  # host:port of the Temporal frontend
+    address: str
     namespace: str = "default"
 
 
@@ -347,8 +309,8 @@ def workflow_id(plan: DayPlan) -> str:
     return f"day-{plan.persona}-{plan.date}"
 
 
-SCHEDULED_DAY = "ScheduledDay"  # registered by the explicitly started long-lived worker
-CATCHUP = dt.timedelta(hours=1)  # a fire missed by more than this (server down) is dropped, not replayed late
+SCHEDULED_DAY = "ScheduledDay"
+CATCHUP = dt.timedelta(hours=1)
 
 
 def schedule_id(persona: str) -> str:
@@ -366,10 +328,8 @@ def schedule_for(
     canary: bool = False,
     day_offset: int = 0,
 ) -> Schedule:
-    """Every day at `at` (HH:MM) in `tz`, start that persona's day. A day still running when the next fires is
-    not doubled (SKIP); created paused unless asked, so defining a schedule never starts a desktop by itself."""
     _persona_name(persona)
-    ZoneInfo(tz)  # an unknown zone fails here, not on the server
+    ZoneInfo(tz)
     if not re.fullmatch(r"\d{2}:\d{2}", at):
         raise ValueError("schedule time must be HH:MM")
     if not 0 <= day_offset <= 7 or (day_offset and clock != "time-jump"):
@@ -392,15 +352,12 @@ def schedule_for(
 
 
 def plan_date(now: dt.datetime, tz: str) -> str:
-    """The persona's local date at an aware instant: the date of the plan a fire replays."""
     if now.tzinfo is None:
         raise ValueError("plan_date needs an aware datetime")
     return now.astimezone(ZoneInfo(tz)).date().isoformat()
 
 
 def scheduled_plan(runs: Path, persona: str, date: str) -> DayPlan:
-    """The plan nightly planning wrote for that date. Missing is an error: a schedule replays plans and never
-    generates one (no planner, no LLM call)."""
     _persona_name(persona)
     if dt.date.fromisoformat(date).isoformat() != date:
         raise ValueError("plan date must be YYYY-MM-DD")
@@ -428,7 +385,6 @@ class DeskBusy(RuntimeError):
 
 @contextmanager
 def desk_lock(path: Path) -> Generator[None]:
-    """One controller per desktop. The OS drops the lock when the process dies, so a crash never leaves it held."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT)
     try:
@@ -445,16 +401,13 @@ def desk_lock(path: Path) -> Generator[None]:
             raise DeskBusy(f"another controller is driving this desktop ({path})") from e
         yield
     finally:
-        os.close(fd)  # closing releases the lock
+        os.close(fd)
 
 
 async def play(
     client: Client, day: DayRunner, plan: DayPlan, clock: Clock, desk: Path,
     *, canary: Callable[[set[str]], dict[str, str]] | None = None, locked: bool = False, **timing: int,
 ) -> list[Done]:  # fmt: skip
-    """Run (or resume, or read back) the persona-day workflow, with this process as its desktop's only worker.
-
-    With `canary` (canary.run bound to this desktop), the day starts with its apps' drift canaries."""
     if not isinstance(day.log, HeartbeatLog):
         raise ValueError("durable days need a HeartbeatLog: slot heartbeats come from ground-truth writes")
     offset = dt.datetime.now().astimezone().utcoffset() or dt.timedelta()
@@ -475,7 +428,7 @@ async def play(
                     PersonaDay.run, inp, id=workflow_id(plan), task_queue=task_queue(plan),
                     id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
                 )  # fmt: skip
-            except WorkflowAlreadyStartedError:  # running: this worker picks it up; finished: read its result
+            except WorkflowAlreadyStartedError:
                 handle = client.get_workflow_handle_for(PersonaDay.run, workflow_id(plan))
             try:
                 result = await handle.result()

@@ -27,7 +27,7 @@ def test_coverage_volume_and_unmapped(tmp_path: Path) -> None:
         "0000-00-00T00:00:00.000000+00:00,Not a time,LNK,Windows Shortcut,z,lnk,NTFS:\\Users\\aberg\\z.lnk,-",
         f"{T.format(59)},Creation Time,LNK,Windows Shortcut,late,lnk,NTFS:\\Users\\aberg\\late.lnk,-",
     ]))  # fmt: skip
-    t0 = 1_793_088_000_000  # 2026-10-27T08:00:00Z
+    t0 = 1_793_088_000_000
     log = _write(tmp_path / "day.jsonl", "\n".join(json.dumps(r) for r in [
         {"event": "day_start", "host_ms": t0, "persona": "aberg"},
         {"event": "day_end", "host_ms": t0 + 30 * 60_000, "persona": "aberg"},
@@ -36,10 +36,10 @@ def test_coverage_volume_and_unmapped(tmp_path: Path) -> None:
     assert cov["personas"]["aberg"]["types"] == {"userassist": 1, "lnk": 3}
     assert "shellbags" in cov["personas"]["aberg"]["missing"]
     assert cov["personas"]["lnord"]["types"] == {}
-    assert cov["host_types"] == {"unknown host": {"prefetch": 1}}  # never credited to a persona
+    assert cov["host_types"] == {"unknown host": {"prefetch": 1}}
     assert cov["unmapped_accounts"] == {"bob": 1}
     assert cov["unattributed_rows"] == 1 and cov["untimed_rows"] == 1
-    assert cov["volume"]["aberg"] == {"events": 2, "hours": 0.5, "events_per_hour": 4.0}  # 08:59 is outside
+    assert cov["volume"]["aberg"] == {"events": 2, "hours": 0.5, "events_per_hour": 4.0}
     assert cov["volume"]["lnord"]["events_per_hour"] is None
 
 
@@ -69,9 +69,9 @@ def test_l2tcsv_layout_and_survival(tmp_path: Path) -> None:
     assert status == {"run-key": "lost", "prefetch": "survived", "dropper": "unknown", "vague": "unknown",
                       "typo": "unknown"}  # fmt: skip
     assert s["pass"] is False
-    alone = artifacts.report(after, ["aberg"], [], manifest)["survival"]  # no before export
+    alone = artifacts.report(after, ["aberg"], [], manifest)["survival"]
     assert {a["id"]: a["status"] for a in alone["artifacts"]}["dropper"] == "present"
-    assert artifacts.report(after, ["aberg"], [])["survival"]["pass"] is None  # no manifest, no verdict
+    assert artifacts.report(after, ["aberg"], [])["survival"]["pass"] is None
 
 
 def test_unsupported_header_is_rejected(tmp_path: Path) -> None:

@@ -1,5 +1,3 @@
-"""Exchange backend (ludius.ews): EWS items map to mail.Message fields, and anything unknown stays unknown."""
-
 from __future__ import annotations
 
 import ssl

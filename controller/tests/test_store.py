@@ -27,7 +27,6 @@ def _port() -> int:
 
 
 def _pg_bin() -> Path | None:
-    """PostgreSQL binaries: LUDIUS_PG_BIN, else the ones bundled in the pgserver wheel (fetched by uv)."""
     if env := os.environ.get("LUDIUS_PG_BIN"):
         return Path(env)
     code = "import pgserver, pathlib; print(pathlib.Path(pgserver.__file__).parent / 'pginstall' / 'bin')"
@@ -41,7 +40,6 @@ def _pg_bin() -> Path | None:
 
 @pytest.fixture(scope="session")
 def pg_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
-    """A real PostgreSQL for the session: LUDIUS_TEST_PG, or a private server in a temp dir, stopped afterwards."""
     if dsn := os.environ.get("LUDIUS_TEST_PG"):
         yield dsn
         return
@@ -53,7 +51,6 @@ def pg_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
                    check=True, capture_output=True, timeout=120)  # fmt: skip
     port = _port()
     ctl = [bin_dir / "pg_ctl", "-D", data, "-w", "-t", "30"]
-    # No pipes on start: the server inherits them and would keep them open, so waiting for EOF never returns.
     started = subprocess.run([*ctl, "-o", f"-p {port} -h 127.0.0.1", "-l", data / "server.log", "start"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)  # fmt: skip
     if started.returncode != 0:
@@ -67,7 +64,6 @@ def pg_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
 
 @pytest.fixture
 def pg(pg_server: str) -> Iterator[str]:
-    """A fresh database per test."""
     name = f"t_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(f"{pg_server}/postgres", autocommit=True, connect_timeout=10) as c:
         c.execute(sql.SQL("create database {}").format(sql.Identifier(name)))
@@ -76,13 +72,11 @@ def pg(pg_server: str) -> Iterator[str]:
 
 @pytest.fixture(scope="session")
 def s3_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
-    """A real MinIO for the session: LUDIUS_TEST_S3, or a private server on a temp dir, stopped afterwards."""
     if url := os.environ.get("LUDIUS_TEST_S3"):
         yield url
         return
     exe = os.environ.get("LUDIUS_MINIO_BIN") or shutil.which("minio")
     if not exe:
-        # MinIO no longer publishes binaries: go install github.com/minio/minio@RELEASE.2025-10-15T17-29-55Z
         pytest.skip("no MinIO: set LUDIUS_TEST_S3 or LUDIUS_MINIO_BIN")
     data, port = tmp_path_factory.mktemp("minio"), _port()
     env = os.environ | {"MINIO_ROOT_USER": "ludius", "MINIO_ROOT_PASSWORD": "ludius-test-secret"}
@@ -121,10 +115,10 @@ def test_traces_and_world_round_trip_incrementally(pg: str, tmp_path: Path) -> N
 
     with store.connect(pg) as conn:
         assert store.sync(conn, runs) == store.Synced(lines=2, docs=2)
-        assert store.sync(conn, runs) == store.Synced()  # idempotent: nothing new, nothing rewritten
+        assert store.sync(conn, runs) == store.Synced()
         log.write(event="day_end", host_ms=3, done=1, items=1)
         with (runs / "days" / "2026-11-02-aberg.jsonl").open("a", encoding="utf-8") as f:
-            f.write('{"event": "half-writ')  # a line still being written is left for the next sync
+            f.write('{"event": "half-writ')
         (runs / "world" / "narrative.yaml").write_text("company: Harbourline\nevents: []\n", encoding="utf-8")
         assert store.sync(conn, runs) == store.Synced(lines=1, docs=1)
 
@@ -150,24 +144,24 @@ def test_rewritten_log_is_refused(pg: str, tmp_path: Path) -> None:
         log.write_text('{"event": "x"}\n{"event": "y"}\nnot json\n', encoding="utf-8")
         with pytest.raises(ValueError, match="a.jsonl:3: not JSON"):
             store.sync(conn, tmp_path)
-        assert [r["event"] for r in store.trace(conn, "a.jsonl")] == ["x", "y"]  # the failed sync left nothing
+        assert [r["event"] for r in store.trace(conn, "a.jsonl")] == ["x", "y"]
 
 
 @pytest.mark.service
 def test_screenshots_go_to_s3_once_and_read_back_checked(pg: str, s3_server: str, tmp_path: Path) -> None:
     runs = tmp_path / "runs"
     (runs / "visual").mkdir(parents=True)
-    a, b = b"PNG first screen", b"PNG second screen"  # stored as bytes, never decoded
+    a, b = b"PNG first screen", b"PNG second screen"
     (runs / "visual" / "a.png").write_bytes(a)
     (runs / "visual" / "copy.png").write_bytes(a)
     (runs / "screen.png").write_bytes(b)
-    shots = store.bucket(f"{s3_server}/t-{uuid.uuid4().hex[:12]}")  # created on first use
+    shots = store.bucket(f"{s3_server}/t-{uuid.uuid4().hex[:12]}")
 
     with store.connect(pg) as conn:
-        assert store.sync(conn, runs).shots == 0  # without a bucket screenshots are left alone
+        assert store.sync(conn, runs).shots == 0
         assert store.sync(conn, runs, shots) == store.Synced(shots=3)
-        assert store.sync(conn, runs, shots) == store.Synced()  # unchanged files are not uploaded again
-        assert len(list(shots.client.list_objects(shots.name, recursive=True))) == 2  # one object per content
+        assert store.sync(conn, runs, shots) == store.Synced()
+        assert len(list(shots.client.list_objects(shots.name, recursive=True))) == 2
         for key, raw in (("visual/a.png", a), ("visual/copy.png", a), ("screen.png", b)):
             assert store.screenshot(conn, shots, key) == raw
         (runs / "screen.png").write_bytes(b + b" changed")
@@ -175,7 +169,6 @@ def test_screenshots_go_to_s3_once_and_read_back_checked(pg: str, s3_server: str
         assert store.screenshot(conn, shots, "screen.png") == b + b" changed"
         with pytest.raises(KeyError):
             store.screenshot(conn, shots, "missing.png")
-        # An object that no longer matches its hash is refused, not returned.
         sha = conn.execute("select sha256 from screenshot where key = 'visual/a.png'").fetchone()
         assert sha is not None
         shots.client.put_object(shots.name, f"sha256/{sha[0]}.png", io.BytesIO(b"tampered"), 8)

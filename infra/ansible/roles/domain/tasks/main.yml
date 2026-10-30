@@ -1,8 +1,4 @@
 ---
-# domain (per clone): trust the range mail server's TLS certificate (range_tls_ca: grommunio's CA or Exchange's
-# self-signed certificate; Outlook's Autodiscover/MAPI over HTTPS), rename and join
-# corp.ludius.test, then autologon as the persona's domain account and wait for its desktop (first logon makes the
-# profile ux_noise writes into). The AD account itself is made by the srv01 role from the narrative.
 - name: Range TLS CA (the mail server's)
   ansible.windows.win_copy:
     src: "{{ range_tls_ca }}"

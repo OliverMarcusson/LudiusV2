@@ -5,8 +5,6 @@ using Ludius.V1;
 
 namespace Ludius.HostAgent;
 
-// The host end of one VM's observer link: request/response over a Hyper-V socket or vsock (the backend's
-// connect), reconnecting after drops (observer restarts, VM restores).
 sealed class GuestChannel(Func<CancellationToken, Task<Socket>> connect) : IDisposable
 {
     readonly SemaphoreSlim gate = new(1, 1);
@@ -83,8 +81,6 @@ sealed class GuestChannel(Func<CancellationToken, Task<Socket>> connect) : IDisp
         await s.WriteAsync(frame, ct);
     }
 
-    // NetworkStream refuses a socket whose Connected is false, which is every vsock socket adopted from a libc fd
-    // (.NET can't read back an AF_VSOCK peer address); Receive and Send work on it, so the channel uses them directly.
     sealed class SocketStream(Socket s) : Stream
     {
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) => s.ReceiveAsync(buffer, SocketFlags.None, ct);

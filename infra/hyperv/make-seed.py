@@ -1,5 +1,3 @@
-"""Write a cloud-init NoCloud seed ISO (volume CIDATA): make-seed.py <out.iso> <file>... (user-data, meta-data, ...)."""
-
 import sys
 from pathlib import Path
 

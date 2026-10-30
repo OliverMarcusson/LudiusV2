@@ -1,17 +1,7 @@
-# Opt-in generalize (spec section 7, sysprep role) for a future unique-identity range member, e.g. a clone that
-# must get its own SID before joining the test domain. Never part of provisioning and never run automatically.
-#
-# What it does: runs sysprep /generalize /oobe /quit inside the named, already running VM over PowerShell Direct.
-# /quit, not /shutdown or /reboot: the VM keeps running generalized; the next boot runs OOBE (with -Unattend's
-# answers if given). It starts, stops, reboots, checkpoints, clones and deletes nothing: the operator takes a NEW
-# checkpoint afterwards if wanted.
-#
-# Refuses: without -Confirm repeating the VM name; for the source test VM and the range DC from .env (they keep
-# their identity and their baselines); for names outside ludius-*; when the VM isn't Running.
 param(
     [Parameter(Mandatory)][string]$VM,
     [Parameter(Mandatory)][string]$Confirm,
-    [string]$Unattend  # optional host path of an oobeSystem answer file, copied to the guest's Panther
+    [string]$Unattend
 )
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')

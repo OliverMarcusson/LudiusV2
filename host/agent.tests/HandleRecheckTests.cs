@@ -6,8 +6,6 @@ using Op = Ludius.V1.LifecycleRequest.Types.Op;
 
 namespace Ludius.HostAgent.Tests;
 
-// Cached VM handles (input, observation, screenshots, file reads) are rechecked once older than Recheck; lifecycle is
-// resolved fresh on every call. A VM that left the range pool, or a VMID reused by another VM, is refused.
 public class HandleRecheckTests
 {
     sealed class Clock
@@ -37,14 +35,14 @@ public class HandleRecheckTests
         var vm = px.Get("ludius-win10-01");
         Entry(pve, 101).Remove("pool");
 
-        clock.Now += TimeSpan.FromSeconds(4); // within the recheck interval: the cached handle, no API round trip
+        clock.Now += TimeSpan.FromSeconds(4);
         var lookups = Lookups(pve);
         Assert.Same(vm, px.Get("ludius-win10-01"));
         Assert.Equal(lookups, Lookups(pve));
 
         clock.Now += TimeSpan.FromSeconds(2);
         Assert.Throws<UnauthorizedAccessException>(() => px.Get("ludius-win10-01"));
-        Assert.Throws<UnauthorizedAccessException>(() => px.Get("ludius-win10-01")); // dropped: resolved afresh, still refused
+        Assert.Throws<UnauthorizedAccessException>(() => px.Get("ludius-win10-01"));
     }
 
     static int VmlistReads(FakePve pve)
@@ -52,7 +50,6 @@ public class HandleRecheckTests
         lock (pve.Calls) return pve.Reads.Count(r => r == ".vmlist");
     }
 
-    // Every frame and input call on a stale handle used to start its own recheck (a pvesh storm under the monitor).
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -68,7 +65,7 @@ public class HandleRecheckTests
         await hold.Reached;
         var others = Enumerable.Range(0, 8).Select(_ => Task.Run(() => px.Get("ludius-win10-01"))).ToArray();
         await Task.Delay(300);
-        Assert.All(others, t => Assert.False(t.IsCompleted)); // waiting on the check, not served the stale handle
+        Assert.All(others, t => Assert.False(t.IsCompleted));
         if (!stillInRange) lock (pve.Calls) Entry(pve, 101).Remove("pool");
         hold.Release();
 
@@ -77,7 +74,7 @@ public class HandleRecheckTests
         else
             foreach (var t in others.Prepend(first)) await Assert.ThrowsAsync<UnauthorizedAccessException>(() => t);
         Assert.Equal(1, VmlistReads(pve));
-        Assert.Equal(1, Lookups(pve)); // only the first resolve went through pvesh; the recheck read pmxcfs
+        Assert.Equal(1, Lookups(pve));
     }
 
     [Fact]
@@ -114,8 +111,6 @@ public class HandleRecheckTests
         Assert.Throws<UnauthorizedAccessException>(() => px.Get("ludius-win10-01"));
     }
 
-    // Proxmox reads a [PENDING] header case-insensitively and with trailing blanks: the pending changes (here the
-    // CID) must not be missed, so that config is rechecked through pvesh.
     [Theory]
     [InlineData("[pending]")]
     [InlineData("[PENDING] ")]
@@ -132,7 +127,6 @@ public class HandleRecheckTests
         Assert.Equal(reads + 1, ConfigReads(pve, 101));
     }
 
-    // A header Proxmox would skip (malformed, unknown) and a key repeated in the current section are refused.
     [Theory]
     [InlineData("\n[bad header]\nmemory: 1\n")]
     [InlineData("\n[1snap]\n")]
@@ -150,12 +144,11 @@ public class HandleRecheckTests
         Assert.Throws<IOException>(() => px.ListVms());
     }
 
-    // Proxmox keeps a VMID's first pool membership only: a range VM also in another pool, or listed twice, is refused.
     [Theory]
     [InlineData("pool:other::200,101::\n")]
-    [InlineData(" pool:other::101::\n")] // Proxmox trims the record: still a pool line
+    [InlineData(" pool:other::101::\n")]
     [InlineData("POOL:other::101::\n")]
-    [InlineData("pool:ludius::101::\n")] // the range pool defined again, 101 in it twice
+    [InlineData("pool:ludius::101::\n")]
     public void A_vmid_with_conflicting_pool_memberships_is_refused(string tail)
     {
         var (px, pve, qmp, clock) = Make();
@@ -172,13 +165,11 @@ public class HandleRecheckTests
         var (px, pve, qmp, clock) = Make();
         using var _q = qmp;
         px.Get("ludius-win10-01");
-        // VM 101 deleted outside the agent and a new VM created with the same VMID, name and even pool.
         pve.Ctime[101] = 1800000000;
         clock.Now += TimeSpan.FromSeconds(6);
         var e = Assert.Throws<UnauthorizedAccessException>(() => px.Get("ludius-win10-01"));
         Assert.Contains("VMID reused", e.Message);
 
-        // A fresh resolve finds the new VM by name in the pool: that one is a range VM in its own right.
         var fresh = px.Get("ludius-win10-01");
         Assert.Equal(Proxmox.IdentityOf(JsonNode.Parse("""{"meta": "creation-qemu=9.0.2,ctime=1800000000", "smbios1": "uuid=00000065-1111-2222-3333-444455556666"}""")), fresh.Identity);
     }
@@ -195,7 +186,7 @@ public class HandleRecheckTests
         pve.Ctime[101] = 1800000000;
         clock.Now += TimeSpan.FromSeconds(6);
         Assert.Throws<UnauthorizedAccessException>(() => px.Get("ludius-win10-01"));
-        Assert.Throws<KeyNotFoundException>(() => px.Get("ludius-win10-01")); // that name no longer exists anywhere
+        Assert.Throws<KeyNotFoundException>(() => px.Get("ludius-win10-01"));
         Assert.Empty(qmp.Commands);
     }
 
@@ -204,19 +195,18 @@ public class HandleRecheckTests
     {
         var (px, pve, qmp, _) = Make();
         using var _q = qmp;
-        px.Get("ludius-win10-01"); // a freshly checked handle in the cache
+        px.Get("ludius-win10-01");
         Entry(pve, 101).Remove("pool");
         foreach (var (op, cp, target) in new[] { (Op.Start, "", ""), (Op.Stop, "", ""), (Op.Checkpoint, "x", ""),
                      (Op.Restore, "clean", ""), (Op.Clone, "clean", "ludius-new"), (Op.Delete, "", "ludius-win10-01") })
         {
             var lookups = Lookups(pve);
             await Assert.ThrowsAsync<UnauthorizedAccessException>(() => px.Lifecycle("ludius-win10-01", op, cp, target, CancellationToken.None));
-            Assert.Equal(lookups + 1, Lookups(pve)); // looked up now, not taken from the handle
+            Assert.Equal(lookups + 1, Lookups(pve));
         }
         Assert.DoesNotContain(pve.Calls, c => c.Method != "get");
     }
 
-    // Holds the first call matching (method, path) until Release; Reached completes when it is held.
     sealed class Hold(string method, string path)
     {
         readonly TaskCompletionSource reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -243,16 +233,16 @@ public class HandleRecheckTests
     {
         var (px, pve, qmp, _) = Make();
         using var _q = qmp;
-        var hold = new Hold("get", "/nodes/pve1/qemu/101/config"); // between resolving the VMID and caching the handle
+        var hold = new Hold("get", "/nodes/pve1/qemu/101/config");
         pve.Gate = hold.Gate;
         var lookup = Task.Run(() => px.Get("ludius-win10-01"));
         await hold.Reached;
-        await px.Lifecycle("ludius-win10-01", Op.Delete, "", "ludius-win10-01", CancellationToken.None); // lands in between
+        await px.Lifecycle("ludius-win10-01", Op.Delete, "", "ludius-win10-01", CancellationToken.None);
         hold.Release();
         var e = await Assert.ThrowsAsync<IOException>(() => lookup);
         Assert.Contains("during the lookup", e.Message);
 
-        var reads = ConfigReads(pve, 101); // nothing stale was cached: the next lookup resolves afresh
+        var reads = ConfigReads(pve, 101);
         px.Get("ludius-win10-01");
         Assert.Equal(reads + 1, ConfigReads(pve, 101));
     }
@@ -265,17 +255,17 @@ public class HandleRecheckTests
     {
         var (px, pve, qmp, _) = Make();
         using var _q = qmp;
-        var hold = new Hold("set", "/nodes/pve1/qemu/104/config"); // clone created, CID not yet its own
+        var hold = new Hold("set", "/nodes/pve1/qemu/104/config");
         pve.Gate = async (m, p) =>
         {
             if (m == "create" && p == "/nodes/pve1/qemu/9000/clone") lock (pve.Calls) pve.Vms.Add(Clone104());
             await hold.Gate(m, p);
         };
-        pve.Args[104] = pve.Args[9000]; // what Proxmox copies: the source's CID
+        pve.Args[104] = pve.Args[9000];
         var clone = px.Lifecycle("ludius-golden", Op.Clone, "", "ludius-win10-02", CancellationToken.None);
         await hold.Reached;
 
-        var e = Assert.Throws<IOException>(() => px.Get("ludius-win10-02")); // resolves, then refuses: being configured
+        var e = Assert.Throws<IOException>(() => px.Get("ludius-win10-02"));
         Assert.Contains("during the lookup", e.Message);
         hold.Release();
         await clone;
@@ -284,7 +274,7 @@ public class HandleRecheckTests
         px.ConnectGuest = (c, ct) => { cid = c; throw new IOException("no guest in this test"); };
         var vm = px.Get("ludius-win10-02");
         await Assert.ThrowsAsync<IOException>(() => vm.Channel.Request(new ObserverRequest { Ping = new Ping() }, TimeSpan.FromSeconds(1), CancellationToken.None));
-        Assert.Equal(104u, cid); // its own CID, not the source's 9000
+        Assert.Equal(104u, cid);
     }
 
     [Fact]
@@ -299,26 +289,24 @@ public class HandleRecheckTests
         {
             if (m == "create" && p == "/nodes/pve1/qemu/9000/clone") lock (pve.Calls) pve.Vms.Add(Clone104());
             if (m == "set") await cloneHold.Gate(m, p);
-            else if (Volatile.Read(ref clone104)) await lookupHold.Gate(m, p); // only the lookup's read, not the clone's
+            else if (Volatile.Read(ref clone104)) await lookupHold.Gate(m, p);
         };
         pve.Args[104] = pve.Args[9000];
         var clone = px.Lifecycle("ludius-golden", Op.Clone, "", "ludius-win10-02", CancellationToken.None);
         await cloneHold.Reached;
         Volatile.Write(ref clone104, true);
-        var lookup = Task.Run(() => px.Get("ludius-win10-02")); // reads the config with the source's CID
+        var lookup = Task.Run(() => px.Get("ludius-win10-02"));
         await lookupHold.Reached;
         cloneHold.Release();
-        await clone; // configured and invalidated while the lookup holds its stale config
+        await clone;
         lookupHold.Release();
         await Assert.ThrowsAsync<IOException>(() => lookup);
 
         var reads = ConfigReads(pve, 104);
         px.Get("ludius-win10-02");
-        Assert.Equal(reads + 1, ConfigReads(pve, 104)); // resolved afresh, with the clone's own CID
+        Assert.Equal(reads + 1, ConfigReads(pve, 104));
     }
 
-    // A clone created, then setting its CID fails or is cancelled: it keeps its source's CID and stays refused for good,
-    // not only while the clone runs. Its observer channel would reach the source's guest.
     [Theory]
     [InlineData("fails")]
     [InlineData("cancelled")]
@@ -349,7 +337,7 @@ public class HandleRecheckTests
         }
         Assert.Equal(0, connects);
 
-        pve.Args[104] = "-device vhost-vsock-pci,guest-cid=104"; // fixed by hand: usable again
+        pve.Args[104] = "-device vhost-vsock-pci,guest-cid=104";
         Assert.Equal(104, px.Get("ludius-win10-02").Id);
     }
 
@@ -364,14 +352,12 @@ public class HandleRecheckTests
             return Task.CompletedTask;
         };
         pve.Args[104] = pve.Args[9000];
-        pve.IgnoreSet = true; // the CID write is accepted but does not take
+        pve.IgnoreSet = true;
         var e = await Assert.ThrowsAsync<IOException>(() => px.Lifecycle("ludius-golden", Op.Clone, "", "ludius-win10-02", CancellationToken.None));
         Assert.Contains("did not take its vsock CID", e.Message);
         Assert.Throws<IOException>(() => px.Get("ludius-win10-02"));
     }
 
-    // Two clones picked VMID 104 at once (Proxmox lets only one create it): the one that fails must not clear the mark
-    // of the one still configuring.
     [Fact]
     public async Task One_clone_does_not_clear_another_clones_mark()
     {
@@ -384,14 +370,14 @@ public class HandleRecheckTests
             if (m == "create" && p == "/nodes/pve1/qemu/9000/clone") lock (pve.Calls) pve.Vms.Add(Clone104());
             if (m == "create" && p == "/nodes/pve1/qemu/101/clone") throw new IOException("pvesh: VM 104 already exists");
             if (m == "set") Interlocked.Increment(ref sets);
-            if (Volatile.Read(ref sets) == 1) await readBack.Gate(m, p); // the first clone, its CID set, reading it back
+            if (Volatile.Read(ref sets) == 1) await readBack.Gate(m, p);
         };
         pve.Args[104] = pve.Args[9000];
         var first = px.Lifecycle("ludius-golden", Op.Clone, "", "ludius-win10-02", CancellationToken.None);
         await readBack.Reached;
         await Assert.ThrowsAsync<IOException>(() => px.Lifecycle("ludius-win10-01", Op.Clone, "clean", "ludius-win10-03", CancellationToken.None));
 
-        var e = Assert.Throws<IOException>(() => px.Get("ludius-win10-02")); // its own CID already, but still marked
+        var e = Assert.Throws<IOException>(() => px.Get("ludius-win10-02"));
         Assert.Contains("during the lookup", e.Message);
         readBack.Release();
         await first;
@@ -405,9 +391,8 @@ public class HandleRecheckTests
         using var _q = qmp;
         var old = px.Get("ludius-win10-01");
         await px.Lifecycle("ludius-win10-01", Op.Delete, "", "ludius-win10-01", CancellationToken.None);
-        Assert.NotSame(old, px.Get("ludius-win10-01")); // resolved afresh, not the deleted VM's handle
+        Assert.NotSame(old, px.Get("ludius-win10-01"));
 
-        // A handle cached on VMID 104, then that VM deleted outside the agent: the clone that reuses 104 drops it.
         pve.Vms.Add(JsonNode.Parse("""{"vmid": 104, "name": "ludius-win10-02", "status": "stopped", "node": "pve1", "type": "qemu", "pool": "ludius"}"""));
         var stale = px.Get("ludius-win10-02");
         pve.Vms.Remove(pve.Vms.Single(v => (int)v!["vmid"]! == 104));

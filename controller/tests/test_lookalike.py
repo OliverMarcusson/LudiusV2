@@ -24,7 +24,6 @@ def test_lookalike_work_follows_risk_profile_and_avoids_scenario() -> None:
 
 
 def test_checked_text_must_fit_the_observer_value_cap() -> None:
-    """Acceptance 20261027-1442: a 381-char WordPad note could never pass its exact-document check."""
     templates = load_templates()
     body = "\n".join(f"point {i} - something to settle with the auditors before the close" for i in range(5))
     params = {"file_name": "cost policy", "heading": "ERP costs - draft policy", "body": body}

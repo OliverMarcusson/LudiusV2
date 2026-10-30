@@ -1,15 +1,4 @@
 ---
-# ex01 (mail_backend exchange), over WinRM: joins corp.ludius.test, installs the Exchange SE prerequisites the docs list
-# for Windows Server 2025 and Exchange SE (Mailbox role) unattended with no product key (trial edition: Standard
-# features, 180 days; the EAC reminds after that), then: a log-in mailbox per narrative person, a self-signed
-# certificate for mail/autodiscover/ex01 and the address (persona clones import it through the domain role as
-# range_tls_ca; the controller verifies EWS against it), internal URLs and the Autodiscover SCP on the mail names, EWS
-# Basic auth over TLS and ApplicationImpersonation for the service account limited to the narrative's mailboxes, and the range boundary: no send connector,
-# mail_domain (ludius.internal) the only accepted domain, a transport rule rejecting any recipient outside the organisation, all
-# asserted, plus a probe mail to an outside address through the pickup folder that must fail and never be sent.
-# Tags (range-exchange.yml): the whole role is ex01; mailboxes / mail-boundary rerun only the configuration. The
-# assertions and the boundary probe are checks.yml, which range-exchange.yml runs on every run.
-# Expects the Exchange ISO in a CD drive (range-exchange.yml) and the prerequisites in exchange_media_dir on the node.
 - name: Join corp.ludius.test as EX01
   microsoft.ad.membership:
     dns_domain_name: "{{ domain }}"
@@ -93,8 +82,6 @@
     reboot_timeout: 1200
   when: prereqs.results | selectattr('reboot_required', 'defined') | selectattr('reboot_required') | list or ucma.reboot_required | default(false)
 
-# Defender scanning every file Setup reads and writes stretched the MSI phase past 15 min on the box; Microsoft
-# documents these folders and processes as antivirus exclusions for Exchange servers.
 - name: Defender exclusions for Exchange (setup media, install folder, setup processes)
   ansible.windows.win_powershell:
     script: |
@@ -114,8 +101,6 @@
     path: C:\Program Files\Microsoft\Exchange Server\V15\Bin\ExSetup.exe
   register: exsetup
 
-# AD preparation (schema, organisation) runs inside the first install; runas gives Setup the domain admin's network
-# credentials, which a WinRM logon doesn't carry. ~60 to 90 min.
 - name: Exchange SE Mailbox role, unattended, trial (no product key)
   ansible.windows.win_command: >-
     {{ media.result }}\Setup.exe /Mode:Install /Roles:Mailbox /OrganizationName:"{{ exchange_org }}"
@@ -139,7 +124,6 @@
       $Ansible.Changed = $false
       Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
       $mail, $auto, $fqdn = "mail.$domain", "autodiscover.$domain", "ex01.$domain"
-      # Self-signed, also valid for the address (the controller on the node connects by IP: no range DNS there).
       $c = Get-ChildItem Cert:\LocalMachine\My | Where-Object FriendlyName -eq 'Ludius range mail' | Select-Object -First 1
       if (-not $c) {
         $c = New-SelfSignedCertificate -CertStoreLocation Cert:\LocalMachine\My -Subject "CN=$mail" `
@@ -154,7 +138,6 @@
       }
       $pem = "-----BEGIN CERTIFICATE-----`n" + [Convert]::ToBase64String($c.RawData, 'InsertLineBreaks') + "`n-----END CERTIFICATE-----`n"
       [IO.File]::WriteAllText('C:\Windows\Temp\range-mail.crt', $pem)
-      # Clients: Autodiscover SCP and every virtual directory on the mail names.
       $srv = $env:COMPUTERNAME
       Set-ClientAccessService $srv -AutoDiscoverServiceInternalUri "https://$auto/Autodiscover/Autodiscover.xml"
       Get-OwaVirtualDirectory -Server $srv | Set-OwaVirtualDirectory -InternalUrl "https://$mail/owa"
@@ -166,8 +149,6 @@
       $ews = Get-WebServicesVirtualDirectory -Server $srv
       if (-not $ews.BasicAuthentication) { $Ansible.Changed = $true; $iis = $true }
       $ews | Set-WebServicesVirtualDirectory -InternalUrl "https://$mail/EWS/Exchange.asmx" -BasicAuthentication $true
-      # Every narrative person logs in (no licence cap on Exchange), and only their mailboxes carry the noise marker:
-      # the service account may impersonate those alone (a scenario mailbox, never in the narrative, is out of reach).
       foreach ($u in $people) {
         if (-not (Get-Mailbox $u -ErrorAction SilentlyContinue)) { Enable-Mailbox $u | Out-Null; $Ansible.Changed = $true }
         if ((Get-Mailbox $u).CustomAttribute1 -ne $marker) { Set-Mailbox $u -CustomAttribute1 $marker; $Ansible.Changed = $true }
@@ -181,7 +162,6 @@
       elseif ($sc.RecipientFilter -ne $filter -or $sc.RecipientRoot) {
         Set-ManagementScope $scope -RecipientRestrictionFilter $filter -RecipientRoot $null; $Ansible.Changed = $true
       }
-      # Any impersonation grant to the service account that is not bound to that scope is removed (and re-made scoped).
       Get-ManagementRoleAssignment -RoleAssignee $svc -Role ApplicationImpersonation -ErrorAction SilentlyContinue |
         Where-Object CustomRecipientWriteScope -ne $scope |
         ForEach-Object { Remove-ManagementRoleAssignment $_.Identity -Confirm:$false; $Ansible.Changed = $true }
@@ -190,8 +170,6 @@
           -CustomRecipientWriteScope $scope | Out-Null
         $Ansible.Changed = $true
       }
-      # Range boundary. The mail domain (not AD's .test, which Exchange refuses as a recipient domain) is the one
-      # accepted domain and every recipient's primary address (default policy, so system mailboxes follow too).
       Get-SendConnector | ForEach-Object { Remove-SendConnector $_.Identity -Confirm:$false; $Ansible.Changed = $true }
       $ad = Get-AcceptedDomain | Where-Object DomainName -eq $mail_domain
       if (-not $ad) { $ad = New-AcceptedDomain $mail_domain -DomainName $mail_domain -DomainType Authoritative; $Ansible.Changed = $true }
@@ -203,7 +181,6 @@
       if (Get-Recipient -ResultSize Unlimited | Where-Object { "$($_.PrimarySmtpAddress)" -notlike "*@$mail_domain" -and $_.EmailAddressPolicyEnabled }) {
         Update-EmailAddressPolicy $pol.Identity; $Ansible.Changed = $true }
       Get-AcceptedDomain | Where-Object DomainName -ne $mail_domain | ForEach-Object { Remove-AcceptedDomain $_.Identity -Confirm:$false; $Ansible.Changed = $true }
-      # Outside the organisation = not in an accepted domain, i.e. not @$mail_domain.
       $reason = "Delivery outside $mail_domain is not allowed"
       $r = Get-TransportRule 'Ludius range only' -ErrorAction SilentlyContinue
       if (-not $r) {

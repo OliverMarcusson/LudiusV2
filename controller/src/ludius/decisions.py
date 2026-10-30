@@ -1,9 +1,3 @@
-"""OpenRouter's Decisions API (any Decisions model): one call per step, three questions.
-
-The decision model only chooses among options built in code; it never plans or writes text.
-Models that read images (liquid/d1.1) can also get a screenshot.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -20,10 +14,7 @@ import httpx
 from ludius import calls
 
 ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
-RATE_LIMIT_WAITS = (1, 2, 4)  # HTTP 429 (a model's shared capacity, seen on liquid/d1-ultra): retried after these
-# Any OpenRouter Decisions model works here (same request and answer shape); liquid/d1.1 and d1-ultra also read
-# screenshots. Default liquid/d1.1 (owner, 2026-10-28, after the bake-off in runs/acceptance/20261028-bakeoff);
-# LUDIUS_DECISION_MODEL picks another (typesafe/jev-1.14 reads text only) without code changes.
+RATE_LIMIT_WAITS = (1, 2, 4)
 DEFAULT_MODEL = os.environ.get("LUDIUS_DECISION_MODEL", "liquid/d1.1")
 MAX_OPTIONS = 255
 
@@ -55,8 +46,8 @@ class Decision:
     off_track: float
     model: str
     cost: float | None = None
-    latency_ms: int = 0  # the whole decide() call, retries included
-    image: bool = False  # a screenshot went along with the state
+    latency_ms: int = 0
+    image: bool = False
     retries_429: int = 0
     request: dict[str, Any] = field(default_factory=dict[str, Any])
     response: dict[str, Any] = field(default_factory=dict[str, Any])
@@ -66,7 +57,6 @@ class Decision:
 
 
 def with_image(state: dict[str, Any], image: bytes) -> list[Any]:
-    """The state as Decisions media parts: the JSON state as text, then the screenshot (PNG or JPEG)."""
     mime = "image/png" if image.startswith(b"\x89PNG") else "image/jpeg"
     url = f"data:{mime};base64,{base64.b64encode(image).decode()}"
     return [json.dumps(state), {"type": "image_url", "image_url": {"url": url}}]
@@ -112,7 +102,6 @@ def _prob(v: object) -> float:
 
 
 def parse_response(data: dict[str, Any], model: str, options: dict[str, str], *, ask_progress: bool = True) -> Decision:
-    """Validate a raw response against the options it answers; reject anything inconsistent."""
     got_model = str(data.get("model", ""))
     if not got_model.startswith(model):
         raise DecisionError(f"model drift: asked {model}, got {got_model}")
@@ -155,7 +144,6 @@ class DecisionsClient:
             raise DecisionError("OPENROUTER_API_KEY is required")
         self.model = model
         self._endpoint = endpoint
-        # Never follow redirects with the key attached.
         self._http = httpx.Client(
             timeout=timeout, follow_redirects=False, headers={"Authorization": f"Bearer {api_key}"}
         )
@@ -163,12 +151,11 @@ class DecisionsClient:
     def decide(
         self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
     ) -> Decision:
-        """`image`: a screenshot for models that read images (liquid/d1.1, not typesafe/jev); the state's text goes along with it."""
         body = build_request(self.model, state, options, ask_progress=ask_progress, image=image)
         last: Exception | None = None
         t0 = time.monotonic()
         throttled = 0
-        for _ in range(2):  # one retry on transport errors, 5xx and answers that break the contract
+        for _ in range(2):
             try:
                 res, n = self._post(body)
                 throttled += n
@@ -182,7 +169,7 @@ class DecisionsClient:
                 raise DecisionError(f"HTTP {res.status_code}: {res.text[:300]}")
             try:
                 decision = parse_response(json.loads(res.content), self.model, options, ask_progress=ask_progress)
-            except (DecisionError, ValueError) as e:  # e.g. a choice that isn't the most probable option (seen once)
+            except (DecisionError, ValueError) as e:
                 last = e
                 continue
             decision.request = body
@@ -193,7 +180,6 @@ class DecisionsClient:
         raise DecisionError(f"Decisions failed twice: {last}")
 
     def _post(self, body: dict[str, Any]) -> tuple[httpx.Response, int]:
-        """One request, with HTTP 429 retried after RATE_LIMIT_WAITS; every send counts against the cap."""
         for n, wait in enumerate((*RATE_LIMIT_WAITS, None)):
             calls.count("decision")
             res = self._http.post(self._endpoint, json=body)

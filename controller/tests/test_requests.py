@@ -1,6 +1,3 @@
-"""Manager requests (ludius.requests): org chart, request validation and idempotent server-side sending, the persona's
-Decisions mapping (fail closed), and the outcome check against the request (offline)."""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -59,7 +56,7 @@ def ensure(tmp_path: Path, llm: FakeLlm, date: dt.date = THU, inbox: list[mail.M
 
 def test_org_chart_managers() -> None:
     assert requests.manager_of(STORY, "aberg", [ANNA, LARS]) == BOSS
-    lnord = requests.manager_of(STORY, "lnord", [ANNA, LARS])  # a manager who is a persona sends server-side too
+    lnord = requests.manager_of(STORY, "lnord", [ANNA, LARS])
     assert not isinstance(lnord, str) and lnord.user == "aberg"
     assert "no manager" in str(requests.manager_of(STORY, "mvellinga", [ANNA]))
 
@@ -75,9 +72,9 @@ def test_requests_are_validated_sent_once_and_capped(tmp_path: Path, monkeypatch
     assert len(day.rejects) == 6 and "not a report with requests left" in day.rejects[-1]
     assert sent[0][:5] == ("mvellinga@ludius.internal", "Marcus Vellinga", "aberg@ludius.internal", "Anna Berg",
                            "lund accruals note")  # fmt: skip
-    assert ensure(tmp_path, FakeLlm()).requests == day.requests and len(sent) == 1  # no second call, no resend
+    assert ensure(tmp_path, FakeLlm()).requests == day.requests and len(sent) == 1
     assert ensure(tmp_path, FakeLlm(), dt.date(2026, 10, 31)).rejects == ["no request: weekend"]
-    for d in (27, 28):  # two more earlier this week: the weekly budget is used
+    for d in (27, 28):
         (tmp_path / "world" / "requests" / f"2026-10-{d}-mvellinga.yaml").write_text(
             (tmp_path / "world" / "requests" / "2026-10-29-mvellinga.yaml").read_text().replace("10-29", f"10-{d}")
         )
@@ -88,11 +85,10 @@ def test_requests_are_validated_sent_once_and_capped(tmp_path: Path, monkeypatch
     reserved = requests.problem(requests.Ask(**ASK), {"aberg": 1}, {"aberg": cli.load_templates()}, {}, BOSS,
                                 Policy(reserved_paths=["aberg@"]), {"aberg": set()}, {"aberg": []})  # fmt: skip
     assert reserved == "aberg@ludius.internal is scenario-reserved"
-    assert requests.Ask.model_validate({**ASK, "heading": "x"}).subject == ASK["subject"]  # extra keys dropped
+    assert requests.Ask.model_validate({**ASK, "heading": "x"}).subject == ASK["subject"]
 
 
 def test_a_recorded_request_is_checked_against_todays_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Sol on 3ccc614: interrupted after recording, then the recipient is reserved: the retry must not send.
     def boom(*_: Any) -> bool:
         raise RuntimeError("interrupted")
 
@@ -115,7 +111,7 @@ def test_persona_maps_a_request_fail_closed(tmp_path: Path, monkeypatch: pytest.
                      msgid=msgid)  # fmt: skip
     seed = mail.Message(m.sender, 0, at, BODY, cls="IPM.Note", subject="seeded", msgid="<s1@ludius.internal>")
     w, ts, book = World(tmp_path), cli.load_templates(), {"aberg": "Anna Berg"}
-    assert requests.pending(w, "aberg", BOSS, [m, seed], Policy(), THU) == [m]  # only mails sent as requests
+    assert requests.pending(w, "aberg", BOSS, [m, seed], Policy(), THU) == [m]
     assert requests.pending(w, "aberg", BOSS, [m], Policy(reserved_subjects=["lund accruals note"]), THU) == []
     item = {"at": "09:30", "params": {"file_name": "lund accruals q4", "body": "lund totals\n- 12 400"}, "context": "c"}
     llm = FakeLlm(item)
@@ -126,7 +122,7 @@ def test_persona_maps_a_request_fail_closed(tmp_path: Path, monkeypatch: pytest.
         PlanItem(template="notepad_write_note", at="09:00", params={"file_name": "a", "body": "Totals"}),
         PlanItem(template="notepad_write_note", at="10:00", params={"file_name": "b", "body": "sums"}),
     ]
-    assert requests.duplicates(own, items[0], tmp_path) == own[:1]  # the planner wrote the requested note again
+    assert requests.duplicates(own, items[0], tmp_path) == own[:1]
     items[0].params["body"] = "lund sums"
     assert requests.planned(items[0], ts, tmp_path) == "content lacks ['totals']"
     items[0].params["file_name"] = "other"
@@ -134,7 +130,7 @@ def test_persona_maps_a_request_fail_closed(tmp_path: Path, monkeypatch: pytest.
     for decider in (
         FakeDecisions("none"),
         FakeDecisions("notepad_write_note", 0.4),
-    ):  # none, or too unsure: nothing, never asked again
+    ):
         assert requests.candidates(llm, decider, w, ANNA, BOSS, [m], ts, THU, book)[0] == []  # type: ignore[arg-type]
         assert requests.pending(w, "aberg", BOSS, [m], Policy(), THU) == []
         (tmp_path / "world" / "requests" / "seen-aberg.yaml").unlink()
@@ -168,10 +164,10 @@ def test_fulfilled_reads_the_new_file(tmp_path: Path, monkeypatch: pytest.Monkey
     )
     files["lund accruals q4.txt"] = guestfile.GuestFile(True, 2000, b"lund sums")
     assert requests.fulfilled(task(), tmp_path) == (False, "file lacks ['totals']")
-    files["lund accruals q4.txt"] = guestfile.GuestFile(True, 500, b"totals")  # written before the task: not ours
+    files["lund accruals q4.txt"] = guestfile.GuestFile(True, 500, b"totals")
     assert requests.fulfilled(task(), tmp_path)[0] is False
     t = task()
-    t.files_absent = frozenset()  # not proven new at start
+    t.files_absent = frozenset()
     assert "not proven absent" in requests.fulfilled(t, tmp_path)[1]
     rtf = rb"{\rtf1\ansi{\fonttbl{\f0 Calibri;}}\b lund\b0\par totals\par}"
     assert "totals" in requests._text("x.rtf", rtf) and "fonttbl" not in requests._text("x.rtf", rtf)  # pyright: ignore[reportPrivateUsage]

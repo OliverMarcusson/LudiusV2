@@ -1,6 +1,3 @@
-# Look in the team chat for what a colleague wrote (a request, an answer): open the direct messages with them and
-# read the newest. Mattermost on chat01, web app in Edge, Kerberos SSO. Effect: Mattermost's read marker only;
-# nothing is typed into the conversation. Done checks are the Decider's, on a screenshot.
 task: chat_read_messages
 app: edge
 capability: chat.read
@@ -12,12 +9,10 @@ example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga}
 variants:
   - [open_edge_start, open_chat, open_conversation, read_newest, close_edge]
   - [open_edge_taskbar, open_chat, open_conversation, read_newest, close_edge]
-  # Reactions only (ludius.react): read and leave the chat open for the answer, then close it.
   - [open_edge_start, open_chat, open_conversation, read_newest]
   - [open_edge_taskbar, open_chat, open_conversation, read_newest]
   - [close_edge]
 weights: [1, 1, 0, 0, 0]
-# Enter in the message box sends (a leftover draft too): only the guarded send_message subgoal may press it there.
 key_commits: [{keys: Enter, focus: {name: "^(Write to |Reply to this thread)"}}]
 budget_steps: 30
 budget_minutes: 6
@@ -36,7 +31,7 @@ subgoals:
     goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click the GitLab button (it signs in with the Windows account; never type a password)"
     text: chat_url
     keys: [Ctrl+L, Enter]
-    replace: true  # a retry replaces what the address bar holds, never appends to it
+    replace: true
     field: "^Address and search bar$"
     done: {ask: "Is the Mattermost team chat open and signed in, showing its list of channels?"}
   open_conversation:

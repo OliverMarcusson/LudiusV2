@@ -1,4 +1,3 @@
-# One-shot: the `default` namespace the CLI uses (the server does not create it).
 [Unit]
 Description=Ludius Temporal default namespace
 Requires=ludius-temporal.service

@@ -1,5 +1,3 @@
-"""file.edit: the owned-file registry, plan-load ownership, the append check on the guest, and the Word gate."""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -36,8 +34,8 @@ def test_owned_files_follow_done_writes_and_moves(tmp_path: Path) -> None:
     assert owned_files(tmp_path, "aberg", TUE.isoformat()) == {
         "documents\\close memo.docx": MON.isoformat(),
         "documents\\archive\\todo old.txt": MON.isoformat(),
-    }  # moved: keeps .txt, source gone
-    assert owned_files(tmp_path, "aberg", MON.isoformat()) == {}  # only days before
+    }
+    assert owned_files(tmp_path, "aberg", MON.isoformat()) == {}
     assert owned_files(tmp_path, "lnord", TUE.isoformat()) == {}
 
 
@@ -74,14 +72,14 @@ def task(monkeypatch: pytest.MonkeyPatch) -> tuple[Task, dict[str, Any]]:
 
 def test_append_needs_the_old_paragraphs_then_the_new(task: tuple[Task, dict[str, Any]]) -> None:
     tk, disk = task
-    assert tk.values["body_line"] == "\none more point\nand another"  # a new paragraph after the last one
+    assert tk.values["body_line"] == "\none more point\nand another"
     done = tk.template.subgoals["save_keys"].done
     snap = obs.Snapshot()
     snap.windows.add(process_name="WINWORD.EXE", title="close memo - Word", kind=obs.Window.FOREGROUND)
     old = docx("Close memo", "Accruals by friday")
     disk["file"] = guestfile.GuestFile(True, 2_000_000, docx("Close memo", "Accruals by friday", "One more point",
                                                              "and another"))  # fmt: skip
-    assert check_done(done, snap, tk, False) is False  # no baseline read
+    assert check_done(done, snap, tk, False) is False
     disk["file"] = guestfile.GuestFile(False)
     assert file_baseline(tk, Policy()) == "Documents\\close memo.docx: not there, nothing to edit"
     for unknown in (None, guestfile.GuestFile(True, 500, b"not a zip")):
@@ -92,15 +90,15 @@ def test_append_needs_the_old_paragraphs_then_the_new(task: tuple[Task, dict[str
     disk["file"] = guestfile.GuestFile(True, 2_000_000, docx("Close memo", "Accruals by friday", "", "One more point",
                                                              "and another"))  # fmt: skip
     assert check_done(done, snap, tk, False) is True
-    for wrong in (old,  # nothing added
-                  docx("Close memo", "One more point", "and another"),  # an old paragraph lost
-                  docx("One more point", "and another", "Close memo", "Accruals by friday"),  # added at the start
+    for wrong in (old,
+                  docx("Close memo", "One more point", "and another"),
+                  docx("One more point", "and another", "Close memo", "Accruals by friday"),
                   docx("Close memo", "Accruals by friday", "One more point")):  # fmt: skip
         disk["file"] = guestfile.GuestFile(True, 2_000_000, wrong)
         assert check_done(done, snap, tk, False) is False
     disk["file"] = guestfile.GuestFile(True, 999_999, docx("Close memo", "Accruals by friday", "One more point",
                                                            "and another"))  # fmt: skip
-    assert check_done(done, snap, tk, False) is False  # not written in the task
+    assert check_done(done, snap, tk, False) is False
 
 
 def test_plan_load_refuses_an_edit_of_a_file_not_owned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -127,9 +125,9 @@ def test_the_file_is_opened_only_from_documents(task: tuple[Task, dict[str, Any]
         s = obs.Snapshot()
         s.windows.add(process_name=process, class_name="CabinetWClass", title=title, kind=obs.Window.FOREGROUND)
         s.elements.add(name="All locations", role="split button", window=0)
-        for c in crumbs:  # as read live: parents are split buttons, the current folder a menu item
+        for c in crumbs:
             s.elements.add(name=c, role="menu item" if c == crumbs[-1] and not history else "split button", window=0)
-        if history:  # live, via Quick access: the current folder has subfolders, and the window has a history
+        if history:
             s.elements.add(name="Previous Locations", role="button", window=0)
         s.elements.add(name=f'Refresh "{title}" (F5)', role="button", window=0)
         s.elements.add(name="close memo", role="list item", window=0)
@@ -141,14 +139,13 @@ def test_the_file_is_opened_only_from_documents(task: tuple[Task, dict[str, Any]
     for elsewhere in (
         ("Desktop", "This PC", "Desktop"),
         ("archive", "This PC", "Documents", "archive"),
-        ("Documents", "Libraries", "Documents"),  # the library: Public Documents' files too
-        ("Documents", "This PC", "Desktop", "Documents"),  # a same-named folder elsewhere
-        ("Documents",),  # address bar not read
+        ("Documents", "Libraries", "Documents"),
+        ("Documents", "This PC", "Desktop", "Documents"),
+        ("Documents",),
     ):
         assert preconditions(open_file, snap("explorer.exe", *elsewhere), tk, None), elsewhere
     assert preconditions(save, snap("WINWORD.EXE", "close memo - Word"), tk, None) is None
     assert preconditions(save, snap("WINWORD.EXE", "other memo - Word"), tk, None)
-    # A popup of the task's own app over the folder: Esc may dismiss it; the folder itself or another app: never.
     assert Runner._popup_over(open_file, snap("WINWORD.EXE", "Check out our new look"), tk) == "Check out our new look"
     assert Runner._popup_over(open_file, snap("explorer.exe", "Documents", "This PC", "Documents"), tk) is None
     assert Runner._popup_over(open_file, snap("msedge.exe", "Intranet"), tk) is None

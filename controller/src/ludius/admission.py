@@ -1,13 +1,3 @@
-"""Template admission (spec sections 6 and 8): run every variant in compressed mode from a clean checkpoint.
-
-A variant is admitted when it completes in at least two thirds of its runs; a template is admitted with its
-reliable variants only. Proposed templates (data/templates/proposed/) move into the catalog on admission.
-
-A run that fails on infrastructure (Decisions or LLM contract/HTTP errors, an RPC to the host agent or observer, an
-observer that never comes back) is recorded as "error": a failed attempt, never a pass. The next run starts
-only after a successful restore; a failed restore stops admission, keeping the runs done so far.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -28,7 +18,6 @@ from ludius.loop import Runner
 from ludius.session import Session
 from ludius.tasks import Task, TaskInstance, Template
 
-# Operational failures isolated per run. Anything else is a bug and still raises.
 OPERATIONAL = (DecisionError, LlmError, grpc.RpcError, httpx.HTTPError, TimeoutError)
 
 
@@ -44,11 +33,6 @@ def validate(
     session: Session,
     report: Callable[[str], None] = print,
 ) -> tuple[dict[int, list[str]], str]:
-    """Statuses per variant, and why admission stopped early ("" when every run happened).
-
-    `restore` resets the VM to the clean checkpoint before each run. Each run is logged as an
-    `admission_run` event (template, variant, run, status, steps, reason).
-    """
     inst = TaskInstance(template=template.task, params=template.example, context="admission test run")
     results: dict[int, list[str]] = {}
     for v in range(len(template.variants)):
@@ -74,7 +58,6 @@ def validate(
 
 
 def admit(template: Template, results: dict[int, list[str]], source: Path, catalog: Path, record: Path) -> bool:
-    """Record the outcome; write the admitted template (reliable variants only) into the catalog."""
     keep = [v for v, st in results.items() if reliable(st.count("done"), len(st))]
     data: dict[str, Any] = yaml.safe_load(record.read_text(encoding="utf-8")) if record.exists() else {}
     data[template.task] = {
@@ -88,7 +71,7 @@ def admit(template: Template, results: dict[int, list[str]], source: Path, catal
         return False
     target = catalog / f"{template.task}.yaml"
     if source.resolve() == target.resolve() and len(keep) == len(template.variants):
-        return True  # already in the catalog, nothing dropped
+        return True
     raw: dict[str, Any] = yaml.safe_load(source.read_text(encoding="utf-8"))
     raw["variants"] = [template.variants[v] for v in keep]
     if template.weights:

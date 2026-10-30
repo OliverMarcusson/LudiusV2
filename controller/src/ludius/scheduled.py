@@ -1,13 +1,3 @@
-"""Lazy scheduled days on an explicitly started worker. No services or schedules are installed on import.
-
-The desktop's OS lock fences controller processes. A small persistent owner record additionally fences whole
-days, including durable timers: one activity thread alone would still interleave two workflows' clocks.
-The record freezes the plan/input for crash recovery and is removed only on successful finish/abort. Shutdown
-closes local resources and resets the clock but keeps ownership for that workflow's next worker. A terminated
-workflow can therefore leave a reservation requiring operator reconciliation (reconcile, `ludius reservation`);
-it is never stolen automatically.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -35,13 +25,11 @@ with workflow.unsafe.imports_passed_through():
 
 
 class Reservation(BaseModel):
-    owner: str  # namespace/workflow id
+    owner: str
     day: durable.DayInput
 
 
 class DayOwner:
-    """Used only while holding the desktop OS lock; malformed reservations fail closed."""
-
     def __init__(self, desk: Path) -> None:
         self.path = desk.with_suffix(".day.json")
 
@@ -77,7 +65,6 @@ class Fire(BaseModel):
 
 
 def occurrence_time(attrs: TypedSearchAttributes) -> dt.datetime:
-    """Temporal supplies the intended timestamp, independent of catchup/worker delays. Never use now()."""
     at = attrs.get(SearchAttributeKey.for_datetime("TemporalScheduledStartTime"))
     if not isinstance(at, dt.datetime) or at.tzinfo is None:
         raise ValueError("missing aware TemporalScheduledStartTime; refusing to guess a plan date")
@@ -87,7 +74,6 @@ def occurrence_time(attrs: TypedSearchAttributes) -> dt.datetime:
 def load_day(runs: Path, persona: str, fire: Fire) -> durable.DayInput:
     if fire.schedule.persona != persona:
         raise ValueError("schedule persona differs from this worker")
-    # Wall-clock arithmetic in the zone: the target day gets its own UTC offset across a DST change.
     at = fire.occurrence.astimezone(ZoneInfo(fire.schedule.tz)) + dt.timedelta(days=fire.schedule.day_offset)
     plan = durable.scheduled_plan(runs, persona, durable.plan_date(at, fire.schedule.tz))
     offset = at.utcoffset()
@@ -178,21 +164,20 @@ class WorkerActivities(durable.DayActivities):
     @activity.defn(name="day_end")
     def finish(self, e: durable.DayEnd) -> None:
         if not self._reserved():
-            return  # a retry after this day finished and released: never log/reset again or touch the next day
+            return
         super().finish(e)
         self.close(release=self._key())
 
     @activity.defn(name="day_abort")
     def abort(self) -> None:
-        # A rejected competing workflow must never reset the active day's clock or release its reservation.
         rec = self._reserved()
         if rec is None:
             return
         if rec.day.clock == "time-jump":
-            super().clock_reset()  # an unopenable runner fails closed here: the reservation stays for recovery
-        if self._day is not None:  # never open a runner just to log: an unopened day has nothing on the monitor
+            super().clock_reset()
+        if self._day is not None:
             self.mark_aborted()
-        self.close(release=rec.owner)  # other clocks never jumped, so release even if the runner never opened
+        self.close(release=rec.owner)
 
     def _reserved(self) -> Reservation | None:
         rec = self.owner.read()
@@ -201,7 +186,7 @@ class WorkerActivities(durable.DayActivities):
     def close(self, *, release: str | None = None) -> None:
         try:
             if self._context:
-                self._context.close()  # the factory resets its own clock before releasing resources
+                self._context.close()
         finally:
             self._context = self._day = self._bound = None
         if release:
@@ -212,7 +197,6 @@ class WorkerActivities(durable.DayActivities):
 
 
 async def serve(client: Client, runs: Path, persona: str, desk: Path, factory: DayFactory, canary: Canary) -> None:
-    """Poll only while explicitly running. No VM start/restore, plan generation, or service installation."""
     with durable.desk_lock(desk), ThreadPoolExecutor(max_workers=1) as pool:
         acts = WorkerActivities(runs, persona, desk, factory, canary)
         try:
@@ -226,11 +210,10 @@ async def serve(client: Client, runs: Path, persona: str, desk: Path, factory: D
             ):
                 await asyncio.Event().wait()
         finally:
-            pool.shutdown(wait=True)  # no cleanup/reset while an activity still touches the desktop
-            acts.close()  # retain reservation: shutting down a worker does not finish its server-side day
+            pool.shutdown(wait=True)
+            acts.close()
 
 
-# Only a server-confirmed closed run may lose its reservation. CONTINUED_AS_NEW has a successor run; RUNNING is live.
 CLOSED = frozenset(
     {
         WorkflowExecutionStatus.COMPLETED,
@@ -240,11 +223,10 @@ CLOSED = frozenset(
         WorkflowExecutionStatus.TIMED_OUT,
     }
 )
-Status = Callable[[str, str], WorkflowExecutionStatus | None]  # (namespace, workflow id) -> server status
+Status = Callable[[str, str], WorkflowExecutionStatus | None]
 
 
 def _lease_live(lease: Path) -> bool:
-    """A lease renewed within STALE_S belongs to a live controller. A malformed one fails closed as live."""
     if not lease.exists():
         return False
     try:
@@ -257,12 +239,6 @@ def _lease_live(lease: Path) -> bool:
 def reconcile(
     desk: Path, lease: Path, status: Status, reset: Callable[[], None], *, confirm: tuple[str, str] | None = None
 ) -> dict[str, Any]:
-    """Operator inspection of a desktop's day reservation; a dry run unless confirm=(vm, owner) repeats both.
-
-    Holds the desktop lock throughout, so it refuses while a worker/controller drives the desktop. A missing,
-    unreachable, unknown or open workflow never clears. A time-jump day's clock is reset first; a failed reset
-    keeps both reservation and lease for the sweeper/next attempt.
-    """
     vm = desk.stem
     with durable.desk_lock(desk):
         owner = DayOwner(desk)
@@ -278,7 +254,7 @@ def reconcile(
                 raise ValueError("owner is not namespace/workflow-id")
             st = status(ns, wid)
             state = st.name if st is not None else "UNKNOWN"
-        except Exception as e:  # unreachable server, missing workflow, timeout: all unknown
+        except Exception as e:
             state = f"UNKNOWN ({type(e).__name__}: {e})"
         out: dict[str, Any] = {
             "vm": vm,
@@ -301,7 +277,7 @@ def reconcile(
         if rec.day.clock == "time-jump":
             if _lease_live(lease):
                 raise ValueError("a live controller holds this VM's clock lease; not resetting its clock")
-            reset()  # raises on failure: the reservation (and lease) stay
+            reset()
         owner.release(rec.owner)
         out["cleared"] = True
         return out

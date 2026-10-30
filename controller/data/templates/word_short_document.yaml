@@ -1,14 +1,6 @@
-# Write a short document in Word (classic desktop, Office 2024) and save it in Documents as .docx.
-# Writes one new file, Documents\{file_name}.docx (a noise folder), declared by confirm_save's file check: the runner
-# refuses to start if it exists, so the task never overwrites. Nothing it does is irreversible; on abandon Word is
-# closed with Don't Save. Done is read on the guest's disk, not in the UI (Word's document exposes no text): the
-# saved document's non-empty paragraphs are exactly {title}, then each line of {body} (ludius.guestfile).
-# Variants cover how the blank document is opened (Enter on the focused tile vs a click on it) and how Save As is
-# reached: F12, or Ctrl+S to the Backstage and its Browse button. Never the Backstage's OneDrive or Sign in: the
-# range has no Microsoft account and no internet.
 task: word_short_document
 app: word
-capability: file.write  # creates one new file (writes); manager requests may ask for it
+capability: file.write
 processes: [winword.exe]
 writes: ['Documents\{file_name}.docx']
 params: [file_name, title, body]
@@ -38,8 +30,7 @@ subgoals:
   write_title:
     goal: "The new document is open with the caret on its first line: type the title at the keyboard focus"
     text: title_enter
-    unreadable_ok: true  # Word's document has no UIA value; the file check decides
-    # Into the page only: never a ribbon field (Font, Font Size, Microsoft search).
+    unreadable_ok: true
     avoid: [{role: edit}, {role: combo box}]
     done: {typed: true}
   write_body:
@@ -51,7 +42,6 @@ subgoals:
   save_as:
     goal: "Open the Save As dialog with F12"
     keys: [F12]
-    # The File tab and the toolbar Save open the Backstage (save_backstage's route); this variant uses F12.
     avoid: [{name: '^(File Tab|Save)$'}]
     done: {window: {process: winword.exe, title: "^Save As$"}}
   save_backstage:
@@ -61,13 +51,12 @@ subgoals:
     done: {element: {role: button, name: '^Browse$'}}
   browse:
     goal: "On Word's Save As page, click Browse to open the Save As dialog"
-    # OneDrive and Sign in need a Microsoft account the range does not have; Share and Add a Place leave the task.
     avoid: [{name: '^(OneDrive|Sign in|Share|Add a Place)$'}, {role: hyperlink}]
     done: {window: {process: winword.exe, title: "^Save As$"}}
   name_file:
     goal: "Enter {file_name} as the file name in the Save As dialog"
     text: file_name
-    replace: true  # the box may hold a filter (*.txt) or a name typed before
+    replace: true
     done: {typed: true, element: {name: "^File name", value: '^{file_name}(\.docx)?$'}}
   confirm_save:
     goal: "Save the document as {file_name}"

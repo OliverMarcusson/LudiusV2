@@ -1,9 +1,3 @@
-"""A real calendar-fired schedule occurrence against one private loopback Temporal dev server.
-
-No trigger, backfill, clock change or time skipping: the schedule is created paused at the next local minute,
-unpaused normally, and the server's own clock fires it. Uses only the Temporal CLI the SDK already cached.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -30,7 +24,7 @@ from ludius.planner import DayPlan
 CLI = Path(tempfile.gettempdir()) / f"temporal-sdk-python-{importlib.metadata.version('temporalio')}.exe"
 TZ = "Europe/Stockholm"
 STARTED = SearchAttributeKey.for_datetime("TemporalScheduledStartTime")
-HEADROOM = dt.timedelta(seconds=25)  # worker start + a paused check + unpause must fit before the occurrence
+HEADROOM = dt.timedelta(seconds=25)
 
 
 @pytest.mark.service
@@ -73,7 +67,7 @@ async def _calendar_fire(tmp_path: Path, target: dt.datetime) -> None:
         dev_server_existing_path=str(CLI), dev_server_database_filename=str(tmp_path / "temporal.db"),
     ) as env:  # fmt: skip
         client = env.client
-        sched = await client.create_schedule(  # paused by default
+        sched = await client.create_schedule(
             durable.schedule_id("aberg"), durable.schedule_for("aberg", target.strftime("%H:%M"), TZ, "compressed")
         )
         worker = asyncio.create_task(scheduled.serve(client, runs, "aberg", desk, factory, lambda d, a: {}))

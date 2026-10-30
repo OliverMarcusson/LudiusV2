@@ -28,5 +28,5 @@ def test_handoff_creates_thread_only_when_done(tmp_path: Path) -> None:
     threads = world.threads("lnord", dt.date(2026, 10, 28))
     assert len(threads) == 1 and "from aberg" in threads[0] and "budget review" in threads[0]
     assert "Threads colleagues handed" in world.summary("lnord", dt.date(2026, 10, 28))
-    assert world.threads("aberg", dt.date(2026, 10, 28)) == []  # own handoffs are not inbound
-    assert world.threads("lnord", dt.date(2026, 11, 5)) == []  # older than the window
+    assert world.threads("aberg", dt.date(2026, 10, 28)) == []
+    assert world.threads("lnord", dt.date(2026, 11, 5)) == []

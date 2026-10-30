@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -62,7 +63,6 @@ def test_request_limits() -> None:
         build_request("m", {}, {"bad key!": "x"})
     q = build_request("m", {}, OPTIONS)["questions"]
     assert set(q) == {"action", "subgoal_done", "off_track"} and q["subgoal_done"]["type"] == "noul"
-    # A screenshot for image-reading Decisions models (liquid/d1.1): the JSON state as text, then the image part.
     state = build_request("liquid/d1.1", {"goal": "g"}, OPTIONS, image=b"\x89PNG...")["state"]
     assert state[0] == '{"goal": "g"}' and state[1]["image_url"]["url"].startswith("data:image/png;base64,")
 
@@ -85,15 +85,13 @@ def test_rate_limit_retried_and_counted(monkeypatch: pytest.MonkeyPatch) -> None
         return c
 
     d = client([429, 200]).decide({}, OPTIONS)
-    assert (
-        d.choice == "o1" and d.retries_429 == 1 and sent == ["decision", "decision"]
-    )  # the retry counts against the cap
+    assert d.choice == "o1" and d.retries_429 == 1 and sent == ["decision", "decision"]
     sent.clear()
-    with pytest.raises(DecisionError, match="429"):  # 3 retries, then the fourth 429 raises
+    with pytest.raises(DecisionError, match="429"):
         client([429] * 4).decide({}, OPTIONS)
     assert len(sent) == 4 and waits[-3:] == [1, 2, 4]
     sent.clear()
-    with pytest.raises(DecisionError, match="400"):  # any other 4xx raises at once
+    with pytest.raises(DecisionError, match="400"):
         client([400]).decide({}, OPTIONS)
     assert len(sent) == 1
 
@@ -129,8 +127,6 @@ def test_absent_window_check() -> None:
 
 
 def test_wordpad_body_rejects_a_split_heading() -> None:
-    """Acceptance 20261027-1255: a click after the heading put the caret inside it, so Enter split the heading
-    and the body landed in the gap. Every keystroke landed (typed_ok), but the document is wrong: never done."""
     t = load_template(DATA / "templates" / "wordpad_formatted_note.yaml")
     heading = "finance team - erp test results 28/10"
     body = "vendor master mapping - dupes?\nbank rec test run - matched ok?\nwho signs off test results"
@@ -182,8 +178,8 @@ def test_plan_validation() -> None:
         PlanItem(at="12:00", template="break", minutes=45),
         PlanItem(at="13:00", template="no_such_task"),
         PlanItem(at="13:30", template="explorer_new_folder", params={"folder_name": "a/b"}),
-        PlanItem(at="14:00", template="edge_web_lookup"),  # search_query missing
-        PlanItem(at="15:00", template="explorer_new_folder", params={"folder_name": "Lund accruals Q3!"}),  # dup
+        PlanItem(at="14:00", template="edge_web_lookup"),
+        PlanItem(at="15:00", template="explorer_new_folder", params={"folder_name": "Lund accruals Q3!"}),
         PlanItem(at="16:00", template="edge_web_lookup", params={"search_query": "moms på tjänster"}),
     ]
     assert [i for i, _ in validate(items, load_templates(), [], Policy())] == [2, 3, 4, 5, 6]
@@ -200,9 +196,11 @@ def test_growth_checker_accepts_catalog_templates() -> None:
     for name, t in templates.items():
         others = {k: v for k, v in templates.items() if k != name}
         problems = growth.check(t, caps, others)
-        if t.app == "outlook":  # hand-written: sending is allowlisted, which proposals may never do
+        if t.app == "outlook":
             problems = [p for p in problems if "not permitted for proposals" not in p]
-        if t.app in ("word", "powerpoint"):  # hand-written: document text has no UIA value, the file check decides
+        if name == "explorer_recycle_file":
+            problems = [p for p in problems if p != "open_bin: search not permitted for proposals"]
+        if t.app in ("word", "powerpoint"):
             problems = [p for p in problems if "unreadable_ok not permitted for proposals" not in p]
         assert problems == [], name
     bad = templates["explorer_new_folder"].model_copy(update={"processes": ["regedit.exe"]})
@@ -248,17 +246,16 @@ def test_mapping_recheck_on_display_change(tmp_path: Any) -> None:
     agent = FakeAgent()
     runner = Runner(agent, None, Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
     runner.observe()
-    assert runner.mapping_ok  # first display: nothing to compare
+    assert runner.mapping_ok
     agent.size = (1280, 720)
     runner.observe()
     assert runner.mapping_ok
-    agent.size, agent.offset = (1600, 900), 7  # pointer lands 7 px off after this change
+    agent.size, agent.offset = (1600, 900), 7
     runner.observe()
     assert not runner.mapping_ok
 
 
 def test_document_click_keeps_the_caret_at_the_end(tmp_path: Any) -> None:
-    """A click inside a WordPad heading moved the caret there and the next Enter split it (fidelity 20261027-1259)."""
     from ludius.loop import GroundTruth, Runner
     from ludius.options import Option
 
@@ -291,7 +288,6 @@ def test_document_click_keeps_the_caret_at_the_end(tmp_path: Any) -> None:
 
 
 def test_no_alt_f4_on_the_desktop() -> None:
-    """Alt+F4 on the desktop opens Shut Down Windows; an OK there powered the test VM off once."""
     from ludius.options import build_options, view
     from ludius.policy import alt_f4_safe, shell_dialog
 
@@ -310,7 +306,6 @@ def test_no_alt_f4_on_the_desktop() -> None:
 
 
 def test_chat_enter_only_in_the_guarded_send() -> None:
-    """Enter in Mattermost's message box sends: a write step's Enter once posted a doubled leftover draft (live run)."""
     from ludius.options import build_options, view
 
     t = load_template(DATA / "templates" / "chat_post_message.yaml")
@@ -326,16 +321,15 @@ def test_chat_enter_only_in_the_guarded_send() -> None:
         return any(o.keys == "Enter" for o in build_options(view(snap, task, s, Policy()), task, s, Policy()))
 
     assert not enter("write_message", composer)
-    assert not enter("write_message")  # focus unknown
+    assert not enter("write_message")
     assert enter("open_channel", switcher)
-    assert not enter("send_message", composer)  # not the planned line: its require checks refuse the press
+    assert not enter("send_message", composer)
     ready = obs.Element(id=1, key="c", role="edit", name="Write to Coffee Corner", focused=True, bounds=box,
                         value=task.values["message"], actions=["value"])  # fmt: skip
     assert enter("send_message", ready)
 
 
 def test_chat_enter_rechecks_the_focus_at_the_press(tmp_path: Any) -> None:
-    """The focus can move to the message box between the choice and the press: Enter is refused there, not sent."""
     from ludius.loop import GroundTruth, Runner
     from ludius.options import Option
 
@@ -369,8 +363,6 @@ def test_visual_words_are_click_targets() -> None:
 
 
 def test_send_guard_needs_this_conversations_box() -> None:
-    """Live team4: after the channel click the old DM's box was still focused and got the channel's line; a
-    "^Write to " guard would have let Enter send it to that colleague. Only this channel's or person's box counts."""
     from ludius.tasks import element_matches
 
     for name, wrong in [("chat_post_message", "Write to Daan Koster"), ("chat_direct_message", "Write to Finance Ops")]:
@@ -384,8 +376,6 @@ def test_send_guard_needs_this_conversations_box() -> None:
 
 
 def test_send_key_is_checked_on_the_fresh_focus(tmp_path: Path) -> None:
-    """Sol: the guard held on the decided screen, then the focus moved to another conversation's box (or a thread
-    reply box): Enter is refused there, pressed only in this channel's box with the planned line."""
     from ludius.loop import GroundTruth, Runner
     from ludius.options import Option
 

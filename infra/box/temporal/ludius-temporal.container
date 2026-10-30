@@ -1,4 +1,3 @@
-# Temporal server, frontend on 127.0.0.1:7233 (BIND_ON_IP keeps every service port on loopback).
 [Unit]
 Description=Ludius Temporal server (127.0.0.1:7233)
 Requires=ludius-temporal-setup.service

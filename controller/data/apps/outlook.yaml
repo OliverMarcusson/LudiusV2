@@ -1,40 +1,27 @@
-# Outlook (classic, Exchange profile on the range grommunio): how it does what the mail.send, mail.reply, mail.read
-# and calendar.invite capabilities need. The send contract's rules are shared (ludius.tasks.Form): this file only
-# says where Outlook keeps each field and which of its prompts mean what. mail.read: opening a mail marks it read,
-# and Outlook syncs the flag to the server a moment later (the done check reads it there).
 process: outlook.exe
-launch_query: outlook  # typed into Start search
+launch_query: outlook
 keys:
-  send: Alt+S  # a template's `keys: [send]`
-  open: Enter  # mail.read: opens the selected Inbox mail in its own window, which marks it read
-  close_item: Esc  # closes an open mail's window (Outlook's own close key for it, never a send)
+  send: Alt+S
+  open: Enter
+  close_item: Esc
 dialogs:
-  discard: ["don'?t save changes", "don'?t send"]  # the meeting close prompt's radio choice; "send without a location?"
+  discard: ["don'?t save changes", "don'?t send"]
 forms:
   mail:
-    recipients: value  # To is read as the field's text value (as typed, or as Outlook resolves it)
+    recipients: value
     to: {role: edit, name: "^To$"}
     empty: [{role: edit, name: "^Cc$"}]
-    # Bcc is hidden by default in classic Outlook (warp6: sends waited out their budget for it). Only Decisions could
-    # fill it, never with planned text, and the done check requires the Sent Items copy to name {to} alone.
     never_filled: [{role: edit, name: "^Bcc$"}]
-    # The notice bar ("You are not responding to the latest message..."): its click opens that message and took the
-    # caret away from the reply being typed.
     avoid: [{role: edit, name: "^Info Bar$"}]
   meeting:
     recipients: value
     to: {role: edit, name: "^Required$"}
-    # A room or resource picked from the address book lands in Location and is invited too.
     empty: [{role: edit, name: "^Optional$"}, {role: edit, name: "^Location$"}]
     never_filled: [{name: "^Resources$"}]
-    # The address book, room finder and location picker, the Scheduling Assistant and the form's data items (its
-    # attendee grid adds attendees, its date cells move the meeting: run2, run1) are the only ways to add an attendee
-    # Decisions doesn't type, so they are never targets.
     avoid:
       - {role: edit, name: "^Info Bar$"}
       - {role: button, name: "^(Required|Optional|Location|Rooms|Room Finder|Address Book|Add Attendees|Scheduling Assistant)$"}
       - {name: "^Scheduling Assistant$"}
       - {role: data item}
-    # Prompts the guarded send itself raises, answered once with this button right after the checked input (run1).
     confirm:
       - {prompt: 'Do you want to send this meeting request without a location\?', button: Send Anyway}

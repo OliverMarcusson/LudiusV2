@@ -1,8 +1,4 @@
 ---
-# hypervisor: virtio-win on Proxmox, nothing on Hyper-V. The answer file already ran virtio-win-guest-tools.exe from
-# the virtio-win ISO (drivers + QEMU guest agent, which Packer and range-up.yml need). Here: make sure the viosock
-# driver is staged even if that installer lacks it (the build VM has no vsock device; a clone with one binds it
-# from the driver store), and register its Winsock provider for AF_VSOCK.
 - name: Virtio-win (Proxmox only)
   when: hypervisor == 'proxmox'
   block:
@@ -29,7 +25,7 @@
       ansible.windows.win_command: pnputil /add-driver "{{ virtio.output[0] }}viosock\w10\amd64\viosock.inf" /install
       register: pnp
       changed_when: "'Published Name' in pnp.stdout"
-      failed_when: pnp.rc not in [0, 259, 3010] # 259: no matching device (none on the build VM), 3010: reboot
+      failed_when: pnp.rc not in [0, 259, 3010]
 
     - name: Viosock Winsock provider
       when: viosock_install_wsp | bool
@@ -37,7 +33,6 @@
         script: |
           param($src)
           $ErrorActionPreference = 'Stop'
-          # viosocklib.dll in older virtio-win, viosocklib_x64.dll from 0.1.30x
           $name = @('viosocklib_x64.dll', 'viosocklib.dll') | Where-Object { Test-Path "$src\$_" } | Select-Object -First 1
           if (-not $name) { throw "no viosocklib in $src" }
           Copy-Item "$src\$name" "$env:WINDIR\System32\$name" -Force

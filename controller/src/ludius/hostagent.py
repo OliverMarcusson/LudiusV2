@@ -1,5 +1,3 @@
-"""Thin typed client for the host agent's gRPC API. Hypervisor-agnostic by design."""
-
 from __future__ import annotations
 
 import ipaddress
@@ -18,7 +16,6 @@ class HostAgent:
     def __init__(self, address: str, vm: str) -> None:
         self.address, self.vm = address, vm
         self._channel = grpc.insecure_channel(address)
-        # Generated stubs are untyped; results are annotated at each call.
         self._stub: Any = rpc.HostAgentStub(self._channel)
 
     def close(self) -> None:
@@ -56,8 +53,6 @@ class HostAgent:
                 result: pb.ObserveResult = self._stub.Observe(pb.ObserveRequest(vm=self.vm, request=req), timeout=60)
                 return result
             except grpc.RpcError as e:
-                # INTERNAL: the observer threw mid-snapshot (UI changing under it). UNAVAILABLE: the guest channel
-                # dropped (seen right after a host agent restart) and the agent reconnects. Look again.
                 code = e.code()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
                 if code not in (grpc.StatusCode.INTERNAL, grpc.StatusCode.UNAVAILABLE) or attempt == 2:
                     raise
@@ -66,19 +61,15 @@ class HostAgent:
 
     def lifecycle(self, op: int, checkpoint: str = "", target: str = "") -> str:
         req = pb.LifecycleRequest(vm=self.vm, op=op, checkpoint=checkpoint, target=target)  # pyright: ignore[reportArgumentType]
-        result: pb.LifecycleResult = self._stub.Lifecycle(req, timeout=1800)  # a clone copies the whole disk
+        result: pb.LifecycleResult = self._stub.Lifecycle(req, timeout=1800)
         return result.state
 
     def read_file(self, path: str, max_bytes: int) -> obs.FileContent:
-        """One guest file through the observer (read-only); raises grpc.RpcError when it can't say."""
         req = pb.GuestFileRequest(vm=self.vm, file=obs.ReadFile(path=path, max_bytes=max_bytes))
         result: obs.FileContent = self._stub.ReadGuestFile(req, timeout=60)
         return result
 
     def local_hyperv(self) -> bool:
-        """Whether this agent drives Hyper-V on this machine, so host-local Hyper-V tools (PowerShell Direct, the
-        clock scripts) reach the VMs it drives and not a same-named VM elsewhere. An agent that predates Info is the
-        Windows build, Hyper-V only: local when its address is loopback. Any other answer or error is False."""
         try:
             info: pb.AgentInfo = self._stub.Info(pb.InfoRequest(), timeout=10)
         except grpc.RpcError as e:

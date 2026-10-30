@@ -1,14 +1,3 @@
-"""Exchange backend of ludius.mail (LUDIUS_MAIL_BACKEND=exchange): the same reads and the server-side send, over EWS.
-
-EWS SOAP over HTTPS to the range's Exchange server, Basic auth as one service account that holds the
-ApplicationImpersonation role (ExchangeImpersonation header per mailbox), verified against the range certificate.
-Reads never change an item. Fails closed: no endpoint, no password, an HTTP or EWS error, or a result that may be cut
-short is None (unknown), never an empty folder.
-
-Settings (environment, or the repo's .env through the CLI): LUDIUS_EWS_URL, LUDIUS_EWS_USER, LUDIUS_EWS_PASSWORD_FILE
-(a root-only file written by range-up.yml from the vault), LUDIUS_EWS_CA (the server certificate, PEM).
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -27,9 +16,8 @@ ROOT = Path(__file__).resolve().parents[3]
 T = "http://schemas.microsoft.com/exchange/services/2006/types"
 M = "http://schemas.microsoft.com/exchange/services/2006/messages"
 FOLDER_IDS = {"inbox": "inbox", "sent": "sentitems", "calendar": "calendar"}
-PAGE = 1000  # ponytail: one page per folder query; more matches than this read as unknown, page if a range gets there
-LISTED = 20  # newest(): as the grommunio backend
-# MAPI properties EWS has no first-class field for: the subject without "RE: ", and that prefix as stored.
+PAGE = 1000
+LISTED = 20
 EXTENDED = ("0x0E1D", "0x003D")
 FIELDS = ("item:ItemClass", "item:Subject", "item:DateTimeReceived", "item:DateTimeSent", "item:DateTimeCreated",
           "item:TextBody", "item:InReplyTo", "message:Sender", "message:ToRecipients", "message:CcRecipients",
@@ -39,8 +27,6 @@ FIELDS = ("item:ItemClass", "item:Subject", "item:DateTimeReceived", "item:DateT
 
 
 class Item(TypedDict):
-    """ludius.mail.Message's fields."""
-
     sender: str
     submit_ms: int
     delivery_ms: int
@@ -70,8 +56,6 @@ def _settings() -> tuple[str, str, str, str] | None:
 
 
 def call(mailbox: str, body: str) -> ET.Element | None:
-    """One EWS request as `mailbox` (impersonated); the response's messages element, or None on any failure, including
-    any response message that is not Success."""
     s = _settings()
     if s is None:
         return None
@@ -101,9 +85,6 @@ def call(mailbox: str, body: str) -> ET.Element | None:
 def _find(
     mailbox: str, folder: str, subject: str | None, fields: str = "", whole: bool = False
 ) -> list[ET.Element] | None:
-    """Items in the folder (subject given: whose subject contains it, the caller compares exactly; else the newest
-    LISTED by delivery; `whole`: every item), as FindItem returned them: ids plus `fields`. None if unknown or cut
-    short."""
     where = (
         ""
         if subject is None
@@ -131,8 +112,6 @@ def _find(
 
 
 def _key(item_id: str) -> int:
-    """A positive int for the item's EWS id (Message.id is an int; the EWS id is stable while the item stays in its
-    folder, read-flag changes included)."""
     return int(hashlib.sha256(item_id.encode()).hexdigest()[:15], 16)
 
 
@@ -149,7 +128,6 @@ def _ms(text: str) -> int:
 
 
 def _addresses(el: ET.Element | None) -> Iterator[str]:
-    """SMTP addresses of every Mailbox under `el`; "?" for one without an SMTP address (never a match)."""
     boxes: list[ET.Element] = [] if el is None else list(el.iter(f"{{{T}}}Mailbox"))
     for mb in boxes:
         addr, kind = mb.findtext(f"{{{T}}}EmailAddress", ""), mb.findtext(f"{{{T}}}RoutingType", "SMTP")
@@ -157,7 +135,6 @@ def _addresses(el: ET.Element | None) -> Iterator[str]:
 
 
 def parse(el: ET.Element) -> Item:
-    """One GetItem item (Message, MeetingRequest, CalendarItem, ...) to Message fields."""
 
     def text(path: str) -> str:
         return el.findtext(path, "") or ""
@@ -192,7 +169,6 @@ def parse(el: ET.Element) -> Item:
 
 
 def query(mailbox: str, folder: str, subject: str | None) -> list[Item] | None:
-    """Items whose normalised subject is exactly `subject` (None: the newest LISTED), newest delivery first."""
     found = _find(mailbox, folder, subject)
     if found is None:
         return None
@@ -220,7 +196,6 @@ def query(mailbox: str, folder: str, subject: str | None) -> list[Item] | None:
 
 
 def read_state(mailbox: str, key: int, folder: str) -> bool | None:
-    """IsRead of the folder's item with this key; None when unknown or not (or no longer) in the folder."""
     found = _find(mailbox, folder, None, '<t:AdditionalProperties><t:FieldURI FieldURI="message:IsRead"/>'
                   "</t:AdditionalProperties>", whole=True)  # fmt: skip
     hit = [el for el in found or [] if _key(_id(el)) == key]
@@ -230,8 +205,6 @@ def read_state(mailbox: str, key: int, folder: str) -> bool | None:
 
 
 def send(sender: str, sender_name: str, to: str, to_name: str, subject: str, body: str, msgid: str) -> bool:
-    """Send one plain-text mail as `sender` (impersonated), no Sent Items copy, with our own Internet message id.
-    True only when Exchange accepted it for sending; the caller checks idempotency and the addresses."""
 
     def mailbox(name: str, addr: str) -> str:
         return f"<t:Mailbox><t:Name>{escape(name)}</t:Name><t:EmailAddress>{escape(addr)}</t:EmailAddress></t:Mailbox>"

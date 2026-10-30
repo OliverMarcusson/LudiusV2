@@ -12,12 +12,10 @@ from ludius import cli, planner, revision
 from ludius.planner import DayPlan, Event, Narrative, Person, World
 from ludius.tasks import Persona
 
-DAY = dt.date(2026, 11, 2)  # a Monday
+DAY = dt.date(2026, 11, 2)
 
 
 class ScriptedLlm:
-    """Stands in for LlmClient.json: hands out prepared answers and records the prompts."""
-
     def __init__(self, *answers: dict[str, Any]) -> None:
         self.answers, self.prompts = list(answers), list[str]()
 
@@ -45,10 +43,10 @@ def test_revision_keeps_continuity_adds_personas_and_is_dated(tmp_path: Path) ->
     n, dropped = revision.revise(llm, _narrative(), PERSONAS, DAY, "- 2026-10-28 aberg erp review done")  # type: ignore[arg-type]
     assert dropped == []
     assert (n.company, n.city, n.summary) == ("Harbourline", "Rotterdam", "Packaging maker.")
-    assert [p.user for p in n.people] == ["aberg", "lnord"]  # current persona added by code
-    assert "lnord" in llm.prompts[0]  # and the LLM sees it
+    assert [p.user for p in n.people] == ["aberg", "lnord"]
+    assert "lnord" in llm.prompts[0]
     assert n.projects == ["office move", "ERP rollout"]
-    assert [e.what for e in n.events] == ["ERP test review", "ERP go-live"]  # past event kept, sorted by date
+    assert [e.what for e in n.events] == ["ERP test review", "ERP go-live"]
     assert n.revised == "2026-11-02" and n.history[-1].date == "2026-11-02"
     with pytest.raises(ValueError, match="already revised"):
         revision.revise(llm, n, PERSONAS, DAY + dt.timedelta(days=4), "")  # type: ignore[arg-type]
@@ -69,12 +67,9 @@ def test_invalid_parts_are_sent_back_once_then_dropped() -> None:
     n, dropped = revision.revise(llm, _narrative(), PERSONAS, DAY, "")  # type: ignore[arg-type]
     assert len(llm.prompts) == 2 and "rejected" in llm.prompts[1]
     assert any("no such project" in d for d in dropped) and any("far away" in d for d in dropped)
-    assert n.projects == ["ERP migration", "office move"]  # unknown "finished" project ignored
-    assert [p.name for p in n.people] == ["Anna Berg", "Lars Nord"]  # duplicate Anna not added
-    assert [e.what for e in n.events] == ["ERP test review", "Budget review"]  # only the in-horizon event
-
-
-# Automatic due revision at plan time -------------------------------------------------------------------------
+    assert n.projects == ["ERP migration", "office move"]
+    assert [p.name for p in n.people] == ["Anna Berg", "Lars Nord"]
+    assert [e.what for e in n.events] == ["ERP test review", "Budget review"]
 
 
 def _world(tmp_path: Path, revised: str = "") -> World:
@@ -95,7 +90,7 @@ def _answer(summary: str, event: str = "Warehouse stock count") -> dict[str, Any
 
 
 def test_one_revision_per_week_across_personas_then_due_next_week(tmp_path: Path) -> None:
-    world = _world(tmp_path)  # unrevised, but both personas have logs from last week
+    world = _world(tmp_path)
     _log(world, "aberg", DAY - dt.timedelta(days=3), "closed the ERP test")
     _log(world, "lnord", DAY - dt.timedelta(days=2), "patched the file server")
     llm = ScriptedLlm(_answer("Week one."), _answer("Week two.", "Supplier contract review"))
@@ -103,34 +98,34 @@ def test_one_revision_per_week_across_personas_then_due_next_week(tmp_path: Path
     other = revision.revise_if_due(llm, world, PERSONAS, DAY + dt.timedelta(days=1))  # type: ignore[arg-type]
     again = revision.revise_if_due(llm, world, PERSONAS, DAY)  # type: ignore[arg-type]
     assert [first.revised, other.revised, again.revised] == [True, False, False]
-    assert len(llm.prompts) == 1  # one model call, not one per planner
+    assert len(llm.prompts) == 1
     assert "closed the ERP test" in llm.prompts[0] and "patched the file server" in llm.prompts[0]
-    assert other.narrative == again.narrative == first.narrative == world.narrative()  # re-read from disk
+    assert other.narrative == again.narrative == first.narrative == world.narrative()
     assert "this week" in other.note and world.narrative().revised == "2026-11-02"
     assert (tmp_path / "world" / "revisions" / "2026-11-02.yaml").exists()
 
     nxt = DAY + dt.timedelta(days=7)
     _log(world, "aberg", DAY + dt.timedelta(days=2), "booked the move")
     second = revision.revise_if_due(llm, world, PERSONAS, nxt)  # type: ignore[arg-type]
-    assert second.revised and len(llm.prompts) == 2 and "Week one." in llm.prompts[1]  # sees the revised story
+    assert second.revised and len(llm.prompts) == 2 and "Week one." in llm.prompts[1]
     assert [h.what for h in world.narrative().history] == ["Week one.", "Week two."]
     assert (tmp_path / "world" / "revisions" / "2026-11-09.yaml").exists()
     assert not revision.revise_if_due(llm, world, PERSONAS, nxt).revised and len(llm.prompts) == 2  # type: ignore[arg-type]
 
 
 def test_no_evidence_or_future_revision_keeps_the_narrative_and_calls_no_model(tmp_path: Path) -> None:
-    llm = ScriptedLlm()  # any model call would pop from an empty list
-    world = _world(tmp_path)  # unrevised and nothing logged: no invented history
+    llm = ScriptedLlm()
+    world = _world(tmp_path)
     quiet = revision.revise_if_due(llm, world, PERSONAS, DAY)  # type: ignore[arg-type]
     assert not quiet.revised and "no revision yet" in quiet.note and world.narrative().revised == ""
     assert not (tmp_path / "world" / "revisions").exists()
 
-    future = _world(tmp_path, revised="2026-11-09")  # revised in the future: never rewound or repeated
+    future = _world(tmp_path, revised="2026-11-09")
     _log(future, "aberg", DAY - dt.timedelta(days=1), "evidence exists")
     out = revision.revise_if_due(llm, future, PERSONAS, DAY)  # type: ignore[arg-type]
     assert not out.revised and "after 2026-11-09" in out.note and future.narrative().revised == "2026-11-09"
 
-    old = _world(tmp_path, revised="2026-11-02")  # due next week, but the week was quiet
+    old = _world(tmp_path, revised="2026-11-02")
     out = revision.revise_if_due(llm, old, PERSONAS, DAY + dt.timedelta(days=7))  # type: ignore[arg-type]
     assert not out.revised and "no logged work" in out.note and old.narrative().revised == "2026-11-02"
     assert llm.prompts == []
@@ -143,7 +138,7 @@ def test_busy_lock_fails_clearly_and_is_released_afterwards(tmp_path: Path) -> N
 
     class Racing(ScriptedLlm):
         def json(self, cls: type[Any], system: str, user: str, temperature: float = 0.9) -> Any:
-            try:  # a second planner arrives while this revision is in flight
+            try:
                 revision.revise_if_due(self, world, PERSONAS, DAY)  # type: ignore[arg-type]
             except revision.RevisionBusy as e:
                 inner.append(e)
@@ -171,7 +166,7 @@ def test_plan_day_revises_first_and_plans_with_the_revised_narrative(
     class FakeClient:
         cost = 0.0
 
-        def __new__(cls, *_a: Any, **_k: Any) -> Any:  # cmd_plan builds its own client
+        def __new__(cls, *_a: Any, **_k: Any) -> Any:
             return llm
 
     llm.cost = 0.0  # type: ignore[attr-defined]
@@ -184,7 +179,7 @@ def test_plan_day_revises_first_and_plans_with_the_revised_narrative(
         args = argparse.Namespace(what="day", persona=str(cli.DATA / "personas" / f"{user}.yaml"),
                                   date=DAY.isoformat(), model="m", scenario=None, idea=None)  # fmt: skip
         assert cli.cmd_plan(args) == 0
-    assert len(llm.prompts) == 1  # the second persona's plan found the week already revised
+    assert len(llm.prompts) == 1
     assert [n.revised for n in planned] == ["2026-11-02", "2026-11-02"]
     assert planned[0].history[-1].what == "Auto revised." and planned[0] == planned[1]
     out = capsys.readouterr().out

@@ -1,15 +1,3 @@
-"""Export the OmniParser v2 icon detector (icon_detect_v3, MIT, Microsoft) from TorchScript to ONNX, dev-only.
-
-The runtime only needs ONNX Runtime; torch is used here once:
-  cd controller
-  uv run --no-project --with torch --with onnx --with onnxruntime --with numpy python scripts/export_detector.py
-
-Input: models/omniparser-v2.0/icon_detect_v3/model.pt from huggingface.co/microsoft/OmniParser-v2.0 at revision
-f55d0750e5b94db2125ef0b45b0fa4a85ddc59b4 (sha256 11c6cbb7...fb00c, checked below). Output: model.onnx next to it,
-with the raw head kept: per stride 8/16/32 one class-logit map [1,1,H,W] and one box map [1,4,H,W] (left, top,
-right, bottom distances from the cell centre, in cells). Decoding lives in ludius.visual.
-"""
-
 import hashlib
 import sys
 from pathlib import Path

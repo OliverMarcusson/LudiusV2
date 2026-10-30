@@ -1,6 +1,3 @@
-# Host agent on the Proxmox box (installed by infra/box/install.sh). Root: pvesh and the QMP sockets are root-only.
-# gRPC and the monitor listen on loopback only; the controller runs on this host, the tailnet reaches the monitor
-# through caddy (127.0.0.1:7453, fixes Host) and `tailscale serve` (infra/monitor).
 [Unit]
 Description=Ludius host agent (Proxmox backend)
 After=network.target pve-cluster.service pvedaemon.service
@@ -11,23 +8,18 @@ WorkingDirectory=/opt/ludius-agent
 ExecStart=/opt/ludius-agent/ludius-host-agent
 Restart=on-failure
 RestartSec=5
-# /run/ludius-agent: screendump scratch (Proxmox:ScratchDir default), 0700.
 RuntimeDirectory=ludius-agent
 RuntimeDirectoryMode=0700
 Environment=Agent__Backend=proxmox
 Environment=Proxmox__Pool=ludius
 Environment=Proxmox__Node=ludius-pve
 Environment=Agent__MaxRunningVms=8
-# Range servers neither count toward nor are held by the cap: VMID and name must both match (main.yml srv01_vmid,
-# ex01_vmid). Clones never take these VMIDs.
 Environment=Proxmox__CapExempt=110:ludius-srv01,110:ludius-dc01,111:ludius-ex01,112:ludius-chat01
-# Explicit, so a published appsettings.json (it carries the desktop's host names) cannot widen what answers.
 Environment=AllowedHosts=127.0.0.1
 Environment=Kestrel__Endpoints__Grpc__Url=http://127.0.0.1:7451
 Environment=Kestrel__Endpoints__Monitor__Url=http://127.0.0.1:7452
 Environment=Monitor__Root=/opt/ludius-agent/monitor
 Environment=Monitor__AllowedOrigins=https://monitor.ludius.se
-# The controller writes these under runs/ in the repo checkout on the box.
 Environment=Monitor__Calls=/root/src/LudiusV2/runs/openrouter-calls.json
 Environment=Monitor__Admission=/root/src/LudiusV2/runs/admission
 

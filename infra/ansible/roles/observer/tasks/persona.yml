@@ -1,14 +1,9 @@
 ---
-# The observer's logon task for one persona, as provision.ps1 registers it (same name, triggers and settings).
 - name: Observer logon task
   ansible.windows.win_powershell:
     script: |
       param($dir, $persona, $observerArgs)
       $ErrorActionPreference = 'Stop'
-      # In the persona's interactive session at logon, never a service; restarted daily (it swaps between requests)
-      # and after a crash or watchdog fault. uiAccess binaries only start through ShellExecute (AppInfo), not the
-      # scheduler's CreateProcess (error 740), so explorer launches it.
-      # Explorer takes its argument as one path, so arguments (vsock on Proxmox) go in a shortcut it opens instead.
       $a = "`"$dir\uiprobe.exe`""
       if ($observerArgs) {
         $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut("$dir\RangeAssist.lnk")
@@ -16,7 +11,6 @@
         $a = "`"$dir\RangeAssist.lnk`""
       }
       $action = New-ScheduledTaskAction -Execute 'C:\Windows\explorer.exe' -Argument $a
-      # A crash (including the watchdog's FailFast) raises Application Error 1000, which starts it again after 30 s.
       $crash = Get-CimClass MSFT_TaskEventTrigger root/Microsoft/Windows/TaskScheduler | New-CimInstance -ClientOnly
       $crash.Enabled = $true
       $crash.Delay = 'PT30S'

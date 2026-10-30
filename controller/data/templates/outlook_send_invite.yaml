@@ -1,11 +1,6 @@
-# Create a meeting for one colleague in Outlook (classic, Exchange profile on the range grommunio) and send it.
-# Done is checked on the range server, not in the UI (ludius.mail.invited): a new meeting request in the colleague's
-# inbox and a new appointment in the persona's Calendar, with the planned subject, attendee, start and end (local to
-# the persona's time zone, Persona.tz). The form's date and times are prefilled, so typing replaces them (replace).
-# Variants cover the new-meeting path (Ctrl+Shift+Q vs the ribbon's New Items menu).
 task: outlook_send_invite
 app: outlook
-capability: calendar.invite  # the shared send contract on the profile's meeting form (data/apps/outlook.yaml, ludius.tasks.Form)
+capability: calendar.invite
 params: [to, to_name, subject, date, start, end, body]
 about: "Invite one colleague to a meeting in Outlook and send the invite. to: the colleague's address <user>@ludius.internal; subject: one line; date: YYYY-MM-DD, a weekday within the next two weeks after the plan's day; start and end: HH:MM between 08:00 and 17:00, 15-120 minutes apart; body: optional short agenda (ASCII, a few short lines) or empty."
 defaults: {body: ""}
@@ -23,11 +18,11 @@ subgoals:
     keys: [Win]
     text: launch_query
     steps: 8
-    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}  # the main window, not "Opening - Microsoft Outlook"
+    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}
   new_meeting_shortcut:
     goal: "Start a new meeting with Ctrl+Shift+Q"
     keys: [Ctrl+Shift+Q]
-    avoid: [{name: "^(New Meeting|New Items|Calendar)$"}]  # the form opens slowly: a second path opened a second form (run2)
+    avoid: [{name: "^(New Meeting|New Items|Calendar)$"}]
     done: {window: {process: outlook.exe, title: "^Untitled - Meeting"}}
   new_meeting_menu:
     goal: "Start a new meeting from the New Items menu on the Home tab (New Items, then Meeting)"
@@ -35,9 +30,6 @@ subgoals:
   fill_to:
     goal: "Type {to} into the Required field of the new meeting"
     text: to
-    # The planned colleague in the Required field itself, not text typed anywhere (run2 typed into the Scheduling
-    # Assistant's grid). The Decider reads it on the screen: a value regex missed the forms Outlook resolves it to
-    # (warp4: added 3 times through a picker, never matched).
     done: {ask: "Is {to_name} ({to}) listed in the Required attendees of the open meeting?"}
   fill_subject:
     goal: "Type the meeting title into the Title field: {subject}"
@@ -61,14 +53,12 @@ subgoals:
   write_body:
     goal: "Type the agenda into the meeting's message body (below the times)"
     text: body
-    unreadable_ok: true  # Word body: no UIA value; the server-side body check decides
+    unreadable_ok: true
     done: {typed: true}
   send_shortcut:
     goal: "Send the meeting invitation with Alt+S"
     keys: [send]
     allow_destructive: ["Send"]
-    # The planned meeting, read in the form before the irreversible send (the shared contract adds the attendee
-    # fields); Outlook shows a date as "Thu 05/11/2026" once its field loses focus.
     require:
       - {role: edit, name: "^Title$", value: "^{subject}$"}
       - {role: edit, name: "^Start date, combo$", value: '^\w{{3}} {date_ui}$'}

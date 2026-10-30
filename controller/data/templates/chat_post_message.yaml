@@ -1,8 +1,3 @@
-# Post one line in a channel of the team chat: Mattermost on the range's chat01, the web app in Edge, signed in by
-# Kerberos SSO (the persona's Windows logon; never a typed password). Small talk or a short work note.
-# Effect: one post in a range channel (noise never deletes it). Done checks are the Decider's, on a screenshot; the
-# send is guarded in code: Enter only while the focused box holds exactly the planned line. The sent check asks for
-# an empty message box too: it runs before every step, while the typed line still sits in the box.
 task: chat_post_message
 app: edge
 capability: chat.post
@@ -14,10 +9,8 @@ example: {channel: Coffee Corner, message: anyone else think the canteen soup is
 variants:
   - [open_edge_start, open_chat, open_channel, write_message, send_message, close_edge]
   - [open_edge_taskbar, open_chat, open_channel, write_message, send_message, close_edge]
-  # Reactions only (ludius.react): an answer in the channel left open by the read; closed after.
   - [open_edge_taskbar, open_chat, open_channel, write_message, send_message]
 weights: [1, 1, 0]
-# Enter in the message box sends (a leftover draft too): only the guarded send_message subgoal may press it there.
 key_commits: [{keys: Enter, focus: {name: "^(Write to |Reply to this thread)"}}]
 budget_steps: 40
 budget_minutes: 8
@@ -36,7 +29,7 @@ subgoals:
     goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click the GitLab button (it signs in with the Windows account; never type a password)"
     text: chat_url
     keys: [Ctrl+L, Enter]
-    replace: true  # a retry replaces what the address bar holds, never appends to it
+    replace: true
     field: "^Address and search bar$"
     done: {ask: "Is the Mattermost team chat open and signed in, showing its list of channels?"}
   open_channel:
@@ -47,8 +40,7 @@ subgoals:
   write_message:
     goal: "Type the message into the message box at the bottom of the {channel} channel: {message}"
     text: message
-    replace: true  # a draft left in the box (Mattermost keeps them) is replaced, never sent along
-    # The box itself, read fresh: Mattermost re-renders its textarea, so `typed` lost it and typed the line twice.
+    replace: true
     done: {element: {name: "^Write to {channel}$", focused: true, value: "^{message}$"}}
   send_message:
     goal: "Send the message with Enter"

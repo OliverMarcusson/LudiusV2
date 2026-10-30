@@ -1,13 +1,3 @@
-"""File done-checks read on the guest, never in the UI: one file in the persona's profile, through the host agent's
-ReadGuestFile (the observer reads it; any hypervisor). Only when that call is UNIMPLEMENTED (an older agent or
-observer) and the agent drives Hyper-V on this machine, over PowerShell Direct (the Hyper-V host's channel into the VM,
-as set-clock.ps1 uses) with the range admin from .env; never against a VM the agent does not drive.
-
-Read-only: the file is opened for reading with full sharing (an app may still hold it) and returned whole. Fails
-closed: no VM, no credential, a missing folder or any error is None (unknown), never "absent"; only a definite "no
-such file" in an existing folder reads as absent.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -24,10 +14,9 @@ import grpc
 
 from ludius.hostagent import HostAgent
 
-MAX_BYTES = 1_000_000  # noise documents are small; a larger file is unknown, never parsed
-NOISE_FOLDERS = ("Documents", "Pictures", "Downloads")  # profile folders noise may create files in (spec section 5)
+MAX_BYTES = 1_000_000
+NOISE_FOLDERS = ("Documents", "Pictures", "Downloads")
 
-# Runs on the host; the guest part gets the path as an argument, so it never reaches a command line as code.
 _PS = r"""
 $ErrorActionPreference = 'Stop'
 $secret = ConvertTo-SecureString $env:LUDIUS_ADMIN_PASSWORD -AsPlainText -Force
@@ -51,12 +40,11 @@ Invoke-Command -VMName $env:LUDIUS_VM -Credential $admin -ArgumentList $arg -Scr
 @dataclass(frozen=True)
 class GuestFile:
     exists: bool
-    written_ms: int = 0  # last write, Unix ms on the guest's clock
+    written_ms: int = 0
     data: bytes = b""
 
 
 def profile_path(user: str, rel: str) -> str | None:
-    """C:\\Users\\<user>\\<rel> when `rel` stays inside one of the persona's noise folders, else None."""
     parts = re.split(r"[\\/]", rel)
     if not re.fullmatch(r"[a-z0-9]+", user) or len(parts) < 2 or parts[0] not in NOISE_FOLDERS:
         return None
@@ -66,12 +54,10 @@ def profile_path(user: str, rel: str) -> str | None:
 
 
 def read(user: str, rel: str) -> GuestFile | None:
-    """The file `rel` (profile-relative, in a noise folder) of `user` on LUDIUS_VM, or None when unknown."""
     path = profile_path(user, rel)
     vm = os.environ.get("LUDIUS_VM")
     if path is None or not vm:
         return None
-    # An error is never "absent"; only the observer's definite "no such file" in an existing folder is.
     agent = HostAgent(os.environ.get("LUDIUS_AGENT", "127.0.0.1:7451"), vm)
     try:
         f = agent.read_file(path, MAX_BYTES)
@@ -109,12 +95,10 @@ def _read_via_powershell(path: str) -> GuestFile | None:
 _NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 _SHEET = re.compile(r"xl/worksheets/sheet\d+\.xml")
 _REF = re.compile(r"([A-Z]{1,3})(\d+)")
-MAX_PART = 5_000_000  # uncompressed bytes of one workbook part
+MAX_PART = 5_000_000
 
 
 def xlsx_cells(data: bytes) -> dict[str, str] | None:
-    """Non-empty cells of a workbook's only worksheet as {"A1": text}: shared strings resolved, numbers as stored.
-    None when it is not a readable .xlsx or has more than one worksheet (which one was meant is then unknown)."""
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             parts = {i.filename: i for i in z.infolist()}
@@ -133,7 +117,7 @@ def xlsx_cells(data: bytes) -> dict[str, str] | None:
                 if kind == "inlineStr":
                     text = "".join(t.text or "" for t in c.iter(f"{{{_NS['m']}}}t"))
                 elif v is None:
-                    continue  # formatted but empty
+                    continue
                 else:
                     text = shared[int(v.text or "")] if kind == "s" else v.text or ""
                 if text != "":
@@ -160,8 +144,6 @@ def _runs(p: ET.Element, t: str, tab: str) -> str:
 
 
 def docx_paragraphs(data: bytes) -> list[str] | None:
-    """The non-empty paragraphs of a document's body in order (tables included), runs joined. None when it is not
-    a readable .docx."""
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             parts = _parts(z)
@@ -177,8 +159,6 @@ def docx_paragraphs(data: bytes) -> list[str] | None:
 
 
 def pptx_slides(data: bytes) -> list[list[str]] | None:
-    """Each slide in presentation order as its non-empty paragraphs: the title placeholder's first, then the other
-    shapes' in tree order. None when it is not a readable .pptx."""
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             parts = _parts(z)
@@ -204,7 +184,6 @@ def pptx_slides(data: bytes) -> list[list[str]] | None:
 
 
 def grid_cells(rows: str) -> dict[str, str]:
-    """Planned rows (cells split by tabs, rows by newlines, typed from A1) as {"A1": text}, empty cells left out."""
     out: dict[str, str] = {}
     for r, line in enumerate(rows.strip("\n").split("\n"), start=1):
         for c, cell in enumerate(line.split("\t")):

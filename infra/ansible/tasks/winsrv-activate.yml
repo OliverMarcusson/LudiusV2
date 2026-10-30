@@ -1,9 +1,4 @@
 ---
-# Evaluation activation (s from range-exchange.yml), on the node, through the guest agent only: the evaluation must be
-# activated online within 10 days or the server shuts down hourly. If not activated yet, an uplink NIC on the build
-# bridge is attached for slmgr /ato alone and detached on the host whatever happened (range-nic-only.yml; the VM is
-# stopped if the detach can't be confirmed); then the guest is checked for any route off the range.
-# Out: winsrv_failures (appended).
 - name: Activated already? {{ s.name }}
   ansible.builtin.command:
     argv: [qm, guest, exec, "{{ s.vmid }}", --timeout, "60", --, powershell.exe, -NoProfile, -NonInteractive, -Command, "{{ licensed }}"]

@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
-# Box side of the monitor and of the Proxmox web UI: Tailscale (tagged key, tailnet only), `tailscale serve` for the
-# agent's monitor endpoint (:8452) and for pveproxy (:8453), and the built monitor UI. Run as root on the Proxmox box from a checkout of this repo:
-#   TS_AUTHKEY=tskey-auth-... infra/monitor/bring-up.sh
-#   DRY_RUN=1 infra/monitor/bring-up.sh        # prints the mutating commands, changes nothing
-# Re-runnable: each step is skipped or repeated harmlessly.
 set -euo pipefail
 
 : "${TS_HOSTNAME:=ludius-box}"
 : "${TS_TAG:=tag:ludius-box}"
-: "${TS_PORT:=8452}"                    # tailnet-side port; the agent itself stays on 127.0.0.1:7452
+: "${TS_PORT:=8452}"
 : "${AGENT_MONITOR:=http://127.0.0.1:7452}"
-: "${PVE_TS_PORT:=8453}"                # tailnet-side port for the Proxmox web UI
-: "${PVE_TARGET:=https+insecure://127.0.0.1:8006}" # pveproxy has a self-signed certificate
+: "${PVE_TS_PORT:=8453}"
+: "${PVE_TARGET:=https+insecure://127.0.0.1:8006}"
 : "${BUN_VERSION:=1.3.14}"
-PVEPROXY_DEFAULT=${PVEPROXY_DEFAULT:-/etc/default/pveproxy} # overridable for the tests
+PVEPROXY_DEFAULT=${PVEPROXY_DEFAULT:-/etc/default/pveproxy}
 DRY_RUN=${DRY_RUN:-}
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -47,15 +42,10 @@ build_monitor() {
   bun run build
 }
 
-# The box must hold exactly one identity: tagged $TS_TAG and nothing else (so no user owner), advertising no routes or
-# exit node and using none. Anything else could expose the owner's tailnet to a rented box (or the reverse), so abort
-# before `serve` is published. Needs tailscale to be running; `tailscale debug prefs` is the only place the advertised
-# routes show (an exit node is advertised as 0.0.0.0/0 and ::/0 in AdvertiseRoutes).
 verify_identity() {
   local st prefs
   st=$(tailscale status --json) || { echo "cannot read tailscale status" >&2; return 1; }
   prefs=$(tailscale debug prefs) || { echo "cannot read tailscale prefs" >&2; return 1; }
-  # Every field must be present with its expected type: a missing or odd-shaped field is "cannot tell", which aborts.
   if ! jq -e --arg tag "$TS_TAG" '
       (.Self.Tags | type) == "array" and .Self.Tags == [$tag]
       and (.Self.UserID | type) == "number"
@@ -88,20 +78,16 @@ if command -v tailscale >/dev/null && tailscale ip -4 >/dev/null 2>&1; then
   verify_identity
 else
   : "${TS_AUTHKEY:?set TS_AUTHKEY to a tagged, pre-authorised (ideally ephemeral) auth key}"
-  # accept-dns=false: the box's resolver stays as Hetzner set it. No routes or exit node are advertised.
-  # ponytail: the key is visible in `ps` for the second this takes; root-only rental box, so left as is.
   if [[ -n $DRY_RUN ]]; then
     echo "+ tailscale up --auth-key=<TS_AUTHKEY> --hostname=$TS_HOSTNAME --advertise-tags=$TS_TAG --accept-dns=false --accept-routes=false"
     echo "+ verify_identity"
   else
     tailscale up --auth-key="$TS_AUTHKEY" --hostname="$TS_HOSTNAME" --advertise-tags="$TS_TAG" \
       --accept-dns=false --accept-routes=false
-    verify_identity # the key's own tags decide, not the flag: a key without the tag must not get through
+    verify_identity
   fi
 fi
 
-# Proxmox stays off the public addresses (infra/ansible does this on a fresh box; repeated here for a box that was
-# set up another way): pveproxy on loopback, SPICE proxy and rpcbind masked. Restarting pveproxy ends open web sessions.
 bind_pve_loopback() {
   local changed=
   grep -qx 'LISTEN_IP="127.0.0.1"' "$PVEPROXY_DEFAULT" 2>/dev/null || {
@@ -116,8 +102,6 @@ bind_pve_loopback() {
 }
 run bind_pve_loopback
 
-# tailnet-side HTTP listeners (inside tailscaled, tailnet addresses only): the agent's loopback monitor endpoint and
-# pveproxy. An existing mapping on the same port is replaced, anything else on serve is left to check.sh to flag.
 run tailscale serve --bg --http="$TS_PORT" "$AGENT_MONITOR"
 run tailscale serve --bg --http="$PVE_TS_PORT" "$PVE_TARGET"
 

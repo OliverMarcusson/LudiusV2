@@ -1,9 +1,3 @@
-"""A real durable BREAK timer across a worker shutdown/restart, on one private loopback Temporal dev server.
-
-Uses only the Temporal CLI the SDK already cached; never downloads one. Fake desktop, temporary SQLite.
-The break is already late (00:00), so its away timer (a real minute) is the only timer the day waits on.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -32,8 +26,6 @@ TZ = "Europe/Stockholm"
 
 
 class Session(FakeSession):
-    """Records when the screen is unlocked; `unlock_ok=False` is a failed unlock."""
-
     def __init__(self, calls: list[str], unlocks: list[dt.datetime], unlock_ok: bool) -> None:
         super().__init__(calls)
         self.unlocks, self.unlock_ok = unlocks, unlock_ok
@@ -103,7 +95,7 @@ async def _break_across_restart(tmp_path: Path, unlock_ok: bool) -> None:
                 return [e async for e in child.fetch_history_events()]
 
             started: list[Any] = []
-            for _ in range(300):  # break_start finished (screen locked) and the away timer is pending
+            for _ in range(300):
                 try:
                     started = [e for e in await events() if e.HasField("timer_started_event_attributes")]
                 except Exception:  # noqa: BLE001 - the child does not exist until the schedule fires
@@ -118,11 +110,11 @@ async def _break_across_restart(tmp_path: Path, unlock_ok: bool) -> None:
             assert dt.datetime.now(dt.UTC) < fire_at - dt.timedelta(seconds=10), "too close to due to prove a restart"
             assert calls == ["open", "normalize", "lock"] and reservation() == owner
 
-            await stop(live[0])  # worker shutdown only: the workflow is never cancelled
+            await stop(live[0])
             assert (await child.describe()).status == WorkflowExecutionStatus.RUNNING
             assert calls == ["open", "normalize", "lock", "close"] and reservation() == owner and unlocks == []
             live.append(asyncio.create_task(scheduled.serve(client, runs, "aberg", desk, factory, lambda d, a: {})))
-            await asyncio.sleep(3)  # worker back and replaying with the away timer still pending
+            await asyncio.sleep(3)
             assert (await child.describe()).status == WorkflowExecutionStatus.RUNNING
             assert calls == ["open", "normalize", "lock", "close"] and unlocks == [] and reservation() == owner
             assert dt.datetime.now(dt.UTC) < fire_at, "restart took longer than the away timer"
@@ -130,9 +122,8 @@ async def _break_across_restart(tmp_path: Path, unlock_ok: bool) -> None:
             if unlock_ok:
                 done = await asyncio.wait_for(child.result(), 120)
                 assert [(d.template, d.status) for d in done] == [("break", "done"), ("notepad_write_note", "done")]
-                # One lock (before the stop), one unlock (after the timer fired), then the later task, then release.
                 after = ["unlock", "normalize", "run note 0001", "close"]
-            else:  # a failed unlock stops the day: no later task, the abort cleans up and releases, the day fails
+            else:
                 with pytest.raises(WorkflowFailureError):
                     await asyncio.wait_for(child.result(), 120)
                 after = ["unlock", "close"]

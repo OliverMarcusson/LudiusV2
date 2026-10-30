@@ -1,5 +1,3 @@
-"""Word document template: planner validation of the text, the .docx reader and the guest-side done check (offline)."""
-
 from __future__ import annotations
 
 import io
@@ -29,7 +27,6 @@ def _zip(parts: dict[str, str]) -> bytes:
 
 
 def docx(*paragraphs: str, table: str = "") -> bytes:
-    """A minimal document as Word writes it: a paragraph's text split over runs."""
 
     def p(text: str) -> str:
         runs = "".join(f'<w:r><w:t xml:space="preserve">{x}</w:t></w:r>' for x in (text[:3], text[3:]))
@@ -61,13 +58,13 @@ def check(**params: str) -> list[str]:
 
 def test_planner_text() -> None:
     assert check() == []
-    assert check(body="a line\n" * 11)  # bounded
-    assert check(title="two\nlines")  # the title is one paragraph
+    assert check(body="a line\n" * 11)
+    assert check(title="two\nlines")
     for bad in ('say "hi"', "it's done", "q4 - close", "q4 -- close", "half 1/2 done", "1. first", "a) first",
                 "- first", "*bold* word", "under_score", "bl\u00e5", " leading space", "close by octo"):  # fmt: skip
         assert check(body=f"fine line\n{bad}"), bad
-    assert check(body="q3/q4 split and 12% left\nfriday 31/10") == []  # slashes, percent and a full day name
-    assert check(file_name="a/b")  # file names stay under the shared rules
+    assert check(body="q3/q4 split and 12% left\nfriday 31/10") == []
+    assert check(file_name="a/b")
 
 
 def test_docx_reader() -> None:
@@ -80,7 +77,7 @@ def test_docx_reader() -> None:
 
 @pytest.fixture
 def task(monkeypatch: pytest.MonkeyPatch) -> tuple[Task, dict[str, Any]]:
-    disk: dict[str, Any] = {}  # what guestfile.read sees: None = unreadable
+    disk: dict[str, Any] = {}
 
     def read(user: str, rel: str) -> guestfile.GuestFile | None:
         return disk.get("file")
@@ -103,20 +100,20 @@ def saved_snap() -> obs.Snapshot:
 def test_file_done_needs_a_new_file_written_in_the_task(task: tuple[Task, dict[str, Any]]) -> None:
     tk, disk = task
     done = tk.template.subgoals["confirm_save"].done
-    assert tk.values["title_enter"] == TITLE + "\n"  # the title ends in Enter, so the body starts a new paragraph
+    assert tk.values["title_enter"] == TITLE + "\n"
     disk["file"] = guestfile.GuestFile(True, 2_000_000, SAVED)
-    assert check_done(done, saved_snap(), tk, False) is False  # no baseline taken: could be pre-existing
+    assert check_done(done, saved_snap(), tk, False) is False
     assert file_baseline(tk, Policy()) == "Documents\\q4 close memo.docx: already exists, never overwritten"
     disk["file"] = None
     assert file_baseline(tk, Policy()) == "Documents\\q4 close memo.docx: unreadable on the guest"
     disk["file"] = guestfile.GuestFile(False)
     assert file_baseline(tk, Policy()) is None
     disk["file"] = guestfile.GuestFile(True, 2_000_000, SAVED)
-    assert check_done(done, saved_snap(), tk, False) is True  # AutoCorrect's capitals and empty paragraphs fold
-    assert check_done(done, obs.Snapshot(), tk, False) is False  # the title check still applies
+    assert check_done(done, saved_snap(), tk, False) is True
+    assert check_done(done, obs.Snapshot(), tk, False) is False
     disk["file"] = guestfile.GuestFile(True, 999_999, SAVED)
-    assert check_done(done, saved_snap(), tk, False) is False  # written before the task started
-    for wrong in (docx("Q4 close memo", "Accruals are booked by friday"),  # a line missing
+    assert check_done(done, saved_snap(), tk, False) is False
+    for wrong in (docx("Q4 close memo", "Accruals are booked by friday"),
                   docx("Accruals are booked by friday", "Q4 close memo", "Open points go to the review on 31/10"),
                   docx("Q4 close memoAccruals are booked by friday", "Open points go to the review on 31/10"),
                   docx("Q4 close memo", "Accruals are booked by friday", "Open points go to the review on 31/10",
@@ -131,7 +128,7 @@ def test_collisions_and_reserved_paths(task: tuple[Task, dict[str, Any]], tmp_pa
     clash = [w for _, w in validate([item()], templates, [], Policy(), existing=["Documents\\Q4 Close Memo.docx"])]
     assert clash == ["file_name: 'q4 close memo' already exists or is used by another item, choose a different name"]
     two = [item(), item(title="another memo", body="something else to say")]
-    assert [i for i, _ in validate(two, templates, [], Policy())] == [1]  # the second would overwrite the first
+    assert [i for i, _ in validate(two, templates, [], Policy())] == [1]
     scenario = tmp_path / "scenario.yaml"
     scenario.write_text(r"reserved: [{path: 'C:\Users\*\Documents\q4 close memo.docx'}]", encoding="utf-8")
     p = Policy.load(scenario)

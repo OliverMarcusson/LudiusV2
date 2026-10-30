@@ -1,7 +1,7 @@
 task: wordpad_formatted_note
 app: wordpad
-fallback_for: word  # only on a range without Word (planner.installed), like Notepad
-capability: file.write  # creates one new file (writes); manager requests may ask for it
+fallback_for: word
+capability: file.write
 processes:
 - wordpad.exe
 writes:
@@ -35,9 +35,7 @@ variants:
   - name_file
   - confirm_save
   - close_app
-# Run dialog (Win+R) variants are rare (about 5%): few users launch apps that way; it stays in as a lookalike.
 weights: [1, 0.05, 1, 0.05]
-# Word (word_short_document) is the usual document editor; WordPad stays in as a rarer one.
 plan_weight: 0.3
 subgoals:
   open_from_start:
@@ -73,8 +71,6 @@ subgoals:
     text: body
     done:
       typed: true
-      # The whole document, in order: a click that moved the caret into the heading splits or reorders it.
-      # ponytail: the observer trims values to 300 chars, so a longer heading+body can never pass (fails, never false done).
       element:
         role: document
         value: ^{heading}\n{body}\n?$
@@ -95,7 +91,7 @@ subgoals:
   name_file:
     goal: Enter {file_name} as the file name in the Save As dialog
     text: file_name
-    replace: true  # the box may hold a filter (*.txt) or a name typed before
+    replace: true
     done:
       element:
         name: ^File name

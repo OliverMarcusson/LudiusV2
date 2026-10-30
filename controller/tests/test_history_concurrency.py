@@ -1,9 +1,3 @@
-"""The content journal is shared by the nightly planner, a manual `ludius plan day` and the readers of both.
-
-Torn in-flight appends are simulated (half a row, then wait for an event), the way a large write can look to a
-concurrent reader; nothing here sleeps for timing and nothing claims crash safety or power-loss durability.
-"""
-
 from __future__ import annotations
 
 import json
@@ -38,16 +32,14 @@ def no_llm() -> Any:
 
 
 class TornWriter:
-    """A manual save whose journal append stops half-way through a row until `go` is set."""
-
     def __init__(self, world: World, monkeypatch: pytest.MonkeyPatch) -> None:
         self.world, self.mid, self.go, self.error = world, threading.Event(), threading.Event(), None
-        self.waiting = threading.Event()  # a lock waiter went to sleep: it is blocked behind the append
+        self.waiting = threading.Event()
         real = World._append  # pyright: ignore[reportPrivateUsage]
         once: list[int] = []
 
         def append(w: World, plan: DayPlan, values: list[str]) -> None:
-            if once:  # only the manual save tears; a repair appending afterwards is a normal append
+            if once:
                 return real(w, plan, values)
             once.append(1)
             data = "".join(row(plan.date, plan.persona, v) for v in values).encode()
@@ -61,7 +53,7 @@ class TornWriter:
 
         def nap() -> None:
             self.waiting.set()
-            self.go.set()  # the waiter is parked on the lock: let the append finish
+            self.go.set()
 
         monkeypatch.setattr(World, "_append", append)
         monkeypatch.setattr(planner, "_nap", nap)
@@ -118,7 +110,7 @@ def test_repair_waits_out_a_manual_save_and_neither_conflicts_nor_duplicates(
     assert torn.waiting.wait(10)
     repair.join(10)
     writer.join(10)
-    assert torn.error is None and out == [0]  # saw the finished rows: nothing missing, nothing doubled
+    assert torn.error is None and out == [0]
     assert world.history("aberg") == list(QUERIES)
 
 
@@ -127,7 +119,7 @@ def test_a_busy_journal_is_retryable_not_a_corrupt_one(tmp_path: Path, monkeypat
     world = World(tmp_path)
     world.save_narrative(_narrative())
     world.lock_wait = 0
-    world.save_plan(PLAN, {}, new=True)  # the published plan whose rows a retry would repair
+    world.save_plan(PLAN, {}, new=True)
     torn = TornWriter(world, monkeypatch)
     writer = torn.start(src.templates)
     before = world.history_path.read_bytes()
@@ -137,9 +129,9 @@ def test_a_busy_journal_is_retryable_not_a_corrupt_one(tmp_path: Path, monkeypat
     acts = nightly.PlanActivities(tmp_path, cli.plan_sources, no_llm)
     acts.world.lock_wait = 0
     fire = nightly.PlanFire(persona="aberg", tz="UTC", occurrence=_utc(2026, 10, 27, 21))
-    with pytest.raises(HistoryBusy):  # a plain exception: Temporal retries it; only PlanConflict is non-retryable
+    with pytest.raises(HistoryBusy):
         acts.plan(fire)
-    assert world.history_path.read_bytes() == before  # a refused caller wrote nothing
+    assert world.history_path.read_bytes() == before
     torn.go.set()
     writer.join(10)
     assert torn.error is None
@@ -150,7 +142,7 @@ def test_a_busy_journal_is_retryable_not_a_corrupt_one(tmp_path: Path, monkeypat
 def test_a_held_lock_is_not_reentered_by_repair_or_save(tmp_path: Path) -> None:
     src = cli.plan_sources()
     world = World(tmp_path)
-    world.lock_wait = 0  # a nested acquire would fail at once instead of waiting
+    world.lock_wait = 0
     assert world.repair_history(PLAN, src.templates) == 2
     assert world.repair_history(PLAN, src.templates) == 0
     world.save_plan(PLAN, src.templates)
@@ -166,7 +158,7 @@ def test_repair_then_manual_save_keeps_both_personas_and_past_rows_and_may_dupli
     old = row("2026-10-27", "aberg", "an earlier day") + row(DAY, "lnord", QUERIES[1]) + row(DAY, "aberg", "old manual")
     world.history_path.write_text(old, encoding="utf-8", newline="")
     world.repair_history(PLAN, src.templates)
-    world.save_plan(PLAN, src.templates)  # a manual save still appends unconditionally: not exactly-once
+    world.save_plan(PLAN, src.templates)
     assert world.history_path.read_text(encoding="utf-8").startswith(old)
     assert world.history("aberg") == ["an earlier day", "old manual", *QUERIES, *QUERIES]
     assert world.history("lnord") == [QUERIES[1]]
@@ -180,7 +172,7 @@ def test_a_true_corrupt_tail_still_fails_closed_and_releases_the_lock(tmp_path: 
     world.history_path.parent.mkdir(parents=True)
     old = row("2026-10-27", "aberg", "an earlier day") + tail
     world.history_path.write_text(old, encoding="utf-8", newline="")
-    for _ in range(2):  # the second call would be HistoryBusy had the first leaked the lock
+    for _ in range(2):
         with pytest.raises(ValueError, match="line 2 is not a history row"):
             world.history("aberg")
         with pytest.raises(ValueError, match="line 2 is not a history row"):
@@ -209,9 +201,9 @@ def test_another_process_excludes_this_one_and_a_killed_holder_releases(tmp_path
         with pytest.raises(HistoryBusy):
             world.save_plan(PLAN, {})
         assert not world.history_path.exists()
-        p.kill()  # no clean exit: the OS must drop the lock with the process
+        p.kill()
         p.wait(10)
-        world.lock_wait = 10  # Windows frees a dead process's byte lock a moment after exit: wait, bounded
+        world.lock_wait = 10
         assert world.history("aberg") == []
     finally:
         p.kill()

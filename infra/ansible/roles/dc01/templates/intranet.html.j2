@@ -55,7 +55,6 @@ document.getElementById("nav").innerHTML = sections.map(s =>
 
 const STOP = new Set("the and for with from what how are can our new check current about into this that when which who why".split(" "));
 const words = s => s.toLowerCase().match(/[a-z0-9À-ɏ]+/g) || [];
-// Lenient: a query word matches an article word that shares its first five letters (kraft/kraftliner, capitalise/capitalisation).
 const stem = w => w.slice(0, 5);
 function score(a, terms) {
   const field = (text, weight) => { const ws = new Set(words(text).map(stem)); return terms.filter(t => ws.has(t)).length * weight; };
@@ -77,7 +76,7 @@ if (q) {
     list.map(a => `<div class="hit">${link(a)}<p>${snippet(a)}</p><p class="meta">${esc(a.section)} - updated ${esc(a.updated)}</p></div>`).join("") +
     `</div>`;
 } else if (shown) {
-  document.title = `${shown.title} - Intranet page`;  // edge_web_lookup's open_result checks for this ending
+  document.title = `${shown.title} - Intranet page`;
   content.innerHTML = `<article><h1>${esc(shown.title)}</h1><div class="meta">${esc(shown.section)} - owner ${esc(shown.owner)} - updated ${esc(shown.updated)}</div>` +
     shown.body.map(p => `<p>${esc(p)}</p>`).join("") +
     (shown.files.length ? `<h3>Downloads</h3><ul>` + shown.files.map(f => `<li><a href="/files/${encodeURIComponent(f)}" download>${esc(f)}</a></li>`).join("") + `</ul>` : "") +

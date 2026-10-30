@@ -1,9 +1,4 @@
 ---
-# Bare Debian 13 (trixie) -> Proxmox VE 9, per Proxmox's "Install Proxmox VE on Debian 13" guide, then what the
-# range needs: an isolated range bridge (no uplink, no forwarding), a NAT build bridge with DHCP for the image build
-# and srv01's apt, an lvmthin storage for linked clones, vhost-vsock for the guest channel, the ISOs, and an API
-# token for Packer. Reboots whenever the running kernel is not the newest installed Proxmox kernel, so a rerun never
-# skips one; over a local connection it stops and asks the operator to reboot and rerun instead.
 - name: Debian 13
   ansible.builtin.assert:
     that: ansible_distribution == 'Debian' and ansible_distribution_major_version == '13'

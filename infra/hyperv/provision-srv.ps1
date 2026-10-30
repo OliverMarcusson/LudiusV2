@@ -1,10 +1,3 @@
-# Provisions the range server made by new-srv.ps1 over SSH. Samba AD DC: forest corp.ludius.test (NetBIOS CORP)
-# with Samba's internal DNS, bound to the range address only (nothing on the Default Switch NIC), forwarding other
-# names to the server's upstream resolver; chrony as the range's authoritative NTP source on its own clock (no
-# upstream, MS-SNTP signing for members), so time-jump sets range time here first; one AD user per narrative person.
-# Passwords are deliberately simple (owner's request, isolated range): Administrator Admin2026, each person
-# <user>2026, with complexity off; the same for the grommunio mailboxes (AAPI admin: admin / Admin2026). grommunio
-# section below. Re-runnable: existing domain, database and certificates are kept, users are created or reset.
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $cfg = @{}
@@ -23,7 +16,6 @@ foreach ($line in Get-Content (Join-Path $root 'runs\world\narrative.yaml')) {
     elseif ($name -and $line -match '^\s+user:\s*([a-z0-9]+)\s*$') { $people += "$($Matches[1])|$name"; $name = $null }
 }
 if ($people.Count -lt 2) { throw 'no people found in runs\world\narrative.yaml' }
-# Everything substituted into the root script is checked here; the bash side also reads it only as heredoc data.
 $userRe = '^[a-z][a-z0-9._-]*$'
 foreach ($p in $people) {
     $u, $n = $p -split '\|', 2
@@ -166,19 +158,16 @@ ss -lntup | awk 'NR>1 && /:(25|53|88|123|389|443|445|8443) / {print $1, $5}' | s
 '@
 $script = $script.Replace('__PERSONAS__', ($personas -join ' ')).Replace('__ADDR__', $addr).Replace('__PEOPLE__', ($people -join "`n")).Replace("`r`n", "`n")
 $script | ssh -i $key -o UserKnownHostsFile=$known -o StrictHostKeyChecking=accept-new -o BatchMode=yes "ludius@$ip" 'tr -d ''
-'' | sudo bash -s'  # pwsh ends piped stdin with CRLF
+'' | sudo bash -s'
 if ($LASTEXITCODE) { throw "provisioning failed on $vm ($LASTEXITCODE)" }
-# The same key under the name the other host scripts pin (mail.py, set-clock.ps1: HostKeyAlias=ludius-srv01), since
-# srv01's Default Switch address changes when the host reboots.
 if (-not (ssh-keygen -F ludius-srv01 -f $known)) {
     $lines = @(ssh-keygen -F $ip -f $known | Where-Object { $_ -and $_ -notmatch '^#' })
     if (-not $lines) { throw "no host key for $ip in $known" }
     $lines | ForEach-Object { [IO.File]::AppendAllText($known, "ludius-srv01 $(($_ -split ' ', 2)[1])`n") }
 }
-# The domain Administrator password set above, for host scripts that join members (provision-client.ps1).
 if (-not $cfg.LUDIUS_SRV_DC_ADMIN_PASSWORD) {
     $envFile = Join-Path $root '.env'
     $nl = if ((Get-Content -Raw $envFile) -notmatch '
-$') { "`r`n" } else { '' }  # else it joins the last key's value
+$') { "`r`n" } else { '' }
     "${nl}LUDIUS_SRV_DC_ADMIN_PASSWORD=Admin2026" | Add-Content $envFile
 }

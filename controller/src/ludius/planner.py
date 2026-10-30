@@ -1,10 +1,3 @@
-"""Planning layer (spec section 6): company narrative, nightly day plans with all content, near-duplicate check.
-
-The LLM writes the narrative once per range and one plan per persona per day, from the narrative plus the
-actual world state (what the ground truth says happened). Every plan is validated in code before it runs:
-known templates, complete parameters, policy-clean ASCII text, and no content too close to earlier output.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -43,35 +36,33 @@ from ludius.tasks import (
     write_paths,
 )
 
-BREAK = "break"  # pseudo-template: away from the desk, screen locked
-NEAR_DUPLICATE = 0.85  # SequenceMatcher ratio at or above this is "too similar"
-MIN_COMPARE = 12  # shorter values (app names, short queries) may repeat
+BREAK = "break"
+NEAR_DUPLICATE = 0.85
+MIN_COMPARE = 12
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-_PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")  # the virtual keyboard types ASCII only
-VALUE_MAX = 300  # guest observer Snapshotter.MaxValue: longest element value a snapshot carries
+_PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")
+VALUE_MAX = 300
 _NAME_KEYS = ("file_name", "folder_name", "new_name")
-RECYCLE_AGE_DAYS = 3  # file.recycle: only a file no done item wrote for this many days
-OWN_FILES = ("file.edit", "file.recycle", "file.share")  # capabilities acting on one of the persona's own files
-_DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)  # Windows reserved, any extension
-# A meeting (date, start, end): a weekday inside the working day, of a sensible length, soon after the plan's day.
+RECYCLE_AGE_DAYS = 3
+OWN_FILES = ("file.edit", "file.recycle", "file.share")
+_DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)
 WORK_DAY, MEETING_MINUTES, MEETING_DAYS_AHEAD = ("08:00", "17:00"), (15, 120), 14
-# The range chat (Mattermost on chat01): its channels by display name, also read by infra/ansible/roles/chat01.
 CHAT_CHANNELS: list[str] = yaml.safe_load(
     (Path(__file__).resolve().parents[2] / "data" / "chat.yaml").read_text("utf-8")
 )["channels"]
-SHOWN_EXISTING = 80  # existing names listed in the prompt; validation checks all of them
+SHOWN_EXISTING = 80
 
 
 class Person(Strict):
     name: str
     role: str
     department: str
-    user: str = ""  # Windows account when this person is a persona
-    manager: str = ""  # account of the person this one reports to (the org chart); "" for the top
+    user: str = ""
+    manager: str = ""
 
 
 class Event(Strict):
-    date: str  # YYYY-MM-DD
+    date: str
     what: str
 
 
@@ -80,22 +71,17 @@ class Narrative(Strict):
     city: str
     summary: str
     people: list[Person]
-    # Private team channels in the team chat (display name -> member accounts), nobody else in them: the range's
-    # provisioning creates them; their posts are notified like direct messages (ludius.react).
     channels: dict[str, list[str]] = Field(default_factory=dict[str, list[str]])
-    # Team file shares (share name -> member accounts): the range's provisioning makes \\<share host>\<name>, only
-    # the members may change files there (ludius.share).
     shares: dict[str, list[str]] = Field(default_factory=dict[str, list[str]])
     projects: list[str]
     events: list[Event]
-    revised: str = ""  # YYYY-MM-DD of the last weekly revision (spec section 6); "" until the first
+    revised: str = ""
 
-    history: list[Event] = Field(default_factory=list[Event])  # dated world-state updates, one per revision
+    history: list[Event] = Field(default_factory=list[Event])
 
     @model_validator(mode="after")
     def _members(self) -> Narrative:
         users = {p.user for p in self.people if p.user}
-        # The chat's channel handle is the lowercased, dashed name: two channels on one handle would share members.
         handles = [c.lower().replace(" ", "-") for c in [*CHAT_CHANNELS, *self.channels]]
         for name, members in self.channels.items():
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,40}", name) or not set(members) <= users:
@@ -111,22 +97,20 @@ class Narrative(Strict):
 
 
 class PlanItem(TaskInstance):
-    at: str  # HH:MM on the plan's logical timeline
-    minutes: int = 0  # breaks: how long the persona is away
-    interrupt: bool = False  # cuts into the task running at that time, at its next subgoal boundary
-    handoff: str = ""  # colleague's account: the result lands on their later plan as a thread to pick up
-    followup: str = ""  # id of the open follow-up (world_state) this item settles
+    at: str
+    minutes: int = 0
+    interrupt: bool = False
+    handoff: str = ""
+    followup: str = ""
 
     @field_validator("handoff", "followup", mode="before")
     @classmethod
     def _none_is_empty(cls, v: object) -> object:
-        return "" if v is None else v  # the planner writes null for "none"; one null must not drop the whole draft
+        return "" if v is None else v
 
     @field_validator("params", "content", mode="before")
     @classmethod
     def _newlines(cls, v: object) -> object:
-        # Live: a reaction's note body came as \r\n lines, refused as untypable, so the whole reaction was dropped.
-        # Multi-line parameters only: a line break anywhere else stays a rejection.
         if not isinstance(v, dict):
             return v
         return {k: x.replace("\r\n", "\n").replace("\r", "\n") if k in MULTILINE and isinstance(x, str) else x
@@ -141,16 +125,13 @@ class PlanItem(TaskInstance):
 
 
 class Scenario(Strict):
-    """Where an injected scenario lands, so legitimate look-alike work is planned near it (spec section 6)."""
-
-    date: str  # YYYY-MM-DD
-    start: str  # HH:MM
-    end: str  # HH:MM
-    signal: str  # matches Template.resembles: powershell, rdp, macro ...
+    date: str
+    start: str
+    end: str
+    signal: str
 
     @classmethod
     def parse(cls, s: str) -> Scenario:
-        """'2026-10-28T13:00-14:00:powershell'"""
         m = re.fullmatch(r"(\d{4}-\d\d-\d\d)T(\d\d:\d\d)-(\d\d:\d\d):(\w+)", s)
         if not m:
             raise ValueError("scenario must look like 2026-10-28T13:00-14:00:powershell")
@@ -167,8 +148,6 @@ class DayPlan(Strict):
     items: list[PlanItem]
 
 
-# Prompts ------------------------------------------------------------------------------
-
 NARRATIVE_SYSTEM = (
     "You write the backstory of a fictional, ordinary small company for a cyber-defence training range. "
     "It must read as mundane and plausible: real-sounding departments, projects and calendar events. "
@@ -184,16 +163,16 @@ PLAN_SYSTEM = (
 )
 
 
-DERIVED = {"to_name"}  # filled in code from the narrative (fill_recipient_names), never written by the LLM
-MESSAGE_ID = re.compile(r"<[!-;=?-~]{1,200}@[!-;=?-~]{1,100}>")  # an Internet message id, as a request names
-_NOT_A_NAME = re.compile(r"[;,<>@]")  # a display name holding a second recipient or an address
+DERIVED = {"to_name"}
+MESSAGE_ID = re.compile(r"<[!-;=?-~]{1,200}@[!-;=?-~]{1,100}>")
+_NOT_A_NAME = re.compile(r"[;,<>@]")
 
 
 def catalog(templates: dict[str, Template], seed: str = "") -> str:
     lines = [f"- {t.task}: {t.about} Parameters: {', '.join(p for p in t.params if p not in DERIVED) or 'none'}."
              + (f" Plan it rarely, about {t.plan_weight:g} times as often as other tasks." if t.plan_weight < 1 else "")
              for t in templates.values()]  # fmt: skip
-    if seed:  # a fixed (alphabetical) list became every persona's running order; shuffled per persona and day
+    if seed:
         random.Random(seed).shuffle(lines)
     lines.append(f"- {BREAK}: away from the desk (lunch, coffee, meeting), screen locked. Set minutes.")
     return "\n".join(lines)
@@ -229,15 +208,6 @@ def plan_day(
     inbox: set[tuple[str, str]] | None = None,
     owned: dict[str, str] | None = None,
 ) -> tuple[DayPlan, list[str]]:
-    """Draft, validate, ask once to replace rejected items, drop what still fails. Returns the plan and rejects.
-
-    `followups` (id -> what) are open tasks colleagues handed over; each must be scheduled with its id.
-    `mail_threads` (follow-up id -> sender, subject) are the mail ones; `inbox` (sender account, subject) the mails
-    read in the persona's Inbox on the server (listed in `world`): the only mails a reply may answer.
-    `existing` are files and folders already on the persona's profile (names or paths): no item may create or
-    rename to one of them, and an item that still does after the one repair is dropped, never run. `owned`
-    (owned_files) are the files an edit may change.
-    """
     policy = policy or Policy()
     followups = followups or {}
     templates = role_templates(templates, persona)
@@ -348,23 +318,15 @@ def plan_day(
     ] + [f"follow-up {k}: not scheduled, stays open" for k in missing]
 
 
-# Validation ---------------------------------------------------------------------------
-
-
-# A team channel is read only by a chat reaction (ludius.react), which checks the server read marker after.
 REACTION_ONLY = {"chat.read_channel"}
 
 
 def installed(app: str) -> bool:
-    """LUDIUS_APPS: the app profiles the range's guests have (template `app` names, comma-separated); unset: all."""
     apps = os.environ.get("LUDIUS_APPS")
     return apps is None or app in {a.strip() for a in apps.split(",")}
 
 
 def role_templates(templates: dict[str, Template], persona: Persona) -> dict[str, Template]:
-    """Signal-like templates only for personas whose risk profile includes them; templates of apps the range lacks,
-    and stand-ins (fallback_for) for apps it has, never, nor templates needing a controller setting that is unset
-    (a "$NAME" default); the rest are unknown to the plan."""
     return {k: t for k, t in templates.items()
             if (not t.resembles or k in persona.risk_profile) and t.capability not in REACTION_ONLY
             and installed(t.app) and not (t.fallback_for and installed(t.fallback_for))
@@ -389,16 +351,9 @@ def validate(
     owned: dict[str, str] | None = None,
     shares: Iterable[str] = (),
 ) -> list[tuple[int, str]]:
-    """Rejected items with the reason. A reply must answer a mail follow-up in `mail_threads` from its `to`
-    colleague with its subject, or a mail in `inbox` (sender account, subject; an empty subject: any mail from that
-    sender); otherwise no reply is valid. The reply's text is written at task time (ludius.reply). A mail's
-    to_name must be exactly the
-    narrative name (`people`, account -> name) of its `to` colleague. A meeting's date follows the plan's `day`.
-    An edit or recycle changes only one of `owned` (owned_files; None: none known); a recycle only one no item wrote for
-    RECYCLE_AGE_DAYS before `day` and no other item of the day names."""
     rejects: list[tuple[int, str]] = []
     seen = list(history)
-    taken = taken_names(existing)  # grows with each accepted item: a second item with the same name would overwrite
+    taken = taken_names(existing)
     for i, it in enumerate(items):
         why = _check_item(it, templates, seen, policy, user, teams, shares)
         if not why:
@@ -460,9 +415,6 @@ def _owned(it: PlanItem, t: Template, owned: dict[str, str], day: str, items: li
 
 
 def owned_files(root: Path, user: str, before: str) -> dict[str, str]:
-    """Profile-relative paths (casefolded) of the files `user`'s items logged done before `before` left, each with the
-    date a done item last wrote it: each one's declared writes, less what a later one removed (`removes`; a ".*"
-    write keeps the removed file's extension)."""
     templates, world, owned = _templates(), World(root), dict[str, str]()
     for path in sorted(root.glob("plans/*.yaml")):
         date = path.stem[:10]
@@ -484,7 +436,7 @@ def owned_files(root: Path, user: str, before: str) -> dict[str, str]:
             for w in made:
                 if not w.endswith(".*"):
                     owned[w] = date
-                elif len(exts) == 1:  # a moved file keeps its extension; unknown otherwise: not owned
+                elif len(exts) == 1:
                     owned[w[:-2] + exts.pop()] = date
     return owned
 
@@ -494,8 +446,6 @@ def _stem(path: str) -> str:
 
 
 def fill_recipient_names(items: Iterable[PlanItem], people: dict[str, str]) -> None:
-    """Set each mail item's to_name from the narrative (the display name Outlook resolves `to` to), replacing
-    anything the LLM wrote; an unknown account gets none, so the item fails validation."""
     for it in items:
         if "to" in it.params:
             it.content.pop("to_name", None)
@@ -503,8 +453,6 @@ def fill_recipient_names(items: Iterable[PlanItem], people: dict[str, str]) -> N
 
 
 def _recipient(it: PlanItem, colleagues: set[str], people: dict[str, str]) -> str | None:
-    """A mail item's `to` is a colleague's range address, its to_name exactly that colleague's narrative name, and
-    its handoff (if any) is that colleague."""
     values = {**it.params, **it.content}
     to = values.get("to")
     if to is None:
@@ -521,7 +469,6 @@ def _recipient(it: PlanItem, colleagues: set[str], people: dict[str, str]) -> st
 
 
 def _meeting(values: dict[str, str]) -> str | None:
-    """A meeting's date is a weekday (YYYY-MM-DD); start and end (HH:MM) lie in WORK_DAY, MEETING_MINUTES apart."""
     try:
         date = dt.date.fromisoformat(values["date"])
     except ValueError:
@@ -540,7 +487,6 @@ def _meeting(values: dict[str, str]) -> str | None:
 
 
 def _meeting_day(it: PlanItem, day: str) -> str | None:
-    """A meeting is planned after the plan's day (YYYY-MM-DD) and at most MEETING_DAYS_AHEAD days after it."""
     date = {**it.params, **it.content}.get("date")
     if date is None or not day:
         return None
@@ -564,7 +510,6 @@ def _reply_thread(it: PlanItem, threads: dict[str, tuple[str, str]], inbox: set[
 
 
 def _sender(it: PlanItem, colleagues: set[str]) -> str | None:
-    """A mail.read item's sender is a colleague's range address (a narrative person, a manager included)."""
     sender = {**it.params, **it.content}.get("sender")
     if sender is None:
         return None
@@ -573,8 +518,6 @@ def _sender(it: PlanItem, colleagues: set[str]) -> str | None:
 
 
 def _read_mail(it: PlanItem, colleagues: set[str], inbox: set[tuple[str, str]], earlier: list[PlanItem]) -> str | None:
-    """A read opens one mail listed in the Inbox (sender account, exact subject), once a plan; whether it is still
-    unread is checked when the task starts (ludius.reply.to_read)."""
     if why := _sender(it, colleagues):
         return why
     values = {**it.params, **it.content}
@@ -587,21 +530,15 @@ def _read_mail(it: PlanItem, colleagues: set[str], inbox: set[tuple[str, str]], 
 
 
 def targets(it: PlanItem, templates: dict[str, Template]) -> list[tuple[str, str]]:
-    """(param, name) of what the item creates in the profile; the existing file/folder a rename acts on is not one."""
     skip = _refers_to_existing(templates.get(it.template))
     return [(k, v) for k, v in {**it.params, **it.content}.items() if k in _NAME_KEYS and k not in skip]
 
 
 def _leaf(path: str) -> str:
-    return re.split(r"[\\/]", path.strip())[-1].strip().rstrip(" .")  # Windows ignores trailing dot/space
+    return re.split(r"[\\/]", path.strip())[-1].strip().rstrip(" .")
 
 
 def taken_names(paths: Iterable[str], stem: bool = True) -> set[str]:
-    """Casefolded leaf names, each also without a trailing extension: Explorer hides it, and Save As may add one.
-
-    A planned folder keeps its literal name (`finance.receivables` is not `finance.payables`); an inventory entry
-    may be either, so it gets both. ponytail: a dotted planned file name may be over-rejected; costs one repair.
-    """
     out: set[str] = set()
     for p in paths:
         leaf = _leaf(p).casefold()
@@ -634,17 +571,13 @@ def item_problem(
     teams: Iterable[str] = (),
     shares: Iterable[str] = (),
 ) -> str | None:
-    """What makes one item unplayable on its own, checked at generation and again at every plan load: the template
-    and its parameters, typeable values, spreadsheet rows, and files it would create that the scenario reserves
-    (their final path, with the extension the app adds, in `user`'s profile). `teams`: the narrative's team channels
-    `user` is a member of, besides the range's channels; `shares` the narrative's team shares `user` is a member of."""
     if it.template == BREAK:
         return None if 1 <= it.minutes <= 120 else "break needs 1-120 minutes"
     t = templates.get(it.template)
     if t is None:
         return f"unknown template {it.template!r}"
     if "date" in {**it.params, **it.content} and (why := _meeting({**it.params, **it.content})):
-        return why  # first: the template's checks format the date
+        return why
     try:
         task = Task(t, it, random.Random(0))
     except ValueError as e:
@@ -663,9 +596,6 @@ def item_problem(
         if page is None or page != task.values.get("page"):
             return "file_name and page: one download and its page from the intranet downloads list, exactly"
     for name, sg in t.subgoals.items():
-        # The observer reports at most VALUE_MAX chars of a value, so a longer checked value can never pass
-        # (acceptance 20261027-1442: a 381-char WordPad note was retyped until the step budget ran out).
-        # ponytail: counts the filled pattern, a few regex chars over the real text; fine as a cap.
         check = sg.done.element.value if sg.done and sg.done.element else None
         if check and len(task.fmt(check)) > VALUE_MAX:
             return f"{name}: text too long, keep it under {VALUE_MAX - 20} characters in total"
@@ -686,7 +616,7 @@ def item_problem(
         if key.endswith("_name") and re.search(r'[<>:"/\\|?*]', value):
             return f"{key}: not a valid file name"
         if key.endswith("_name") and (value != value.strip() or value.endswith(".") or _DEVICE.fullmatch(value)):
-            return f"{key}: not a valid file name"  # Windows would alias it (trailing dot/space) or reserve it
+            return f"{key}: not a valid file name"
         if r := policy.text_allowed(value, None):
             return f"{key}: {r}"
     for name, sg in t.subgoals.items():
@@ -699,13 +629,10 @@ def item_problem(
 
 
 GRID_ROWS, GRID_COLS, CELL_MAX = 8, 5, 30
-# What Excel stores as typed: text from a letter (no leading = + - @, a formula), or a whole number. Excel turns
-# 1/11, 8:30, 30% or 1,000 into dates, times and numbers; the done check compares stored values and would fail.
 _CELL = re.compile(rf"[A-Za-z][A-Za-z0-9 .,'&/-]{{0,{CELL_MAX - 1}}}|0|[1-9][0-9]{{0,8}}")
 
 
 def _grid(rows: str) -> str | None:
-    """Spreadsheet rows typed from A1 (cells split by tabs): bounded, every cell non-empty and stored as typed."""
     lines = rows.strip("\n").split("\n")
     grid = [line.split("\t") for line in lines]
     if not 1 <= len(grid) <= GRID_ROWS or any(not 1 <= len(r) <= GRID_COLS for r in grid):
@@ -714,30 +641,22 @@ def _grid(rows: str) -> str | None:
         for c, cell in enumerate(row):
             if not _CELL.fullmatch(cell) or cell != cell.strip():
                 return f"cell {cell!r}: a short text starting with a letter, or a whole number"
-            # AutoComplete finishes a text cell that starts a longer text above it in the column.
             above = [g[c].casefold() for g in grid[:r] if c < len(g)]
             if cell[0].isalpha() and any(a != cell.casefold() and a.startswith(cell.casefold()) for a in above):
                 return f"cell {cell!r}: Excel would complete it to a longer cell above it"
     return None
 
 
-MULTILINE = ("body", "rows", "bullets", "bullets2")  # the only parameters that may hold several lines
-OFFICE_LINES = {"body": 10, "bullets": 6, "bullets2": 6}  # line caps of Word and PowerPoint text; other keys: one
+MULTILINE = ("body", "rows", "bullets", "bullets2")
+OFFICE_LINES = {"body": 10, "bullets": 6, "bullets2": 6}
 OFFICE_LINE_MAX = 120
-# What Word and PowerPoint store as typed (the done check reads the saved file). AutoFormat As You Type turns quotes
-# into smart quotes, "--" and " - " into dashes, *x* and _x_ into bold and italic, 1/2 into a fraction and (c) into a
-# symbol, and makes a line starting with -, *, > or "1." / "a)" a list item (the prefix removed). AutoCorrect's
-# capitalisation is folded by the check. ponytail: AutoCorrect's word list ("dont" -> "don't") is not modelled;
-# such a line fails the done check (fails closed), add the words when plans hit them.
 _OFFICE_LINE = re.compile(rf"[A-Za-z0-9][A-Za-z0-9 ,.;:!?&%#+/-]{{0,{OFFICE_LINE_MAX - 1}}}")
 _AUTOFORMAT = re.compile(r"--| -|- |\b[13]/[24]\b|^\w{1,3}[.)] ")
-# Word's AutoComplete offers a month or weekday from its first four letters; the Enter ending the line takes it.
 _COMPLETES = ("january", "february", "march", "april", "june", "july", "august", "september", "october", "november",
               "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")  # fmt: skip
 
 
 def _office_keys(t: Template) -> set[str]:
-    """Parameters a Word or PowerPoint file check reads back."""
     checks = [sg.done.file for sg in t.subgoals.values() if sg.done and sg.done.file]
     text = " ".join([c.paragraphs or "" for c in checks] + [s for c in checks for s in c.slides or []])
     text += " " + " ".join(c.append or "" for c in checks if c.path.lower().endswith(".docx"))
@@ -761,7 +680,6 @@ def _office_text(value: str, max_lines: int) -> str | None:
 
 
 def content_values(it: PlanItem, templates: dict[str, Template]) -> list[str]:
-    """Planner-written text (not template defaults), long enough to compare; a rename's existing source is not new."""
     t = templates.get(it.template)
     keys = (set(t.params) if t else set[str]()) - _refers_to_existing(t)
     return [v for k, v in {**it.params, **it.content}.items() if k in keys and len(v) >= MIN_COMPARE]
@@ -789,11 +707,8 @@ def _norm(s: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", s.lower()))
 
 
-# World state and persistence ------------------------------------------------------------
-
-
 class HistoryBusy(RuntimeError):
-    """The content journal stayed locked past `World.lock_wait`: retryable, says nothing about the journal."""
+    pass
 
 
 def _nap() -> None:
@@ -801,9 +716,7 @@ def _nap() -> None:
 
 
 class World:
-    """Range state on disk: narrative, content history and per-day ground truth (runs/ is gitignored)."""
-
-    lock_wait = 10.0  # seconds a journal reader or writer waits for another before HistoryBusy
+    lock_wait = 10.0
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -815,7 +728,7 @@ class World:
 
     def save_narrative(self, n: Narrative) -> Path:
         _dump(self.narrative_path, n.model_dump())
-        if n.revised:  # each weekly revision is also kept, dated, so the range's story can be replayed
+        if n.revised:
             _dump(self.root / "world" / "revisions" / f"{n.revised}.yaml", n.model_dump())
         return self.narrative_path
 
@@ -826,7 +739,6 @@ class World:
         return self.root / "days" / f"{date}-{user}.jsonl"
 
     def save_plan(self, plan: DayPlan, templates: dict[str, Template], *, new: bool = False) -> Path:
-        """new=True never replaces an existing plan file (FileExistsError), even one written concurrently."""
         path = self.plan_path(plan.persona, plan.date)
         _dump(path, plan.model_dump(exclude_defaults=True), mode="x" if new else "w")
         with self._journal():
@@ -834,14 +746,7 @@ class World:
         return path
 
     def repair_history(self, plan: DayPlan, templates: dict[str, Template]) -> int:
-        """Append the plan's content values missing from the journal; returns how many were appended.
-
-        Recovers a crash after the plan was published but before (or during) its history append. Matched as a
-        multiset per (date, persona), so repeated repair appends nothing and rows of an overwritten manual plan
-        or of another persona stay as they are. Existing rows are never rewritten; an unreadable journal raises
-        ValueError before anything is written.
-        """
-        with self._journal():  # read + append as one step: a manual save landing between them is seen, not doubled
+        with self._journal():
             have = Counter(r["text"] for r in self._rows() if (r["date"], r["persona"]) == (plan.date, plan.persona))
             missing: list[str] = []
             for v in (v for it in plan.items for v in content_values(it, templates)):
@@ -858,12 +763,6 @@ class World:
 
     @contextmanager
     def _journal(self) -> Generator[None]:
-        """Cross-process lock over the journal (readers, appends, repair), so no one reads a half-written append.
-
-        Not reentrant: _rows and _append are the unlocked halves and must only run inside it. The OS drops it with
-        the process; a crash mid-append still leaves a torn tail, which readers keep refusing (no fsync or rollback).
-        ponytail: only lock-taking writers are excluded; bounded poll, a fair queue if contention ever matters.
-        """
         path = self.root / "world" / "content.lock"
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_RDWR | os.O_CREAT)
@@ -886,7 +785,7 @@ class World:
                     _nap()
             yield
         finally:
-            os.close(fd)  # closing drops the lock
+            os.close(fd)
 
     def _rows(self) -> list[dict[str, str]]:
         if not self.history_path.exists():
@@ -907,13 +806,12 @@ class World:
         with self.history_path.open("a+b") as f:
             if f.seek(0, os.SEEK_END):
                 f.seek(-1, os.SEEK_END)
-                if f.read(1) != b"\n":  # never glue a new row onto an unterminated last line
+                if f.read(1) != b"\n":
                     f.write(b"\n")
             for v in values:
                 f.write((json.dumps({"date": plan.date, "persona": plan.persona, "text": v}) + "\n").encode())
 
     def summary(self, user: str, before: dt.date, days: int = 3) -> str:
-        """What really happened on the persona's last few days, from the day ground-truth logs."""
         out: list[str] = []
         for d in sorted(self.root.glob(f"days/*-{user}.jsonl")):
             day = d.name[:10]
@@ -932,13 +830,6 @@ class World:
         )
 
     def threads(self, user: str, before: dt.date, days: int = 3) -> list[str]:
-        """Cross-persona threads (spec section 6): colleagues' completed items handed off to this user.
-
-        Joins other personas' plans (handoff) with their day logs (item_end done), so an item that failed or
-        never ran creates no thread.
-        """
-        # ponytail: a thread stays visible for `days` days and is not marked answered; track replies explicitly
-        # once templates with real round trips (mail, shared documents) exist.
         start = (before - dt.timedelta(days=days)).isoformat()
         out: list[str] = []
         for path in sorted(self.root.glob("plans/*.yaml")):
@@ -958,8 +849,6 @@ class World:
 
 
 def day_records(log: Path) -> Generator[dict[str, Any]]:
-    """A day ground-truth log's records. A line that doesn't parse (a worker killed mid-write) is skipped: it
-    proves nothing, so whatever it would have recorded stays unknown, and the other personas still plan."""
     for line in log.read_text(encoding="utf-8").splitlines():
         try:
             r = json.loads(line) if line.strip() else None
@@ -970,7 +859,6 @@ def day_records(log: Path) -> Generator[dict[str, Any]]:
 
 
 def done_slots(log: Path) -> set[tuple[str, str]]:
-    """(at, template) of every item the log ends "done"."""
     if not log.exists():
         return set()
     return {(str(r["at"]), str(r["template"])) for r in day_records(log)
@@ -978,21 +866,11 @@ def done_slots(log: Path) -> set[tuple[str, str]]:
 
 
 def load_plan(path: Path, *, history: bool = False) -> DayPlan:
-    """Every entry point (day, worker, nightly reuse, world state) loads plans here, so each item's own checks
-    (item_problem, under the LUDIUS_SCENARIO policy; a meeting's date against the plan's) and mail recipients are
-    checked here too: each mail or meeting item's `to`
-    must be a colleague and its to_name exactly their name in the narrative beside the plan
-    (<root>/world/narrative.yaml for <root>/plans/<plan>.yaml). No narrative: a plan with mail is refused.
-    """
     plan = DayPlan.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
-    # (at, template) is an item's identity in day logs and world state: two alike share one outcome. Such a plan is
-    # never played; read as history (older plans), its ambiguous items are dropped: their outcome is unknown.
     if dup := {k for k, n in Counter((it.at, it.template) for it in plan.items).items() if n > 1}:
         if not history:
             raise ValueError(f"{path}: items share a time and template: {sorted(dup)}")
         plan = plan.model_copy(update={"items": [it for it in plan.items if (it.at, it.template) not in dup]})
-    # The plan as written may never have passed generation (hand-edited, older code): the item checks run again.
-    # An unknown template can't be played at all; validate() reports it with the role's template set.
     policy, templates = Policy.from_env(), _templates()
     narrative = path.parent.parent / "world" / "narrative.yaml"
     world = Narrative.model_validate(yaml.safe_load(narrative.read_text("utf-8"))) if narrative.exists() else None
@@ -1026,17 +904,13 @@ def _templates() -> dict[str, Template]:
 
 
 def _dump(path: Path, data: Any, mode: str = "w") -> None:
-    """mode "w" rewrites in place; mode "x" publishes the complete bytes atomically and never replaces `path`."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=110)  # serialize before touching disk
+    text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=110)
     if mode == "w":
         with path.open("w", encoding="utf-8") as f:
             f.write(text)
         return
     assert mode == "x", mode
-    # Write a same-directory temp, then os.link it into place: link creation is atomic and fails with
-    # FileExistsError if `path` exists (NTFS and POSIX alike), so a concurrent winner is never overwritten
-    # and `path` is either absent or complete. Filesystems without hard links fail closed (no replace fallback).
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -1048,7 +922,7 @@ def _dump(path: Path, data: Any, mode: str = "w") -> None:
         except FileExistsError:
             raise
         except OSError as e:
-            if path.exists():  # Windows can report an existing target as an access error
+            if path.exists():
                 raise FileExistsError(errno.EEXIST, "plan already exists", str(path)) from e
             raise OSError(f"cannot publish {path} atomically without replacing: hard links unavailable ({e})") from e
     finally:

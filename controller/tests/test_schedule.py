@@ -41,7 +41,6 @@ def test_schedule_is_paused_bounded_and_never_overlaps() -> None:
 
 
 def test_occurrence_date_and_plan_identity_are_explicit(tmp_path: Path) -> None:
-    # Midnight and the repeated Stockholm autumn hour use the intended occurrence, not worker wall time.
     assert durable.plan_date(dt.datetime(2026, 10, 26, 23, 30, tzinfo=dt.UTC), "Europe/Stockholm") == "2026-10-27"
     for hour in (0, 1):
         assert durable.plan_date(dt.datetime(2026, 10, 25, hour, 30, tzinfo=dt.UTC), "Europe/Stockholm") == "2026-10-25"
@@ -65,7 +64,7 @@ def test_intended_occurrence_drives_child_id_even_after_midnight(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    at = dt.datetime(2026, 10, 26, 22, 45, tzinfo=dt.UTC)  # local23:45, not delayed-next-day wall time
+    at = dt.datetime(2026, 10, 26, 22, 45, tzinfo=dt.UTC)
     attrs = TypedSearchAttributes(
         [SearchAttributePair(SearchAttributeKey.for_datetime("TemporalScheduledStartTime"), at)]
     )
@@ -98,14 +97,14 @@ def test_day_offset_plays_a_later_dates_plan(tmp_path: Path) -> None:
     folder = tmp_path / "plans"
     folder.mkdir()
     (folder / "2026-10-28-aberg.yaml").write_text("persona: aberg\ndate: '2026-10-28'\nitems: []\n", encoding="utf-8")
-    at = dt.datetime(2026, 10, 27, 18, 30, tzinfo=dt.UTC)  # local 19:30 on the 27th
+    at = dt.datetime(2026, 10, 27, 18, 30, tzinfo=dt.UTC)
     s = durable.schedule_for("aberg", "19:30", "Europe/Stockholm", "time-jump", day_offset=1)
     assert isinstance(s.action, ScheduleActionStartWorkflow)
     sched = s.action.args[0]
     assert isinstance(sched, durable.ScheduledInput) and sched.day_offset == 1
     day = scheduled.load_day(tmp_path, "aberg", scheduled.Fire(schedule=sched, occurrence=at))
     assert day.plan.date == "2026-10-28" and day.clock == "time-jump" and day.utc_offset_s == 3600
-    with pytest.raises(FileNotFoundError, match="no plan"):  # default offset 0 keeps the fire's own date
+    with pytest.raises(FileNotFoundError, match="no plan"):
         scheduled.load_day(tmp_path, "aberg", scheduled.Fire(schedule=durable.ScheduledInput(
             persona="aberg", tz="Europe/Stockholm"), occurrence=at))  # fmt: skip
 
@@ -147,19 +146,18 @@ def test_worker_reservation_survives_shutdown_and_rejects_competing_days(
 
     acts = scheduled.WorkerActivities(tmp_path, "aberg", desk, factory, canary)
     acts.prepare(inp)
-    acts.close()  # process shutdown: close resources, keep workflow reservation
+    acts.close()
     assert scheduled.DayOwner(desk).read() is not None
     original = list(calls)
     other = inp.model_copy(update={"plan": plan.model_copy(update={"date": "2026-10-28"})})
     info.workflow_id = durable.workflow_id(other.plan)
     with pytest.raises(ValueError, match="reserved"):
         acts.prepare(other)
-    acts.abort()  # a failed competing prepare cannot reset/release the original day
+    acts.abort()
     assert calls == original and scheduled.DayOwner(desk).read() is not None
 
     info.workflow_id = durable.workflow_id(plan)
     resumed = scheduled.WorkerActivities(tmp_path, "aberg", desk, factory, canary)
-    # A restarted worker loads its frozen input when the next slot arrives, without replaying day_start.
     assert resumed.slot(durable.SlotInput(date=plan.date, item=plan.items[0]))[0].status == "done"
     resumed.finish(
         durable.DayEnd(plan=plan, done=[durable.Done(at="09:00", template="notepad_write_note", status="done")])
@@ -203,7 +201,7 @@ def test_new_workflow_failure_boundaries_always_abort(fail: str, monkeypatch: py
     )
     with pytest.raises(RuntimeError, match=fail):
         asyncio.run(durable.PersonaDay().run(inp))
-    assert calls[-1] == "day_abort"  # compressed days also release their active context, not only jumped clocks
+    assert calls[-1] == "day_abort"
 
 
 def test_one_shot_worker_refuses_another_dates_activity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -226,7 +224,7 @@ def test_one_shot_worker_refuses_another_dates_activity(tmp_path: Path, monkeypa
         with pytest.raises(ValueError, match="another dated workflow"):
             acts.slot(durable.SlotInput(date="2026-10-28", item=plan.items[0]))
         acts.abort()
-        assert calls == []  # rejected work must neither touch the desktop nor reset its clock
+        assert calls == []
     finally:
         log.close()
 
@@ -234,8 +232,6 @@ def test_one_shot_worker_refuses_another_dates_activity(tmp_path: Path, monkeypa
 def test_unopenable_runner_still_releases_a_day_without_a_jumped_clock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Prepare claims, then the runner cannot open (wrong logon, agent down). Abort must not need that runner
-    # for a realtime day, or every retry fails and the desktop stays reserved by a failed workflow forever.
     plan = DayPlan(persona="aberg", date="2026-10-27", items=[note("09:00")])
     info = SimpleNamespace(workflow_namespace="default", workflow_id=durable.workflow_id(plan))
     monkeypatch.setattr(scheduled.activity, "info", lambda: info)
@@ -253,8 +249,7 @@ def test_unopenable_runner_still_releases_a_day_without_a_jumped_clock(
             acts.prepare(durable.DayInput(plan=plan, clock=clock, utc_offset_s=0))
         acts.abort()
         assert not acts.owner.path.exists()
-    assert opened == ["realtime", "compressed"]  # abort never reopened the runner
-    # A time-jump day may have a jumped clock this process cannot reset: fail closed, keep the reservation.
+    assert opened == ["realtime", "compressed"]
     with pytest.raises(RuntimeError):
         acts.prepare(durable.DayInput(plan=plan, clock="time-jump", utc_offset_s=0))
     with pytest.raises(RuntimeError):
@@ -263,8 +258,6 @@ def test_unopenable_runner_still_releases_a_day_without_a_jumped_clock(
 
 
 def test_retried_day_end_after_release_is_a_no_op(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # day_end released the reservation but its completion was lost; the retry must neither fail forever
-    # nor finish (reset/log) again, even when the next day already owns the desktop.
     calls: list[str] = []
     plan = DayPlan(persona="aberg", date="2026-10-27", items=[])
     info = SimpleNamespace(workflow_namespace="default", workflow_id=durable.workflow_id(plan))
@@ -329,14 +322,14 @@ def test_reservation_inspect_is_a_dry_run_and_clear_needs_both_confirmations(tmp
         return S.TERMINATED
 
     out = scheduled.reconcile(desk, lease, status, _no_reset)
-    assert asked == [("default", "day-aberg-2026-10-27")]  # exact namespace/workflow identity
+    assert asked == [("default", "day-aberg-2026-10-27")]
     assert out["clearable"] and not out["cleared"] and out["workflow"] == "TERMINATED"
     assert scheduled.DayOwner(desk).read() is not None
     for confirm in [("vm2", OWNER), ("vm1", "default/day-aberg-2026-10-28"), ("vm1", "other/day-aberg-2026-10-27")]:
         with pytest.raises(ValueError, match="repeat"):
             scheduled.reconcile(desk, lease, status, _no_reset, confirm=confirm)
     assert scheduled.DayOwner(desk).read() is not None
-    _lease(lease, 3600)  # orphaned lease of the dead controller: the reset (which drops it) precedes the clear
+    _lease(lease, 3600)
     out = scheduled.reconcile(desk, lease, status, lambda: resets.append("reset"), confirm=("vm1", OWNER))
     assert out["cleared"] and resets == ["reset"] and scheduled.DayOwner(desk).read() is None
     with pytest.raises(ValueError, match="no reservation"):
@@ -344,7 +337,7 @@ def test_reservation_inspect_is_a_dry_run_and_clear_needs_both_confirmations(tmp
 
 
 def _unreachable(ns: str, wid: str) -> S:
-    raise RuntimeError("connection refused")  # also NOT_FOUND (missing workflow) and timeouts
+    raise RuntimeError("connection refused")
 
 
 @pytest.mark.parametrize("result", [S.RUNNING, S.CONTINUED_AS_NEW, None, "raise"])
@@ -366,10 +359,10 @@ def _closed(ns: str, wid: str) -> S:
 
 def test_reservation_clear_refuses_held_desk_changed_owner_live_lease_and_failed_reset(tmp_path: Path) -> None:
     desk, lease, inp = _reserve(tmp_path)
-    with durable.desk_lock(desk), pytest.raises(durable.DeskBusy):  # a worker/controller owns the desktop
+    with durable.desk_lock(desk), pytest.raises(durable.DeskBusy):
         scheduled.reconcile(desk, lease, _closed, _no_reset)
 
-    def swap(ns: str, wid: str) -> S:  # a different owner appears while the server is queried
+    def swap(ns: str, wid: str) -> S:
         other = scheduled.Reservation(owner="default/day-aberg-2026-10-28", day=inp)
         scheduled.DayOwner(desk).path.write_text(other.model_dump_json(), "utf-8")
         return S.COMPLETED
@@ -380,10 +373,10 @@ def test_reservation_clear_refuses_held_desk_changed_owner_live_lease_and_failed
     scheduled.DayOwner(desk).path.unlink()
     _reserve(tmp_path)
 
-    _lease(lease, 5)  # another live controller still renews this VM's clock lease: never reset its clock
+    _lease(lease, 5)
     with pytest.raises(ValueError, match="live controller"):
         scheduled.reconcile(desk, lease, _closed, _no_reset, confirm=("vm1", OWNER))
-    lease.write_text("{partial", "utf-8")  # a malformed lease fails closed as live
+    lease.write_text("{partial", "utf-8")
     with pytest.raises(ValueError, match="live controller"):
         scheduled.reconcile(desk, lease, _closed, _no_reset, confirm=("vm1", OWNER))
 
@@ -394,12 +387,12 @@ def test_reservation_clear_refuses_held_desk_changed_owner_live_lease_and_failed
 
     with pytest.raises(subprocess.CalledProcessError):
         scheduled.reconcile(desk, lease, _closed, failed_reset, confirm=("vm1", OWNER))
-    assert scheduled.DayOwner(desk).read() is not None and lease.exists()  # both kept for the sweeper/retry
+    assert scheduled.DayOwner(desk).read() is not None and lease.exists()
 
 
 def test_reservation_without_a_jumped_clock_clears_without_reset(tmp_path: Path) -> None:
     desk, lease, _ = _reserve(tmp_path, "compressed")
-    _lease(lease, 5)  # irrelevant: a compressed day never jumped this clock
+    _lease(lease, 5)
     out = scheduled.reconcile(desk, lease, _closed, _no_reset, confirm=("vm1", OWNER))
     assert out["cleared"] and scheduled.DayOwner(desk).read() is None and lease.exists()
 
@@ -441,11 +434,10 @@ def test_reservation_cli_defaults_to_inspect_and_queries_the_exact_namespace(
     cli.main([*base, "clear", "--temporal", "h:7233", "--confirm-vm", "vm1", "--confirm-owner", OWNER])
     assert len(calls) == 2 and calls[-1]["confirm"] == ("vm1", OWNER)
     with pytest.raises(SystemExit):
-        cli.main([*base, "clear"])  # --temporal is required: no server status, no clear
+        cli.main([*base, "clear"])
 
 
 def test_day_offset_is_bounded_time_jump_only_and_takes_the_target_days_dst_offset(tmp_path: Path) -> None:
-    # Review of 64325f3: realtime would hold the desktop a day, huge offsets overflowed, DST kept the fire's offset.
     cases: list[tuple[durable.Clock, int]] = [("realtime", 1), ("time-jump", -1), ("time-jump", 8)]
     for clock, n in cases:
         with pytest.raises(ValueError, match="day-offset"):
@@ -454,6 +446,6 @@ def test_day_offset_is_bounded_time_jump_only_and_takes_the_target_days_dst_offs
     folder.mkdir()
     (folder / "2026-03-29-aberg.yaml").write_text("persona: aberg\ndate: '2026-03-29'\nitems: []\n", encoding="utf-8")
     sched = durable.ScheduledInput(persona="aberg", tz="Europe/Stockholm", clock="time-jump", day_offset=1)
-    at = dt.datetime(2026, 3, 28, 18, 30, tzinfo=dt.UTC)  # 19:30 CET; the 29th is CEST
+    at = dt.datetime(2026, 3, 28, 18, 30, tzinfo=dt.UTC)
     day = scheduled.load_day(tmp_path, "aberg", scheduled.Fire(schedule=sched, occurrence=at))
     assert day.plan.date == "2026-03-29" and day.utc_offset_s == 7200

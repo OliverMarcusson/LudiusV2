@@ -1,16 +1,3 @@
-"""Persona-to-persona interactions for the monitor's popups (`range interactions`), by rule from recorded effects only.
-
-Never from a plan: an interaction is an effect the range recorded or verified.
-- mail, reply, invite: an item_end with status done whose template sends (capability mail.send, mail.reply,
-  calendar.invite). Its done check proved the mail or meeting in the recipient's mailbox on the server, so the
-  item's planned `to` is the verified recipient; it counts when that is another range persona's address.
-- request: a manager's request (ludius.requests) with status sent (written only after the server-side delivery
-  succeeded) from one persona to another. Its record has no send time: the record file's write time stands in.
-- request_done: a request_check that found the work matching a request from a persona manager.
-A file handoff has no template yet, so none is detected. The subject is the label: planner text, shown on the local
-monitor page only and never sent to a model.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -31,16 +18,15 @@ MAX_READ = 8 << 20
 
 @dataclass
 class Interaction:
-    id: str  # stable across passes and restarts: a log line's identity or a request's Message-ID
-    personas: list[str]  # from, to
-    kind: str  # mail, reply, invite, request, request_done
+    id: str
+    personas: list[str]
+    kind: str
     label: str
-    host: str  # when it happened on the host (ISO, UTC); for a request, when its record was written
-    logical: str | None  # the personas' clock: the item's slot, or the request's day
+    host: str
+    logical: str | None
 
 
 def kinds(templates: Path = TEMPLATES) -> dict[str, str]:
-    """Template name -> interaction kind, for the templates whose capability sends to someone."""
     out: dict[str, str] = {}
     for p in templates.glob("*.yaml"):
         try:
@@ -64,7 +50,6 @@ def _iso(ms: float) -> str:
 
 def from_day_log(log: Path, sender: str, personas: set[str], sends: dict[str, str],
                  requests: dict[str, dict[str, Any]]) -> list[Interaction]:  # fmt: skip
-    """The interactions one persona's day log records. `requests`: Message-ID -> request record."""
     out: list[Interaction] = []
     try:
         with log.open("rb") as f:
@@ -99,7 +84,6 @@ def from_day_log(log: Path, sender: str, personas: set[str], sends: dict[str, st
 
 
 def sent_requests(requests_dir: Path) -> dict[str, tuple[dict[str, Any], float]]:
-    """Message-ID -> (request, its record file's write time in ms) for every request recorded as sent."""
     out: dict[str, tuple[dict[str, Any], float]] = {}
     for p in requests_dir.glob("2*.yaml"):
         try:
@@ -118,13 +102,10 @@ def sent_requests(requests_dir: Path) -> dict[str, tuple[dict[str, Any], float]]
 
 @dataclass
 class Tracker:
-    """New interactions since the last pass, each written once to `out` (runs/monitor-interactions.jsonl); a
-    restart reads it back and repeats none."""
-
     days: Path
     personas: list[str]
     out: Path
-    requests_dir: Path | None = None  # runs/world/requests, default beside days/
+    requests_dir: Path | None = None
     sends: dict[str, str] = field(default_factory=kinds)
     recent: list[Interaction] = field(default_factory=list[Interaction])
     _seen: set[str] | None = None
@@ -159,7 +140,7 @@ class Tracker:
             except OSError:
                 continue
             if user not in users or self._mtimes.get(log) == mtime:
-                continue  # unchanged since the last pass: nothing new in it
+                continue
             self._mtimes[log] = mtime
             found += from_day_log(log, user, users, self.sends, records)
         new = [i for i in found if i.id not in self._seen]

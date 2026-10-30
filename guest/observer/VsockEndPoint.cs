@@ -3,21 +3,17 @@ using System.Runtime.InteropServices;
 
 namespace Ludius.Observer;
 
-// vsock for the virtio-win viosock Winsock provider (Proxmox guests), straight through ws2_32: .NET 10's
-// Socket.Accept fails with WSAEINVAL (10022) on this provider, while socket/bind/listen/accept called directly on the
-// same provider work (box test 2026-10-29). SOCKADDR_VM: family, reserved, port, cid, zero[4]. The provider
-// registers its own address family; 40 (AF_VSOCK) unless `netsh winsock show catalog` says otherwise (--vsock-family).
 sealed partial class VsockListener : IDisposable
 {
-    const uint AnyCid = 0xFFFFFFFF; // VMADDR_CID_ANY
+    const uint AnyCid = 0xFFFFFFFF;
     static readonly nint Invalid = -1;
     readonly nint s;
 
     public VsockListener(int family, uint port)
     {
-        var wsa = new byte[512]; // WSADATA
+        var wsa = new byte[512];
         if (WSAStartup(0x0202, wsa) != 0) throw new SocketException(WSAGetLastError());
-        s = WSASocketW(family, 1 /* SOCK_STREAM */, 0, 0, 0, 0);
+        s = WSASocketW(family, 1 , 0, 0, 0, 0);
         if (s == Invalid) throw new SocketException(WSAGetLastError());
         var a = new byte[16];
         BitConverter.TryWriteBytes(a.AsSpan(0, 2), (ushort)family);
@@ -31,7 +27,6 @@ sealed partial class VsockListener : IDisposable
         }
     }
 
-    // Blocks until the host connects; the stream owns the connection.
     public Stream Accept()
     {
         var c = accept(s, 0, 0);

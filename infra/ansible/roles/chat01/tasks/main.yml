@@ -1,10 +1,4 @@
 ---
-# chat01 on stock Debian 13 (range-chat.yml, uplink attached): the range's Slack. Mattermost Team Edition on local
-# Postgres, behind nginx at http://chat.<domain>. Sign-in is the persona's Windows logon: nginx checks its Kerberos
-# ticket (SPNEGO, dc01's keytab for HTTP/chat.<domain>) and the SSO shim (files/chat-sso.py) hands it to Mattermost as
-# GitLab OAuth; email and username sign-in are off, so no password is ever typed. Mattermost, the shim and Postgres
-# listen on loopback only; no mail leaves (email notifications off) and nothing is fetched (link previews, plugins
-# and telemetry off). The clock follows dc01 (chrony, any step): Kerberos needs it within 5 minutes of the personas'.
 - name: Packages
   ansible.builtin.apt:
     name: [postgresql, nginx, libnginx-mod-http-auth-spnego, chrony, python3, curl]
@@ -27,7 +21,6 @@
     content: |
       server {{ srv01_ip }} iburst minpoll 4 maxpoll 6
       makestep 1 -1
-      # dc01 (Windows, NoSync local clock) claims ~10 s dispersion, over chrony's 3 s default; Kerberos allows 5 min.
       maxdistance 16
       driftfile /var/lib/chrony/chrony.drift
   register: chrony_conf

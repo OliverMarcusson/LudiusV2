@@ -1,5 +1,3 @@
-"""Planner LLM through OpenRouter chat completions. Per range, per day, per task; never per action."""
-
 from __future__ import annotations
 
 import json
@@ -12,7 +10,7 @@ from pydantic import BaseModel, ValidationError
 from ludius import calls
 
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash-1017"  # every chat completion; LUDIUS_PLANNER_MODEL overrides
+DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash-1017"
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
 
@@ -36,8 +34,6 @@ class LlmClient:
     def json[M: BaseModel](
         self, cls: type[M], system: str, user: str, temperature: float = 0.9, attempts: int = 2
     ) -> M:
-        """One JSON answer validated as `cls`; a validation error goes back to the model once (attempts=1: never,
-        exactly one request)."""
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system + "\nAnswer with one JSON object only, no prose, no code fence."},
             {"role": "user", "content": user},
@@ -70,8 +66,6 @@ class LlmClient:
             raise LlmError(f"unexpected response: {str(data)[:300]}") from e
 
     def post(self, body: dict[str, Any]) -> dict[str, Any]:
-        """One chat completion as sent, counted nowhere (callers count it: calls.count, or a budget of their own);
-        the whole response, its cost added to self.cost."""
         r = self._http.post(ENDPOINT, json=body)
         if r.status_code != 200:
             raise LlmError(f"OpenRouter {r.status_code}: {r.text[:300]}")

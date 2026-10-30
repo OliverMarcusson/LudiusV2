@@ -1,4 +1,3 @@
-# Saves the guest console as a PNG through Hyper-V's thumbnail API (no guest software).
 param([string]$VMName = 'ludius-win10-01', [string]$Out = "$PSScriptRoot\build\screen.png", [int]$Width = 1920, [int]$Height = 1080)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing

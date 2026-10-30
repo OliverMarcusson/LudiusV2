@@ -1,8 +1,4 @@
 ---
-# accessibility, machine part (provision-java.ps1): Temurin JRE with the Java Access Bridge, JAVA_HOME and the
-# JavaSoft key the observer uses to find WindowsAccessBridge-64.dll. The per-persona .accessibility.properties and
-# keyboard cues are written by ux_noise after the persona's first logon. The repo's fixture apps (Timesheet, Ledger)
-# are test fixtures and stay out of the range image.
 - name: Temurin JRE installer
   ansible.windows.win_get_url:
     url: "{{ temurin_msi_url }}"

@@ -1,6 +1,3 @@
-# Managed by infra/ansible (proxmox_host role).
-# {{ range_bridge }}: the range. No ports, no forwarding in or out: persona VMs and srv01's range NIC reach only each
-# other and this host (Ansible, the host agent). Only the host and the controller reach OpenRouter.
 auto {{ range_bridge }}
 iface {{ range_bridge }} inet static
     address {{ range_net }}.1/24
@@ -10,7 +7,6 @@ iface {{ range_bridge }} inet static
     post-up iptables -I FORWARD -i {{ range_bridge }} -j DROP; iptables -I FORWARD -o {{ range_bridge }} -j DROP
     pre-down iptables -D FORWARD -i {{ range_bridge }} -j DROP; iptables -D FORWARD -o {{ range_bridge }} -j DROP
 
-# {{ build_bridge }}: NAT to the uplink, for the golden-image build and srv01's package installs. No persona VM is on it.
 auto {{ build_bridge }}
 iface {{ build_bridge }} inet static
     address 10.78.0.1/24

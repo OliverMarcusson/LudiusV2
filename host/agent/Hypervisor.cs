@@ -2,14 +2,12 @@ using System.Text.RegularExpressions;
 
 namespace Ludius.HostAgent;
 
-// What the gRPC service, the monitor and the feed need from a hypervisor (spec section 4). Hyper-V and Proxmox
-// implement it; nothing above this line knows which one runs.
 interface IHypervisor
 {
-    string Backend { get; } // "hyperv" or "proxmox": reported by Info, never branched on above this line
+    string Backend { get; }
     VmHandle Get(string name);
     Task Move(VmHandle vm, int x, int y, uint durationMs, CancellationToken ct);
-    Task Click(VmHandle vm, int button, uint count, CancellationToken ct); // 1 left, 2 right, 3 middle
+    Task Click(VmHandle vm, int button, uint count, CancellationToken ct);
     void Key(VmHandle vm, uint vk, bool down);
     Task Chord(VmHandle vm, IReadOnlyList<uint> keys, CancellationToken ct);
     Task Type(VmHandle vm, string text, uint meanMs, uint jitterMs, CancellationToken ct);
@@ -18,7 +16,7 @@ interface IHypervisor
     Task<string> Lifecycle(string vm, Ludius.V1.LifecycleRequest.Types.Op op, string checkpoint, string target, CancellationToken ct);
     (byte[] Png, int Width, int Height) Screenshot(VmHandle vm);
     List<VmInfo> ListVms();
-    byte[] Frame(string name, int maxWidth); // view only: a JPEG or PNG the monitor can decode
+    byte[] Frame(string name, int maxWidth);
 }
 
 class VmHandle
@@ -27,7 +25,7 @@ class VmHandle
     public required GuestChannel Channel;
     public readonly SemaphoreSlim InputGate = new(1, 1);
     public (int X, int Y)? Pointer;
-    public (int W, int H)? Screen; // guest resolution as the observer last reported it
+    public (int W, int H)? Screen;
 }
 
 public sealed record VmInfo(string Name, string State, int Width, int Height);
@@ -40,11 +38,8 @@ static partial class VmName
     public static bool Valid(string name) => Safe().IsMatch(name);
 }
 
-// Shared by both backends so they move and type alike.
 static class Human
 {
-    // A slightly curved, eased path rather than a teleport or a ruler line. Stays inside the box spanned by start
-    // and target and never at 0: Hyper-V rejects off-screen points (32773) and ignores (0, 0).
     public static IEnumerable<(int X, int Y)> Path((int X, int Y)? from, int x, int y, int steps)
     {
         double bend = (Random.Shared.NextDouble() - 0.5) * 0.25;
@@ -66,7 +61,6 @@ static class Human
     public static int Steps((int X, int Y)? from, uint durationMs) =>
         from is null || durationMs < 30 ? 1 : (int)Math.Clamp(durationMs / 15, 2, 60);
 
-    // Heavy-ish tail: mostly near the mean, sometimes a pause.
     public static int KeyDelay(uint meanMs, uint jitterMs)
     {
         double delay = meanMs + (Random.Shared.NextDouble() * 2 - 1) * jitterMs;

@@ -1,7 +1,4 @@
 ---
-# One persona VM (p: user, vmid, ip from range-vms.yml). Ownership was checked before anything ran. Isolation is set on
-# every run, before any start (range-nic-only.yml), and the effective config is asserted: one NIC, on the range bridge,
-# vsock CID = VM id.
 - name: Linked clone into the range pool, ludius-{{ p.user }}
   ansible.builtin.command: qm clone {{ template_vmid }} {{ p.vmid }} --name ludius-{{ p.user }} --pool {{ range_pool }}
   when: (p.vmid | int) not in pve_vms
@@ -30,13 +27,10 @@
   changed_when: start.rc == 0
   failed_when: start.rc != 0 and 'already running' not in start.stderr
 
-# From here the clone may hold the bring-up admin: the teardown in range-up.yml covers it whatever happens next.
 - name: Mark the clone for teardown, ludius-{{ p.user }}
   ansible.builtin.set_fact:
     bootstrapped: "{{ (bootstrapped | default([])) + [p.vmid] }}"
 
-# After first-boot setup the guest agent runs this as SYSTEM: static range address, srv01 as DNS, the per-range
-# bring-up admin (password on stdin, never on a command line), WinRM on with default settings.
 - name: Range address, bring-up admin and WinRM through the guest agent
   ansible.builtin.command:
     argv: [qm, guest, exec, "{{ p.vmid }}", --pass-stdin, "1", --timeout, "120", --, powershell.exe, -NoProfile,

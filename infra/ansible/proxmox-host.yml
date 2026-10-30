@@ -1,14 +1,11 @@
 ---
-# Bare Debian 13 -> Proxmox VE node for the range. Run from any Linux/WSL control node:
-#   ansible-playbook -i <box ip>, -u root proxmox-host.yml
 - name: Proxmox node
   hosts: all
   vars:
-    build_dns: 1.1.1.1 # resolver handed to the build bridge
-    thin_vg: vg0 # the installimage LVM volume group with free space
+    build_dns: 1.1.1.1
+    thin_vg: vg0
     thin_pool_extents: 90%FREE
     virtio_win_iso_url: https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.271-1/virtio-win-0.1.271.iso
-    # The golden image's own virtio-win: 0.1.271 has no viosock (the observer's vsock driver), 0.1.302 has it.
     golden_virtio_iso_url: https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/archive-virtio/virtio-win-0.1.302-1/virtio-win-0.1.302.iso
     golden_virtio_iso_sha256: 303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d
   roles:

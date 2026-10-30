@@ -5,9 +5,6 @@ using System.Text.Json.Nodes;
 
 namespace Ludius.HostAgent;
 
-// QEMU Machine Protocol over the VM's Unix socket (/var/run/qemu-server/<vmid>.qmp). One connection per batch of
-// commands: QEMU serves one QMP client at a time on that socket and Proxmox (qm, pvestatd) needs it too, so a held
-// connection would stall the node's own status queries.
 sealed class Qmp(string path)
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
@@ -15,11 +12,10 @@ sealed class Qmp(string path)
     public async Task<JsonNode?> Execute(string command, JsonObject? arguments, CancellationToken ct) =>
         (await Run([(command, arguments)], ct))[0];
 
-    // passFd: a file descriptor sent along with the first command (SCM_RIGHTS), as getfd expects.
     public async Task<List<JsonNode?>> Run(IReadOnlyList<(string Command, JsonObject? Arguments)> commands, CancellationToken ct, int passFd = -1)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(Timeout); // a busy socket accepts but never greets: give up rather than queue forever
+        cts.CancelAfter(Timeout);
         using var s = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         try { await s.ConnectAsync(new UnixDomainSocketEndPoint(path), cts.Token); }
         catch (SocketException e) { throw new IOException($"QMP socket {path}: {e.Message} (VM off?)", e); }
@@ -39,12 +35,9 @@ sealed class Qmp(string path)
         return results;
     }
 
-    // The monitor's console capture (Captures): one end of a new socket pair goes to QEMU as a VNC client (getfd +
-    // add_client, skipauth), so Proxmox's VNC password and config stay untouched; the QMP connection closes right after.
-    // View-only by use, not by QEMU: RfbWriter is what keeps the client from sending input. Linux only (SCM_RIGHTS).
     public async Task<Stream> VncClient(CancellationToken ct)
     {
-        const string name = "ludius-monitor"; // a leftover from a failed call is replaced by the next getfd
+        const string name = "ludius-monitor";
         var (ours, theirs) = Unix.Pair();
         try
         {
@@ -57,7 +50,7 @@ sealed class Qmp(string path)
             ours.Dispose();
             throw;
         }
-        finally { Unix.Close(theirs); } // QEMU holds its own copy now
+        finally { Unix.Close(theirs); }
     }
 
     static byte[] Message(string command, JsonObject? arguments)
@@ -70,7 +63,6 @@ sealed class Qmp(string path)
     static async Task Send(Stream s, string command, JsonObject? arguments, CancellationToken ct) =>
         await s.WriteAsync(Message(command, arguments), ct);
 
-    // Asynchronous events can arrive between a command and its answer: skip them.
     static async Task<JsonNode?> Reply(StreamReader r, CancellationToken ct)
     {
         while (true)
@@ -85,7 +77,6 @@ sealed class Qmp(string path)
         (await r.ReadLineAsync(ct) ?? throw new IOException("QMP: connection closed")) is var line
         && JsonNode.Parse(line) is JsonObject o ? o : throw new IOException("QMP: not a JSON object");
 
-    // input-send-event building blocks (QAPI InputEvent).
     public static JsonObject Abs(string axis, int value) =>
         new() { ["type"] = "abs", ["data"] = new JsonObject { ["axis"] = axis, ["value"] = value } };
 
@@ -98,7 +89,6 @@ sealed class Qmp(string path)
     public static JsonObject Events(params JsonObject[] events) => new() { ["events"] = new JsonArray(events) };
 }
 
-// libc for what .NET sockets lack: socketpair and sendmsg with SCM_RIGHTS (x86-64/arm64 Linux struct layouts).
 static class Unix
 {
     [StructLayout(LayoutKind.Sequential)]
@@ -114,7 +104,7 @@ static class Unix
     public static (Socket Ours, int Theirs) Pair()
     {
         var fds = new int[2];
-        if (socketpair(1 /* AF_UNIX */, 1 | 0x80000 /* SOCK_STREAM | SOCK_CLOEXEC */, 0, fds) != 0)
+        if (socketpair(1 , 1 | 0x80000 , 0, fds) != 0)
             throw new IOException($"socketpair: errno {Marshal.GetLastPInvokeError()}");
         return (new Socket(new SafeSocketHandle(fds[0], ownsHandle: true)), fds[1]);
     }
@@ -125,17 +115,17 @@ static class Unix
     {
         var pin = GCHandle.Alloc(data, GCHandleType.Pinned);
         var iov = Marshal.AllocHGlobal(Marshal.SizeOf<IoVec>());
-        var control = Marshal.AllocHGlobal(24); // CMSG_SPACE(sizeof(int))
+        var control = Marshal.AllocHGlobal(24);
         try
         {
             Marshal.StructureToPtr(new IoVec { Base = pin.AddrOfPinnedObject(), Length = (nuint)data.Length }, iov, false);
-            Marshal.WriteInt64(control, 0, 20); // cmsg_len = CMSG_LEN(sizeof(int))
-            Marshal.WriteInt32(control, 8, 1); // SOL_SOCKET
-            Marshal.WriteInt32(control, 12, 1); // SCM_RIGHTS
+            Marshal.WriteInt64(control, 0, 20);
+            Marshal.WriteInt32(control, 8, 1);
+            Marshal.WriteInt32(control, 12, 1);
             Marshal.WriteInt32(control, 16, fd);
             Marshal.WriteInt32(control, 20, 0);
             var msg = new MsgHdr { Iov = iov, IovLength = 1, Control = control, ControlLength = 24 };
-            var sent = sendmsg(s.SafeHandle.DangerousGetHandle(), ref msg, 0x4000 /* MSG_NOSIGNAL */);
+            var sent = sendmsg(s.SafeHandle.DangerousGetHandle(), ref msg, 0x4000 );
             if (sent != data.Length) throw new IOException($"QMP sendmsg: {(sent < 0 ? $"errno {Marshal.GetLastPInvokeError()}" : "short write")}");
         }
         finally
@@ -147,8 +137,6 @@ static class Unix
     }
 }
 
-// Windows virtual-key codes (what the controller sends, see controller keys.py) to QEMU qcodes, and printable ASCII
-// to keys on a US layout: the guests' layout (ux_noise role). Hyper-V's TypeText makes the same assumption.
 static class Keys
 {
     static readonly Dictionary<uint, string> Qcodes = Build();
@@ -180,7 +168,6 @@ static class Keys
     const string Unshifted = "`1234567890-=[]\\;',./";
     const string Shifted = "~!@#$%^&*()_+{}|:\"<>?";
 
-    // The qcode for one character and whether it needs shift.
     public static (string Qcode, bool Shift) ForChar(char c) => c switch
     {
         '\n' => ("ret", false),

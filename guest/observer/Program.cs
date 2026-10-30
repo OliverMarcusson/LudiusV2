@@ -5,12 +5,8 @@ using Interop.UIAutomationClient;
 using Ludius.Observer;
 using Ludius.V1;
 
-// Read-only UIA observer for one interactive session. Started at logon by a
-// scheduled task; serves one host connection at a time over a Hyper-V socket, or
-// vsock with `--transport vsock` (Proxmox, virtio-win viosock driver).
-// Writes nothing to disk. `--once` prints one settled snapshot as JSON (dev only).
 #if WATCHDOG_TEST
-const string Version = "0.1.0-watchdogtest"; // the hooks in Observe exist only in this build
+const string Version = "0.1.0-watchdogtest";
 #else
 const string Version = "0.1.0";
 #endif
@@ -19,12 +15,9 @@ return ListSelfTest.Run();
 #endif
 var service = Guid.Parse(Arg("--service") ?? "000011cb-facb-11e6-bd58-64006a7986d3");
 
-// Only in a user's interactive session: session 0 cannot see the desktop.
 Native.ProcessIdToSessionId((uint)Environment.ProcessId, out var ownSession);
 if (ownSession == 0 && !args.Contains("--once")) return 2;
 
-// One observer per session: a new instance (daily restart) asks the running one to quit and takes over. The
-// running one finishes its request and waits for a quiet link first, so the swap falls between tasks when it can.
 var dog = new Watchdog(() => Environment.TickCount64);
 using var quit = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\RangeAssistQuit");
 using var single = new Mutex(false, @"Local\RangeAssist");
@@ -39,7 +32,6 @@ if (!args.Contains("--once"))
         for (var waited = 0; waited < 120_000 && !dog.Idle(10_000); waited += 250) Thread.Sleep(250);
         Environment.Exit(0);
     }) { IsBackground = true }.Start();
-    // A hang or a run of failures becomes a crash; the task's crash trigger starts a fresh observer.
     new Thread(() =>
     {
         while (true)
@@ -51,11 +43,11 @@ if (!args.Contains("--once"))
 }
 
 var uia = (IUIAutomation2)new CUIAutomation8();
-uia.ConnectionTimeout = 2000;  // a hung app becomes an unresponsive window,
-uia.TransactionTimeout = 3000; // not a frozen observer
+uia.ConnectionTimeout = 2000;
+uia.TransactionTimeout = 3000;
 bool uiAccess = Native.SelfUiAccess();
-JavaBridge.Start(); // no JRE: Java windows stay UIA-only
-dog.Begin(); // startup registers UIA event handlers in every app: a hang there is a fault too
+JavaBridge.Start();
+dog.Begin();
 Watchdog.Step = "startup: settle handlers";
 var settle = new Settle(uia);
 dog.End(ok: true);
@@ -69,12 +61,10 @@ if (args.Contains("--once"))
     return 0;
 }
 
-// Hyper-V socket on the observer's service id, or vsock on the port that id encodes (its first field, as in
-// Hyper-V's VSOCK template 0000xxxx-facb-11e6-bd58-64006a7986d3), from any CID: only the host can connect.
 if (Arg("--transport") is null or "hyperv")
 {
     using var listener = new Socket(HyperVEndPoint.Family, SocketType.Stream, HyperVEndPoint.RawProtocol);
-    listener.Bind(new HyperVEndPoint(Guid.Empty, service)); // HV_GUID_WILDCARD
+    listener.Bind(new HyperVEndPoint(Guid.Empty, service));
     listener.Listen(1);
     while (true)
     {
@@ -134,8 +124,6 @@ void Serve(Stream conn)
 Snapshot Observe(SnapshotRequest r)
 {
 #if WATCHDOG_TEST
-    // Test build only. These quiet_ms values drive the real watchdog: 4242 hangs this request past the 60 s
-    // limit; 4243 fails it, and five in a row trip the failure rule.
     if (r.QuietMs == 4242) Thread.Sleep(Timeout.Infinite);
     if (r.QuietMs == 4243) throw new InvalidOperationException("injected watchdog test failure");
 #endif
@@ -148,7 +136,6 @@ Snapshot Observe(SnapshotRequest r)
     return snap;
 }
 
-// Frames: u32 little-endian length, then the protobuf message.
 static void Send(Stream s, IMessage m)
 {
     var body = m.ToByteArray();

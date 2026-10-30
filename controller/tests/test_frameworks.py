@@ -1,6 +1,3 @@
-"""Framework handling seam (spec section 3): what the controller offers for the observer's virtualized-list hint
-and for Chromium documents, on the recorded Start menu snapshot."""
-
 from test_fixtures import load
 
 from ludius.cli import ROOT
@@ -17,7 +14,6 @@ def _scrolls(snap: obs.Snapshot) -> list[str]:
 
 def test_scroll_offered_only_for_a_continuing_list_or_a_document() -> None:
     snap, *_ = load(ROOT / "fixtures" / "start-menu")
-    # Recorded hint, then the current observer wording: both say the list continues.
     assert any("list continues" in h for e in snap.elements for h in e.hints)
     assert _scrolls(snap) == ["scroll down", "scroll up"]
     for e in snap.elements:

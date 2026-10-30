@@ -1,8 +1,4 @@
 ---
-# The range DNS server (dc01 for exchange, srv01 for grommunio, VM srv01_vmid at srv01_ip) is every persona's default
-# gateway, so it must never forward: with an uplink attached, a forwarding gateway would route the range out. Enforced,
-# then read back; any failure fails the task (callers run it before they attach an uplink or hand out the gateway).
-# Runs on localhost: dc01 through the guest agent, srv01 over ssh (it has no guest agent).
 - name: Gateway does not forward (dc01)
   when: mail_backend == 'exchange'
   ansible.builtin.command:
@@ -43,7 +39,6 @@
         if [ -n "$bad" ]; then echo "srv01 forwards: $bad" >&2; exit 1; fi
       delegate_to: srv01
       become: true
-      # Unreachable would end localhost's run; the check below fails it instead.
       ignore_unreachable: true
       register: gw_linux
       changed_when: "'changed' in gw_linux.stdout | default('')"

@@ -1,7 +1,3 @@
-# Send a colleague one direct message in the team chat (Mattermost on chat01, web app in Edge, Kerberos SSO): small
-# talk, asking them for something (the plan's handoff makes it their follow-up, ludius.world_state), or telling them
-# the asked work is done. Effect: one direct message to a range colleague (noise never deletes it). Done checks are
-# the Decider's; the send is guarded in code: Enter only while the focused box holds exactly the planned line.
 task: chat_direct_message
 app: edge
 capability: chat.dm
@@ -13,10 +9,8 @@ example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga, message: coul
 variants:
   - [open_edge_start, open_chat, open_conversation, write_message, send_message, close_edge]
   - [open_edge_taskbar, open_chat, open_conversation, write_message, send_message, close_edge]
-  # Reactions only (ludius.react): answer in the chat the read left open.
   - [open_edge_taskbar, open_chat, open_conversation, write_message, send_message]
 weights: [1, 1, 0]
-# Enter in the message box sends (a leftover draft too): only the guarded send_message subgoal may press it there.
 key_commits: [{keys: Enter, focus: {name: "^(Write to |Reply to this thread)"}}]
 budget_steps: 40
 budget_minutes: 8
@@ -35,7 +29,7 @@ subgoals:
     goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click the GitLab button (it signs in with the Windows account; never type a password)"
     text: chat_url
     keys: [Ctrl+L, Enter]
-    replace: true  # a retry replaces what the address bar holds, never appends to it
+    replace: true
     field: "^Address and search bar$"
     done: {ask: "Is the Mattermost team chat open and signed in, showing its list of channels?"}
   open_conversation:
@@ -46,8 +40,7 @@ subgoals:
   write_message:
     goal: "Type the message into the message box at the bottom of the conversation with {to_name}: {message}"
     text: message
-    replace: true  # a draft left in the box (Mattermost keeps them) is replaced, never sent along
-    # The box itself, read fresh: Mattermost re-renders its textarea, so `typed` lost it and typed the line twice.
+    replace: true
     done: {element: {name: "^Write to {to_name}$", focused: true, value: "^{message}$"}}
   send_message:
     goal: "Send the message with Enter"

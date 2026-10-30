@@ -1,12 +1,9 @@
-# Write a short note in Notepad and save it in Documents.
-# Variants cover launch method (Start search vs Run: different parent process,
-# UserAssist and RunMRU artifacts) and UI path (Ctrl+S vs File menu).
 task: notepad_write_note
 app: notepad
-capability: file.write  # creates one new file (writes); manager requests may ask for it
+capability: file.write
 processes: [notepad.exe]
 writes: ['Documents\{file_name}.txt']
-fallback_for: word  # a plain note only on a range without Word (planner.installed); with Word, Word's templates
+fallback_for: word
 params: [file_name, body]
 about: "Write a short plain-text note in Notepad and save it to Documents. file_name: without extension; body: the note text (ASCII, several lines)."
 defaults: {launch_query: notepad}
@@ -15,9 +12,7 @@ variants:
   - [open_from_start, write_body, save_shortcut, name_file, confirm_save, close_app]
   - [open_from_run, write_body, save_menu, name_file, confirm_save, close_app]
   - [open_from_start, write_body, save_menu, name_file, confirm_save, close_app]
-  # Mistake: a stray key at the end of the file name, removed with Backspace before saving.
   - [open_from_run, write_body, save_shortcut, name_file_typo, fix_file_name, confirm_save, close_app]
-# Run dialog (Win+R) variants are rare (about 5%): few users launch apps that way; it stays in as a lookalike.
 weights: [1, 0.05, 1, 0.025]
 budget_steps: 40
 budget_minutes: 8
@@ -49,12 +44,12 @@ subgoals:
   name_file:
     goal: "Enter {file_name} as the file name in the Save As dialog"
     text: file_name
-    replace: true  # the box may hold a filter (*.txt) or a name typed before
+    replace: true
     done: {typed: true, element: {name: "^File name", value: '^{file_name}(\.txt)?$'}}
   name_file_typo:
     goal: "Enter {file_name_typo} as the file name in the Save As dialog"
     text: file_name_typo
-    replace: true  # the box may hold a filter (*.txt) or a name typed before
+    replace: true
     done: {typed: true, element: {name: "^File name", value: '^{file_name_typo}$'}}
   fix_file_name:
     goal: "The file name ends with a stray character; press Backspace once so it reads {file_name}"
@@ -62,22 +57,10 @@ subgoals:
     done: {element: {name: "^File name", value: '^{file_name}(\.txt)?$'}}
   confirm_save:
     goal: "Save the file as {file_name}"
-    # Explorer hides known extensions by default, so the title may lack ".txt".
     done: {window: {process: notepad.exe, title: '^{file_name}(\.txt)? - Notepad$'}}
   close_app:
     goal: "Close Notepad"
     done: {window: {process: notepad.exe, absent: true}}
-# Pixels-only mode (agreed with Mochi). Values come from real OCR on the recorded fixtures
-# (runs/visual/20261026-222911-pixels-anchor-inputs.txt): desktop and Start out of scope, all three Notepad
-# screens in. Matching ignores case and whitespace. confirm_save is from a real saved title on the guest
-# (runs/visual/20261026-223919-saved-title.txt): OCR reads Notepad's title icon as a leading glyph
-# ("I pixels-title-... - Notepad"), so up to two characters may precede the file name.
-# write_body: the body's first line ({body_head}: its first 24 characters) as its own row, as typed text reads on
-# the guest (runs/visual/20261026-230211-pixels-walk.txt: 'pixels walk'@221,261). The unsaved star only supplements
-# it, since any edit sets it. This proves a visible prefix of the body, not that the whole body landed intact.
-# File name rows: the field's value reads as its own row beside 'File name:' (same walk: the typed path
-# 'C:\Users\aberg\Documents\pixels-walk-...'@352,683; '*.txt' before typing). A same-named file listed in the
-# folder would also match; the saved-title check of confirm_save still fails closed then.
 pixels:
   title: '-Notepad$'
   anchors: ['^FileEditFormatView|Doyouwanttosavechanges']
@@ -94,9 +77,5 @@ pixels:
     close_app: {absent: ['-Notepad$'], present: ['ypeheretosearch|RecycleBin']}
   hints:
     write_body: "If nothing else was clicked since Notepad opened, try typing at the keyboard focus."
-    # Evidence (runs/visual/20261027-focus-evidence-run1-ABC.txt, run2-C2.txt; UIA ground truth, zero Decisions calls): a fresh
-    # Ctrl+S puts the keyboard focus in the File name field with '*.txt' selected, so typing replaces it. After
-    # clicking the Encoding control and then the 'File name:' label the focus stays on Encoding, and typing changed
-    # Encoding to UTF-16 LE while the file name stayed '*.txt'. Alt+N did not move focus back.
     name_file: "If nothing was clicked since the Save As dialog opened, type the name right away: the File name field already has the keyboard focus. Do not click the Encoding control or the 'File name:' label first; that moves the focus away from the field."
     name_file_typo: "If nothing was clicked since the Save As dialog opened, type the name right away: the File name field already has the keyboard focus. Do not click the Encoding control or the 'File name:' label first; that moves the focus away from the field."

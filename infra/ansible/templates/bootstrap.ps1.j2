@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $s = Get-ItemProperty HKLM:\SYSTEM\Setup
-if ($s.SystemSetupInProgress -or $s.OOBEInProgress) { exit 3 }  # first-boot setup still running: retried
+if ($s.SystemSetupInProgress -or $s.OOBEInProgress) { exit 3 }
 $pw = [Console]::In.ReadToEnd().Trim()
-if ($pw.Length -lt 12) { exit 5 }  # no password on stdin
+if ($pw.Length -lt 12) { exit 5 }
 $n = Get-NetAdapter -Physical | Where-Object Status -eq Up | Select-Object -First 1
 if (-not $n) { exit 4 }
 if (-not (Get-NetIPAddress -InterfaceIndex $n.ifIndex -IPAddress {{ ip }} -ErrorAction SilentlyContinue)) {
@@ -10,10 +10,6 @@ if (-not (Get-NetIPAddress -InterfaceIndex $n.ifIndex -IPAddress {{ ip }} -Error
     Get-NetIPAddress -InterfaceIndex $n.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false
     New-NetIPAddress -InterfaceIndex $n.ifIndex -IPAddress {{ ip }} -PrefixLength 24 | Out-Null
 }
-# Default gateway: the range DNS server (dc01 or srv01), a host that does not forward, so nothing leaves the range
-# through it (enforced and read back by tasks/gateway-no-forwarding.yml before any clone gets here or it gets an uplink). Outlook refuses Exchange on an adapter without a gateway ("does not have a default gateway"), and with
-# an on-link default NLA reports no traffic and Outlook stays offline; the node (.1) is no option, its FORWARD chain
-# passes tailscale0 before the range DROP.
 $gw = Get-NetRoute -InterfaceIndex $n.ifIndex -DestinationPrefix 0.0.0.0/0 -PolicyStore PersistentStore -ErrorAction SilentlyContinue
 if (@($gw).Count -ne 1 -or $gw.NextHop -ne '{{ srv01_ip }}') {
     Get-NetRoute -InterfaceIndex $n.ifIndex -DestinationPrefix 0.0.0.0/0 -ErrorAction SilentlyContinue | Remove-NetRoute -Confirm:$false
@@ -21,7 +17,6 @@ if (@($gw).Count -ne 1 -or $gw.NextHop -ne '{{ srv01_ip }}') {
     New-NetRoute -InterfaceIndex $n.ifIndex -DestinationPrefix 0.0.0.0/0 -NextHop {{ srv01_ip }} | Out-Null
 }
 Set-DnsClientServerAddress -InterfaceIndex $n.ifIndex -ServerAddresses {{ srv01_ip }}
-# Per-range bring-up admin: made or re-enabled here with the vault's password; disabled again after bring-up.
 $sp = ConvertTo-SecureString $pw -AsPlainText -Force
 $u = '{{ range_admin_user }}'
 if (Get-LocalUser $u -ErrorAction SilentlyContinue) { Set-LocalUser $u -Password $sp; Enable-LocalUser $u }

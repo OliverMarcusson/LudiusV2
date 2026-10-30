@@ -1,17 +1,3 @@
-"""Range clock on a Proxmox range (spec section 7, time-jump): every range VM on one logical time, DC first.
-
-dc01 is the range's time source (w32time NoSync, announced reliable PDC; roles/dc01) and every member follows the
-domain hierarchy (NT5DS), so a member set to the DC's time stays there: KVM has no Hyper-V-style integration time
-sync, and nothing pushes host time into a guest unless asked (`guest-set-time`, which this never calls). Each VM is
-set through the QEMU guest agent (`qm guest exec`, the controller runs on the box as root): dc01 first, then ex01 and
-the personas in parallel, each to the DC's instant at that moment. A set is verified: every VM within MAX_SKEW_S of
-the DC, else it raises (the caller resets). Per-persona jumps can't exist on this range: 8 personas share one DC
-and a member more than 5 min off it loses Kerberos.
-
-Forward only: a set behind the DC's clock is refused (AD and Exchange don't go back in time). reset() does go back,
-to the box's UTC; after a warp the range is rolled back to its pre-warp snapshot anyway.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -22,15 +8,12 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
-MAX_SKEW_S = 60.0  # spec of the warp test; Kerberos breaks at 300
-POOL = "ludius"  # the range pool (host agent Proxmox__Pool)
-Exec = Callable[[int, str], str]  # (vmid, PowerShell) -> stdout; raises on failure
+MAX_SKEW_S = 60.0
+POOL = "ludius"
+Exec = Callable[[int, str], str]
 
 
 def qm_exec(vmid: int, script: str) -> str:
-    """PowerShell in a guest over the QEMU guest agent; a nonzero exit or a hung agent raises. `qm` itself fails now
-    and then (exit 255) with the agent fine a moment later: three attempts. A retried set lands a few seconds
-    late, inside MAX_SKEW_S, and the member's w32time pulls it to the DC."""
     argv = ["qm", "guest", "exec", str(vmid), "--timeout", "60", "--", "powershell", "-NoProfile", "-NonInteractive",
             "-Command", script]  # fmt: skip
     out = subprocess.run(argv, capture_output=True, text=True, timeout=90)
@@ -47,11 +30,6 @@ def qm_exec(vmid: int, script: str) -> str:
     return str(res.get("out-data", ""))
 
 
-# Epoch milliseconds in and out: no agreement on time zones needed. The guest prints its UTC after setting. The time
-# PowerShell took to start (seconds on a busy persona) is added, so a member lands on the DC's instant. It is measured
-# on the guest's wall clock, so a set from an earlier call still running in the guest (qm gave up waiting, the guest
-# process did not) can make it days long or negative: outside 0-30 s it counts as 0 (live: a reset landed a VM 4.3
-# days in the past).
 _SET = ("$e = (Get-Date) - [Diagnostics.Process]::GetCurrentProcess().StartTime; "
         "if ($e.TotalSeconds -lt 0 -or $e.TotalSeconds -gt 30) {{ $e = [TimeSpan]::Zero }}; "
         "Set-Date ([DateTimeOffset]::FromUnixTimeMilliseconds({ms}).LocalDateTime + $e) | Out-Null; ")  # fmt: skip
@@ -61,15 +39,12 @@ _NOW = "[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()"
 @dataclass
 class RangeClock:
     dc: int
-    members: list[int]  # ex01 and the personas
+    members: list[int]
     run: Exec = qm_exec
     now: Callable[[], float] = time.time
-    # VMIDs that are not range VMs right now -> why (violations() over a fresh pvesh read); checked before every
-    # set and reset, not once: a VMID can leave the pool or be renamed during a multi-hour warp.
     verify: Callable[[], dict[int, str]] = lambda: {}
 
     def offsets(self) -> dict[int, float]:
-        """Each VM's clock minus the box's, in seconds."""
         vms = [self.dc, *self.members]
         with ThreadPoolExecutor(len(vms)) as pool:
             return dict(zip(vms, pool.map(self._offset, vms), strict=True))
@@ -77,10 +52,9 @@ class RangeClock:
     def _offset(self, vmid: int) -> float:
         t0 = self.now()
         guest = int(self.run(vmid, _NOW).strip()) / 1000
-        return guest - (t0 + self.now()) / 2  # measured at the midpoint of the call
+        return guest - (t0 + self.now()) / 2
 
     def set(self, at: dt.datetime) -> dict[int, float]:
-        """Every VM to `at` (aware), DC first; returns the verified offsets. Refuses to go back in time."""
         if at.tzinfo is None:
             raise ValueError("range clock needs an aware datetime")
         if bad := self.verify():
@@ -92,9 +66,6 @@ class RangeClock:
         return self._apply(target - self.now())
 
     def reset(self) -> dict[int, float]:
-        """Every VM back to the box's UTC, DC first (the members follow it again). Tries every VM whatever fails
-        (a DC whose agent is down must not keep the members jumped) and raises all errors together at the end.
-        A VM that fails the range check is skipped and reported; if the check itself fails, nothing is touched."""
         try:
             bad = self.verify()
         except Exception as e:
@@ -115,7 +86,6 @@ class RangeClock:
                     raise
                 errors.append(f"VM {vmid}: {e}")
 
-        # Each VM to box time + offset at the moment its command is built: the members land on the DC's instant.
         def set_one(vmid: int) -> str:
             return self.run(vmid, _SET.format(ms=int((self.now() + offset) * 1000)) + _NOW)
 
@@ -145,8 +115,6 @@ class RangeClock:
 def violations(
     expected: dict[int, str], resources: Sequence[Mapping[str, object]], node: str, pool: str = POOL
 ) -> dict[int, str]:
-    """The VMIDs that are not a VM (not a template) in the range pool on this node with their expected name, and why.
-    `resources` is `pvesh get /cluster/resources --type vm`."""
     seen = {int(str(r["vmid"])): r for r in resources if "vmid" in r}
     bad: dict[int, str] = {}
     for vmid, name in expected.items():
@@ -160,7 +128,6 @@ def violations(
 
 
 def confine(expected: dict[int, str], resources: Sequence[Mapping[str, object]], node: str, pool: str = POOL) -> None:
-    """Every VMID a range VM (violations()), else refuse before anything is touched."""
     if bad := violations(expected, resources, node, pool):
         raise ValueError("range clock refused, not range VMs: " + "; ".join(f"{k}: {v}" for k, v in bad.items()))
 

@@ -6,25 +6,20 @@ option csharp_namespace = "Ludius.V1";
 
 import "ludius/v1/observation.proto";
 
-// One host agent per hypervisor host. The controller never learns which
-// hypervisor is behind it.
 service HostAgent {
   rpc Input(InputRequest) returns (InputResult);
   rpc Observe(ObserveRequest) returns (ObserveResult);
   rpc Lifecycle(LifecycleRequest) returns (LifecycleResult);
   rpc Screenshot(ScreenshotRequest) returns (ScreenshotResult);
-  // A guest file through the observer (done-checks). UNIMPLEMENTED when the VM's observer predates read_file.
   rpc ReadGuestFile(GuestFileRequest) returns (FileContent);
-  // Which hypervisor and host this agent drives. Only for refusing host-local fallbacks (PowerShell Direct, the
-  // Hyper-V clock scripts) when the VM is not on this host's Hyper-V; the controller's VM work never branches on it.
   rpc Info(InfoRequest) returns (AgentInfo);
 }
 
 message InfoRequest {}
 
 message AgentInfo {
-  string backend = 1;  // "hyperv" or "proxmox"
-  string host = 2;     // the machine the agent runs on
+  string backend = 1;
+  string host = 2;
 }
 
 message GuestFileRequest {
@@ -33,9 +28,9 @@ message GuestFileRequest {
 }
 
 message Move {
-  int32 x = 1;            // guest physical pixels
+  int32 x = 1;
   int32 y = 2;
-  uint32 duration_ms = 3; // short movement path, 0 = jump
+  uint32 duration_ms = 3;
 }
 
 message Click {
@@ -45,28 +40,28 @@ message Click {
     MIDDLE = 2;
   }
   Button button = 1;
-  uint32 count = 2;       // 1 or 2
+  uint32 count = 2;
 }
 
 message Key {
-  uint32 vk = 1;          // Windows virtual-key code
+  uint32 vk = 1;
   bool down = 2;
 }
 
 message Chord {
-  repeated uint32 vk = 1; // pressed in order, released in reverse
+  repeated uint32 vk = 1;
 }
 
 message TypeText {
-  string text = 1;        // printable ASCII, \n and \t
-  uint32 mean_ms = 2;     // per-key delay distribution
+  string text = 1;
+  uint32 mean_ms = 2;
   uint32 jitter_ms = 3;
 }
 
 message CtrlAltDel {}
 
 message Scroll {
-  int32 notches = 1;      // positive = up / away from the user
+  int32 notches = 1;
 }
 
 message InputRequest {
@@ -93,7 +88,7 @@ message ObserveRequest {
 
 message ObserveResult {
   Snapshot snapshot = 1;
-  Hello hello = 2;        // the observer's current hello
+  Hello hello = 2;
   int64 host_time_ms = 3;
 }
 
@@ -105,8 +100,8 @@ message LifecycleRequest {
     CHECKPOINT = 2;
     RESTORE = 3;
     STATE = 4;
-    CLONE = 5;   // full copy of `checkpoint` as a new VM named `target` (new VM id); the source is untouched
-    DELETE = 6;  // ludius-* VMs only; `target` must repeat the VM name as confirmation
+    CLONE = 5;
+    DELETE = 6;
   }
   Op op = 2;
   string checkpoint = 3;

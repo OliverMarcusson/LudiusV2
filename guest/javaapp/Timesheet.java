@@ -1,5 +1,3 @@
-// A small Swing app for the observer's Java Access Bridge path: the controls an office Java client typically has.
-// Repo-owned test fixture, no third-party code. Run with a JDK 11+: java Timesheet.java
 import java.awt.BorderLayout;
 import java.awt.GridLayout;
 import javax.swing.*;

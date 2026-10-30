@@ -1,9 +1,6 @@
-# Write a new mail to a colleague in Outlook (classic, Exchange profile on the range grommunio) and send it.
-# Done is checked on the range server, not in the UI: the message is in the colleague's inbox (ludius.mail).
-# Variants cover the new-message path (Ctrl+N vs the ribbon's New Email) and sending (Alt+S vs the Send button).
 task: outlook_send_mail
 app: outlook
-capability: mail.send  # the shared send contract on the profile's mail form (data/apps/outlook.yaml, ludius.tasks.Form)
+capability: mail.send
 params: [to, to_name, subject, body]
 about: "Write a new mail to one colleague in Outlook and send it. to: the colleague's address <user>@ludius.internal; subject: one line; body: the mail text (ASCII, a few short lines)."
 example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga, subject: lund accruals q4 status, body: "hi marcus\nlund accruals for q4 are booked\n- anna"}
@@ -20,7 +17,7 @@ subgoals:
     keys: [Win]
     text: launch_query
     steps: 8
-    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}  # the main window, not "Opening - Microsoft Outlook"
+    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}
   new_message_shortcut:
     goal: "Start a new mail with Ctrl+N"
     keys: [Ctrl+N]
@@ -39,7 +36,7 @@ subgoals:
   write_body:
     goal: "Type the mail text into the message body (below the Subject field)"
     text: body
-    unreadable_ok: true  # Word body: no UIA value; the server-side body check decides
+    unreadable_ok: true
     done: {typed: true}
   send_shortcut:
     goal: "Send the mail with Alt+S"

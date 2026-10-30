@@ -1,5 +1,3 @@
-# chat01 (roles/chat01): Mattermost at http://{{ chat_host }}; the sign-in endpoint is behind Kerberos (SPNEGO, no
-# password fallback) and goes to the SSO shim. Mattermost and the shim listen on loopback only.
 map $http_upgrade $connection_upgrade {
     default upgrade;
     '' close;

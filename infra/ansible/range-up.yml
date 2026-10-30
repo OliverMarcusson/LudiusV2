@@ -1,15 +1,4 @@
 ---
-# Range bring-up on the Proxmox node (run there as root, after proxmox-host.yml and the Packer build, with the host
-# agent running with Proxmox:Pool=ludius):
-#   ansible-playbook range-up.yml
-# Every VM it touches (template, srv01, persona clones) must be in the range pool under its expected name; an existing
-# VM id that isn't is refused, never adopted. The range mail server follows mail_backend: exchange (range-exchange.yml:
-# Windows Server dc01 + Exchange SE ex01) or grommunio (range-srv01.yml: srv01, Debian with Samba AD and grommunio),
-# each with an uplink only while it needs one. Each persona gets the linked clone named in range-vms.yml (VM id = vsock CID),
-# isolated on the range bridge before every start; the guest agent gives it its range address, WinRM and a per-range
-# bring-up admin; then domain join, persona autologon, hive settings and the observer task, checked through the host
-# agent's observe call; then, whatever happened, the bring-up account and WinRM are switched off again on every
-# bootstrapped clone (or the clone is stopped). Re-runnable.
 - name: Validate inputs and ownership
   hosts: localhost
   connection: local
@@ -28,7 +17,6 @@
           - personas | difference(persona_files) | length == 0
           - personas | length <= login_mailbox_cap | int
           - mail_backend in ['grommunio', 'exchange']
-          # Samba's policy (min length 6, set by the srv01 role) and provisioning (default complexity) must accept them.
           - (people | map(attribute='user') | map('length') | min) + (user_password_suffix | length) >= 6
           - dc_admin_password is match('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}$')
           - range_admin_password | length >= 12
@@ -112,7 +100,6 @@
         bootstrapped: []
         bringup_failures: []
 
-    # Fail closed: no clone is bootstrapped (and given the gateway) unless the gateway is confirmed not to forward.
     - name: Clone, isolate, start and bootstrap each persona VM
       block:
         - name: Gateway does not forward
@@ -129,7 +116,6 @@
           ansible.builtin.set_fact:
             bringup_failures: "{{ bringup_failures + ['clones: ' ~ ansible_failed_result.msg | default('failed')] }}"
 
-# localhost is in this play so that a failure on every persona doesn't end the run before the teardown play below.
 - name: Persona machines
   hosts: personas:localhost
   gather_facts: false
@@ -146,8 +132,6 @@
             name: ux_noise
           tags: [wallpaper]
 
-        # A clone keeps the template's observer until this: a newer signed build replaces it (the running one is
-        # stopped first, the logon below starts the new one).
         - name: Observer build on the controller
           ansible.builtin.stat:
             path: "{{ observer_exe }}"
@@ -197,7 +181,6 @@
             reboot_timeout: 900
           tags: [wallpaper, observer]
 
-        # Read back in the persona's logged-on hive (HKCU of the session) after the logon: what the session now uses.
         - name: Persona wallpaper after logon
           ansible.windows.win_powershell:
             script: |
@@ -237,8 +220,6 @@
             persona_done: true
           tags: [always]
 
-# Always reached (localhost never fails before here). The teardown covers every clone that got the bring-up admin,
-# whether its setup succeeded or not, through the guest agent (no WinRM); a clone it can't close is stopped.
 - name: Observer channel, bring-up access off, verdict
   hosts: localhost
   gather_facts: false
@@ -258,8 +239,6 @@
       ignore_errors: true
       tags: [always]
 
-    # apply: a tag on a dynamic include reaches only the include, not the tasks it loads; without it a tagged run
-    # (bootstrap is always) reopens the bring-up admin and WinRM and never closes them.
     - name: Bring-up admin and WinRM off on every bootstrapped clone (else the VM is stopped)
       ansible.builtin.include_tasks:
         file: tasks/persona-teardown.yml

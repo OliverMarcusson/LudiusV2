@@ -1,9 +1,4 @@
 #!/usr/bin/python3
-"""Kerberos sign-in for Mattermost on chat01, posing as GitLab's OAuth (Team Edition's only SSO). nginx checks the
-browser's Kerberos ticket (SPNEGO) on /oauth/authorize and passes the account on in X-Remote-User; this answers with
-a one-time code. Mattermost trades it for a token (/oauth/token) and reads the user (/api/v4/user), both over
-loopback. Only the narrative's people (USERS) sign in; codes and tokens are single use and expire after TTL seconds
-of monotonic time (the range clock jumps)."""
 
 import base64
 import json
@@ -16,7 +11,7 @@ from pathlib import Path
 
 REALM = os.environ["REALM"]
 CLIENT_ID = os.environ["CLIENT_ID"]
-REDIRECT = os.environ["REDIRECT"]  # Mattermost's <site>/signup/gitlab/complete
+REDIRECT = os.environ["REDIRECT"]
 SECRET = (Path(os.environ["CREDENTIALS_DIRECTORY"]) / "secret").read_text().strip()
 USERS: dict[str, dict] = json.loads(Path(os.environ["USERS"]).read_text())
 TTL = 120

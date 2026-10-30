@@ -1,6 +1,3 @@
-# The custom-drawn fixture app (guest/drawnapp/Ledger.cs) on the test guest, for the observer's no_tree flag and
-# the visual fallback: built here by the .NET Framework compiler every Windows has, installed under Program Files
-# with a Start shortcut. Re-runnable; leaves checkpoints alone.
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $cfg = @{}
@@ -20,7 +17,6 @@ try {
         $ErrorActionPreference = 'Stop'
         $app = 'C:\Program Files\Ledger'
         New-Item -ItemType Directory -Force $app | Out-Null
-        # Copy, not move, and reset: a file moved out of Temp keeps an admin-only ACL.
         Copy-Item -Force 'C:\Windows\Temp\Ledger.exe' $app
         Remove-Item 'C:\Windows\Temp\Ledger.exe'
         icacls "$app\Ledger.exe" /reset /q | Out-Null

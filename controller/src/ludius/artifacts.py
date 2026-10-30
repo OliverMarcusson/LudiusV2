@@ -1,26 +1,3 @@
-"""Artifact coverage, volume and survival (spec section 8) from trainee-toolchain timeline exports.
-
-Input is a Plaso ``psort`` CSV export; nothing here runs Plaso or touches a VM. Two layouts are read,
-as written by Plaso's output modules (plaso/output/dynamic.py, l2t_csv.py, shared_dsv.py):
-
-- ``dynamic`` (psort's default CSV): header ``datetime,timestamp_desc,source,source_long,message,parser,
-  display_name,tag``. ``datetime`` is ISO 8601 with offset (``2026-10-27T08:20:01.123456+00:00``); Plaso
-  writes ``0000-00-00T00:00:00.000000+00:00`` for a zero timestamp and ``Invalid`` on error. Extra columns
-  from ``--fields``/``--additional_fields`` are kept; ``username``/``user``, ``hostname``/``host`` and
-  ``filename`` are used when present.
-- ``l2tcsv``: header ``date,time,timezone,MACB,source,sourcetype,type,user,host,short,desc,version,filename,
-  inode,notes,format,extra``; ``date`` is MM/DD/YYYY, ``time`` HH:MM:SS in ``timezone``. ``desc`` is read as
-  the message, ``filename`` as the display name, ``format`` as the parser chain, ``sourcetype`` as
-  ``source_long``.
-
-Plaso writes ``-`` for an empty field and prefixes values starting with ``= + - @`` with an apostrophe;
-both are undone here. Any other header is rejected rather than guessed.
-
-Account attribution: the ``username``/``user`` column when it is not ``-``, else the profile folder in the
-artifact path (``\\Users\\<account>\\``). Rows with neither stay unattributed; Prefetch is host-wide and is
-counted per host, never credited to a persona.
-"""
-
 from __future__ import annotations
 
 import csv
@@ -36,8 +13,6 @@ DYNAMIC_REQUIRED = {"datetime", "parser", "display_name", "message"}
 L2T_REQUIRED = {"date", "time", "timezone", "MACB", "user", "host", "desc", "filename", "format"}
 L2T_RENAME = {"desc": "message", "filename": "display_name", "format": "parser", "sourcetype": "source_long"}
 
-# Expected per-persona types (spec section 8), classified from the parser chain, first match wins.
-# Jump lists come before LNK: automatic destinations embed LNK data.
 USER_TYPES: list[tuple[str, re.Pattern[str]]] = [
     ("jump_list", re.compile(r"automatic_destinations|custom_destinations", re.I)),
     ("userassist", re.compile(r"userassist", re.I)),
@@ -66,7 +41,7 @@ def _time_dynamic(v: str) -> dt.datetime | None:
         t = dt.datetime.fromisoformat(v)
     except ValueError:
         return None
-    return t if t.tzinfo else None  # no offset: the zone is unknown, so the instant is too
+    return t if t.tzinfo else None
 
 
 def _time_l2t(date: str, time: str, zone: str) -> dt.datetime | None:
@@ -80,7 +55,6 @@ def _time_l2t(date: str, time: str, zone: str) -> dt.datetime | None:
 
 
 def read_timeline(path: Path) -> list[dict[str, Any]]:
-    """Rows normalized to time (aware datetime or None), user, host, parser, source_long, message, display_name."""
     with path.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         header = set(reader.fieldnames or [])
@@ -119,7 +93,6 @@ def account(row: dict[str, Any]) -> str:
 
 
 def classify(row: dict[str, Any]) -> tuple[str, str]:
-    """(scope, type): scope is "user", "host" or "" when the parser is not one of the expected types."""
     chain = f"{row['parser']} {row['source_long']}"
     for scope, table in (("host", HOST_TYPES), ("user", USER_TYPES)):
         for name, rx in table:
@@ -129,7 +102,6 @@ def classify(row: dict[str, Any]) -> tuple[str, str]:
 
 
 def persona_windows(logs: list[Path]) -> dict[str, list[tuple[dt.datetime, dt.datetime]]]:
-    """Per persona, the guest-time span of each ground-truth log (host time where the guest did not report)."""
     out: dict[str, list[tuple[dt.datetime, dt.datetime]]] = defaultdict(list)
     for path in logs:
         persona, ts = "", list[int]()
@@ -200,12 +172,6 @@ def _matches(row: dict[str, Any], match: dict[str, str]) -> bool:
 def survival(
     after: list[dict[str, Any]], manifest: list[dict[str, Any]], before: list[dict[str, Any]] | None
 ) -> dict[str, Any]:
-    """Each manifest entry: {"id": str, "match": {field: regex, ...}} over MATCH_FIELDS (all must hold).
-
-    survived: in the before export and still in the after export. lost: in before, gone after.
-    present / missing: no before export, judged against the manifest alone. unknown: not identifiable
-    (no usable match) or absent from the before export, so nothing can be said about survival.
-    """
     out: list[dict[str, Any]] = []
     for e in manifest:
         match: dict[str, str] = e.get("match") or {}

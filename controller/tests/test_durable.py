@@ -27,7 +27,7 @@ from ludius.tasks import Task
 
 
 async def _env(local: bool) -> WorkflowEnvironment:
-    try:  # the SDK downloads its test server (time-skipping) or the Temporal CLI dev server (local) on first use
+    try:
         if local:
             return await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
                 data_converter=pydantic_data_converter, ui=False
@@ -43,8 +43,6 @@ def _day(runner: type[FakeRunner], log: Path, calls: list[str], clock: str, **kw
 
 
 class FlakyRunner(FakeRunner):
-    """The 10:00 task loses its connection once (an infrastructure error, not a task failure)."""
-
     def run(self, task: Task, between: Any = None) -> Outcome:
         if task.inst.params["file_name"] == "note 1000" and "run note 1000" not in self.calls:
             self.calls.append("run note 1000")
@@ -75,24 +73,21 @@ async def _realtime_day(tmp_path: Path) -> None:
         done = await durable.play(env.client, day, plan, "realtime", tmp_path / "desk.lock")
         assert [(d.at, d.status) for d in done] == [("08:55", "done"), ("09:10", "done"), ("09:00", "done"),
                                                     ("10:00", "done"), ("12:00", "done")]  # fmt: skip
-        # Finished slots are not redone by the retry; waits and the break are workflow timers, not sleeps.
         assert calls == ["normalize", "run note 0855", "normalize", "run note 0900", "run note 0910", "normalize",
                          "run note 1000", "normalize", "run note 1000", "normalize", "lock", "unlock"]  # fmt: skip
         noon = dt.datetime.combine(date, dt.time(12, 30)).astimezone()
-        assert await env.get_current_time() >= noon  # the clock waited for the day: 12:00 plus the 30-minute break
+        assert await env.get_current_time() >= noon
 
         again: list[str] = []
         assert await durable.play(env.client, _day(FakeRunner, log, again, "realtime"), plan, "realtime",
                                   tmp_path / "desk.lock") == done  # fmt: skip
-        assert again == []  # read back, nothing re-run
+        assert again == []
         events = log.read_text(encoding="utf-8")
         assert events.count('"day_start"') == 1 and events.count('"day_end"') == 1
-        assert events.count('"item_retry"') == 1 and '"attempt": 2' in events  # the repeat is in ground truth
+        assert events.count('"item_retry"') == 1 and '"attempt": 2' in events
 
 
 class Recorded(list[str]):
-    """Calls written through to a file, so the test can see what a killed process did."""
-
     def __init__(self, path: Path) -> None:
         super().__init__()
         self.path = path
@@ -107,7 +102,7 @@ class StuckRunner(FakeRunner):
     def run(self, task: Task, between: Any = None) -> Outcome:
         if task.inst.params["file_name"] == "note 1000":
             self.calls.append("run note 1000")
-            threading.Event().wait()  # stuck in the task until the process is killed
+            threading.Event().wait()
         return super().run(task, between)
 
 
@@ -115,7 +110,6 @@ PLAN_3 = DayPlan(persona="lnord", date="2026-11-02", items=[note("09:00"), note(
 
 
 def controller_a(address: str, tmp: str) -> None:
-    """Entry point of the controller process that gets killed (run by the test in a subprocess)."""
     calls = Recorded(Path(tmp) / "calls_a.txt")
     durable.run(address, _day(StuckRunner, Path(tmp) / "day.jsonl", calls, "compressed"), PLAN_3, "compressed",
                 Path(tmp) / "desk.lock", heartbeat_s=2, retry_s=1)  # fmt: skip
@@ -140,27 +134,24 @@ async def _killed(tmp_path: Path) -> None:
                 await asyncio.sleep(0.1)
             else:
                 raise AssertionError("controller A never reached the 10:00 task")
-            # While A lives, a second controller for the same desktop refuses to start.
             with pytest.raises(durable.DeskBusy):
                 await durable.play(env.client, _day(FakeRunner, log, second, "compressed"), PLAN_3, "compressed",
                                    tmp_path / "desk.lock", heartbeat_s=2, retry_s=1)  # fmt: skip
         finally:
-            a.kill()  # mid-task: no completion, no failure report, no more heartbeats
+            a.kill()
             a.wait()
         done = await durable.play(env.client, _day(FakeRunner, log, second, "compressed"), PLAN_3, "compressed",
                                   tmp_path / "desk.lock", heartbeat_s=2, retry_s=1)  # fmt: skip
         assert marker.read_text(encoding="utf-8").splitlines() == ["normalize", "run note 0900", "normalize",
                                                                    "run note 1000"]  # fmt: skip
-        assert second == ["normalize", "run note 1000", "normalize", "run note 1100"]  # 09:00 is not redone
+        assert second == ["normalize", "run note 1000", "normalize", "run note 1100"]
         assert [(d.at, d.status) for d in done] == [("09:00", "done"), ("10:00", "done"), ("11:00", "done")]
         events = log.read_text(encoding="utf-8")
         assert events.count('"day_start"') == 1 and events.count('"day_end"') == 1
-        assert '"item_retry"' in events  # 10:00 ran twice: at-least-once, and ground truth says so
+        assert '"item_retry"' in events
 
 
 class HungRunner(FakeRunner):
-    """The first 10:00 attempt hangs while still pressing keys (no steps, so no ground-truth writes)."""
-
     def __init__(self, log: GroundTruth, calls: list[str]) -> None:
         super().__init__(log, calls)
         self.presses: list[tuple[int, float]] = []
@@ -198,16 +189,14 @@ async def _hung(tmp_path: Path) -> None:
         )
         runner: HungRunner = day.runner  # type: ignore[assignment]
         assert [(d.at, d.status) for d in done] == [("09:00", "done"), ("10:00", "done"), ("11:00", "done")]
-        assert "cancelled attempt 1" in calls and "end 1000 attempt 1" not in calls  # timed out and stopped
-        assert time.monotonic() - started < 25  # not left to run its 30 s
+        assert "cancelled attempt 1" in calls and "end 1000 attempt 1" not in calls
+        assert time.monotonic() - started < 25
         first = [t for a, t in runner.presses if a == 1]
         second = [t for a, t in runner.presses if a == 2]
-        assert first and second and max(first) < min(second)  # never both attempts on the desktop at once
+        assert first and second and max(first) < min(second)
 
 
 class BusyRunner(FakeRunner):
-    """The 10:00 task keeps making steps (so it heartbeats) until it is cancelled."""
-
     def run(self, task: Task, between: Any = None) -> Outcome:
         if task.inst.params["file_name"] == "note 1000":
             self.calls.append("start 1000")
@@ -251,8 +240,6 @@ async def _cancelled(tmp_path: Path) -> None:
 
 
 class CanaryRunner(FakeRunner):
-    """Notepad's UI has drifted: its tasks fail. Everything else works."""
-
     def run(self, task: Task, between: Any = None) -> Outcome:
         self.calls.append(f"run {task.template.task} {next(iter(task.inst.params.values()))}")
         return Outcome("failed" if task.template.app.lower() == "notepad" else "done", 1)
@@ -283,7 +270,6 @@ async def _canary_day(tmp_path: Path) -> None:
         done = await durable.play(env.client, day, plan, "compressed", tmp_path / "desk.lock", canary=check)
         assert [(d.at, d.template, d.status) for d in done] == [
             ("09:00", "notepad_write_note", "skipped_drift"), ("10:00", "explorer_new_folder", "done")]  # fmt: skip
-        # Canaries first, by app (notepad twice: one retry before drift), then only the explorer item of the day.
         assert [c for c in calls if c.startswith("run")] == [
             "run explorer_new_folder admission test folder", "run notepad_write_note admission test note",
             "run notepad_write_note admission test note", "run explorer_new_folder q4 drafts"]  # fmt: skip
@@ -293,8 +279,6 @@ async def _canary_day(tmp_path: Path) -> None:
 
 
 class Range:
-    """The range clock as a fake: set_clock moves it, a lease sweep puts it back on host time (None)."""
-
     def __init__(self, calls: list[str], fail_at: str = "") -> None:
         self.calls, self.fail_at, self.now = calls, fail_at, None
 
@@ -314,8 +298,6 @@ class ClockedRunner(FakeRunner):
 
 
 class SweptSession(FakeSession):
-    """While the persona is away, the controller died and the lease sweeper put the range back on host time."""
-
     range: Range
 
     def unlock(self) -> bool:
@@ -348,8 +330,6 @@ async def _reassert(tmp_path: Path) -> None:
         calls: list[str] = []
         done = await durable.play(env.client, _break_day(tmp_path, calls), BREAK_DAY, "time-jump", tmp_path / "d.lock")
         assert [(d.at, d.status) for d in done] == [("09:00", "done"), ("12:00", "done"), ("12:05", "done")]
-        # Break start and end set the clock themselves; the interrupt that came due while away runs at the
-        # break's logical end even though a sweep reset the clock in between.
         assert calls == [
             "clock 09:00", "normalize", "run note 0900 @ 09:00",
             "clock 12:00", "normalize", "lock",
@@ -370,8 +350,8 @@ async def _fail_closed(tmp_path: Path) -> None:
         day = _break_day(tmp_path, calls, fail_at="12:30")
         with pytest.raises(RuntimeError, match="failed"):
             await durable.play(env.client, day, BREAK_DAY, "time-jump", tmp_path / "d.lock", retry_s=1)
-        assert not any(c.startswith(("unlock", "run note 1205")) for c in calls)  # no GUI step on an unknown clock
-        assert calls[-1] == "clock reset"  # the failed day still puts the range back on host time
+        assert not any(c.startswith(("unlock", "run note 1205")) for c in calls)
+        assert calls[-1] == "clock reset"
 
 
 FAILED_BREAK_DAY = DayPlan(persona="aberg", date="2026-11-04", items=[
@@ -402,7 +382,7 @@ def test_failed_break_unlock_stops_the_durable_day(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(durable.workflow, "patched", lambda marker: True)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     wf = durable.PersonaDay()
     run = wf.run(durable.DayInput(plan=FAILED_BREAK_DAY, clock="time-jump", utc_offset_s=0))
-    if unlocked:  # an ordinary break: the late interrupt and the later slot still run, and the day ends
+    if unlocked:
         asyncio.run(run)
         assert calls == ["day_prepare", "slot 09:00", "break_start 12:00", "break_end 12:00", "slot 12:05",
                          "slot 13:00", "day_end"]  # fmt: skip
@@ -410,14 +390,11 @@ def test_failed_break_unlock_stops_the_durable_day(monkeypatch: pytest.MonkeyPat
     with pytest.raises(ApplicationError, match="unlock failed") as e:
         asyncio.run(run)
     assert e.value.non_retryable and e.value.type == "BreakUnlockFailed"
-    # No later desktop slot; the abort resets the clock and releases the day; never a day_end.
     assert calls == ["day_prepare", "slot 09:00", "break_start 12:00", "break_end 12:00", "day_abort"]
     assert [(d.at, d.status) for d in wf.done] == [("09:00", "done"), ("12:00", "failed")]
 
 
 def test_histories_recorded_before_the_failed_unlock_stop_still_replay() -> None:
-    """Recorded with the previous PersonaDay (fake desktop, unlock False): break_end returned failed and the day
-    went on to the 12:05 and 13:00 slots. Without its patch marker the new code must make the same commands."""
     history = WorkflowHistory.from_json(
         durable.workflow_id(FAILED_BREAK_DAY),
         (Path(__file__).parent / "fixtures" / "persona_day_failed_break_legacy.json").read_text(encoding="utf-8"),

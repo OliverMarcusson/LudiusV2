@@ -1,7 +1,4 @@
 ---
-# Range chat for mail_backend: exchange (imported by range-up.yml after range-exchange.yml; also runnable alone on the
-# node: ansible-playbook range-chat.yml): chat01 from the stock Debian 13 cloud image + the chat01 role (Mattermost,
-# Kerberos sign-in through dc01's keytab), with an uplink only while it is provisioned. Same shape as range-srv01.yml.
 - name: Chat01 VM
   hosts: localhost
   connection: local
@@ -49,7 +46,6 @@
       args:
         creates: "{{ chat01_key }}"
 
-    # Replaces Proxmox's own user-data: hostname chat01, no package upgrade at first boot (no uplink then).
     - name: Chat01 cloud-init user-data
       ansible.builtin.copy:
         dest: /var/lib/vz/snippets/{{ chat01_user_data }}
@@ -124,7 +120,6 @@
         ansible_ssh_private_key_file: "{{ chat01_key }}"
         ansible_ssh_common_args: -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/ludius_known_hosts
 
-# Guest work runs as chat01's own host (see range-srv01.yml): a failed chat01 drops out, the detach below still runs.
 - name: Chat01 (Mattermost, Kerberos sign-in), uplink only while provisioning
   hosts: localhost:chat01
   gather_facts: false

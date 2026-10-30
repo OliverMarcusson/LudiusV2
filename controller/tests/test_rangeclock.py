@@ -10,8 +10,6 @@ from ludius.rangeclock import RangeClock, confine
 
 
 class Range:
-    """Fake guests: a set moves that VM's offset; order of sets is recorded."""
-
     def __init__(self, stuck: int | None = None) -> None:
         self.t = 1_800_000_000.0
         self.off: dict[int, float] = {}
@@ -113,7 +111,6 @@ def test_range_clock_refuses_before_touching_any_vm(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(rangeclock, "resources", lambda: RES)
     with pytest.raises(ValueError, match="not range VMs"):
         cli._range_clock()  # pyright: ignore[reportPrivateUsage]
-    # unwarp: no all-or-nothing refusal up front; reset checks each VM and resets every one that passes
     assert cli._range_clock(strict=False).dc == 110  # pyright: ignore[reportPrivateUsage]
 
 
@@ -162,4 +159,4 @@ def test_warp_exits_3_when_reset_fails_after_the_warp_failed(
     assert cli._range_warp(args, [], dt.date(2099, 1, 1)) == 3  # pyright: ignore[reportPrivateUsage]
     err = capsys.readouterr().err
     assert "reset FAILED" in err and "guest agent hung mid-jump" in err
-    assert (tmp_path / "clock-range.json").exists()  # lease kept for recovery
+    assert (tmp_path / "clock-range.json").exists()

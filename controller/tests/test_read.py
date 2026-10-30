@@ -1,6 +1,3 @@
-"""mail.read (outlook_read_mail): the mail is picked and proven unread at task start, done is its read flag on the
-server, the runner waits for that flag instead of acting, and request plans read the mail before the work."""
-
 from __future__ import annotations
 
 import random
@@ -29,7 +26,6 @@ def msg(i: int, subject: str = SUBJECT, sender: str = BOSS, read: bool = False) 
 
 
 def server(monkeypatch: pytest.MonkeyPatch, inbox: list[mail.Message] | None, states: list[bool | None]) -> list[int]:
-    """Inbox by subject; read_state answers `states` in turn (the last one repeats). Returns the ids asked."""
     asked: list[int] = []
 
     def matching(user: str, folder: str, subject: str) -> list[mail.Message] | None:
@@ -70,9 +66,9 @@ def test_template_declares_a_read_only_task() -> None:
     assert t.subgoals["open_message"].keys == ["Enter"] and t.subgoals["close_message"].keys == ["Esc"]
     assert all(not sg.allow_destructive for sg in t.subgoals.values())
     raw = t.model_dump(exclude={"processes"})
-    with pytest.raises(ValueError, match="mail.read"):  # a read check needs the capability
+    with pytest.raises(ValueError, match="mail.read"):
         Template.model_validate({**raw, "capability": None})
-    with pytest.raises(ValueError, match="mail.read"):  # and the capability types nothing of its own
+    with pytest.raises(ValueError, match="mail.read"):
         bad = {**raw, "subgoals": {**raw["subgoals"], "close_outlook": {"goal": "x", "text": "subject"}}}
         Template.model_validate(bad)
 
@@ -101,7 +97,7 @@ def test_to_read_picks_only_an_unread_colleague_mail(monkeypatch: pytest.MonkeyP
     assert "read state unreadable" in str(reply.to_read("aberg", BOSS, SUBJECT, PEOPLE, Policy()))
     server(monkeypatch, None, [False])
     assert "inbox unreadable" in str(reply.to_read("aberg", BOSS, SUBJECT, PEOPLE, Policy()))
-    server(monkeypatch, [msg(7), msg(8, sender="lnord@ludius.internal")], [False])  # opened by subject: ambiguous
+    server(monkeypatch, [msg(7), msg(8, sender="lnord@ludius.internal")], [False])
     assert "in the Inbox" in str(reply.to_read("aberg", BOSS, SUBJECT, PEOPLE, Policy()))
     server(monkeypatch, [msg(7)], [False])
     for sender in ("someone@ludius.internal", "aberg@ludius.internal", "mvellinga@example.com"):
@@ -116,24 +112,24 @@ def test_done_is_the_read_flag_of_the_mail_proven_unread(monkeypatch: pytest.Mon
     win = obs.Window(kind=obs.Window.FOREGROUND, process_name="OUTLOOK.EXE", title=f"{SUBJECT} - Message (Plain Text)")
     open_ = obs.Snapshot(windows=[win])
     asked = server(monkeypatch, [msg(7)], [True])
-    assert not check_done(done, open_, task, False)  # no mail proven unread at start: never done
+    assert not check_done(done, open_, task, False)
     assert asked == []
     task.read_id = 7
     assert check_done(done, open_, task, False) and asked == [7]
-    assert not check_done(done, obs.Snapshot(), task, False)  # not open on screen
+    assert not check_done(done, obs.Snapshot(), task, False)
     server(monkeypatch, [msg(7)], [None])
-    assert not check_done(done, open_, task, False)  # unknown is never done
-    assert check_done(done, open_, task, False, outside=False)  # on screen it is
+    assert not check_done(done, open_, task, False)
+    assert check_done(done, open_, task, False, outside=False)
 
 
 def test_runner_waits_for_the_read_flag_without_acting(
     monkeypatch: pytest.MonkeyPatch, narrative: Path, tmp_path: Path
 ) -> None:
-    asked = server(monkeypatch, [msg(7)], [False, False, False, True])  # start, then Outlook syncs a little later
+    asked = server(monkeypatch, [msg(7)], [False, False, False, True])
     monkeypatch.setattr(loop, "NARRATIVE", narrative)
     monkeypatch.setattr(loop, "BLOCKED_WAIT_S", 0)
     main = obs.Window(kind=obs.Window.FOREGROUND, process_name="OUTLOOK.EXE", title="Inbox - aberg - Outlook")
-    message = obs.Window(process_name="OUTLOOK.EXE", title=f"{SUBJECT} - Message")  # open behind the main window
+    message = obs.Window(process_name="OUTLOOK.EXE", title=f"{SUBJECT} - Message")
     reading, closed = obs.Snapshot(windows=[main], apps=[message], guest_time_ms=5), obs.Snapshot(guest_time_ms=5)
 
     class Agent:
@@ -202,13 +198,10 @@ def test_a_request_mail_is_read_before_its_task() -> None:
     other = PlanItem(template="break", at="10:26", minutes=5)
     read = requests.read_first(req, [msg(7)], ts, [req, other])
     assert read is not None and read.at == "10:25" and read.params == {"sender": BOSS, "subject": SUBJECT}
-    assert requests.read_first(req, [msg(7, read=True)], ts, [req]) is None  # read already: it can't be shown
-    assert requests.read_first(req, [msg(8)], ts, [req]) is None  # not the request's mail
+    assert requests.read_first(req, [msg(7, read=True)], ts, [req]) is None
+    assert requests.read_first(req, [msg(8)], ts, [req]) is None
     no_read = {k: t for k, t in ts.items() if t.capability != "mail.read"}
     assert requests.read_first(req, [msg(7)], no_read, [req]) is None
-
-
-# Sol blockers on f211516 (shared layer: options, policy, runner) --------------------------------------------------
 
 
 def outlook(*els: obs.Element, process: str = "OUTLOOK.EXE", title: str = "Inbox - aberg - Outlook") -> obs.Snapshot:
@@ -244,10 +237,10 @@ def test_enter_never_presses_a_focused_committing_control(name: str, tmp_path: P
     assert "commits or destroys" in str(post_check(snap, task, "open_message", Option("o1", "key", "", keys="Enter"),
                                                    tmp_path))  # fmt: skip
     row = outlook(el(2, "data item", f"From Marcus Vellinga, Subject {SUBJECT}", focused=True))
-    assert "Enter" in keys_offered(row, task, "open_message", Policy())  # the mail row: Enter opens it
-    assert "focus is unknown" in str(Policy().key_allowed("Enter", outlook()))  # declares no effect: refused
-    assert Policy().key_allowed("Enter", outlook(), ["Save"]) is None  # a writing task's Save As
-    if name == "Send":  # a subgoal that declares Send may press it, as it may click it
+    assert "Enter" in keys_offered(row, task, "open_message", Policy())
+    assert "focus is unknown" in str(Policy().key_allowed("Enter", outlook()))
+    assert Policy().key_allowed("Enter", outlook(), ["Save"]) is None
+    if name == "Send":
         assert Policy().key_allowed("Enter", snap, ["Send"]) is None
 
 
@@ -262,7 +255,7 @@ def test_reserved_mail_rows_are_never_offered_or_opened(tmp_path: Path) -> None:
         row = el(1, "data item", name)
         sg = task.subgoal("open_message")
         opts = build_options(view(outlook(row), task, sg, policy), task, sg, policy)
-        assert not [o for o in opts if o.element is not None], name  # no click, double-click or typing on it
+        assert not [o for o in opts if o.element is not None], name
         for flag in ("focused", "selected"):
             snap = outlook(el(1, "data item", name, **{flag: True}))
             assert policy.key_allowed("Enter", snap) == "scenario-reserved path"
@@ -276,16 +269,16 @@ def test_launch_query_goes_into_the_start_search_only(tmp_path: Path) -> None:
     sg = task.subgoal("open_outlook")
     draft = outlook(el(1, "edit", "Subject", focused=True), title="Untitled - Message (HTML)")
     opts = build_options(view(draft, task, sg, Policy()), task, sg, Policy())
-    assert not [o for o in opts if o.kind == "type"]  # neither into the draft's Subject nor at its focus
+    assert not [o for o in opts if o.kind == "type"]
     for o in (Option("o1", "type", "", element=draft.elements[0], content="launch_query"),
               Option("o2", "type", "", content="launch_query")):  # fmt: skip
         assert "Start search box only" in str(post_check(draft, task, "open_outlook", o, tmp_path))
     start = outlook(el(1, "edit", "Search box", focused=True), process="SearchApp.exe", title="Search")
     assert launch_target(start.elements[0], start)
     assert [o.kind for o in build_options(view(start, task, sg, Policy()), task, sg, Policy())].count("type") == 2
-    run = outlook(el(1, "edit", "Open:", focused=True), process="explorer.exe", title="Run")  # Sol on 1dec7e8
+    run = outlook(el(1, "edit", "Open:", focused=True), process="explorer.exe", title="Run")
     run.windows[0].class_name = "#32770"
-    assert launch_target(run.elements[0], run)  # Win+R launches Notepad, WordPad, Excel and PowerShell
+    assert launch_target(run.elements[0], run)
     run.windows[0].title = "Untitled - Notepad"
     assert not launch_target(run.elements[0], run)
     raw = template().model_dump(exclude={"processes"})

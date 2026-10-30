@@ -1,5 +1,3 @@
-"""file.recycle: only an own, old, unused file; done is gone on the guest; Delete only on exactly that selection."""
-
 from __future__ import annotations
 
 import random
@@ -49,15 +47,15 @@ def test_done_is_present_at_start_then_definitely_gone(task: tuple[Task, dict[st
     tk, disk = task
     done, snap = tk.template.subgoals["recycle_keys"].done, obs.Snapshot()
     disk["file"] = guestfile.GuestFile(False)
-    assert check_done(done, snap, tk, False) is False  # no baseline: never done
+    assert check_done(done, snap, tk, False) is False
     assert file_baseline(tk, Policy()) == "Documents\\old draft.txt: not there, nothing to recycle"
     disk["file"] = None
     assert file_baseline(tk, Policy()) == "Documents\\old draft.txt: unreadable on the guest"
     disk["file"] = guestfile.GuestFile(True, 500, b"x")
     assert file_baseline(tk, Policy()) is None
-    assert check_done(done, snap, tk, False) is False  # still there
+    assert check_done(done, snap, tk, False) is False
     disk["file"] = None
-    assert check_done(done, snap, tk, False) is False  # unreadable is unknown, never gone
+    assert check_done(done, snap, tk, False) is False
     disk["file"] = guestfile.GuestFile(False)
     assert check_done(done, snap, tk, False) is True
 
@@ -84,10 +82,10 @@ def test_delete_only_with_exactly_the_file_by_full_name_selected_in_documents(
 
     assert preconditions(sg, snap(("old draft.txt", True), ("budget.xlsx", False)), tk) is None
     for bad in (
-        snap(("old draft", True)),  # extensions hidden: could be old draft.docx (Sol)
-        snap(("old draft.txt", True), ("old draft.docx", True)),  # a same-stem file selected too
-        snap(("old draft.txt", False), ("budget.xlsx", False)),  # not selected
-        snap(("old draft.txt", True), ("budget.xlsx", True)),  # another file selected too
+        snap(("old draft", True)),
+        snap(("old draft.txt", True), ("old draft.docx", True)),
+        snap(("old draft.txt", False), ("budget.xlsx", False)),
+        snap(("old draft.txt", True), ("budget.xlsx", True)),
         snap(("old draft.txt", True), crumbs=("Libraries", "Documents")),
         snap(("old draft.txt", True), text="Are you sure you want to permanently delete this file?"),
     ):
@@ -95,7 +93,6 @@ def test_delete_only_with_exactly_the_file_by_full_name_selected_in_documents(
 
 
 def test_extensions_count_as_shown_only_by_the_view_setting(task: tuple[Task, dict[str, Any]]) -> None:
-    """Sol: with extensions hidden a reserved 'old draft.txt.docx' shows as 'old draft.txt', the planned full name."""
     tk, _ = task
     done = tk.template.subgoals["show_extensions"].done
 

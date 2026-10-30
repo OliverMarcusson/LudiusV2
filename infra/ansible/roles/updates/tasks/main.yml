@@ -1,10 +1,4 @@
 ---
-# updates: the image's Windows updates, the only work in Packer's stage 1 (ludius-win10-base, base.yml), so the
-# ~30 min of updates is not redone when apps, the observer or settings change (stage 2, golden.yml).
-# Windows 10 22H2 is past end of support: the default categories (critical, security, rollups) bring the last
-# cumulative updates (2025-10 LCU and .NET CU) and two small servicing fixes. The Malicious Software Removal Tool is a
-# one-off scan, not a fix, so it stays out. The timeout bounds the whole task (every round and reboot): a hung module
-# call fails the build instead of stalling it.
 - name: Bake in updates
   ansible.windows.win_updates:
     reboot: true

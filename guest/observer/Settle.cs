@@ -7,10 +7,6 @@ using static Interop.UIAutomationClient.UIA_PropertyIds;
 
 namespace Ludius.Observer;
 
-// The screen has settled when neither UIA (structure/property events from the
-// foreground window, focus, windows and menus anywhere) nor DXGI desktop
-// duplication (dirty rectangles) reported a change for the quiet interval.
-// Events only time the snapshot; the table is always rebuilt.
 sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEventHandler,
     IUIAutomationPropertyChangedEventHandler, IUIAutomationFocusChangedEventHandler
 {
@@ -29,7 +25,7 @@ sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEv
         new Thread(PixelLoop) { IsBackground = true, Name = "dxgi" }.Start();
     }
 
-    bool globals; // the focus, window and menu handlers are registered
+    bool globals;
 
     void Globals(bool on)
     {
@@ -44,7 +40,7 @@ sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEv
                 foreach (var id in new[] { UIA_Window_WindowOpenedEventId, UIA_MenuOpenedEventId, UIA_MenuClosedEventId })
                     uia.AddAutomationEventHandler(id, root, TreeScope.TreeScope_Subtree, null, this);
             }
-            else uia.RemoveAllEventHandlers(); // the subtree handlers too: Track removed or never added them
+            else uia.RemoveAllEventHandlers();
             globals = on;
         }
         catch (Exception e) when (e is COMException or UnauthorizedAccessException or ArgumentException) { }
@@ -57,8 +53,6 @@ sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEv
     public void HandlePropertyChangedEvent(IUIAutomationElement sender, int propertyId, object newValue) => Hit();
     public void HandleFocusChangedEvent(IUIAutomationElement sender) => Hit();
 
-    // Follow the foreground window with subtree-scoped handlers. Called from
-    // the request thread, never from inside a handler.
     void Track()
     {
         var fg = Native.GetForegroundWindow();
@@ -76,9 +70,6 @@ sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEv
         tracked = null;
         trackedHwnd = fg;
         if (fg == 0) return;
-        // Excel in front: no handlers at all, pixels alone time the snapshot. With any UIA event handler of ours
-        // registered while cells were typed, Excel's UIA went slow for good: every later read of its window and its
-        // Save As dialog timed out, and a new observer hung registering handlers. Without ours it stayed fast.
         Native.GetWindowThreadProcessId(fg, out var pid);
         bool excel = Native.ProcessName(pid).Equals("EXCEL.EXE", StringComparison.OrdinalIgnoreCase);
         Globals(!excel);
@@ -92,8 +83,6 @@ sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEv
                 [UIA_NamePropertyId, UIA_ValueValuePropertyId, UIA_IsEnabledPropertyId, UIA_ToggleToggleStatePropertyId,
                  UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_SelectionItemIsSelectedPropertyId]);
         }
-        // E_INVALIDARG arrives as ArgumentException (Outlook's main window refuses subtree handlers). The window is
-        // not retried until the foreground changes: settling falls back to focus/window events and pixels.
         catch (Exception e) when (e is COMException or UnauthorizedAccessException or ArgumentException) { tracked = null; }
         Hit();
     }
@@ -126,14 +115,12 @@ sealed class Settle : IUIAutomationEventHandler, IUIAutomationStructureChangedEv
                     if (r == Vortice.DXGI.ResultCode.WaitTimeout) continue;
                     r.CheckError();
                     res?.Dispose();
-                    // Pointer-only updates have no present time; the caret and real changes do.
                     if (info.LastPresentTime != 0 && info.TotalMetadataBufferSize > 0) Hit();
                     dup.ReleaseFrame();
                 }
             }
             catch (Exception)
             {
-                // Lost on desktop switches (lock, UAC); retry quietly.
                 pixels = false;
                 Thread.Sleep(1000);
             }

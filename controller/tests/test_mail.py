@@ -1,5 +1,3 @@
-"""Outlook mail templates: loading, planner validation of recipients, and the server-side done check (offline)."""
-
 from __future__ import annotations
 
 import dataclasses
@@ -19,7 +17,7 @@ from ludius.tasks import Task, check_done, preconditions
 from ludius.v1 import observation_pb2 as obs
 
 COLLEAGUES = {"mvellinga", "lnord"}
-THREADS = {"f1": ("mvellinga", "lund accruals q4 status")}  # f2: an open follow-up that is not a mail
+THREADS = {"f1": ("mvellinga", "lund accruals q4 status")}
 PEOPLE = {"mvellinga": "Marcus Vellinga", "lnord": "Lars Nord", "aberg": "Anna Berg"}
 
 
@@ -43,7 +41,7 @@ def test_templates_load_with_server_side_send_checks() -> None:
         t = templates[name]
         sends = [sg for sg in t.subgoals.values() if sg.done and sg.done.mail]
         assert sends and all(sg.done and sg.done.mail and sg.done.mail.mailbox == "{to}" for sg in sends)
-        assert all(sg.require and sg.forbid for sg in sends)  # every send is guarded
+        assert all(sg.require and sg.forbid for sg in sends)
         assert all(any(t.subgoals[n].done and t.subgoals[n].done.mail for n in v) for v in t.variants)  # pyright: ignore[reportOptionalMemberAccess]
 
 
@@ -60,7 +58,7 @@ def test_mail_to_a_colleague_is_valid() -> None:
         ({"handoff": "lnord"}, "must be the mail's recipient"),
         ({"params": {"to_name": "Marcus Vellinga; outside@example.com"}}, "name from the company story"),
         ({"params": {"to_name": "Marcus Vellinga <outside@example.com>"}}, "to_name"),
-        ({"params": {"to_name": "Lars Nord"}}, "name from the company story"),  # another colleague's name
+        ({"params": {"to_name": "Lars Nord"}}, "name from the company story"),
         ({"params": {"to_name": ""}}, "missing parameters"),
     ],
 )
@@ -76,13 +74,13 @@ def test_to_name_is_derived_from_the_narrative_not_the_llm() -> None:
            PlanItem.model_validate(item(params={"to": "jdoe@ludius.internal"}))]  # fmt: skip
     fill_recipient_names(its, PEOPLE)
     assert [it.params["to_name"] for it in its] == ["Marcus Vellinga", ""]
-    assert "to_name" not in catalog(cli.load_templates())  # the LLM is never asked for it
+    assert "to_name" not in catalog(cli.load_templates())
 
 
 def test_reply_must_answer_the_matching_mail_followup() -> None:
     assert check(item("outlook_reply_mail", followup="f1")) == []
     assert "set followup" in check(item("outlook_reply_mail"))[0]
-    assert "set followup" in check(item("outlook_reply_mail", followup="f2"))[0]  # a folder handoff, not a mail
+    assert "set followup" in check(item("outlook_reply_mail", followup="f2"))[0]
     wrong_subject = item("outlook_reply_mail", followup="f1", params={"subject": "other thing"})
     wrong_sender = item(
         "outlook_reply_mail", followup="f1", params={"to": "lnord@ludius.internal", "to_name": "Lars Nord"}
@@ -133,12 +131,12 @@ REPLY = mail.Message(
     ("body", "sender", "since", "ok"),
     [
         ("yes, booked", "aberg@ludius.internal", 4_000, True),
-        ("yes", "aberg@ludius.internal", 6_000, False),  # only the seed and an older reply: before the task
+        ("yes", "aberg@ludius.internal", 6_000, False),
         ("hi anna", "aberg@ludius.internal", 4_000, True),
-        ("yes", "mvellinga@ludius.internal", 4_000, False),  # the seed's sender is not the persona
-        ("yes", "aberg@ludius.internal", 0, False),  # no task start: never
-        ("- ...", "aberg@ludius.internal", 4_000, False),  # punctuation-only body normalises to nothing
-        ("yes", "", 4_000, False),  # no persona
+        ("yes", "mvellinga@ludius.internal", 4_000, False),
+        ("yes", "aberg@ludius.internal", 0, False),
+        ("- ...", "aberg@ludius.internal", 4_000, False),
+        ("yes", "", 4_000, False),
     ],
 )
 def test_delivered_needs_sender_time_and_a_real_body(
@@ -154,10 +152,10 @@ def test_delivered_needs_sender_time_and_a_real_body(
 @pytest.mark.parametrize(
     "sent_to",
     [
-        ("mvellinga@ludius.internal", "outside@example.com"),  # a hidden Bcc: only the Sent Items copy shows it
-        ("lnord@ludius.internal", "mvellinga@ludius.internal"),  # an extra colleague in Cc
-        ("?",),  # a recipient without a readable address
-        (),  # no Sent Items copy recipients at all
+        ("mvellinga@ludius.internal", "outside@example.com"),
+        ("lnord@ludius.internal", "mvellinga@ludius.internal"),
+        ("?",),
+        (),
     ],
 )
 def test_sent_copy_must_go_to_the_planned_recipient_alone(
@@ -175,19 +173,19 @@ def test_sent_copy_must_go_to_the_planned_recipient_alone(
 
 
 MIN = mail.MINUTE_MS
-START = 100 * MIN + 8_000  # the task started 8 s into a minute
+START = 100 * MIN + 8_000
 
 
 @pytest.mark.parametrize(
     ("submit", "delivery", "ok"),
     [
-        (START + 26_000, START + 27_000, True),  # recipient copy: delivered a second after submit
-        (START + 26_000, 100 * MIN, True),  # Sent Items copy: delivery cut to the minute, before the task start
-        (START + 30 * MIN, 50 * MIN, False),  # an old message with a forged future submit time
-        (50 * MIN, START + MIN, False),  # an old submit time, delivered (again) during the task
-        (START + 5 * MIN, START + MIN, False),  # submit long after delivery: times disagree
-        (START + 1_000, 0, False),  # no delivery time
-        (0, START + 1_000, False),  # no submit time
+        (START + 26_000, START + 27_000, True),
+        (START + 26_000, 100 * MIN, True),
+        (START + 30 * MIN, 50 * MIN, False),
+        (50 * MIN, START + MIN, False),
+        (START + 5 * MIN, START + MIN, False),
+        (START + 1_000, 0, False),
+        (0, START + 1_000, False),
     ],
 )
 def test_delivered_needs_submit_and_delivery_times_in_the_task(
@@ -218,22 +216,22 @@ def test_send_is_blocked_unless_to_is_exact_and_cc_bcc_empty() -> None:
     task = Task(t, PlanItem.model_validate(item()), random.Random(0))
     sg = t.subgoals["send_button"]
 
-    def snap(**fields: str) -> obs.Snapshot:  # the fields, readable, in the foreground window (index 1)
+    def snap(**fields: str) -> obs.Snapshot:
         return obs.Snapshot(windows=[obs.Window(kind=obs.Window.POPUP), obs.Window(kind=obs.Window.FOREGROUND)],
                             elements=[obs.Element(role="edit", name=k, value=v, actions=["value"], window=1)
                                       for k, v in fields.items()])  # fmt: skip
 
-    resolved = ("Marcus Vellinga", "Marcus Vellinga <mvellinga@ludius.internal>")  # how Outlook shows it, resolved
+    resolved = ("Marcus Vellinga", "Marcus Vellinga <mvellinga@ludius.internal>")
     for to in ("mvellinga@ludius.internal", "mvellinga@ludius.internal;", *resolved):
         assert preconditions(sg, snap(To=to, Cc="", Bcc=""), task) is None
-        assert preconditions(sg, snap(To=to, Cc=""), task) is None  # Bcc hidden (Outlook's default): only filled blocks
+        assert preconditions(sg, snap(To=to, Cc=""), task) is None
     for bad in (snap(To="mvellinga@ludius.internal; outside@example.com", Cc="", Bcc=""),
                 snap(To="Marcus Vellinga; outside@example.com", Cc="", Bcc=""), snap(To="Lars Nord", Cc="", Bcc=""),
                 snap(To="Marcus Vellinga <outside@example.com>", Cc="", Bcc=""),
                 snap(To="mvellinga@ludius.internal", Cc="outside@example.com", Bcc=""),
                 snap(To="mvellinga@ludius.internal", Cc="", Bcc="lnord@ludius.internal"),
                 snap(To="lnord@ludius.internal", Cc="", Bcc=""),
-                snap(To="mvellinga@ludius.internal", Bcc=""),  # Cc not on screen
+                snap(To="mvellinga@ludius.internal", Bcc=""),
                 snap()):  # fmt: skip
         assert preconditions(sg, bad, task) is not None
     reply = cli.load_templates()["outlook_reply_mail"].subgoals["send_shortcut"]
@@ -254,21 +252,18 @@ def test_send_guard_reads_readable_ascii_fields_in_the_foreground_window() -> No
                                       for k, v in f.items()])  # fmt: skip
 
     assert preconditions(sg, snap(), task) is None
-    # The observer reads "" for a field without a Value pattern: that is not an empty Cc.
     assert preconditions(sg, snap(readable="To Bcc"), task) is not None
-    # Fields in another window do not authorise the foreground one; nor does a Send button in another window.
     assert preconditions(sg, snap(where={"To": 1}), task) is not None
     assert preconditions(sg, snap(where={"Cc": 1}), task) is not None
     send = obs.Element(role="button", name="Send", actions=["invoke"])
     assert preconditions(sg, snap(), task, send) is None
     send.window = 1
     assert preconditions(sg, snap(), task, send) is not None
-    assert preconditions(sg, obs.Snapshot(elements=snap().elements), task) is not None  # no foreground window
-    # Lookalikes: Unicode re.I folds dotless i (U+0131) to i and the Kelvin sign to k.
+    assert preconditions(sg, obs.Snapshot(elements=snap().elements), task) is not None
     for to in ("mvell\u0131nga@ludius.internal", "mvellinga@corp.lud\u0131us.test", "Marcus Vell\u0131nga",
                "Marcus Vellinga <mvellinga@ludius.internal>\u200b"):  # fmt: skip
         assert preconditions(sg, snap(To=to), task) is not None, to
-    assert preconditions(sg, snap(To="MVellinga@Ludius.Internal"), task) is None  # ASCII case still folds
+    assert preconditions(sg, snap(To="MVellinga@Ludius.Internal"), task) is None
 
 
 def test_value_less_typing_counts_only_where_the_template_says_so() -> None:
@@ -276,13 +271,13 @@ def test_value_less_typing_counts_only_where_the_template_says_so() -> None:
     from ludius.options import Option
 
     templates = cli.load_templates()
-    body = obs.Element(key="b", role="document", name="Untitled Message")  # Word editor: no Value pattern
+    body = obs.Element(key="b", role="document", name="Untitled Message")
     edit = obs.Element(key="e", role="edit", name="Subject", actions=["value"])
     after = obs.Snapshot(elements=[obs.Element(key="e", role="edit", name="Subject", actions=["value"]),
                                    obs.Element(key="b", role="document", name="Untitled Message")])  # fmt: skip
     outlook = templates["outlook_send_mail"].subgoals["write_body"]
     assert _typed_landed(after, Option("o1", "type", "t", element=body), outlook)
-    assert not _typed_landed(after, Option("o2", "type", "t", element=edit), outlook)  # value unchanged
+    assert not _typed_landed(after, Option("o2", "type", "t", element=edit), outlook)
     for sg in (templates["notepad_write_note"].subgoals["write_body"],
                templates["wordpad_formatted_note"].subgoals["bold_keys_heading"],
                templates["wordpad_formatted_note"].subgoals["bullets_body"]):  # fmt: skip
@@ -293,7 +288,7 @@ def test_value_less_typing_counts_only_where_the_template_says_so() -> None:
 def test_recipient_and_answered_subject_may_repeat() -> None:
     first, again = item(), item(at="11:00", params={"subject": "lund accruals q4 reversal", "body": "reversal done"})
     reply = item("outlook_reply_mail", at="13:00", followup="f1", params={"body": "thanks, noted"})
-    assert check(first, again, reply) == []  # same colleague, and the reply reuses the answered subject
+    assert check(first, again, reply) == []
 
 
 def _range(tmp_path: Path, to_name: str, narrative: bool = True) -> Path:
@@ -323,7 +318,7 @@ def test_ludius_day_refuses_a_plan_with_a_bad_recipient(tmp_path: Path, to_name:
     path = _range(tmp_path, to_name, narrative)
     args = argparse.Namespace(plan=str(path), canary=False, temporal=None)
     with pytest.raises(ValueError, match="company story|colleague.s address"):
-        cli.cmd_day(args)  # raises in the shared loader, before any agent, Decisions or VM
+        cli.cmd_day(args)
 
 
 def test_a_plan_with_the_narrative_name_loads(tmp_path: Path) -> None:
@@ -365,7 +360,7 @@ def test_a_blocked_subgoal_waits_without_asking_decisions(tmp_path: Path, monkey
 
     def delivered(*a: object) -> bool:
         polls.append(a)
-        return len(polls) == 3  # the mail lands on the third look
+        return len(polls) == 3
 
     monkeypatch.setattr(mail, "delivered", delivered)
     monkeypatch.setattr(loop, "BLOCKED_WAIT_S", 0)
@@ -404,10 +399,10 @@ QUOTED = (
 @pytest.mark.parametrize(
     ("body", "ok"),
     [
-        ("Hi Marcus\r\nAll booked.\r\n" + QUOTED, True),  # written above the quote
-        (QUOTED + "Hi Marcus\r\nAll booked.", False),  # typed into the end of the quote (reply-r6)
-        ("Hi Marcus\r\n" + QUOTED + "All booked.", False),  # split around the quote
-        ("Hi Marcus\r\nAll booked.", True),  # no quote at all
+        ("Hi Marcus\r\nAll booked.\r\n" + QUOTED, True),
+        (QUOTED + "Hi Marcus\r\nAll booked.", False),
+        ("Hi Marcus\r\n" + QUOTED + "All booked.", False),
+        ("Hi Marcus\r\nAll booked.", True),
     ],
 )
 def test_reply_text_must_come_before_the_quoted_original(monkeypatch: pytest.MonkeyPatch, body: str, ok: bool) -> None:
@@ -419,7 +414,7 @@ def test_reply_text_must_come_before_the_quoted_original(monkeypatch: pytest.Mon
     monkeypatch.setattr(mail, "messages", messages)
     args = ("mvellinga@ludius.internal", "inbox", "s", "hi marcus\nall booked", "aberg@ludius.internal", 1)
     assert mail.delivered(*args, above_quote=True) is ok
-    assert mail.delivered(*args) is (ok or body.startswith(QUOTED))  # a send's check: anywhere in the body
+    assert mail.delivered(*args) is (ok or body.startswith(QUOTED))
     done = cli.load_templates()["outlook_reply_mail"].subgoals["send_shortcut"].done
     assert done and done.mail and done.mail.above_quote
     send = cli.load_templates()["outlook_send_mail"].subgoals["send_shortcut"].done
@@ -451,7 +446,7 @@ def test_reply_click_puts_the_caret_at_the_top(tmp_path: Path) -> None:
     agent = FakeAgent()
     runner = Runner(agent, None, Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
     box = obs.Rect(x=0, y=0, width=800, height=600)
-    body = obs.Element(key="d", role="document", name="RE: s - Message", bounds=box)  # Word body: no value
+    body = obs.Element(key="d", role="document", name="RE: s - Message", bounds=box)
     note = obs.Element(key="n", role="document", value="heading\r", bounds=box)
     templates = cli.load_templates()
     reply = templates["outlook_reply_mail"].subgoals["write_reply"]
@@ -467,7 +462,6 @@ def test_reply_click_puts_the_caret_at_the_top(tmp_path: Path) -> None:
 def test_mail_templates_get_the_shared_send_contract() -> None:
     from ludius.tasks import Dialogs, ElementCheck, Form, Template
 
-    # The contract as it was hardcoded before app profiles (d5620c0): the Outlook profile must give exactly this.
     require = [
         ElementCheck(role="edit", name="^To$", value="^({to}|{to_name}|{to_name} <{to}>);?$"),
         ElementCheck(role="edit", name="^Cc$", value="^$"),
@@ -485,28 +479,26 @@ def test_mail_templates_get_the_shared_send_contract() -> None:
     raw = {"task": "x", "app": "outlook", "variants": [["s"]],
            "subgoals": {"s": {"goal": "send", "done": {"mail": {"mailbox": "{to}"}}}}}  # fmt: skip
     with pytest.raises(ValueError, match="needs a sending capability"):
-        Template.model_validate(raw)  # a mail check cannot opt out of the contract
+        Template.model_validate(raw)
     with pytest.raises(ValueError, match="without a subgoal"):
         Template.model_validate(raw | {"capability": "mail.send", "subgoals": {"s": {"goal": "type"}}})
     assert Template.model_validate(raw | {"capability": "mail.send"}).subgoals["s"].require == require
-    with pytest.raises(ValueError, match="no mail form"):  # an app without a profile form can't send
+    with pytest.raises(ValueError, match="no mail form"):
         Template.model_validate(raw | {"app": "notepad", "processes": ["notepad.exe"], "capability": "mail.send"})
-    # A profile only places fields: it can't set their values, and abandon's words never name a committing button.
     with pytest.raises(ValueError, match="selectors"):
         Form.model_validate({"to": {"name": "^To$"}, "empty": [{"name": "^Cc$", "value": ".*"}]})
     with pytest.raises(ValueError, match="commits"):
         Dialogs.model_validate({"discard": ["don'?t save", "send( anyway)?"], "choice_ok": "OK", "leave": []})
-    with pytest.raises(ValueError, match="commits"):  # Sol on bb21c4f: the radio's confirm can't be Send
+    with pytest.raises(ValueError, match="commits"):
         Dialogs.model_validate({"discard": ["don'?t save"], "choice_ok": "Send", "leave": []})
     base = tasks.profile("outlook").model_dump()
-    with pytest.raises(ValueError, match="close key"):  # abandon presses it unchecked: never a send shortcut
+    with pytest.raises(ValueError, match="close key"):
         tasks.Profile.model_validate(base | {"keys": base["keys"] | {"close": "Alt+S"}})
 
 
 def test_mail_from_an_earlier_playback_never_counts_after_a_clock_rewind(monkeypatch: pytest.MonkeyPatch) -> None:
     from ludius.tasks import mail_baseline
 
-    # The guest clock was rewound to 1_000 (time-jump replay); the earlier playback's mail is dated after that.
     old_in = mail.Message("aberg@ludius.internal", 5_000, 5_000, "Yes, booked.", ("mvellinga@ludius.internal",), 7)
     old_sent = mail.Message("aberg@ludius.internal", 5_000, 0, "Yes, booked.", ("mvellinga@ludius.internal",), 3)
     store = {("mvellinga", "inbox"): [old_in], ("aberg", "sent"): [old_sent]}
@@ -528,12 +520,12 @@ def test_mail_from_an_earlier_playback_never_counts_after_a_clock_rewind(monkeyp
     task.mail_before = mail_baseline(task)
     assert task.mail_before == {("mvellinga", "inbox", 7), ("aberg", "sent", 3)}
     done = t.subgoals["send_shortcut"].done
-    assert not check_done(done, obs.Snapshot(), task, typed_ok=False)  # recent by the clock, but not new
+    assert not check_done(done, obs.Snapshot(), task, typed_ok=False)
     store[("mvellinga", "inbox")].append(dataclasses.replace(old_in, id=8))
-    assert not check_done(done, obs.Snapshot(), task, typed_ok=False)  # no new Sent Items copy yet
+    assert not check_done(done, obs.Snapshot(), task, typed_ok=False)
     store[("aberg", "sent")].append(dataclasses.replace(old_sent, id=4))
     assert check_done(done, obs.Snapshot(), task, typed_ok=False)
-    task.mail_before = None  # the baseline could not be read: never done
+    task.mail_before = None
     assert not check_done(done, obs.Snapshot(), task, typed_ok=False)
     monkeypatch.setattr(mail, "_query", unreadable)
     assert mail_baseline(task) is None
@@ -549,13 +541,11 @@ def test_send_is_refused_when_the_recipient_became_reserved(tmp_path: Path) -> N
     task = Task(t, PlanItem.model_validate(item("outlook_reply_mail", followup="f1")), random.Random(0))
     send, write = t.subgoals["send_shortcut"], t.subgoals["write_reply"]
     assert recipient_reserved(send, task, reserved)
-    assert not recipient_reserved(write, task, reserved)  # only the sending step is refused
+    assert not recipient_reserved(write, task, reserved)
     assert not recipient_reserved(send, task, Policy())
     assert RESERVED_RECIPIENT.startswith("precondition")
 
 
-# Git Bash on Windows, never whatever `bash` resolves to: System32's WSL bash made the test pass without the fix (Sol
-# on d5620c0).
 def _git_bash() -> str | None:
     if os.name != "nt":
         return shutil.which("bash")
@@ -568,8 +558,6 @@ GIT_BASH = _git_bash()
 
 @pytest.mark.skipif(GIT_BASH is None, reason="needs (Git) bash to run the remote pipeline")
 def test_failing_database_is_unreadable_not_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Re-check of a3b6b7d: a locked database exited 0 with no output through the pipe, so the baseline read as
-    # empty and an earlier playback's mail could pass done.
     fake = tmp_path / "sudo"
     fake.write_text('#!/bin/sh\necho "Error: database is locked" >&2\nexit 5\n', encoding="utf-8", newline="\n")
     fake.chmod(0o755)
@@ -583,7 +571,6 @@ def test_failing_database_is_unreadable_not_empty(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(mail, "_host", lambda: "10.0.0.1")
     monkeypatch.setattr(mail.subprocess, "run", run)
     assert mail._query("aberg", "sent", "x") is None  # pyright: ignore[reportPrivateUsage]
-    # Sol on afbadf1: a body that can't be read made the query fail too, never an empty body.
     fake.write_text('#!/bin/sh\nif [ "$1" = sqlite3 ]; then echo "1 0 0 0 - - 0 0 0 - - 2D 2D 2D 2D c1"; exit 0; fi\n'
                     'exit 1\n', encoding="utf-8", newline="\n")  # fmt: skip
     assert mail._query("aberg", "inbox", "x") is None  # pyright: ignore[reportPrivateUsage]

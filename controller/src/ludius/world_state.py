@@ -1,19 +1,3 @@
-"""World state for planning (spec section 6): inbox, calendar, shared documents and cross-persona follow-ups.
-
-Built from what really happened, never from what was planned alone: a plan item counts only when its day
-ground-truth log ends it "done". The state is derived again before each plan (idempotent, so it never double
-counts) and written to runs/world/state.yaml as the readable record.
-
-- documents: what completed items left on disk (path from the template's parameters), with owner and date.
-- messages: a completed item handed off to a colleague is a note from its author to that colleague.
-- follow-ups: each handoff becomes a concrete task due for the colleague on the next working day. It stays open
-  until a plan item that names it (PlanItem.followup) is logged done; the planner must schedule open ones.
-- calendar: the narrative's dated events, per persona mentioned by name.
-
-A chat direct message is never a follow-up: the colleague learns it by reading it the same day (ludius.react), not
-from the sender's plan. This is planning data; calendar and sharing UIs are not driven from it.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -43,12 +27,12 @@ class Message(Strict):
 
 class Followup(Strict):
     id: str
-    user: str  # who has to act
+    user: str
     sender: str
-    due: str  # YYYY-MM-DD
+    due: str
     about: str
     document: str = ""
-    subject: str = ""  # the mail's subject when the handoff was a sent mail: the thread a reply must answer
+    subject: str = ""
     done_on: str = ""
 
 
@@ -73,10 +57,9 @@ def next_workday(day: dt.date) -> dt.date:
 
 
 def build(world: World, narrative: Narrative, personas: list[Persona], before: dt.date) -> State:
-    """Everything that happened on days before `before`."""
     state = State()
     templates = _templates()
-    finished: dict[str, str] = {}  # follow-up id -> date its follow-up item was done
+    finished: dict[str, str] = {}
     handoffs: list[Followup] = []
     for path in sorted(world.root.glob("plans/*.yaml")):
         date, user = path.stem[:10], path.stem[11:]
@@ -88,12 +71,12 @@ def build(world: World, narrative: Narrative, personas: list[Persona], before: d
                 continue
             doc = ""
             t = templates.get(it.template)
-            if t and t.writes:  # where its result lands, as the template declares it (".*": a kept extension)
+            if t and t.writes:
                 try:
                     doc = t.writes[0].removesuffix(".*").format_map({**it.params, **it.content})
                     state.documents.append(Document(path=doc, owner=user, date=date, template=it.template))
                 except KeyError:
-                    pass  # parameters the plan did not fill: no document recorded
+                    pass
             if it.followup:
                 finished.setdefault(it.followup, date)
             if it.handoff and not (t and t.capability == "chat.dm"):
@@ -101,7 +84,7 @@ def build(world: World, narrative: Narrative, personas: list[Persona], before: d
                 about = it.context or it.template
                 subject = it.params.get("subject", "") if t and t.capability == "mail.send" else ""
                 if subject:
-                    about = f"mail {subject!r}: {about}"  # the subject a reply must use
+                    about = f"mail {subject!r}: {about}"
                 state.messages.append(Message(id=fid, date=date, sender=user, to=it.handoff,
                                               subject=subject or about[:80],
                                               body=about + (f" See {doc}." if doc else "")))  # fmt: skip
@@ -114,9 +97,6 @@ def build(world: World, narrative: Narrative, personas: list[Persona], before: d
 
 
 def existing_files(world: World, user: str) -> list[str]:
-    """Names a new item must not reuse: every target in any of the persona's plans (done or not: a failed save may
-    have left a file) plus the optional guest inventory world/guest-files-<user>.txt (one name or path per line,
-    written from a read-only listing of the profile). The controller never sees the guest disk itself."""
     out: list[str] = []
     templates = _templates()
     for path in sorted(world.root.glob("plans/*.yaml")):
@@ -129,7 +109,6 @@ def existing_files(world: World, user: str) -> list[str]:
 
 
 def calendar(narrative: Narrative, personas: list[Persona]) -> list[CalendarEntry]:
-    """Narrative events per persona named in them (full or first name)."""
     out: list[CalendarEntry] = []
     for e in narrative.events:
         text = e.what.lower()
@@ -140,7 +119,6 @@ def calendar(narrative: Narrative, personas: list[Persona]) -> list[CalendarEntr
 
 
 def mail_threads(state: State, user: str) -> dict[str, tuple[str, str]]:
-    """Mail follow-ups addressed to `user`: id -> (sender account, subject), what a reply must match."""
     return {f.id: (f.sender, f.subject) for f in state.followups if f.user == user and f.subject}
 
 
@@ -149,14 +127,13 @@ def due(state: State, user: str, day: dt.date) -> list[Followup]:
 
 
 def brief(state: State, user: str, day: dt.date) -> str:
-    """The persona's inbox, calendar, documents and open follow-ups, as planner input."""
     iso, soon = day.isoformat(), (day + dt.timedelta(days=3)).isoformat()
     lines: list[str] = []
     if inbox := [m for m in state.messages if m.to == user and m.date < iso][-10:]:
         lines += ["Inbox:", *(f"- {m.date} from {m.sender}: {m.body}" for m in inbox)]
     if cal := [c for c in state.calendar if user in c.attendees and iso <= c.date <= soon]:
         lines += ["Calendar (next days):", *(f"- {c.date} {c.what}" for c in cal)]
-    if docs := list({d.path.casefold(): d for d in state.documents if d.owner == user}.values())[-8:]:  # once each
+    if docs := list({d.path.casefold(): d for d in state.documents if d.owner == user}.values())[-8:]:
         lines += ["Own recent files:", *(f"- {d.date} {d.path}" for d in docs)]
     if open_ := due(state, user, day):
         lines += ["Open follow-ups (must be scheduled today):",

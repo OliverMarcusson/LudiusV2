@@ -1,5 +1,3 @@
-"""file.share: an own file to one of the persona's team shares; done is the share's copy, new and byte for byte."""
-
 from __future__ import annotations
 
 import random
@@ -64,7 +62,7 @@ def test_the_copy_is_new_and_holds_the_own_file(task: tuple[Task, dict[str, Any]
     done, snap, key = tk.template.subgoals["paste_keys"].done, obs.Snapshot(), "Finance/old draft.txt"
     disk["file"] = guestfile.GuestFile(True, 500, b"draft")
     disk[key] = guestfile.GuestFile(True, 0, b"draft")
-    assert check_done(done, snap, tk, False) is False  # no baseline: never done
+    assert check_done(done, snap, tk, False) is False
     assert file_baseline(tk, Policy()) == "\\\\files\\Finance\\old draft.txt: already exists, never overwritten"
     disk[key] = None
     assert file_baseline(tk, Policy()) == "\\\\files\\Finance\\old draft.txt: unreadable"
@@ -72,7 +70,7 @@ def test_the_copy_is_new_and_holds_the_own_file(task: tuple[Task, dict[str, Any]
     assert file_baseline(tk, Policy()) == "Documents\\old draft.txt: not there, nothing to copy"
     disk["file"] = guestfile.GuestFile(True, 500, b"draft")
     assert file_baseline(tk, Policy()) is None
-    assert check_done(done, snap, tk, False) is False  # not copied yet
+    assert check_done(done, snap, tk, False) is False
     for wrong in (None, guestfile.GuestFile(True, 0, b"other")):
         disk[key] = wrong
         assert check_done(done, snap, tk, False) is False
@@ -93,7 +91,7 @@ def test_a_reserved_file_or_copy_is_never_read(
 def test_copy_needs_a_press_and_both_keys_a_decider_yes(task: tuple[Task, dict[str, Any]]) -> None:
     tk, _ = task
     copy, paste = tk.template.subgoals["copy_keys"], tk.template.subgoals["paste_keys"]
-    assert check_done(copy.done, obs.Snapshot(), tk, False) is False  # Decisions alone never completes the copy (Sol)
+    assert check_done(copy.done, obs.Snapshot(), tk, False) is False
     assert check_done(copy.done, obs.Snapshot(), tk, False, pressed_ok=True) is True
 
     assert paste.confirm and "{share_path}" in paste.confirm and copy.confirm

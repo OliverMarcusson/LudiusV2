@@ -1,10 +1,3 @@
-"""Persistent-VM hygiene and the upper failure ladder (spec sections 5 and 7).
-
-normalize: dismiss dialogs and close apps outside the allowlist, confirm an unlocked,
-responsive desktop. unlock: Ctrl+Alt+Del and the persona's password, blind, through
-the virtual keyboard (real type 7 unlock logons). escalate: ladder steps 4-8.
-"""
-
 from __future__ import annotations
 
 import os
@@ -20,15 +13,15 @@ from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
 DISCARD = re.compile(r"(don'?t save|no|discard)", re.I)
-DISMISS = re.compile(r"(cancel|close|ok|not now|no thanks|dismiss|got it)", re.I)  # got it: Office teaching callouts
+DISMISS = re.compile(r"(cancel|close|ok|not now|no thanks|dismiss|got it)", re.I)
 
 
 class VmUnhealthy(Exception):
-    """Ladder step 8: the VM leaves the pool; the trace is in the ground-truth log."""
+    pass
 
 
 class EscalationDenied(Exception):
-    """LUDIUS_NO_ESCALATE=1: the ladder (restart, sign out, reboot) was needed but is denied; no input was sent."""
+    pass
 
 
 class Session:
@@ -48,7 +41,6 @@ class Session:
         return self.agent.observe(wait_settle=True, timeout_ms=timeout_ms).snapshot
 
     def wait_ready(self, seconds: float = 180) -> obs.Snapshot:
-        """Until the observer answers from an unlocked desktop (it restarts with every logon)."""
         deadline = time.monotonic() + seconds
         while True:
             try:
@@ -62,8 +54,6 @@ class Session:
                 raise TimeoutError("desktop not ready")
             time.sleep(2)
 
-    # Unlock -------------------------------------------------------------------------
-
     def unlock(self) -> bool:
         snap = self.observe()
         if not snap.locked:
@@ -72,7 +62,6 @@ class Session:
         return self.sign_in()
 
     def sign_in(self) -> bool:
-        """Blind: Ctrl+Alt+Del, then the password into the focused box. Lock screen and logon screen alike."""
         for _ in range(2):
             self.agent.ctrl_alt_del()
             time.sleep(2.0)
@@ -86,25 +75,20 @@ class Session:
                 time.sleep(1)
         return False
 
-    # Normalize ----------------------------------------------------------------------
-
     def normalize(self, keep: set[str] | None = None, rounds: int = 12) -> bool:
-        """Close everything outside `keep` (process names). True when only kept apps remain."""
         keep = {k.lower() for k in keep or set()}
         closed: list[str] = []
         for _ in range(rounds):
             if not self.unlock():
                 return False
             snap = self.observe()
-            if snap.secure_desktop:  # a UAC prompt left behind: cancel it, never answer it
+            if snap.secure_desktop:
                 self.agent.chord(keys.chord("Esc"))
                 closed.append("UAC prompt")
                 time.sleep(1.0)
                 continue
             fg = _fg(snap)
             if fg is not None and pixels_window(fg):
-                # Pixels only: nothing is known by process, so nothing is closed and no row is clicked. Shut Down
-                # Windows left open is the one thing to leave, with Esc.
                 if any(
                     e.framework_id == "visual" and re.fullmatch(r"Shut Down Windows", e.name) for e in snap.elements
                 ):
@@ -127,7 +111,6 @@ class Session:
                 if a.process_name.lower() not in keep
                 and (a.process_name.lower() not in SHELL_PROCESSES or _explorer_window(a))
             ]
-            # A kept app may stay in front (a reaction's chat, ludius.react); never its dialog.
             if (
                 fg is not None
                 and (_is_shell_surface(fg) or (fg.process_name.lower() in keep and fg.class_name != "#32770"))
@@ -137,7 +120,6 @@ class Session:
                 self.log.write(event="normalized", host_ms=_now(), closed=closed)
                 return True
             if popup is not None or (fg is not None and fg.class_name == "#32770"):
-                # A save prompt from closing a noise app: discard like a person giving up.
                 target = None if shell_dialog(fg) else _button(snap, DISCARD) or _button(snap, DISMISS)
                 if target is not None:
                     self._click(target)
@@ -147,8 +129,6 @@ class Session:
                 closed.append(f"{fg.title} ({fg.process_name})")
                 self.agent.chord(keys.chord("Alt+F4"))
             elif strays:
-                # Bring the next stray forward through its taskbar button, else Alt+Tab (which does not restore
-                # a minimized Edge). Edge's title says "Microsoft\u200b Edge", its button "Microsoft Edge".
                 app = strays[0].title.split(" - ")[-1].replace("\u200b", "").lower()
                 btn = next((e for e in snap.elements if e.role == "button" and app and
                             app in e.name.replace("\u200b", "").lower()), None)  # fmt: skip
@@ -158,17 +138,13 @@ class Session:
                 elif (
                     fg is not None
                     and fg.class_name == "Shell_TrayWnd"
-                    and all(  # every window's geometry known, none but the desktop under the point
+                    and all(
                         w.bounds.width > 0
                         and w.bounds.height > 0
                         and (w.class_name in ("Progman", "WorkerW") or not _contains(w.bounds, x, y))
                         for w in [*snap.windows, *snap.apps]
                     )
                 ):
-                    # Focus on the taskbar itself (live: its tray chevron) leaves only the focused button in the
-                    # tree, and neither Esc nor Alt+Tab moves it: a click on the bare desktop does. Only where no
-                    # window but the desktop is under the point (a minimized app sits at -32000); bounds unknown
-                    # anywhere: no click.
                     self.agent.move(x, y, 120)
                     self.agent.click()
                 else:
@@ -184,22 +160,16 @@ class Session:
         self.agent.move(max(1, b.x + b.width // 2), max(1, b.y + b.height // 2), 120)
         self.agent.click()
 
-    # Ladder 4-8 ---------------------------------------------------------------------
-
     def escalate(self) -> int:
-        """Run ladder steps 4..8 until the desktop is clean. Returns the step that worked."""
-        if os.environ.get("LUDIUS_NO_ESCALATE") == "1":  # unattended deployments: fail the task, never sign out
+        if os.environ.get("LUDIUS_NO_ESCALATE") == "1":
             self.log.write(event="escalate_blocked", host_ms=_now())
             raise EscalationDenied("LUDIUS_NO_ESCALATE=1: ladder steps 4-8 denied, no input sent")
-        # 4: restart the app (close it; the next task launches it again).
         self.log.write(event="ladder", step=4, action="restart app", host_ms=_now())
         if self.normalize():
             return 4
-        # 5: normalize the session harder (more rounds).
         self.log.write(event="ladder", step=5, action="normalize session", host_ms=_now())
         if self.normalize(rounds=24):
             return 5
-        # 6: sign out and back in (autologon), via the Win+X menu: U, I.
         self.log.write(event="ladder", step=6, action="sign out", host_ms=_now())
         self.agent.chord(keys.chord("Win+X"))
         time.sleep(1.0)
@@ -207,12 +177,11 @@ class Session:
         time.sleep(0.6)
         self.agent.chord(keys.chord("I"))
         try:
-            time.sleep(15)  # autologon only runs at boot: sign back in like a person
+            time.sleep(15)
             if self.sign_in() and self.normalize():
                 return 6
         except Exception:
             pass
-        # 7: reboot the VM through the hypervisor.
         self.log.write(event="ladder", step=7, action="reboot VM", host_ms=_now())
         if self.lifecycle is not None:
             try:
@@ -223,7 +192,6 @@ class Session:
                     return 7
             except Exception:
                 pass
-        # 8: out of the pool.
         self.log.write(event="ladder", step=8, action="mark VM unhealthy", host_ms=_now())
         raise VmUnhealthy("session could not be normalized")
 
@@ -233,8 +201,6 @@ def _fg(snap: obs.Snapshot) -> obs.Window | None:
 
 
 def _is_shell_surface(w: obs.Window) -> bool:
-    """Also Explorer's file operation window: after a Delete it stays in front invisible until an app is clicked, and
-    Alt+F4 or Esc on it only asks to cancel all transfers (live, lnord). Never closed; a click elsewhere clears it."""
     return w.class_name in (
         "Progman",
         "WorkerW",
@@ -244,9 +210,6 @@ def _is_shell_surface(w: obs.Window) -> bool:
 
 
 def _inert_shell_popup(snap: obs.Snapshot, i: int) -> bool:
-    """Explorer's tray "Worker Window", or a SysShadow (a taskbar tooltip's shadow, live aberg): a WS_POPUP with no
-    UIA tree and no elements. Nothing to dismiss; Esc never closes it, so counting it as a dialog fails every
-    normalize (live: a minimized Edge behind it was never reached)."""
     w = snap.windows[i]
     return (
         w.process_name.lower() == "explorer.exe"
@@ -261,7 +224,6 @@ def _contains(b: obs.Rect, x: int, y: int) -> bool:
 
 
 def _explorer_window(w: obs.Window) -> bool:
-    """File Explorer folders run in explorer.exe but are ordinary apps to close."""
     return w.process_name.lower() == "explorer.exe" and w.class_name == "CabinetWClass"
 
 

@@ -1,7 +1,4 @@
 ---
-# Range mail server for mail_backend: grommunio (imported by range-up.yml after its validation play, which sets
-# pve_node and pve_vms and checked the ids): srv01 from the stock Debian 13 cloud image + the srv01 role (Samba AD,
-# chrony, grommunio), with an uplink only while it is provisioned.
 - name: Srv01 VM
   hosts: localhost
   connection: local
@@ -16,9 +13,6 @@
       args:
         creates: "{{ srv01_key }}"
 
-    # Proxmox's own cloud-init user-data names the host after the VM (ludius-srv01) and rewrites /etc/hosts at boot;
-    # this snippet replaces it: hostname srv01 (what the domain was provisioned with), /etc/hosts left to the role,
-    # no package upgrade at first boot (srv01 has no uplink then).
     - name: Srv01 cloud-init user-data
       ansible.builtin.copy:
         dest: /var/lib/vz/snippets/{{ srv01_user_data }}
@@ -87,7 +81,6 @@
         port: 22
         timeout: 600
 
-    # Every run, whatever the tags: the gateway check (tasks/gateway-no-forwarding.yml) reaches srv01 through it.
     - name: Srv01 in the inventory
       tags: [always]
       ansible.builtin.add_host:
@@ -97,9 +90,6 @@
         ansible_ssh_private_key_file: "{{ srv01_key }}"
         ansible_ssh_common_args: -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/ludius_known_hosts
 
-# Guest work runs as srv01's own host, never delegated from localhost: a failed or unreachable srv01 only drops srv01
-# from the run (localhost is in this play so the run goes on), and the host-side detach in the next play runs whatever
-# happened to the guest. A delegated task that can't reach srv01 would mark localhost unreachable and skip it.
 - name: Srv01 (Samba AD, NTP, grommunio), uplink only while provisioning
   hosts: localhost:srv01
   gather_facts: false

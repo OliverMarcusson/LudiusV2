@@ -1,8 +1,3 @@
-"""Fixture replay: recorded observations + subgoal -> expected option (offline), expected Decisions choice (live).
-
-Live Decisions replay runs only with LUDIUS_LIVE_DECISION=1 and OPENROUTER_API_KEY set.
-"""
-
 from __future__ import annotations
 
 import os
@@ -47,7 +42,6 @@ def test_expected_option_offered_and_forbidden_absent(case_dir: Path) -> None:
         pytest.fail(f"none of {case['expect']} offered; got {texts[:40]}")
     for bad in case.get("forbid", []):
         assert not any(bad in t for t in texts), f"forbidden option {bad!r} offered"
-    # Bounds and sources stay in the controller; Decisions only sees ids, roles, names, values, states, hints.
     state = build_state(v, task, sg, [], "start")
     assert "bounds" not in str(state)
 

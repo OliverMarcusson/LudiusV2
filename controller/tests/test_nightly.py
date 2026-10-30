@@ -45,7 +45,7 @@ def _world(tmp_path: Path) -> World:
     people = [Person(name="Anna Berg", role="Finance controller", department="Finance", user="aberg")]
     n = Narrative(company="Harbourline", city="Rotterdam", summary="Packaging.", people=people, projects=[], events=[])
     world.save_narrative(n)
-    return world  # unrevised and nothing logged: the weekly revision makes no model call
+    return world
 
 
 def _setup(tmp_path: Path) -> tuple[World, Any, nightly.Sources]:
@@ -56,12 +56,12 @@ def _setup(tmp_path: Path) -> tuple[World, Any, nightly.Sources]:
 def test_planning_date_is_the_next_local_day_of_the_intended_occurrence() -> None:
     utc = dt.UTC
     cases = {
-        dt.datetime(2026, 10, 27, 21, 0, tzinfo=utc): "2026-10-28",  # 22:00 CET
-        dt.datetime(2026, 10, 27, 23, 30, tzinfo=utc): "2026-10-29",  # past local midnight: its local day + 1
-        dt.datetime(2026, 10, 25, 0, 30, tzinfo=utc): "2026-10-26",  # repeated 02:30 at the autumn change...
-        dt.datetime(2026, 10, 25, 1, 30, tzinfo=utc): "2026-10-26",  # ...is the same local day both times
-        dt.datetime(2026, 3, 29, 1, 30, tzinfo=utc): "2026-03-30",  # 03:30 CEST after the spring gap
-        dt.datetime(2026, 10, 30, 21, 0, tzinfo=utc): "2026-10-31",  # Friday evening plans Saturday too
+        dt.datetime(2026, 10, 27, 21, 0, tzinfo=utc): "2026-10-28",
+        dt.datetime(2026, 10, 27, 23, 30, tzinfo=utc): "2026-10-29",
+        dt.datetime(2026, 10, 25, 0, 30, tzinfo=utc): "2026-10-26",
+        dt.datetime(2026, 10, 25, 1, 30, tzinfo=utc): "2026-10-26",
+        dt.datetime(2026, 3, 29, 1, 30, tzinfo=utc): "2026-03-30",
+        dt.datetime(2026, 10, 30, 21, 0, tzinfo=utc): "2026-10-31",
     }
     for at, want in cases.items():
         assert nightly.planning_date(at, "Europe/Stockholm").isoformat() == want
@@ -85,7 +85,7 @@ def test_nightly_schedule_is_separate_paused_and_never_overlaps() -> None:
     args = argparse.Namespace(nightly=True, canary=True, clock="realtime", persona="aberg", at=None,
                               timezone="UTC", unpause=False, temporal="unused:1", what="create")  # fmt: skip
     with pytest.raises(ValueError, match="day schedule"):
-        cli.cmd_schedule(args)  # refused before any connection
+        cli.cmd_schedule(args)
 
 
 def test_generated_plan_is_kept_on_retry_and_never_overwritten(tmp_path: Path) -> None:
@@ -99,7 +99,7 @@ def test_generated_plan_is_kept_on_retry_and_never_overwritten(tmp_path: Path) -
     again = nightly.ensure_day(no_llm, world, anna, src, DAY)
     assert not again.generated and again.items == 1 and path.read_bytes() == before
     plan = nightly.check_existing(world, anna, DAY, src)
-    with pytest.raises(FileExistsError):  # a plan written meanwhile wins over a concurrent generation
+    with pytest.raises(FileExistsError):
         world.save_plan(plan.model_copy(update={"items": []}), src.templates, new=True)
     assert path.read_bytes() == before
 
@@ -115,7 +115,7 @@ def test_personas_plan_in_parallel_and_each_pays_for_its_own_calls(
 ) -> None:
     world, _, src = _setup(tmp_path)
     monkeypatch.setattr(calls, "PATH", tmp_path / "openrouter-calls.json")
-    both = threading.Barrier(2, timeout=10)  # broken unless both planner calls are in flight at once
+    both = threading.Barrier(2, timeout=10)
 
     class Parallel(ScriptedLlm):
         def json(self, cls: type[Any], system: str, user: str, temperature: float = 0.9) -> Any:
@@ -124,7 +124,7 @@ def test_personas_plan_in_parallel_and_each_pays_for_its_own_calls(
             return super().json(cls, system, user, temperature)
 
     acts = nightly.PlanActivities(tmp_path, lambda: src, lambda: Parallel({"items": ITEMS}))  # type: ignore[arg-type, return-value]
-    at = dt.datetime(2026, 10, 27, 21, 0, tzinfo=dt.UTC)  # plans DAY
+    at = dt.datetime(2026, 10, 27, 21, 0, tzinfo=dt.UTC)
     out: dict[str, nightly.Planned] = {}
     threads = [threading.Thread(target=lambda u=p.user: out.update({u: acts.plan(nightly.PlanFire(
         persona=u, tz="Europe/Stockholm", occurrence=at))})) for p in src.personas
@@ -148,12 +148,12 @@ def test_crash_after_publish_before_history_append_is_repaired_once(
 
     with monkeypatch.context() as m:
         m.setattr(World, "_append", crash)
-        for p in src.personas:  # both personas publish the same content, then die before the append
+        for p in src.personas:
             with pytest.raises(RuntimeError, match="crash"):
                 nightly.ensure_day(lambda: ScriptedLlm({"items": ITEMS}), world, p, src, DAY)  # type: ignore[arg-type, return-value]
             assert world.plan_path(p.user, DAY.isoformat()).exists()
     assert not world.history_path.exists()
-    for _ in range(2):  # the retry restores the history without the model; a repeated recovery appends nothing
+    for _ in range(2):
         for p in src.personas:
             assert not nightly.ensure_day(no_llm, world, p, src, DAY).generated
         assert world.history("aberg") == world.history("lnord") == list(QUERIES)
@@ -162,7 +162,7 @@ def test_crash_after_publish_before_history_append_is_repaired_once(
 @pytest.mark.parametrize("end", ["\n", ""])
 def test_partial_append_keeps_every_row_and_adds_only_the_missing(tmp_path: Path, end: str) -> None:
     world, anna, src = _setup(tmp_path)
-    world.save_plan(PLAN, {}, new=True)  # {} templates: no history rows of its own
+    world.save_plan(PLAN, {}, new=True)
     rows = [("2026-10-27", "aberg", "an earlier day"), (DAY.isoformat(), "aberg", "an overwritten manual plan"),
             (DAY.isoformat(), "lnord", QUERIES[1]), (DAY.isoformat(), "aberg", QUERIES[0])]  # fmt: skip
     old = "\n".join(json.dumps({"date": d, "persona": u, "text": t}) for d, u, t in rows) + end
@@ -224,7 +224,7 @@ def test_activity_rejects_unknown_persona_and_waits_on_a_busy_planner(tmp_path: 
         with pytest.raises(ApplicationError) as e:
             acts.plan(nightly.PlanFire(persona=persona, tz="Europe/Stockholm", occurrence=at))
         assert e.value.non_retryable
-    acts = nightly.PlanActivities(tmp_path, cli.plan_sources, ScriptedLlm)  # made, never asked: the shared steps wait
+    acts = nightly.PlanActivities(tmp_path, cli.plan_sources, ScriptedLlm)
     with durable.desk_lock(tmp_path / "locks" / "nightly.lock"), pytest.raises(RuntimeError, match="retrying"):
         acts.plan(nightly.PlanFire(persona="aberg", tz="Europe/Stockholm", occurrence=at))
     assert activity._Definition.must_from_callable(acts.plan).name == "nightly_plan"  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
@@ -270,7 +270,7 @@ def test_workflow_uses_the_intended_occurrence_and_passes_the_sandbox(monkeypatc
     assert e.value.non_retryable
     defn = workflow._Definition.must_from_class(nightly.NightlyPlan)  # pyright: ignore[reportPrivateUsage]
 
-    async def sandbox() -> None:  # imports the module under the workflow sandbox; needs a running loop
+    async def sandbox() -> None:
         SandboxedWorkflowRunner().prepare_workflow(defn)
 
     asyncio.run(sandbox())

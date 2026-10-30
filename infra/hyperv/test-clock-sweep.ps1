@@ -1,7 +1,3 @@
-# Checks clock-sweep.ps1 against a stub set-clock.ps1: no VM is touched.
-#  fresh lease          -> left alone, no reset
-#  stale lease          -> reset for its VM, then deleted
-#  stale, reset fails   -> kept and reported, so the next sweep retries
 $ErrorActionPreference = 'Stop'
 $dir = Join-Path ([IO.Path]::GetTempPath()) "ludius-clocksweep-$PID"
 $locks = Join-Path $dir 'locks'

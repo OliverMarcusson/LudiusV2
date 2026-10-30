@@ -29,12 +29,12 @@ def test_lease_is_renewed_until_released(tmp_path: Path, monkeypatch: pytest.Mon
     lease.hold()
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["vm"] == "ludius-x" and dt.datetime.fromisoformat(data["renewed"]).tzinfo is not None
-    assert renewed.wait(10)  # the heartbeat thread rewrote it (event, not a sleep: no race with a loaded host)
+    assert renewed.wait(10)
     lease.release()
     assert not path.exists()
     n = len(writes)
     assert lease._thread is None  # pyright: ignore[reportPrivateUsage]  # release() joined the renewer
-    assert len(writes) == n and not path.exists()  # the stopped thread can't bring it back
+    assert len(writes) == n and not path.exists()
 
 
 def test_set_clock_keeps_the_lease_when_the_reset_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -45,7 +45,7 @@ def test_set_clock_keeps_the_lease_when_the_reset_fails(tmp_path: Path, monkeypa
     fail_reset = False
 
     def fake_run(cmd: list[str], **_: Any) -> None:
-        assert lease.exists()  # held before any jump
+        assert lease.exists()
         if "-Reset" in cmd and fail_reset:
             raise subprocess.CalledProcessError(1, cmd, stderr="guest unreachable")
 
@@ -54,7 +54,7 @@ def test_set_clock_keeps_the_lease_when_the_reset_fails(tmp_path: Path, monkeypa
     fail_reset = True
     with pytest.raises(subprocess.CalledProcessError):
         cli.set_clock(None)
-    assert lease.exists()  # left for the host agent's sweeper
+    assert lease.exists()
     fail_reset = False
     cli.set_clock(None)
     assert not lease.exists()

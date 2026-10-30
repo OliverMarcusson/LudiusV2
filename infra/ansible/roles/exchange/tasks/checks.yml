@@ -1,9 +1,4 @@
 ---
-# ex01 checks, on every range-exchange.yml run whatever the tags (the controller's EWS password is only published after
-# them): range boundary (no send connector, one accepted domain, the rule, a probe to an outside address rejected for
-# that rule's reason and never sent), every narrative mailbox, the impersonation scope's filter and resolved members
-# (exactly the narrative's mailboxes), and the service account (Domain Users only, one scoped role assignment). Then
-# the certificate to the control node. Out: exchange_checked, boundary.result.outside (a mailbox outside the scope).
 - name: As the domain's Administrator
   ansible.builtin.set_fact:
     ansible_user: "{{ domain_netbios }}\\Administrator"
@@ -20,7 +15,6 @@
   ansible.windows.win_powershell:
     script: |
       param($domain, $people, $svc, $marker)
-      # $domain is the mail domain here.
       $ErrorActionPreference = 'Stop'
       $Ansible.Changed = $false
       Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
@@ -38,17 +32,13 @@
       $sc = Get-ManagementScope 'Ludius noise mailboxes'
       if ($sc.RecipientFilter -ne $filter -or $sc.RecipientRoot -or "$($sc.ScopeRestrictionType)" -ne 'RecipientScope') {
         throw "scope filter is '$($sc.RecipientFilter)' (root '$($sc.RecipientRoot)')" }
-      # What the scope resolves to, not only the marker: exactly the narrative's mailboxes.
       $members = @(Get-Recipient -ResultSize Unlimited -RecipientPreviewFilter $sc.RecipientFilter | ForEach-Object SamAccountName)
       if (Compare-Object @($members | Sort-Object) @($people | Sort-Object)) { throw "scope resolves to: $($members -join ', ')" }
-      # The service account: Domain Users only, and its one role assignment is the scoped impersonation.
       $all = @(Get-ManagementRoleAssignment -RoleAssignee $svc)
       if ($all.Count -ne 1 -or "$($all[0].Role)" -ne 'ApplicationImpersonation') { throw "service account roles: $(($all | ForEach-Object Role) -join ', ')" }
       $groups = @(Get-ADPrincipalGroupMembership $svc | ForEach-Object Name)
       if ($groups.Count -ne 1 -or $groups[0] -ne 'Domain Users') { throw "service account groups: $($groups -join ', ')" }
-      # A mailbox outside the scope for the node's EWS probe (exists in every organisation, never a persona's).
       $outside = (Get-Mailbox -RecipientTypeDetails DiscoveryMailbox | Select-Object -First 1).PrimarySmtpAddress.ToString()
-      # Probe: a mail to an outside address, dropped into the pickup folder like any submission.
       $id = "<probe-$([guid]::NewGuid().ToString('N'))@$domain>"
       $pickup = (Get-TransportService $env:COMPUTERNAME).PickupDirectoryPath.PathName
       $eml = "From: postmaster@$domain`r`nTo: probe@example.com`r`nSubject: Ludius range boundary probe`r`nMessage-ID: $id`r`n`r`nprobe`r`n"
@@ -60,7 +50,6 @@
       } until (($ev.EventId -contains 'FAIL') -or (Get-Date) -gt $deadline)
       if ($ev.EventId -notcontains 'FAIL') { throw "probe not rejected: $($ev.EventId -join ',')" }
       $why = "$(($ev | Where-Object EventId -eq FAIL).RecipientStatus)"
-      # Tracking logs the rule action, not its reason text; the only rejecting rule is ours, so that names the reason.
       $rejecting = @(Get-TransportRule | Where-Object { $_.RejectMessageReasonText -or $_.RejectMessageEnhancedStatusCode })
       if ($rejecting.Count -ne 1 -or $rejecting[0].Name -ne 'Ludius range only') { throw "rejecting rules: $($rejecting.Name -join ', ')" }
       if ($why -notmatch '5\.7\.1' -or $why -notmatch 'TRANSPORT\.RULES\.RejectMessage') { throw "probe failed for another reason: $why" }

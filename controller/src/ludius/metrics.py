@@ -1,9 +1,3 @@
-"""Range test metrics and filterability check (spec section 8), from ground-truth logs.
-
-Covers what the step logs can answer: coherence, guardrails, volume, repetition and timing. Artifact
-coverage and survival need a collected super-timeline (Velociraptor/KAPE -> Plaso) and are not computed here.
-"""
-
 from __future__ import annotations
 
 import csv
@@ -16,17 +10,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Balanced accuracy a single trainee rule may reach before the noise counts as filterable.
 CHANCE_MARGIN = 0.6
-# Held-out evaluation: whole source logs (one run or session each) go to one side, never rows of the same
-# run on both sides; the order within each label is a salted hash, so the split is reproducible.
 HOLDOUT_FRACTION = 0.3
 HOLDOUT_SALT = "ludius-holdout-v1"
 HOLDOUT_LIMITS = (
     "logs are disjoint, content is not: the same template or near-duplicate sessions in different logs can still "
     "leak across the split; with stand-in labels this says nothing about performance against genuine humans"
 )
-# What the labels are. Nothing here verifies that the comparison logs are human sessions.
 LABELS = (
     "stand-in: positive = logs given as noise, negative = logs given with --human; operator-supplied, "
     "not verified as genuine human sessions"
@@ -35,15 +25,13 @@ LABELS = (
 
 @dataclass
 class Instance:
-    """One task attempt: task_start to task_end (or end of log)."""
-
     persona: str
     template: str
     launch: str
     status: str = "open"
     steps: list[dict[str, Any]] = field(default_factory=lambda: [])
-    source: str = ""  # log path relative to the dataset root, forward slashes (provenance, never a feature)
-    line: int = 0  # 1-based line of its task_start
+    source: str = ""
+    line: int = 0
 
 
 @dataclass
@@ -59,7 +47,6 @@ def _ms(r: dict[str, Any]) -> int:
 
 
 def root_of(paths: list[Path]) -> Path:
-    """The dataset root: the deepest directory holding every log, so source paths don't depend on the cwd."""
     return Path(os.path.commonpath([p.resolve().parent for p in paths])) if paths else Path()
 
 
@@ -151,7 +138,6 @@ def range_metrics(logs: Logs) -> dict[str, Any]:
 
 
 def _repeat(xs: list[Instance]) -> float:
-    """Share of instances whose action sequence exactly repeats an earlier one."""
     sigs = [tuple(f"{s.get('action')}:{_role(s)}" for s in i.steps) for i in xs]
     return 1 - len(set(sigs)) / len(sigs) if sigs else 0.0
 
@@ -164,7 +150,7 @@ def _role(step: dict[str, Any]) -> str:
 def features(i: Instance) -> dict[str, float | str]:
     gaps = _gaps(i.steps)
     ts = [_ms(s) for s in i.steps if _ms(s)]
-    hour = (ts[0] // 3_600_000) % 24 if ts else -1  # UTC hour of first input
+    hour = (ts[0] // 3_600_000) % 24 if ts else -1
     return {
         "steps": len(i.steps),
         "mean_gap_s": statistics.mean(gaps) if gaps else 0.0,
@@ -176,7 +162,7 @@ def features(i: Instance) -> dict[str, float | str]:
     }
 
 
-Rule = tuple[str, str, float | str, bool]  # feature, op ("==" or "<="), value, predicts noise
+Rule = tuple[str, str, float | str, bool]
 
 
 def _balanced(pred: list[bool], noise: list[bool]) -> float:
@@ -197,9 +183,6 @@ def _text(rule: Rule | None) -> str:
 
 
 def _fit(rows: list[dict[str, float | str]], label: list[bool]) -> dict[str, tuple[float, Rule | None]]:
-    """Best single-feature rule ("noise if x <= t", "noise if x == c", or their inverse) per feature."""
-    # ponytail: decision stumps stand in for the spec's LightGBM + rule miner; swap in a real model once
-    # a human baseline of several days exists and multi-feature interactions matter.
     rules: dict[str, tuple[float, Rule | None]] = {}
     names: list[str] = list(rows[0]) if rows and any(label) and not all(label) else []
     for name in names:
@@ -221,8 +204,6 @@ def _score(rule: Rule, rows: list[dict[str, float | str]], label: list[bool]) ->
 
 
 def filterability(noise: list[Instance], human: list[Instance]) -> dict[str, Any]:
-    """In-sample: the best rule per feature on all instances. A rule well above chance names a feature where
-    the noise lacks human variety. `held_out` is the honest number: fitted on training logs only."""
     rows: list[dict[str, float | str]] = [features(i) for i in noise + human]
     label = [True] * len(noise) + [False] * len(human)
     fitted = _fit(rows, label)
@@ -240,8 +221,6 @@ def filterability(noise: list[Instance], human: list[Instance]) -> dict[str, Any
 
 def split(noise: list[Instance], human: list[Instance], fraction: float = HOLDOUT_FRACTION,
           salt: str = HOLDOUT_SALT) -> dict[str, str] | str:  # fmt: skip
-    """Source log -> "train" or "test", or why no honest split exists. Per label, the sources are ordered by a
-    salted hash and the first max(1, round(fraction * n)) are held out, so each side gets every label."""
     groups = {lab: sorted({i.source for i in xs}) for lab, xs in (("noise", noise), ("human", human))}
     if both := set(groups["noise"]) & set(groups["human"]):
         return f"source logs carry both labels: {sorted(both)}"
@@ -257,7 +236,6 @@ def split(noise: list[Instance], human: list[Instance], fraction: float = HOLDOU
 
 def held_out(noise: list[Instance], human: list[Instance], fraction: float = HOLDOUT_FRACTION,
              salt: str = HOLDOUT_SALT) -> dict[str, Any]:  # fmt: skip
-    """The best stump fitted on the training logs only, scored on the held-out logs only."""
     out: dict[str, Any] = {"grouping": "source log", "fraction": fraction, "salt": salt, "limits": HOLDOUT_LIMITS}
     sides = split(noise, human, fraction, salt)
     if isinstance(sides, str):
@@ -286,8 +264,6 @@ def provenance(paths: list[Path], root: Path) -> list[dict[str, Any]]:
 
 
 def write_features(out: Path, noise: list[Instance], human: list[Instance]) -> int:
-    """One CSV row per instance: label, split and provenance columns, then the fitted features (readable as is by
-    DuckDB read_csv or polars.read_csv; neither is a dependency here)."""
     sides = split(noise, human)
     rows = [(i, "noise") for i in noise] + [(i, "human") for i in human]
     with out.open("w", newline="", encoding="utf-8") as f:
@@ -309,7 +285,7 @@ def report(noise: list[Path], human: list[Path] | None = None, features_csv: Pat
         out["filterability"] = filterability(logs.instances, comparison)
     dataset: dict[str, Any] = {
         "labels": LABELS,
-        "human_baseline": False,  # never claimed: nothing here can verify the comparison logs are human
+        "human_baseline": False,
         "noise": provenance(noise, root),
         "comparison": provenance(human or [], root),
     }

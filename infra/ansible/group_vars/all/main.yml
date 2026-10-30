@@ -1,98 +1,80 @@
 ---
-# Non-secret range settings. Secrets come from vault.yml (see vault.yml.example; gitignored, ansible-vault encrypted).
 
-# --- golden image (golden.yml, applied by Packer) ---
-hypervisor: proxmox # proxmox | hyperv; Packer passes the source name
-# The build admin (Packer's admin_user) is disabled with a random password at the end of the build: clones never use it.
-inactivity_lock_seconds: 900 # machine inactivity limit (base role): the range keeps a realistic lock (spec section 5)
-windows_updates: true # bake updates into the image (base role)
+hypervisor: proxmox
+inactivity_lock_seconds: 900
+windows_updates: true
 office_product_id: ProPlus2024Volume
 office_channel: PerpetualVL2024
 office_language: en-gb
-office_pidkey: "{{ vault_office_pidkey | default('') }}" # MAK; empty = no key in the image (activate.yml installs office_gvlk)
-office_gvlk: XJ2XN-FW8RK-P4HMP-DKDBV-GCVGB # Microsoft's published KMS client key for ProPlus2024Volume
-office_kms_host: "{{ vault_office_kms_host | default('') }}" # host[:port] reachable from the range bridge; set per clone
+office_pidkey: "{{ vault_office_pidkey | default('') }}"
+office_gvlk: XJ2XN-FW8RK-P4HMP-DKDBV-GCVGB
+office_kms_host: "{{ vault_office_kms_host | default('') }}"
 temurin_msi_url: https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_windows_hotspot_25.0.5_8.msi
-temurin_msi_sha256: 503f1c8ce75378b1dfe89485abdbc2cb1588600937cff87e8a63d70ca5873139 # pinned in infra/hyperv/provision-java.ps1
+temurin_msi_sha256: 503f1c8ce75378b1dfe89485abdbc2cb1588600937cff87e8a63d70ca5873139
 observer_dir: C:\Program Files\RangeAssist
-observer_exe: "{{ playbook_dir }}/../../out/observer/uiprobe.exe" # signed, uiAccess build (infra/packer/observer-artifacts.ps1)
-observer_ca_cert: "{{ playbook_dir }}/../../secrets/range-root-ca.cer" # the code-signing root, public part only
-observer_vsock_family: "" # set if the viosock provider's address family is not 40 (netsh winsock show catalog)
-# Proxmox: the guest channel is vsock; Hyper-V keeps the observer's default (Hyper-V sockets).
+observer_exe: "{{ playbook_dir }}/../../out/observer/uiprobe.exe"
+observer_ca_cert: "{{ playbook_dir }}/../../secrets/range-root-ca.cer"
+observer_vsock_family: ""
 observer_args: "{{ ('--transport vsock' ~ ((' --vsock-family ' ~ observer_vsock_family) if observer_vsock_family else '')) if hypervisor == 'proxmox' else '' }}"
-viosock_install_wsp: true # register viosock's Winsock provider (AF_VSOCK for user-mode sockets)
+viosock_install_wsp: true
 
-# --- range (range-up.yml, run on the Proxmox node) ---
 domain: corp.ludius.test
 domain_netbios: CORP
-# Mail (SMTP) domain, the range's mail boundary. Exchange refuses recipients in RFC 2606 TLDs such as .test (501 5.1.4),
-# so on Exchange mail is ludius.internal while AD stays corp.ludius.test; grommunio keeps the AD domain.
 mail_domain: "{{ 'ludius.internal' if mail_backend == 'exchange' else domain }}"
-range_bridge: vmbr1 # no uplink: persona VMs never reach the internet
+range_bridge: vmbr1
 range_net: 10.77.0
-build_bridge: vmbr2 # NAT bridge for builds and srv01's apt
-storage: local-lvm # lvmthin: linked clones need thin storage
-template_vmid: 9000 # Packer's vm_id for the golden template
+build_bridge: vmbr2
+storage: local-lvm
+template_vmid: 9000
 srv01_vmid: 110
 srv01_ip: "{{ range_net }}.11"
-range_pool: ludius # the host agent's Proxmox:Pool; every VM the playbooks touch must be in it
-srv01_build_mac: "BC:24:11:4C:55:01" # srv01's temporary uplink NIC (provisioning only)
+range_pool: ludius
+srv01_build_mac: "BC:24:11:4C:55:01"
 persona_cores: 4
 persona_memory_mb: 6144
-display_args: -global VGA.xres=1920 -global VGA.yres=1080 # fixed 1920x1080 with vga std (spec section 4)
-# Persona -> VM id (also its vsock CID) and range address: range_personas in range-vms.yml, never a list position.
+display_args: -global VGA.xres=1920 -global VGA.yres=1080
 personas: "{{ range_personas | map(attribute='user') | list }}"
 persona_files: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/../../controller/data/personas/*.yaml') | map('basename') | map('splitext') | map('first') | list }}"
-range_admin_user: ludiusbringup # per-range local admin made at a clone's first boot by the guest agent; disabled after bring-up
+range_admin_user: ludiusbringup
 range_admin_password: "{{ vault_range_admin_password }}"
-bringup_teardown: true # after bring-up: bring-up account disabled, WinRM stopped and disabled on every clone
-observer_check_cmd: uv run --project {{ playbook_dir }}/../../controller ludius # channel check through the host agent
-narrative_file: "{{ playbook_dir }}/../../runs/world/narrative.yaml" # the planner's company narrative
-intranet_dir: "{{ playbook_dir }}/../../controller/data/intranet" # the scenario's intranet pages (Markdown)
-people: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).people }}" # name, user: AD users, mailboxes
-team_channels: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).channels | default({}) }}" # private, these members
-team_shares: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).shares | default({}) }}" # \\dc01\<name>: members change, ews_user reads
-range_tls_ca: "{{ playbook_dir }}/build/range-ca.crt" # grommunio's CA or Exchange's self-signed cert, fetched by its role
-grommunio_login_mailboxes: 5 # community licence cap on log-in mailboxes; raise only with a grommunio licence installed
-# Range mail server. exchange: Windows Server 2025 evaluation DC (dc01, VM srv01_vmid at srv01_ip: AD, DNS, time) plus
-# an Exchange SE trial member server (ex01); every narrative person gets a log-in mailbox. grommunio: srv01 (Debian,
-# Samba AD + grommunio), personas capped at grommunio_login_mailboxes. The controller's LUDIUS_MAIL_BACKEND must match.
+bringup_teardown: true
+observer_check_cmd: uv run --project {{ playbook_dir }}/../../controller ludius
+narrative_file: "{{ playbook_dir }}/../../runs/world/narrative.yaml"
+intranet_dir: "{{ playbook_dir }}/../../controller/data/intranet"
+people: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).people }}"
+team_channels: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).channels | default({}) }}"
+team_shares: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).shares | default({}) }}"
+range_tls_ca: "{{ playbook_dir }}/build/range-ca.crt"
+grommunio_login_mailboxes: 5
 mail_backend: exchange
 login_mailbox_cap: "{{ grommunio_login_mailboxes if mail_backend == 'grommunio' else 99 }}"
 range_servers: >-
   {{ [[srv01_vmid | int, 'ludius-srv01']] if mail_backend == 'grommunio'
      else [[srv01_vmid | int, 'ludius-dc01'], [ex01_vmid | int, 'ludius-ex01'], [chat01_vmid | int, 'ludius-chat01']] }}
 ex01_vmid: 111
-# Range chat (mail_backend exchange; range-chat.yml): Mattermost Team Edition 10.11 ESR (the last TE line with GitLab
-# SSO, which the Kerberos shim poses as) on Debian 13, http://chat.<domain>; team and channels from controller/data/chat.yaml.
 chat01_vmid: 112
 chat01_ip: "{{ range_net }}.13"
-chat01_build_mac: "BC:24:11:4C:55:13" # chat01's temporary uplink NIC (provisioning only)
+chat01_build_mac: "BC:24:11:4C:55:13"
 chat_host: chat.{{ domain }}
-chat_svc_user: ludiuschat # AD account holding HTTP/chat.<domain> (never a narrative user)
-chat_keytab: "{{ playbook_dir }}/build/chat.keytab" # HTTP/chat.<domain>, made on dc01 (roles/dc01), copied to chat01
+chat_svc_user: ludiuschat
+chat_keytab: "{{ playbook_dir }}/build/chat.keytab"
 mattermost_url: https://releases.mattermost.com/10.11.25/mattermost-team-10.11.25-linux-amd64.tar.gz
 mattermost_sha256: 9ddd044a68c45dad8b18e21185c081f62f4a61b0fc2c9131c49f784c63420f8a
-# range-exchange.yml: a tagged resume (--tags dc01, ex01, mailboxes, mail-boundary) only answers for the phases it ran.
 winsrv_full_run: "{{ 'all' in ansible_run_tags }}"
 winsrv_dc01_ran: "{{ winsrv_full_run or 'dc01' in ansible_run_tags }}"
 winsrv_ex01_ran: "{{ winsrv_full_run or ansible_run_tags | intersect(['ex01', 'mailboxes', 'mail-boundary']) | length > 0 }}"
 ex01_ip: "{{ range_net }}.12"
-# Windows Server 2025 Evaluation (180 days; activated online through the build bridge within 10 days, else it shuts
-# down hourly), from Microsoft's Evaluation Center, en-US; image 2 = Standard with Desktop Experience.
-winsrv_iso: ws2025-eval.iso # in local:iso
+winsrv_iso: ws2025-eval.iso
 winsrv_iso_url: https://software-static.download.prss.microsoft.com/dbazure/998969d5-f34g-4e03-ac9d-1f9786c66749/26100.32230.260111-0550.lt_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso
 winsrv_iso_sha256: 7b052573ba7894c9924e3e87ba732ccd354d18cb75a883efa9b900ea125bfd51
 winsrv_image_index: 2
-winsrv_build_mac: { dc01: "BC:24:11:4C:55:11", ex01: "BC:24:11:4C:55:12" } # temporary uplink NICs (activation only)
+winsrv_build_mac: { dc01: "BC:24:11:4C:55:11", ex01: "BC:24:11:4C:55:12" }
 dc01_memory_mb: 4096
-ex01_memory_mb: 16384 # Microsoft recommends 128 GB for production; 16 GB runs a range of tens of mailboxes
-# Exchange media, fetched on the node (never by a guest) and checked: SE RTM ISO (KB5047155's hash) and the
-# prerequisites the docs list for Windows Server 2025 (VC++ 2012 and 2013, IIS URL Rewrite; UCMA is on the ISO).
+ex01_memory_mb: 16384
 exchange_media_dir: /var/lib/vz/template/ludius/exchange
 exchange_media:
   - name: ExchangeServerSE-x64.iso
-    dir: /var/lib/vz/template/iso # local:iso: qm attaches ISOs from storage only
+    dir: /var/lib/vz/template/iso
     url: https://download.microsoft.com/download/ad9b1e53-f28e-4a82-987d-6c88803795b2/ExchangeServerSE-x64.iso
     sha256: cd2b13f2c297187776af4cff3541b4be3c677cf907cca69d85ab0e2b70377bd1
   - name: vcredist2012_x64.exe
@@ -105,14 +87,13 @@ exchange_media:
     url: https://download.microsoft.com/download/1/2/8/128E2E22-C1B9-44A4-BE2A-5859ED1D4592/rewrite_amd64_en-US.msi
     sha256: 37342ff2f585f263f34f48e9de59eb1051d61015a8e967dbde4075716230a32a
 exchange_org: Ludius
-ews_user: ludiussvc # AD service account with ApplicationImpersonation: the controller's EWS reads and sends
+ews_user: ludiussvc
 ews_password: "{{ vault_ews_password | default('') }}"
-ews_scope_marker: ludius-noise # CustomAttribute1 on the narrative's mailboxes: the impersonation scope
-ews_password_file: /root/.ludius-ews # written on the node (0600) for the controller's LUDIUS_EWS_PASSWORD_FILE
+ews_scope_marker: ludius-noise
+ews_password_file: /root/.ludius-ews
 debian_image_url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
 debian_image_sums: https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS
 
 dc_admin_password: "{{ vault_dc_admin_password }}"
 grommunio_admin_password: "{{ vault_grommunio_admin_password }}"
-# Every AD user and log-in mailbox gets <user><suffix> (today's range: suffix 2026, complexity off).
 user_password_suffix: "{{ vault_user_password_suffix }}"

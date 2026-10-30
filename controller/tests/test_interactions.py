@@ -24,11 +24,11 @@ def test_interactions_only_from_verified_effects_between_personas(tmp_path: Path
                  "params": params, "status": status}]  # fmt: skip
 
     day = [
-        *send("sdekker@ludius.internal", "done", now),  # persona -> persona, verified: one interaction
-        *send("mvellinga@ludius.internal", "done", now + 1),  # a narrative colleague, no VM: none
-        *send("lnord@ludius.internal", "abandoned", now + 2),  # planned, never proven delivered: none
-        *send("aberg@ludius.internal", "done", now + 3),  # to itself: none
-        *send("sdekker@other.example", "done", now + 4),  # another domain: none
+        *send("sdekker@ludius.internal", "done", now),
+        *send("mvellinga@ludius.internal", "done", now + 1),
+        *send("lnord@ludius.internal", "abandoned", now + 2),
+        *send("aberg@ludius.internal", "done", now + 3),
+        *send("sdekker@other.example", "done", now + 4),
     ]
     log = days / "2026-11-02-aberg.jsonl"
     log.write_text("".join(json.dumps(e) + "\n" for e in day), encoding="utf-8")
@@ -38,16 +38,15 @@ def test_interactions_only_from_verified_effects_between_personas(tmp_path: Path
         (["aberg", "sdekker"], "mail", "Board delivery numbers", "2026-11-02T10:00")
     ]
     assert "typed body text" not in out.read_text(encoding="utf-8")
-    assert t.step() == []  # nothing new
-    assert interactions.Tracker(days, users, out, requests_dir=reqs).step() == []  # a restart repeats nothing
+    assert t.step() == []
+    assert interactions.Tracker(days, users, out, requests_dir=reqs).step() == []
 
-    # A manager's request counts once it is recorded as sent, persona to persona; its fulfilment counts too.
     msgid = "<1.aberg@ludius.internal>"
     request = {"to": "sdekker", "task": "excel_new_workbook", "subject": "October accruals workbook",
                "manager": "aberg", "msgid": msgid, "status": "planned"}  # fmt: skip
     (reqs / "2026-11-02-aberg.yaml").write_text(yaml.safe_dump({"manager": "aberg", "date": "2026-11-02",
                                                                 "requests": [request]}), encoding="utf-8")  # fmt: skip
-    assert t.step() == []  # planned, not sent
+    assert t.step() == []
     (reqs / "2026-11-02-aberg.yaml").write_text(yaml.safe_dump({"manager": "aberg", "date": "2026-11-02",
                                                                 "requests": [request | {"status": "sent"}]}),
                                                 encoding="utf-8")  # fmt: skip

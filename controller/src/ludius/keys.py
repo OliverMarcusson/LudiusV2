@@ -1,5 +1,3 @@
-"""Key names ("Ctrl+Shift+S") to Windows virtual-key codes."""
-
 from __future__ import annotations
 
 _NAMED: dict[str, int] = {
@@ -21,5 +19,4 @@ def vk(name: str) -> int:
 
 
 def chord(spec: str) -> list[int]:
-    """'Ctrl+S' -> [VK_CONTROL, 'S']; modifiers first, as written."""
     return [vk(part) for part in spec.split("+")]

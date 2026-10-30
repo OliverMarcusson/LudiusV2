@@ -1,16 +1,6 @@
-# Make a short deck in PowerPoint (classic desktop, Office 2024) and save it in Documents as .pptx: a title slide,
-# then one or two Title and Content slides with bullets (the second only when slide2_title and bullets2 are planned).
-# Writes one new file, Documents\{file_name}.pptx (a noise folder), declared by confirm_save's file check: the runner
-# refuses to start if it exists, so the task never overwrites. Nothing it does is irreversible; on abandon PowerPoint
-# is closed with Don't Save. Done is read on the guest's disk, not in the UI (placeholders expose no text): the saved
-# deck's slides are exactly the planned title and each slide's title and bullets, in order (ludius.guestfile).
-# On screen, a slide's thumbnail is named "Slide <its title>" ("Slide" while untitled): the title checks read that.
-# Keys: on a blank presentation (or after Ctrl+M) typing goes into the slide's title; Ctrl+M adds a Title and Content
-# slide after it; Ctrl+Enter moves from the title to the slide's text box. Variants cover how the blank deck is opened
-# and how Save As is reached (F12, or Ctrl+S to the Backstage and Browse; never its OneDrive or Sign in).
 task: powerpoint_short_deck
 app: powerpoint
-capability: file.write  # creates one new file (writes); manager requests may ask for it
+capability: file.write
 processes: [powerpnt.exe]
 writes: ['Documents\{file_name}.pptx']
 params: [file_name, title, slide_title, bullets, slide2_title, bullets2]
@@ -40,16 +30,12 @@ subgoals:
   write_title:
     goal: "Type the presentation's title at the keyboard focus: on the new blank first slide, typing goes into its title"
     text: title
-    unreadable_ok: true  # placeholders have no UIA value; the thumbnail name and the file check decide
+    unreadable_ok: true
     avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
     done: {typed: true, element: {role: list item, name: '^Slide {title}$'}}
   new_slide:
     goal: "Add a new slide after the title slide with Ctrl+M"
     keys: [Ctrl+M]
-    # Never the ribbon's New Slide (any subgoal): its menu offers other layouts, and a click on it in a typing
-    # subgoal added a second untitled slide (run1). Never a thumbnail either: a click moves the keyboard focus to the
-    # thumbnail pane, where typing lands nowhere and Enter adds a slide (run3). Done: one more thumbnail than at the subgoal's start, the selected
-    # one untitled; its position is marked, so the title and bullet checks read that slide and no older one.
     avoid: [{name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
     done: {added: {items: {role: list item, name: '^Slide( |$)'}, new: {name: '^Slide$'}, mark: slide}}
   write_slide_title:
@@ -68,7 +54,6 @@ subgoals:
     text: bullets
     unreadable_ok: true
     avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
-    # Bullets typed into the title would rename the slide: the new slide's thumbnail still names only its title.
     done: {typed: true, element: {role: list item, name: '^Slide {slide_title}$', selected: true, at: slide}}
   new_slide2:
     goal: "Add another new slide with Ctrl+M"
@@ -111,7 +96,7 @@ subgoals:
   name_file:
     goal: "Enter {file_name} as the file name in the Save As dialog"
     text: file_name
-    replace: true  # the box may hold a filter (*.txt) or a name typed before
+    replace: true
     done: {typed: true, element: {name: "^File name", value: '^{file_name}(\.pptx)?$'}}
   confirm_save:
     goal: "Save the presentation as {file_name}"

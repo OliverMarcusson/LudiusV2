@@ -1,6 +1,4 @@
 ---
-# One bootstrapped clone (p): bring-up admin disabled and WinRM off through the guest agent (no WinRM involved), then
-# port 5985 checked closed from the host. If either fails, the VM is stopped: a clone is never left open.
 - name: Close bring-up access, else stop the VM, ludius-{{ p.user }}
   block:
     - name: Bring-up admin disabled, WinRM stopped and disabled (guest agent)
@@ -19,7 +17,6 @@
         port: 5985
         state: stopped
         timeout: 120
-  # Never fails: every marked clone gets its turn, and the verdict in range-up.yml fails on any recorded entry.
   rescue:
     - name: Stop the VM (bring-up access could not be closed)
       ansible.builtin.command: qm stop {{ p.vmid }}

@@ -1,6 +1,3 @@
-"""Host-local Hyper-V paths only for a Hyper-V agent on this machine: HostAgent.local_hyperv, the time-jump refusal,
-and the contract verdict (skipped is never reported as passed)."""
-
 from __future__ import annotations
 
 import argparse
@@ -40,7 +37,6 @@ def test_local_hyperv() -> None:
     assert _with_info(pb.AgentInfo(backend="hyperv", host=here.upper())).local_hyperv()
     assert not _with_info(pb.AgentInfo(backend="hyperv", host="other-host")).local_hyperv()
     assert not _with_info(pb.AgentInfo(backend="proxmox", host=here)).local_hyperv()
-    # An agent without Info is the old Windows build (Hyper-V only): local only on a loopback address.
     old = _Rpc(grpc.StatusCode.UNIMPLEMENTED)
     assert _with_info(old, "127.0.0.1:7451").local_hyperv()
     assert _with_info(old, "localhost:7451").local_hyperv()
@@ -52,7 +48,6 @@ def test_local_hyperv() -> None:
 
 @pytest.fixture
 def proxmox_agent(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Every HostAgent reports Proxmox; records any process the controller would start."""
     cli.require_hyperv_clock.cache_clear()
     monkeypatch.setenv("LUDIUS_VM", "ludius-win10-01")
     ran: list[str] = []
@@ -77,8 +72,8 @@ def test_time_jump_is_refused_before_the_lease_or_the_clock_script(
     for at in (None, cli.dt.datetime(2026, 1, 5, 9, 0)):
         with pytest.raises(cli.ClockRefused, match="does not drive Hyper-V"):
             cli.set_clock(at, vm="ludius-win10-01", agent="pve1.lan:7451")
-    assert proxmox_agent == []  # no set-clock.ps1
-    assert not (tmp_path / "locks").exists()  # no lease written
+    assert proxmox_agent == []
+    assert not (tmp_path / "locks").exists()
 
 
 def test_a_time_jump_day_is_refused_before_anything_starts(

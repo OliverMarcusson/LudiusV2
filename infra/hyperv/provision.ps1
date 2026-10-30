@@ -1,13 +1,3 @@
-# Provisions the test guest made by new-vm.ps1 over PowerShell Direct: range CA
-# root, signed observer (uiAccess) under Program Files, logon task for the
-# persona, and the slice of the golden-image roles a test guest needs (base,
-# eventlogs, ux_noise). Ends with a new checkpoint (-Checkpoint, default "clean"); an
-# existing checkpoint is never replaced, so re-runs pass -NoCheckpoint or a new name.
-# Stand-in for the Packer + Ansible build (spec section 7) on local Hyper-V.
-# -RolesOnly: only the guest roles ($roles below) and a read-back of their named settings, on the already running
-# VM. No build, observer, task, certificate, DVD, start, restore or checkpoint.
-# -VM: target another range VM than .env's LUDIUS_VM (same .env credentials, e.g. a guest installed from the same
-# answer ISO). -WaitMinutes: first wait that long for setup to finish (the persona logged on), e.g. under Packer.
 param([switch]$NoUiAccess, [switch]$NoCheckpoint, [string]$Checkpoint = 'clean', [switch]$RolesOnly, [string]$VM,
     [int]$WaitMinutes = 0)
 $ErrorActionPreference = 'Stop'
@@ -19,22 +9,16 @@ if ($vm -notmatch '^ludius-[A-Za-z0-9-]+$') { throw "not a range VM: $vm" }
 $admin = [pscredential]::new("$($cfg.LUDIUS_ADMIN_USER)", (ConvertTo-SecureString $cfg.LUDIUS_ADMIN_PASSWORD -AsPlainText -Force))
 $installDir = 'C:\Program Files\RangeAssist'
 
-# Golden-image roles inside the guest (base, eventlogs, ux_noise, accessibility cues). The one copy both paths run.
 $roles = {
     param($persona, $personaPassword)
     $ErrorActionPreference = 'Stop'
-    # base: never sleep, Windows Update paused (updates belong in the image).
     powercfg /change standby-timeout-ac 0; powercfg /change monitor-timeout-ac 0; powercfg /change hibernate-timeout-ac 0
     Set-Service wuauserv -StartupType Disabled; Stop-Service wuauserv -Force -ErrorAction SilentlyContinue
     New-Item -Force 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' | Out-Null
     Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' NoAutoUpdate 1 -Type DWord
-    # eventlogs: large enough that a scenario's events survive a day of noise (Sysmon's log: not installed yet).
     foreach ($l in @{ Security = 1GB; System = 256MB; Application = 256MB }.GetEnumerator()) {
         wevtutil sl $l.Key /ms:$($l.Value); if ($LASTEXITCODE) { throw "wevtutil $($l.Key): $LASTEXITCODE" }
     }
-    # ux_noise, in the persona's hive: no minimize/taskbar animations, 100% scaling (96 dpi), no toasts over
-    # tasks (focus assist's effect); accessibility: keyboard cues (access-key underlines always shown).
-    # Read at logon: they apply from the persona's next logon.
     $sid = ([Security.Principal.NTAccount]$persona).Translate([Security.Principal.SecurityIdentifier]).Value
     $loaded = Test-Path "Registry::HKEY_USERS\$sid"
     $hive = if ($loaded) { "Registry::HKEY_USERS\$sid" } else { 'Registry::HKEY_USERS\LudiusPersona' }
@@ -53,15 +37,12 @@ $roles = {
     } finally {
         if (-not $loaded) { [gc]::Collect(); reg unload 'HKU\LudiusPersona' | Out-Null }
     }
-    # Autologon for the persona stays on (the unattend count runs out).
     $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
     Set-ItemProperty $wl AutoAdminLogon '1'; Set-ItemProperty $wl DefaultUserName $persona; Set-ItemProperty $wl DefaultPassword $personaPassword
     Remove-ItemProperty $wl AutoLogonCount -ErrorAction SilentlyContinue
-    # No first-run tips or consumer content popping up over tasks.
     New-Item -Force 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' | Out-Null
     Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' DisableWindowsConsumerFeatures 1 -Type DWord
     Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' DisableSoftLanding 1 -Type DWord
-    # Edge: no first-run wizard, sign-in or default-browser prompts over tasks.
     $edge = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
     New-Item -Force $edge | Out-Null
     foreach ($p in @{ HideFirstRunExperience = 1; BrowserSignin = 0; DefaultBrowserSettingEnabled = 0; ShowRecommendationsEnabled = 0; StartupBoostEnabled = 0 }.GetEnumerator()) {
@@ -73,7 +54,6 @@ if ($RolesOnly) {
     $conflict = @('Checkpoint', 'NoUiAccess') | Where-Object { $PSBoundParameters.ContainsKey($_) }
     if ($conflict) { throw "-RolesOnly never checkpoints or builds; drop -$($conflict -join ', -')" }
     if ((Get-VM -Name $vm).State -ne 'Running') { throw "$vm is not running; -RolesOnly never starts or restores it" }
-    # Named, non-secret settings only (never DefaultPassword).
     $readback = {
         param($persona)
         $sid = ([Security.Principal.NTAccount]$persona).Translate([Security.Principal.SecurityIdentifier]).Value
@@ -103,7 +83,6 @@ if (-not $NoCheckpoint -and (Get-VMSnapshot $vm -Name $Checkpoint -ErrorAction S
     throw "checkpoint '$Checkpoint' exists and is never replaced: pass -NoCheckpoint or -Checkpoint <new name>"
 }
 
-# Setup still reads its DVDs: eject only once the persona is logged on (autologon is unattend's last step).
 $until = (Get-Date).AddMinutes($WaitMinutes)
 while (-not (Invoke-Command -VMName $vm -Credential $admin -ErrorAction SilentlyContinue {
     param($p) Get-Process explorer -IncludeUserName -ErrorAction SilentlyContinue | Where-Object UserName -like "*\$p" } -ArgumentList $cfg.LUDIUS_PERSONA_USER)) {
@@ -112,7 +91,6 @@ while (-not (Invoke-Command -VMName $vm -Credential $admin -ErrorAction Silently
 }
 Get-VMDvdDrive $vm | Where-Object Path | Set-VMDvdDrive -Path $null
 
-# Range CA and code-signing certificate (spec: observer signed with the range's own CA).
 $secrets = Join-Path $root 'secrets'
 New-Item -ItemType Directory -Force $secrets | Out-Null
 $ca = Get-ChildItem Cert:\CurrentUser\My | Where-Object Subject -eq 'CN=Ludius Range Root CA' | Select-Object -First 1
@@ -142,7 +120,6 @@ try {
     Invoke-Command $s {
         param($dir)
         $ErrorActionPreference = 'Stop'
-        # Import-Certificate is denied over PowerShell Direct; certutil is not.
         certutil -f -addstore Root "$dir\range-root-ca.cer" | Out-Null
         if ($LASTEXITCODE) { throw "certutil failed: $LASTEXITCODE" }
         Remove-Item "$dir\range-root-ca.cer"
@@ -151,14 +128,7 @@ try {
     Invoke-Command $s {
         param($dir, $persona)
         $ErrorActionPreference = 'Stop'
-        # Observer: in the persona's interactive session at logon, never a service;
-        # restarted daily (it swaps between requests) and after a crash or watchdog fault (UIA client leaks).
-        # uiAccess binaries only start through ShellExecute (AppInfo), not the
-        # scheduler's CreateProcess (error 740), so explorer launches it.
         $action = New-ScheduledTaskAction -Execute 'C:\Windows\explorer.exe' -Argument "`"$dir\uiprobe.exe`""
-        # The task's own process is explorer, which exits at once, so RestartCount never sees an observer crash.
-        # A crash (including the observer's own watchdog FailFast) raises Application Error 1000, which starts
-        # it again after 30 s; IgnoreNew and the delay bound a crash loop to one start per 30 s.
         $crash = Get-CimClass MSFT_TaskEventTrigger root/Microsoft/Windows/TaskScheduler | New-CimInstance -ClientOnly
         $crash.Enabled = $true
         $crash.Delay = 'PT30S'

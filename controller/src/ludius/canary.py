@@ -1,11 +1,3 @@
-"""Drift canaries (spec section 7, persistent-VM hygiene): one known-good task per app, run on a schedule.
-
-Each app's canary is its first admitted template (by name) at its first admitted variant, run on the VM as it
-is (a persistent range VM: no restore). A failed canary is retried once; the app is marked "drift" only when
-both runs fail on the task itself. Runs lost to infrastructure (Decisions, host agent, observer) leave the app
-"unknown", never "drift". Results go to runs/health.json, which `ludius day` reads to skip drifted apps.
-"""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -23,11 +15,10 @@ from ludius.loop import Runner
 from ludius.session import Session
 from ludius.tasks import Task, TaskInstance, Template
 
-RUNS_PER_CANARY = 2  # one retry: a single flaky run is not drift
+RUNS_PER_CANARY = 2
 
 
 def pick(templates: dict[str, Template], admission: dict[str, Any]) -> dict[str, tuple[Template, int]]:
-    """Per app: the first admitted template by name and its first admitted variant."""
     out: dict[str, tuple[Template, int]] = {}
     for name in sorted(templates):
         rec: dict[str, Any] = admission.get(name) or {}
@@ -89,5 +80,5 @@ def run(
                          reason=reason)  # fmt: skip
         report(f"  {app}: {state} ({t.task} v{variant}: {' '.join(statuses)})" + (f" - {reason}" if reason else ""))
         health_path.parent.mkdir(parents=True, exist_ok=True)
-        health_path.write_text(json.dumps(health, indent=2), encoding="utf-8")  # per app: a crash keeps earlier results
+        health_path.write_text(json.dumps(health, indent=2), encoding="utf-8")
     return states

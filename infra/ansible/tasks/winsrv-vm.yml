@@ -1,8 +1,4 @@
 ---
-# One range server VM (s: host, vmid, name, ip, dns, mac, memory, disk, password; from range-exchange.yml), on the
-# node. A new VM installs unattended from the evaluation ISO with a one-off answer ISO; every run then asserts range
-# NIC only before the start, and the guest agent sets the range address, the vault password and WinRM (bootstrap).
-# Out: the server in the inventory group winsrv.
 - name: Answer ISO and VM, {{ s.name }}
   when: (s.vmid | int) not in pve_vms
   block:
@@ -17,7 +13,6 @@
         dest: "{{ answer_dir.path }}/autounattend.xml"
         mode: "0600"
       vars:
-        # One-off (complexity-safe): replaced through the guest agent before anything else uses the server.
         oneoff: "{{ lookup('ansible.builtin.password', '/dev/null', length=20, chars=['ascii_letters', 'digits']) }}aA1!"
       no_log: true
 
@@ -57,12 +52,10 @@
   changed_when: start.rc == 0
   failed_when: start.rc != 0 and 'already running' not in start.stderr
 
-# From here the server may have WinRM on: the close-down play in range-exchange.yml covers it whatever happens next.
 - name: Mark the server for close-down, {{ s.name }}
   ansible.builtin.set_fact:
     winsrv_started: "{{ (winsrv_started | default([])) + [s.vmid | int] }}"
 
-# A fresh install takes ~20 min before the guest agent answers (setup, then the one autologon installs it).
 - name: Range address, vault password and WinRM through the guest agent, {{ s.name }}
   ansible.builtin.command:
     argv: [qm, guest, exec, "{{ s.vmid }}", --pass-stdin, "1", --timeout, "120", --, powershell.exe, -NoProfile,

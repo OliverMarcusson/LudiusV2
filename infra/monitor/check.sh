@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# Exposure check for the monitor and the Proxmox web UI on the box. Fails closed: a tool that cannot answer (ss, ip,
-# tailscale, jq, a probe) aborts with exit 2, a failed check exits 1, only a clean pass exits 0.
-#   1. listeners, from `ss`: the monitor and Proxmox ports (7452 7453 8452 8453 8006 3128 85) only on loopback, and no
-#      other TCP listener on a public address except PUBLIC_TCP_ALLOW (default: 22), IPv4 and IPv6
-#   2. no connect succeeds to those ports on any global address of the box (IPv4 and IPv6), tailscale0 excluded
-#   3. `tailscale serve status --json` holds exactly :TS_PORT -> AGENT_MONITOR and :PVE_TS_PORT -> PVE_TARGET (at "/"),
-#      no funnel, no Services, no Foreground sessions, no other port
-# `tailscale serve` listens inside tailscaled, so `ss` never shows the tailnet ports; check 2 covers them.
-#   infra/monitor/check.sh     (AGENT_MONITOR, TS_PORT, PVE_TS_PORT, PVE_TARGET, PUBLIC_TCP_ALLOW, PROBE_TIMEOUT override)
 set -euo pipefail
 
 : "${AGENT_MONITOR:=http://127.0.0.1:7452}"
@@ -18,8 +9,6 @@ set -euo pipefail
 : "${PROBE_TIMEOUT:=3}"
 agent_port=${AGENT_MONITOR##*:}
 pve_port=${PVE_TARGET##*:}
-# 7452 and 7453 (the Host-fixing fallback proxy) are always checked, whichever one serve points at; 8006 is pveproxy,
-# 3128 spiceproxy, 85 pvedaemon.
 ports=$(printf '%s\n' 7452 7453 8006 3128 85 "$agent_port" "$pve_port" "$TS_PORT" "$PVE_TS_PORT" | sort -u)
 fail=0
 bad() { echo "FAIL: $*"; fail=1; }
@@ -30,18 +19,17 @@ for t in ss ip tailscale jq timeout bash awk sort grep tr mktemp; do
   command -v "$t" >/dev/null || die "$t is missing (apt-get install jq iproute2 coreutils ...)"
 done
 
-# 1. listeners. A failed or empty `ss` is not "no listeners": there is always at least sshd.
 ss_out=$(ss -H -ltn) || die "ss failed, cannot list listeners"
 [[ -n $ss_out ]] || die "ss listed no listeners at all"
 agent_up=; pve_up=
 while read -r addr; do
   [[ $addr =~ ^(.+):([0-9]+)$ ]] || die "unparsable listener address: $addr"
   host=${BASH_REMATCH[1]}; port=${BASH_REMATCH[2]}
-  host=${host%%\%*} # "127.0.0.53%lo" -> "127.0.0.53"
+  host=${host%%\%*}
   case $host in
     127.* | '[::1]' | '[::ffff:127.'*) loc=local ;;
     100.6[4-9].* | 100.[7-9][0-9].* | 100.1[01][0-9].* | 100.12[0-7].* | '[fd7a:115c:a1e0:'*) loc=tailnet ;;
-    10.77.* | 10.78.*) loc=range ;; # the range and build bridges: never public
+    10.77.* | 10.78.*) loc=range ;;
     *) loc=public ;;
   esac
   if grep -qx "$port" <<<"$ports"; then
@@ -56,8 +44,6 @@ if [[ -n $agent_up ]]; then ok "agent monitor on ${AGENT_MONITOR#http://}, no wi
 else echo "warn: nothing on ${AGENT_MONITOR#http://} yet (agent not running?)"; fi
 [[ -n $pve_up ]] || echo "warn: nothing on 127.0.0.1:$pve_port yet (pveproxy not running, or not bound to loopback?)"
 
-# 2. connect probes to every global address (a connect to our own address reaches any 0.0.0.0 or :: listener).
-# Only a refused or timed-out connect passes; a probe that could not run is an abort, not a pass.
 valid_ip() {
   local o
   if [[ $1 =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
@@ -66,10 +52,9 @@ valid_ip() {
     [[ $1 =~ ^[0-9a-fA-F:]+$ && $1 == *:*:* && $1 != *:::* ]]
   fi
 }
-# probe <addr> <port>: exit 0 = a connection was made, 1 = refused or timed out, 2 = could not run (reason on stdout)
 probe() {
   local rc err
-  # shellcheck disable=SC2016 # $1 and $2 are for the inner bash
+  # shellcheck disable=SC2016
   err=$(LC_ALL=C timeout "$PROBE_TIMEOUT" bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$1" "$2" 2>&1) && return 0
   rc=$?
   [[ $rc -eq 124 ]] && return 1
@@ -96,7 +81,7 @@ if [[ ${#probe_addrs[@]} -eq 0 ]]; then bad "no global address found to probe"; 
   trap 'rm -rf "$pdir"' EXIT
   n=0
   for a in "${probe_addrs[@]}"; do
-    for p in $ports; do # all probes at once: a dozen timeouts in a row would take a minute
+    for p in $ports; do
       n=$((n + 1))
       echo "$a:$p" >"$pdir/$n.target"
       ( rc=0; probe "$a" "$p" >"$pdir/$n.msg" || rc=$?; echo "$rc" >"$pdir/$n.rc" ) &
@@ -114,8 +99,6 @@ if [[ ${#probe_addrs[@]} -eq 0 ]]; then bad "no global address found to probe"; 
   done
 fi
 
-# 3. serve config: exactly the two mappings, nothing else
-# (ipn.ServeConfig: TCP, Web, Services, AllowFunnel, Foreground; foreground sessions carry their own TCP/Web/funnel)
 serve_json=$(tailscale serve status --json) || die "tailscale serve status failed"
 if jq -e --arg p1 "$TS_PORT" --arg t1 "$AGENT_MONITOR" --arg p2 "$PVE_TS_PORT" --arg t2 "$PVE_TARGET" '
      def want: {($p1): $t1, ($p2): $t2};

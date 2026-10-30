@@ -1,14 +1,10 @@
 namespace Ludius.Observer;
 
-// Spec: restarted by watchdog to contain UIA client leaks. A request that hangs past the UIA timeouts, or a run
-// of failed snapshots, is reported as a fault; the caller then crashes the process so the scheduled task's
-// crash trigger starts a fresh observer. Idle() lets a daily takeover wait for a gap between requests.
 sealed class Watchdog(Func<long> nowMs, long hungMs = 60_000, int maxFailures = 5)
 {
-    long busySince = -1; // start of the request in progress, -1 between requests
+    long busySince = -1;
     long lastActivity = nowMs();
     int failures;
-    // What the observer is doing (a window being read, settle tracking): a hang's fault names it.
     public static volatile string Step = "start";
 
     public void Begin() => Volatile.Write(ref busySince, nowMs());

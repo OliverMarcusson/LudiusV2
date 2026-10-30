@@ -1,6 +1,4 @@
 ---
-# Reboot when the running kernel is not the newest installed Proxmox kernel. Over SSH: reboot and wait. Over a local
-# connection the reboot module can't come back, so stop with instructions; the rerun re-detects, so nothing is skipped.
 - name: Running and newest Proxmox kernel
   ansible.builtin.shell: |
     set -o pipefail

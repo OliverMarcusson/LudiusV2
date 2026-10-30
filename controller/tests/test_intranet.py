@@ -45,7 +45,7 @@ def test_scenario_pages_are_off_limits(tmp_path: Path) -> None:
     link = Element(name="Forklift daily pre-use check", role="link")
     assert p.element_allowed(link, []) and not p.element_allowed(Element(name="Expenses", role="link"), [])
     assert p.text_allowed("forklift daily pre-use check", None) and not p.text_allowed("forklift", None)
-    assert p.text_allowed("http://intranet.corp.ludius.test/?a=forklift-check", None)  # its address (Sol)
+    assert p.text_allowed("http://intranet.corp.ludius.test/?a=forklift-check", None)
     assert not p.text_allowed("intranet.corp.ludius.test/?a=forklift-checklist", None)
     assert "Forklift daily" not in intranet.index(skip=p.page_reserved) and "Forklift daily" in intranet.index()
 
@@ -62,8 +62,8 @@ def test_download_task(monkeypatch: pytest.MonkeyPatch) -> None:
         return PlanItem(at="09:00", template="edge_download_file", params={"page": page, "file_name": name} | params)
 
     assert item_problem(item(), ts, policy) is None
-    assert item_problem(item(page="Travel and expense policy"), ts, policy)  # a file of another page
-    assert item_problem(item(file_name="Close timetable.csv"), ts, policy)  # not a download
+    assert item_problem(item(page="Travel and expense policy"), ts, policy)
+    assert item_problem(item(file_name="Close timetable.csv"), ts, policy)
     reserved = Policy(reserved_pages=["(?i)month-end close.*"])
     assert item_problem(item(), ts, reserved) and name not in intranet.downloads(skip=reserved.page_reserved)
 
@@ -77,6 +77,6 @@ def test_download_task(monkeypatch: pytest.MonkeyPatch) -> None:
                     (guestfile.GuestFile(True, 500, served), True), (None, False)]:  # fmt: skip
         monkeypatch.setattr(guestfile, "read", lambda user, rel, f=got: f)  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
         assert tasks._file_ok(check, t) is ok  # pyright: ignore[reportPrivateUsage]
-    t.files_absent = frozenset()  # there at start: never this task's download
+    t.files_absent = frozenset()
     assert tasks._file_ok(check, t) is False  # pyright: ignore[reportPrivateUsage]
     assert guestfile.profile_path("aberg", rel) == "C:\\Users\\aberg\\Downloads\\" + name

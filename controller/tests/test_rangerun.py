@@ -1,5 +1,3 @@
-"""Multi-persona run: worker isolation and restarts (fake processes), per-persona budgets, the run summary."""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -59,14 +57,14 @@ def test_a_dying_worker_is_restarted_with_backoff_and_the_others_are_untouched(t
     sup, procs, now = supervisor(tmp_path, ["plan", "aberg", "lnord"])
     sup.step()
     assert [len(p) for p in procs.values()] == [1, 1, 1]
-    procs["aberg"][-1].code = 1  # crashes at once
+    procs["aberg"][-1].code = 1
     now[0] = 1
     sup.step()
-    assert len(procs["aberg"]) == 1  # waits BACKOFF[0] first
+    assert len(procs["aberg"]) == 1
     now[0] = 6
     sup.step()
     assert len(procs["aberg"]) == 2
-    procs["aberg"][-1].code = 1  # fails fast again: twice the wait
+    procs["aberg"][-1].code = 1
     now[0] = 7
     sup.step()
     now[0] = 7 + 9
@@ -75,13 +73,13 @@ def test_a_dying_worker_is_restarted_with_backoff_and_the_others_are_untouched(t
     now[0] = 7 + 10
     sup.step()
     assert len(procs["aberg"]) == 3
-    now[0] += rangerun.STEADY_S  # ran steadily, then exited: the short wait again
+    now[0] += rangerun.STEADY_S
     procs["aberg"][-1].code = 3
     sup.step()
     now[0] += rangerun.BACKOFF[0]
     sup.step()
     assert len(procs["aberg"]) == 4
-    assert [len(procs["plan"]), len(procs["lnord"])] == [1, 1]  # never restarted, never signalled
+    assert [len(procs["plan"]), len(procs["lnord"])] == [1, 1]
     assert all(p.signals == [] for p in procs["plan"] + procs["lnord"])
     state = json.loads((tmp_path / "state.json").read_text())["workers"]
     assert state["aberg"]["starts"] == 4 and state["aberg"]["last_exit"] == 3 and state["lnord"]["starts"] == 1
@@ -107,7 +105,7 @@ def test_stop_interrupts_every_worker_and_kills_one_that_hangs(tmp_path: Path) -
     if rangerun.os.name != "nt":
         assert procs["aberg"][0].signals and not procs["aberg"][0].killed
     assert procs["lnord"][0].killed
-    sup.step()  # stopping: nothing starts again
+    sup.step()
     assert [len(p) for p in procs.values()] == [1, 1]
 
 
@@ -141,12 +139,12 @@ def test_one_runaway_persona_spends_only_its_own_day(tmp_path: Path, monkeypatch
     monkeypatch.setenv("LUDIUS_CAP_PERSONA_DECISION", "2")
     yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
     calls.persona_path("aberg").parent.mkdir(parents=True)
-    calls.persona_path("aberg").write_text(json.dumps({yesterday: {"decision": 2, "llm": 0}}))  # a new day: budget back
+    calls.persona_path("aberg").write_text(json.dumps({yesterday: {"decision": 2, "llm": 0}}))
     monkeypatch.setattr(calls, "persona", "aberg")
     calls.count("decision")
     calls.count("decision")
     with pytest.raises(calls.CapReached, match="aberg"):
-        calls.count("decision")  # aberg's day is spent; nothing counted for the refused request
+        calls.count("decision")
     monkeypatch.setattr(calls, "persona", "lnord")
     calls.count("decision")
     calls.count("decision")
@@ -156,12 +154,12 @@ def test_one_runaway_persona_spends_only_its_own_day(tmp_path: Path, monkeypatch
     monkeypatch.setattr(calls, "persona", "sdekker")
     calls.count("decision")
     with pytest.raises(calls.CapReached, match="LUDIUS_CAP_DECISION"):
-        calls.count("decision")  # the total still holds over every persona
+        calls.count("decision")
     calls.persona_path("lnord").write_text("{broken")
     monkeypatch.setattr(calls, "persona", "lnord")
     monkeypatch.setenv("LUDIUS_CAP_DECISION", "100")
     with pytest.raises(calls.CapReached, match="unusable"):
-        calls.count("decision")  # a lost persona counter would grant the whole day again
+        calls.count("decision")
 
 
 def test_status_reads_current_task_counts_and_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

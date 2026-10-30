@@ -1,14 +1,10 @@
 ---
-# Owner's decision (2026-10-29): Microsoft Defender Antivirus off on the range servers too (dc01, ex01). Policy and
-# preferences only turn realtime off (the platform ignores DisableAntiSpyware since 4.18.2108), so the feature is
-# removed; on a server that is supported and final. A no-op once it is gone. Exchange's exclusions are skipped then.
 - name: Defender feature removed
   ansible.windows.win_feature:
     name: Windows-Defender
     state: absent
   register: defender_feature
 
-# ex01: back only when Exchange is (its services wait for AD and start late after a reboot).
 - name: Reboot for the Defender removal (bounded; ex01 until Exchange's services run)
   ansible.windows.win_reboot:
     reboot_timeout: 1200

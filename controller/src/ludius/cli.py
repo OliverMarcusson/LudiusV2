@@ -1,9 +1,3 @@
-"""ludius: run tasks, record fixtures, run the contract test.
-
-Configuration comes from the repo's .env (gitignored) and the environment:
-OPENROUTER_API_KEY, LUDIUS_VM, LUDIUS_AGENT (host agent address).
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -48,7 +42,7 @@ if TYPE_CHECKING:
 
 ROOT = Path(__file__).resolve().parents[3]
 DATA = ROOT / "controller" / "data"
-RUNS = Path(os.environ.get("LUDIUS_RUNS") or ROOT / "runs")  # set it when running from a worktree
+RUNS = Path(os.environ.get("LUDIUS_RUNS") or ROOT / "runs")
 
 
 def load_env() -> None:
@@ -116,13 +110,11 @@ def _clock_lease(vm: str | None = None) -> Lease:
 
 
 class ClockRefused(RuntimeError):
-    """Time-jump asked of an agent that is not Hyper-V on this machine."""
+    pass
 
 
 @functools.cache
 def require_hyperv_clock(address: str | None, vm: str) -> None:
-    """Time-jump and the clock lease act through infra/hyperv on this machine, by VM name: refuse them unless the
-    host agent drives Hyper-V here, so a same-named local VM is never jumped while the persona runs elsewhere."""
     address = address or os.environ.get("LUDIUS_AGENT", "127.0.0.1:7451")
     agent = HostAgent(address, vm)
     try:
@@ -138,8 +130,6 @@ def require_hyperv_clock(address: str | None, vm: str) -> None:
 
 
 def set_clock(at: dt.datetime | None, *, vm: str | None = None, agent: str | None = None) -> None:
-    """Time-jump: the guest clock to a logical time (test VM only, via infra/hyperv/set-clock.ps1). Refused before
-    anything is touched unless the host agent is Hyper-V on this machine."""
     require_hyperv_clock(agent, vm or os.environ["LUDIUS_VM"])
     script = str(ROOT / "infra" / "hyperv" / "set-clock.ps1")
     extra = ["-Reset"] if at is None else ["-Time", at.isoformat(timespec="seconds")]
@@ -147,10 +137,10 @@ def set_clock(at: dt.datetime | None, *, vm: str | None = None, agent: str | Non
     if vm is not None:
         cmd += ["-VM", vm]
     if at is not None:
-        _clock_lease(vm).hold()  # before the jump: a controller killed mid-jump still leaves a lease to sweep
+        _clock_lease(vm).hold()
     subprocess.run(cmd, check=True, capture_output=True, text=True)
     if at is None:
-        _clock_lease(vm).release()  # only after a reset that worked; a failed one leaves the lease to the sweeper
+        _clock_lease(vm).release()
 
 
 def restore(agent: HostAgent, checkpoint: str) -> None:
@@ -160,7 +150,6 @@ def restore(agent: HostAgent, checkpoint: str) -> None:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    """Admission gate: every variant `--runs` times from the checkpoint; reliable variants are admitted."""
     source = Path(args.template)
     if not source.exists():
         source = next(p for p in (DATA / "templates" / f"{args.template}.yaml",
@@ -181,7 +170,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
             agent.close()
         variants = {str(v): f"{st.count('done')}/{len(st)}" for v, st in results.items()}
         if stopped:
-            # Incomplete: too few runs to judge reliability, so nothing is recorded or admitted.
             log.write(event="admission_end", host_ms=int(time.time() * 1000), task=template.task, admitted=False,
                       variants=variants, stopped=stopped)  # fmt: skip
             print(f"{template.task}: stopped, not judged ({stopped}). Runs so far: " + ", ".join(
@@ -207,7 +195,6 @@ def load_templates() -> dict[str, Template]:
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
-    """Narrative once per range; one validated day plan per persona and day; template proposals (spec section 6)."""
     world = planner.World(RUNS)
     date = dt.date.fromisoformat(args.date) if args.date else dt.date.today()
     llm = LlmClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
@@ -234,12 +221,12 @@ def cmd_plan(args: argparse.Namespace) -> int:
                 f"{n.company} ({n.city}): {len(n.people)} people, {len(n.events)} events -> {world.save_narrative(n)}"
             )
         else:
-            from ludius import nightly  # the same generation the nightly planning worker runs
+            from ludius import nightly
 
             persona = load_persona(args.persona)
             src = plan_sources()
             scenario = planner.Scenario.parse(args.scenario) if args.scenario else None
-            try:  # weekly revision first, so this plan sees the revised story; one planner at a time
+            try:
                 plan, rejects, auto = nightly.generate_day(llm, world, persona, src, date, scenario)
             except revision.RevisionBusy as e:
                 print(e, file=sys.stderr)
@@ -272,7 +259,7 @@ def cmd_day(args: argparse.Namespace) -> int:
     if args.canary and not args.temporal:
         print("--canary needs --temporal (without it, run `ludius canary` before the day)", file=sys.stderr)
         return 2
-    if getattr(args, "clock", None) == "time-jump":  # before the agent restores or touches anything
+    if getattr(args, "clock", None) == "time-jump":
         require_hyperv_clock(getattr(args, "agent", None), args.vm or os.environ["LUDIUS_VM"])
     plan = planner.load_plan(Path(args.plan))
     persona = load_persona(args.persona or str(DATA / "personas" / f"{plan.persona}.yaml"))
@@ -285,24 +272,24 @@ def cmd_day(args: argparse.Namespace) -> int:
     agent = start_agent(args)
     decider = DecisionsClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
     if args.temporal:
-        from ludius import durable  # needs the durable dependency group
+        from ludius import durable
 
-        log: GroundTruth = durable.HeartbeatLog(log_path)  # slot heartbeats come from ground-truth writes
+        log: GroundTruth = durable.HeartbeatLog(log_path)
     else:
         log = GroundTruth(log_path)
     reset_failed = False
     try:
-        for i in skipped:  # the app's drift canary failed: don't burn Decisions calls on a UI that has changed
+        for i in skipped:
             log.write(event="skipped_drift", host_ms=int(time.time() * 1000), at=i.at, task=i.template,
                       app=templates[i.template].app)  # fmt: skip
             print(f"  {i.at} {i.template}: skipped, {templates[i.template].app} drifted (runs/health.json)")
         day = build_day(agent, decider, persona, log, templates, args.clock, seed, args.vm or os.environ["LUDIUS_VM"])
-        if args.temporal:  # durable: resumes after the last finished slot if this day was started before
+        if args.temporal:
             from ludius import durable
 
             desk = RUNS / "locks" / f"{args.vm or os.environ['LUDIUS_VM']}.lock"
 
-            def check(apps: set[str]) -> dict[str, str]:  # the day's drift canaries, on this desktop, first
+            def check(apps: set[str]) -> dict[str, str]:
                 return canary.run(
                     templates, DATA / "admission.yaml", day.runner, day.session, RUNS / "health.json", apps
                 )
@@ -321,9 +308,9 @@ def cmd_day(args: argparse.Namespace) -> int:
             results = [(r.item.at, r.item.template, r.status) for r in day.run(plan)]
     finally:
         if args.clock == "time-jump" and _clock_lease(args.vm or os.environ["LUDIUS_VM"]).held:
-            try:  # an exception or Ctrl+C mid-day must not leave the range on a jumped clock
+            try:
                 set_clock(None, vm=args.vm or os.environ["LUDIUS_VM"], agent=args.agent)
-            except (subprocess.CalledProcessError, OSError) as e:  # report it; never mask an exception in flight
+            except (subprocess.CalledProcessError, OSError) as e:
                 reset_failed = True
                 detail = (getattr(e, "stderr", "") or str(e)).strip()[-500:]
                 print(f"time-jump reset FAILED, range clocks may still be jumped: {detail}\n"
@@ -351,7 +338,6 @@ def build_day(
     seed: int,
     vm: str,
 ) -> DayRunner:
-    """Shared runner construction for one-shot and lazy long-lived workers."""
     if clock == "time-jump":
         require_hyperv_clock(agent.address, vm)
     pacing = "compressed" if clock == "time-jump" else clock
@@ -373,7 +359,6 @@ def build_day(
 def cmd_schedule(args: argparse.Namespace) -> int:
     from ludius import durable, nightly
 
-    # Validate definitions before opening a connection. Creation never triggers immediately.
     if args.nightly:
         if args.canary or args.clock != "realtime" or args.day_offset:
             raise ValueError("--clock/--canary/--day-offset configure the day schedule, not --nightly planning")
@@ -418,7 +403,7 @@ def cmd_schedule(args: argparse.Namespace) -> int:
 def cmd_worker(args: argparse.Namespace) -> int:
     from ludius import durable, scheduled
 
-    durable.schedule_id(args.persona)  # validate account syntax before forming a persona-file path
+    durable.schedule_id(args.persona)
     persona = load_persona(str(DATA / "personas" / f"{args.persona}.yaml"))
     if persona.user != args.persona:
         raise ValueError("persona file account differs from worker persona")
@@ -429,7 +414,6 @@ def cmd_worker(args: argparse.Namespace) -> int:
     def factory(inp: durable.DayInput) -> Generator[DayRunner]:
         if inp.plan.persona != persona.user:
             raise ValueError("worker cannot drive another persona's plan")
-        # No restore/start: an explicit worker only connects to the already-running desktop.
         with ExitStack() as stack:
             agent = stack.enter_context(closing(agent_from(args)))
             user = agent.observe(wait_settle=False).hello.user.rsplit("\\", 1)[-1]
@@ -450,7 +434,6 @@ def cmd_worker(args: argparse.Namespace) -> int:
                 already_failed = sys.exc_info()[0] is not None
                 if inp.clock == "time-jump" and _clock_lease(vm).held:
                     try:
-                        # never reset another process's lease on a failed claim/load
                         set_clock(None, vm=vm, agent=agent.address)
                     except Exception:
                         print("worker clock reset FAILED; lease/reservation retained for recovery", file=sys.stderr)
@@ -483,7 +466,6 @@ def cmd_plan_worker(args: argparse.Namespace) -> int:
 
 
 def cmd_range(args: argparse.Namespace) -> int:
-    """The multi-persona run (ludius.rangerun): `up` starts and keeps it running, `status` summarizes it."""
     import signal
     from zoneinfo import ZoneInfo
 
@@ -513,7 +495,7 @@ def cmd_range(args: argparse.Namespace) -> int:
                               dict(os.environ))], RUNS / "range", rangerun.popen)  # fmt: skip
 
     def term(*_: object) -> None:
-        raise KeyboardInterrupt  # systemd's stop: the same orderly worker shutdown as Ctrl+C
+        raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, term)
     try:
@@ -528,7 +510,6 @@ def cmd_range(args: argparse.Namespace) -> int:
 
 
 def _range_interactions() -> int:
-    """The monitor's interaction popups (ludius.interactions), every 5 s until stopped; no model."""
     import signal
     from dataclasses import asdict
 
@@ -551,8 +532,6 @@ def _range_interactions() -> int:
 
 
 def _range_clock(*, strict: bool = True) -> rangeclock.RangeClock:
-    """dc01 first, then ex01 and every persona VM in range-vms.yml (all of them: one DC, one clock). strict=False
-    (unwarp) skips the up-front all-or-nothing check: reset checks each VM itself and resets every one that passes."""
     from ludius import rangeclock, rangerun
 
     if os.environ.get("LUDIUS_MAIL_BACKEND") != "exchange":
@@ -560,8 +539,6 @@ def _range_clock(*, strict: bool = True) -> rangeclock.RangeClock:
     main = yaml.safe_load((rangerun.VMS.parent / "main.yml").read_text(encoding="utf-8"))
     dc, ex = int(main["srv01_vmid"]), int(main["ex01_vmid"])
     names = {dc: "ludius-dc01", ex: "ludius-ex01"} | {v: rangerun.vm_of(u) for u, v in rangerun.vmids().items()}
-    # Root `qm` acts on whatever VMID it is given: every one must be a range VM before any clock is touched, checked
-    # here and again (a fresh pvesh read) before every set and reset.
     if strict:
         rangeclock.confine(names, rangeclock.resources(), socket.gethostname())
     return rangeclock.RangeClock(
@@ -572,7 +549,6 @@ def _range_clock(*, strict: bool = True) -> rangeclock.RangeClock:
 
 
 def _range_unwarp() -> int:
-    """Every range VM back on real time, then the range lease dropped (recovery after a failed warp reset)."""
     try:
         got = _range_clock(strict=False).reset()
     except Exception as e:  # noqa: BLE001  every VM was tried; say which failed, keep the lease
@@ -584,13 +560,6 @@ def _range_unwarp() -> int:
 
 
 def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> int:
-    """Time-jump on a Proxmox range (spec section 7). Per simulated weekday: the range clock to the evening before,
-    that day's plans (nightly.ensure_day, as `up --today`), the range clock to just before the day's first item,
-    then every persona's day as a compressed durable day on its own worker; the clock runs on from there. Every
-    jump goes through the range clock (rangeclock: DC first, forward only, skew verified) under the range's clock
-    lease; the range goes back on real time when the warp ends or fails (then roll back to the pre-warp snapshot:
-    AD and Exchange have seen the future). Workers are supervised as by `up`; no schedules are created.
-    ponytail: no lease sweeper on Proxmox; a killed warp leaves the clocks jumped until `ludius range unwarp`."""
     import signal
     from zoneinfo import ZoneInfo
 
@@ -616,7 +585,7 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
 
     def note(**rec: object) -> None:
         line = json.dumps({"at": dt.datetime.now().isoformat(timespec="seconds"), **rec}, default=str)
-        with suppress(OSError):  # unwritable journal or output must never skip the cleanup in `finally` (stop, reset)
+        with suppress(OSError):
             journal.parent.mkdir(parents=True, exist_ok=True)
             with journal.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
@@ -628,7 +597,7 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
                 "offsets_s": {str(k): round(v, 1) for k, v in got.items()}}  # fmt: skip
 
     def jump(at: dt.datetime) -> None:
-        lease.hold()  # before the jump: a warp killed mid-jump still leaves its lease behind
+        lease.hold()
         note(event="clock_set", logical=at.isoformat(), **offsets(clock.set(at)))
 
     def term(*_: object) -> None:
@@ -653,7 +622,7 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
                     calls.persona = None
             note(event="planned", date=d, items={u: len(p.items) for u, p in plans.items()})
             failed += len(users) - len(plans)
-            plans = {u: p for u, p in plans.items() if p.items}  # an empty plan has no first item and no day
+            plans = {u: p for u, p in plans.items() if p.items}
             if not plans:
                 continue
             first = min(dt.time.fromisoformat(i.at) for p in plans.values() for i in p.items)
@@ -670,7 +639,6 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
         failure = e
         note(event="warp_failed", error=repr(e)[-1500:])
     finally:
-        # Stopped mid-day: no day may run on after the warp (a SIGTERM can skip any task's own cleanup).
         if playing:
             try:
                 open_days = asyncio.run(_stop_days(args.temporal, playing))
@@ -678,16 +646,16 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
                 open_days = playing
         if open_days:
             note(event="days_not_stopped", workflows=open_days, fix="temporal workflow terminate --workflow-id")
-        sup.stop(30)  # before the reset: a worker still driving its day would jump its clock again
+        sup.stop(30)
         if lease.held:
             try:
                 got = clock.reset()
-                lease.release()  # only after a reset that worked
+                lease.release()
                 note(event="clock_reset", **offsets(got))
             except Exception as e:  # noqa: BLE001  report it; never mask an exception in flight
                 reset_failed = True
                 note(event="clock_reset_failed", error=str(e)[-1500:], fix="ludius range unwarp")
-    if reset_failed:  # a range left on a jumped clock outranks whatever stopped the warp
+    if reset_failed:
         print(f"warp: clock reset FAILED, run `ludius range unwarp`; warp error: {failure!r}", file=sys.stderr)
         return 3
     if open_days:
@@ -703,7 +671,6 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
 async def _play_days(
     temporal: str, plans: dict[str, planner.DayPlan], tz: dt.tzinfo, sup: rangerun.Supervisor
 ) -> dict[str, object]:
-    """Every persona's day as a compressed durable day on its own worker; the supervisor keeps the workers up."""
     from temporalio.client import WorkflowFailureError
     from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
@@ -715,7 +682,6 @@ async def _play_days(
         noon = dt.datetime.combine(dt.date.fromisoformat(plan.date), dt.time(12), tz).utcoffset() or dt.timedelta()
         inp = durable.DayInput(plan=plan, clock="compressed", utc_offset_s=int(noon.total_seconds()))
         wid = durable.workflow_id(plan)
-        # A running day is picked up again; a closed one is played anew: after a rollback its result is not real.
         h = await client.start_workflow(durable.PersonaDay.run, inp, id=wid, task_queue=durable.task_queue(plan),
                                         id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
                                         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING)  # fmt: skip
@@ -737,7 +703,6 @@ async def _play_days(
 
 
 async def _stop_days(temporal: str, wids: list[str]) -> list[str]:
-    """Terminate the warp's day workflows; returns the ids not confirmed closed (unreachable server, any doubt)."""
     from temporalio.client import WorkflowExecutionStatus
     from temporalio.service import RPCError, RPCStatusCode
 
@@ -751,12 +716,12 @@ async def _stop_days(temporal: str, wids: list[str]) -> list[str]:
     for wid in wids:
         h = client.get_workflow_handle(wid)
         try:
-            with suppress(RPCError):  # already closed or never started: the describe below decides
+            with suppress(RPCError):
                 await h.terminate("warp stopped")
             if (await h.describe()).status == WorkflowExecutionStatus.RUNNING:
                 left.append(wid)
         except RPCError as e:
-            if e.status != RPCStatusCode.NOT_FOUND:  # not found: its start never reached the server
+            if e.status != RPCStatusCode.NOT_FOUND:
                 left.append(wid)
         except Exception:  # noqa: BLE001  unknown is not closed
             left.append(wid)
@@ -764,8 +729,6 @@ async def _stop_days(temporal: str, wids: list[str]) -> list[str]:
 
 
 async def _range_schedules(args: argparse.Namespace, users: list[str], today: dt.date) -> None:
-    """Every persona's nightly-plan and day schedules, active; existing ones are kept as they are. --today: plan
-    today where no plan exists yet, then start today's day now (a schedule trigger) instead of tomorrow."""
     from temporalio.client import ScheduleAlreadyRunningError
 
     from ludius import calls, durable, nightly
@@ -836,7 +799,6 @@ def cmd_reservation(args: argparse.Namespace) -> int:
 
 
 def cmd_canary(args: argparse.Namespace) -> int:
-    """Drift canaries: one admitted task per app on the VM as it is; results to runs/health.json."""
     agent = start_agent(args)
     decider = DecisionsClient(os.environ.get("OPENROUTER_API_KEY", ""), model=args.model)
     log_path = RUNS / "canary" / f"{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
@@ -855,8 +817,7 @@ def cmd_canary(args: argparse.Namespace) -> int:
 
 
 def cmd_store(args: argparse.Namespace) -> int:
-    """Mirror the run directory (ground-truth traces, world and plan files) into PostgreSQL, screenshots into S3."""
-    from ludius import store  # needs the state dependency group
+    from ludius import store
 
     dsn = args.dsn or os.environ.get("LUDIUS_PG", "")
     if not dsn:
@@ -905,7 +866,6 @@ def _wait_for_observer(agent: HostAgent, seconds: float = 180) -> None:
 
 
 def cmd_observe(args: argparse.Namespace) -> int:
-    """Print one snapshot, or record it (plus the console frame) as a fixture."""
     agent = agent_from(args)
     res = agent.observe()
     if args.record:
@@ -937,16 +897,12 @@ def pb_kind(k: int) -> str:
 
 
 def contract_verdict(failures: int, skipped: int) -> str:
-    """PASS only with no failure; a check an old agent can't run is reported as skipped, never as passed."""
     if failures:
         return f"FAIL: {failures} failure(s)" + (f", {skipped} skipped (old agent)" if skipped else "")
     return "PASS" + (f", {skipped} skipped (old agent)" if skipped else "")
 
 
 def _contract_read_only(agent: HostAgent) -> tuple[int, int]:
-    """The checks that change nothing in the guest: VM state, the observer's resolution against the console frame
-    (display fixed in VM config, spec section 4), and a guest file read (absent file in an existing folder). Returns
-    (failures, skipped): skipped only for UNIMPLEMENTED (agent or observer predates the call); any other error fails."""
     failures = skipped = 0
 
     def check(ok: bool, what: str) -> None:
@@ -978,8 +934,6 @@ def _contract_read_only(agent: HostAgent) -> tuple[int, int]:
 
 
 def cmd_contract(args: argparse.Namespace) -> int:
-    """Pointer mapping and typing round trip, readable from the guest (spec section 4), after the read-only checks;
-    --read-only stops there (nothing typed, pointer untouched)."""
     agent = agent_from(args)
     failures, skipped = _contract_read_only(agent)
     if args.read_only:
@@ -988,14 +942,12 @@ def cmd_contract(args: argparse.Namespace) -> int:
         return 0 if failures == 0 else 1
     s = agent.observe().snapshot
     w, h = s.screen_width, s.screen_height
-    # Hyper-V's absolute pointer rounds to within 1 px (measured: x off by one below ~40).
     for x, y in [(1, 1), (w // 2, h // 2), (w - 2, h - 2), (137, 911 % h), (w // 3, h // 5)]:
         agent.move(x, y)
         got = agent.observe(wait_settle=False).snapshot
         ok = abs(got.cursor_x - x) <= 1 and abs(got.cursor_y - y) <= 1
         failures += not ok
         print(f"{'ok  ' if ok else 'FAIL'} pointer {(x, y)} -> {(got.cursor_x, got.cursor_y)}")
-    # Typing: Run dialog (Win+R) field, read back via UIA, then cancel.
     probe = "Ludius contract 0123 ~!@#$%^&*()_+{}|:<>?"
     agent.chord([0x5B, 0x52])
     snap = agent.observe().snapshot
@@ -1004,33 +956,29 @@ def cmd_contract(args: argparse.Namespace) -> int:
         print("FAIL typing: no focused field in the Run dialog")
         failures += 1
     else:
-        agent.chord([0x11, 0x41])  # select all, typing replaces it
+        agent.chord([0x11, 0x41])
         agent.type(probe, 15, 5)
         snap = agent.observe().snapshot
         got = next((e.value for e in snap.elements if e.key == field.key), "")
         ok = got == probe
         failures += not ok
         print(f"{'ok  ' if ok else 'FAIL'} typing {probe!r} -> {got!r}")
-        agent.chord([0x1B])  # Esc closes the Run dialog
+        agent.chord([0x1B])
     agent.close()
     print("contract: " + contract_verdict(failures, skipped))
     return 0 if failures == 0 else 1
 
 
 def make_policy() -> Policy:
-    """Scenario-reserved paths and mailboxes from the scenario file in LUDIUS_SCENARIO (none when unset)."""
     return Policy.from_env()
 
 
 def make_assist() -> Assist | None:
-    """Rare LLM help for open-ended subgoals (LUDIUS_ASSIST=0: none); its HTTP client lives as long as the process."""
     key = os.environ.get("OPENROUTER_API_KEY", "") if os.environ.get("LUDIUS_ASSIST") != "0" else ""
     return Assist(LlmClient(key, model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL))) if key else None
 
 
 def make_composer() -> Composer | None:
-    """Task-time reply content: one planner-LLM call per reply task, always checked by the decision model's yes/no.
-    Independent of LUDIUS_ASSIST (that switches the in-loop help off, not content)."""
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if not key:
         return None
@@ -1039,7 +987,6 @@ def make_composer() -> Composer | None:
 
 
 def make_reactor(persona: Persona, templates: dict[str, Template], policy: Policy, log: GroundTruth) -> Reactor | None:
-    """Same-day chat reactions (ludius.react): on when the planner LLM and chat01 (LUDIUS_CHAT_HOST) are configured."""
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if not key or not os.environ.get("LUDIUS_CHAT_HOST"):
         return None
@@ -1092,7 +1039,6 @@ def cmd_vm(args: argparse.Namespace) -> int:
 
 
 def cmd_intranet(args: argparse.Namespace) -> int:
-    """The dc01 role embeds this output in the intranet page; a bad folder fails before anything is deployed."""
     from dataclasses import asdict
 
     from ludius import intranet
@@ -1107,7 +1053,6 @@ def cmd_intranet(args: argparse.Namespace) -> int:
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
-    """Empty the direct-message conversations between every pair of the given range accounts on chat01."""
     from itertools import combinations
 
     from ludius import react
@@ -1282,7 +1227,7 @@ def main(argv: list[str] | None = None) -> int:
 
         vm = args.vm or os.environ["LUDIUS_VM"]
         desk = RUNS / "locks" / f"{vm}.lock"
-        with durable.desk_lock(desk):  # before restore, input or clock cleanup; all controller entry points fence
+        with durable.desk_lock(desk):
             rec = scheduled.DayOwner(desk).read()
             if rec:
                 if args.cmd != "day" or not args.temporal:

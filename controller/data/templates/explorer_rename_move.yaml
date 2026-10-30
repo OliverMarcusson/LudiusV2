@@ -1,12 +1,9 @@
-# Rename a file in Documents, then move it into a folder there with Cut and Paste.
-# Variants: launch via Win+E or the taskbar; rename via F2 or the context menu; cut/paste via
-# Ctrl+X/Ctrl+V or the context menu. The file and folder must already exist (planner: from world state).
 task: explorer_rename_move
 app: explorer
-capability: file.move  # names an existing file and folder (planner: not new content)
+capability: file.move
 processes: [explorer.exe]
-writes: ['Documents\{folder_name}\{new_name}.*']  # the renamed file keeps the extension Explorer hides
-removes: ['Documents\{file_name}.*']  # the source leaves Documents (planner.owned_files)
+writes: ['Documents\{folder_name}\{new_name}.*']
+removes: ['Documents\{file_name}.*']
 params: [file_name, new_name, folder_name]
 about: "Rename an existing file in Documents and move it into an existing folder there with Cut and Paste. file_name: the file's current name as Explorer shows it (no extension); new_name: its new name without extension; folder_name: an existing folder in Documents."
 example: {file_name: admission test note, new_name: admission test note old, folder_name: admission test folder}
@@ -39,8 +36,6 @@ subgoals:
     text: new_name
     keys: [Enter]
     done: {element: {role: list item, name: '^{new_name}(\.\w+)?$'}}
-  # Cut, open the folder and paste are one subgoal: a cut file only looks faded (not in UIA), so the only
-  # checkable point is the file listed inside the folder.
   move_keys:
     goal: "Cut the file {new_name} with Ctrl+X, open the folder {folder_name} and paste it there with Ctrl+V"
     keys: [Ctrl+X, Ctrl+V]

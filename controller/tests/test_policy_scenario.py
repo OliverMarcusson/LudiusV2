@@ -38,16 +38,15 @@ def test_reserved_files_folders_and_mailboxes_are_refused(tmp_path: Path) -> Non
     p = _policy(tmp_path)
     assert p.element_allowed(el("Q3 invoice final.xlsm"), []) == "scenario-reserved path"
     assert p.element_allowed(el("handover"), []) == "scenario-reserved path"
-    assert p.element_allowed(el("budget.xlsx"), []) is None  # intended red herring
+    assert p.element_allowed(el("budget.xlsx"), []) is None
     assert p.element_allowed(el("Q3 notes.txt"), []) is None
     address = el("Address", r"C:\Users\aberg\Documents\Q3 invoice 2.xlsm", role="edit")
     assert p.element_allowed(address, []) == "scenario-reserved path"
     assert p.text_allowed(r"c:\users\LNORD\documents\handover\list.txt", None) == "scenario-reserved path"
-    assert p.text_allowed(r"C:\Users\a\b\Documents\handover", None) is None  # * stays in one folder level
+    assert p.text_allowed(r"C:\Users\a\b\Documents\handover", None) is None
     assert p.text_allowed("Q3 invoice v2.xlsm", None) == "scenario-reserved path"
     assert p.text_allowed("mail cfo@harbourline.example today", None) == "scenario-reserved path"
     assert p.text_allowed("q3 invoice notes", None) is None
-    # The planner rejects plan content that would touch a reserved item.
     item = PlanItem(at="09:00", template="explorer_new_folder", params={"folder_name": "handover"})
     assert "scenario-reserved" in validate([item], load_templates(), [], p)[0][1]
 
@@ -60,7 +59,6 @@ def test_scenario_file_is_strict_and_default_policy_is_unchanged(tmp_path: Path)
     assert Policy().element_allowed(el("Q3 invoice final.xlsm"), []) is None
 
 
-# Click options filter a reserved target; a bare Enter/F2/Ctrl+O would still act on it while it is selected or focused.
 def _task(name: str = "explorer_new_folder") -> Task:
     t = load_templates()[name]
     return Task(t, TaskInstance(template=t.task, params=t.example, variant=0), random.Random(0))
@@ -104,25 +102,21 @@ def test_visible_selected_reserved_item_blocks_activation_keys_only(tmp_path: Pa
         got = _keys(tmp_path, [_win(FG)], [_row(1, RESERVED, selected=sel, focused=foc), _row(2, "notes.txt")])
         assert "Enter" not in got
         assert {"Esc", "Tab", "Up", "Down", "Left", "Right", "Alt+F4"} <= set(got)
-    # sg.keys shortcuts that act on the selection (rename) are held back too, navigation chords are not
     got = _keys(tmp_path, [_win(FG)], [_row(1, RESERVED, selected=True)], sg="rename_folder")
     assert "F2" not in got and "Enter" not in got
 
 
 def test_keyboard_guard_needs_visible_reserved_evidence_in_the_keyboard_window(tmp_path: Path) -> None:
     ok = ["Enter"]
-    assert _keys(tmp_path, [_win(FG)], [_row(1, "notes.txt", selected=True)])[:1] == ok  # unreserved selection
-    assert _keys(tmp_path, [_win(FG)], [_row(1, RESERVED)])[:1] == ok  # reserved but neither selected nor focused
+    assert _keys(tmp_path, [_win(FG)], [_row(1, "notes.txt", selected=True)])[:1] == ok
+    assert _keys(tmp_path, [_win(FG)], [_row(1, RESERVED)])[:1] == ok
     off = _row(1, RESERVED, selected=True)
-    off.bounds.width = 0  # virtualized away, not visible
+    off.bounds.width = 0
     assert _keys(tmp_path, [_win(FG)], [off])[:1] == ok
-    # selected in a window that is not receiving keys (background Explorer, taskbar): no blanket ban
     bg = [_win(FG, "notepad.exe"), _win(obs.Window.KIND_UNSPECIFIED)]
     assert _keys(tmp_path, bg, [_row(1, RESERVED, w=1, selected=True)])[:1] == ok
-    # a text field with the keyboard focus takes Enter, whatever is still selected behind it
     typing = [_row(1, RESERVED, selected=True), _row(2, "New folder", role="edit", focused=True)]
     assert _keys(tmp_path, [_win(FG)], typing)[:1] == ok
-    # a modal dialog owns the keyboard; the reserved row underneath is not its selection
     owned = [_win(FG), _win(obs.Window.OWNED, modal=True)]
     assert _keys(tmp_path, owned, [_row(1, RESERVED, selected=True), _row(2, "OK", w=1, role="button")])[:1] == ok
 

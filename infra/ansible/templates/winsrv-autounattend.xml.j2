@@ -1,10 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Range server install (range-exchange.yml, tasks/winsrv-vm.yml): Windows Server 2025 Evaluation, image
-     {{ winsrv_image_index }} (Standard, Desktop Experience), SeaBIOS/MBR so the blank disk boots the ISO without a key
-     press. windowsPE loads virtio-scsi and NetKVM from the virtio-win ISO; the one autologon installs
-     virtio-win-guest-tools (drivers + QEMU guest agent). The Administrator password here is a one-off: the bootstrap
-     replaces it from the vault through the guest agent, and this ISO is deleted once that worked. No product key: the
-     evaluation media carry their own. -->
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
   <settings pass="windowsPE">
     <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">

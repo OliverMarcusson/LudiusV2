@@ -1,9 +1,3 @@
-"""Template growth (spec section 6): the LLM proposes new templates from the capability catalog.
-
-A proposal is checked in code (schema, catalog processes, placeholders, policy, completion checks) and saved
-to data/templates/proposed/. It reaches day plans only after `ludius validate` admits it.
-"""
-
 from __future__ import annotations
 
 import re
@@ -30,13 +24,12 @@ GROWTH_SYSTEM = (
 )
 
 _NAME = re.compile(r"^[a-z][a-z0-9_]{2,40}$")
-COOKIE_CONSENT = "(?i)accept.*|reject.*"  # the only destructive-looking control a proposal may allowlist
+COOKIE_CONSENT = "(?i)accept.*|reject.*"
 
 
 def propose(
     llm: LlmClient, capabilities: dict[str, Any], templates: dict[str, Template], idea: str = ""
 ) -> tuple[Template, dict[str, Any]]:
-    """One proposal; problems found in code go back to the model once."""
     examples = "\n---\n".join(
         yaml.safe_dump(t.model_dump(exclude_defaults=True), sort_keys=False, width=110) for t in templates.values()
     )
@@ -64,7 +57,7 @@ def propose(
     raise AssertionError("unreachable")
 
 
-TASK_CONTENT_KEYS = {"body", "reply_to"}  # what ludius.reply fills at task time
+TASK_CONTENT_KEYS = {"body", "reply_to"}
 
 
 def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Template]) -> list[str]:
@@ -78,7 +71,6 @@ def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Templa
     except ValueError as e:
         problems.append(str(e))
         return problems
-    # A zero-weight variant is never drawn: code plays it and closes the app after (ludius.react).
     drawn = [v for i, v in enumerate(t.variants) if not t.weights or t.weights[i]]
     if not 2 <= len(drawn) <= 4:
         problems.append("needs 2-4 variants")
@@ -86,8 +78,8 @@ def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Templa
     if bad := [p for p in t.processes if p.lower() not in allowed]:
         problems.append(f"processes outside the catalog: {bad}")
     keys = set(t.params) | set(t.defaults)
-    keys |= {f"{k}_{d}" for k in keys for d in ("typo", "enter", "ui", "line")}  # variants derived in Task
-    if t.task_content:  # content written at task time (an LLM call per task): hand-written templates only
+    keys |= {f"{k}_{d}" for k in keys for d in ("typo", "enter", "ui", "line")}
+    if t.task_content:
         problems.append("task_content not permitted for proposals")
         keys |= TASK_CONTENT_KEYS
     if missing := [p for p in t.params if not t.example.get(p) and p not in t.defaults]:
@@ -100,9 +92,9 @@ def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Templa
             problems.append(f"{name}: unknown placeholders {sorted(unknown)}")
         if extra := set(sg.allow_destructive) - {COOKIE_CONSENT}:
             problems.append(f"{name}: allow_destructive not permitted for proposals: {sorted(extra)}")
-        if sg.search:  # fixed text is ours to write, not the planner's
+        if sg.search:
             problems.append(f"{name}: search not permitted for proposals")
-        if sg.unreadable_ok:  # would let typing count as landed with nothing on screen to show it
+        if sg.unreadable_ok:
             problems.append(f"{name}: unreadable_ok not permitted for proposals")
         if sg.done is None:
             open_ended += 1

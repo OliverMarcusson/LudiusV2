@@ -1,10 +1,4 @@
 # BEGIN ludius-pve
-# Remove with BLOCK=ludius-pve infra/monitor/homelab/remove-monitor.sh (it needs the BEGIN and END lines exactly as they are).
-# Proxmox web UI behind Claustra. Public site: Claustra login, then the loopback hop below.
-# The box's tailscale serve answers only its MagicDNS name as Host (anything else is a 404) and passes that Host on;
-# pveproxy does not check Host. The snippet can't set header_up, so the Host rewrite lives in the hop. serve
-# terminates pveproxy's self-signed TLS (https+insecure); Caddy proxies the noVNC and xterm.js WebSocket upgrades
-# without extra config. PVE's own login stays on.
 pve.ludius.se {
 	import claustra_forward http://127.0.0.1:18453
 }

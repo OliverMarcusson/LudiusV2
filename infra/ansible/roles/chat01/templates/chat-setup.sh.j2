@@ -1,7 +1,4 @@
 #!/bin/bash
-# roles/chat01: the team, its channels (controller/data/chat.yaml), the narrative's private team channels (only their
-# members) and one user per narrative person, signed in only through the SSO shim (auth service gitlab, auth data =
-# the shim's id). Idempotent; prints "changed" for a change.
 set -euo pipefail
 cd /
 mm() { /opt/mattermost/bin/mmctl --local "$@" >/dev/null; }
@@ -41,5 +38,4 @@ esac
 {% endfor %}
 {% endfor %}
 
-# Mattermost caches users: a changed sign-in method is only seen after a restart.
 [ -z "$restart" ] || systemctl restart mattermost

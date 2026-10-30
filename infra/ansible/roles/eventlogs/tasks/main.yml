@@ -1,5 +1,4 @@
 ---
-# eventlogs: large enough that a scenario's events survive a day of noise (Sysmon's log: not installed yet).
 - name: Event log sizes
   community.windows.win_eventlog:
     name: "{{ item.name }}"

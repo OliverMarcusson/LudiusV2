@@ -1,15 +1,8 @@
 # BEGIN ludius-monitor
-# Remove with infra/monitor/homelab/remove-monitor.sh (it needs the BEGIN and END lines exactly as they are).
-# Public site: Claustra login, then the loopback hop below. Claustra sees the real Host (monitor.ludius.se).
 monitor.ludius.se {
 	import claustra_forward http://127.0.0.1:18452
 }
 
-# Loopback-only hop. The box's tailscale serve answers only its MagicDNS name as Host (anything else is a 404) and
-# passes that Host on unchanged, so the agent (Host 127.0.0.1:7452 only) needs the box-side Caddy fallback in the
-# README (serve :8452 -> 127.0.0.1:7453 -> agent with Host rewritten). The snippet can't set header_up, so the Host
-# rewrite lives here. Origin passes through unchanged (https://monitor.ludius.se), which the agent's allowed-origin
-# setting accepts. WebSocket upgrades are proxied by Caddy without extra config.
 http://:18452 {
 	bind 127.0.0.1
 	reverse_proxy __BOX_TAILNET_IP__:__TS_PORT__ {

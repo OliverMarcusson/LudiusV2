@@ -1,8 +1,3 @@
-# The observer files the golden image installs (observer role), built and signed on the desktop exactly as
-# provision.ps1 does, without touching any VM: out\observer\uiprobe.exe (uiAccess, signed by the range's code-signing
-# certificate) and secrets\range-root-ca.cer (the public root). Uses the certificates provision.ps1 created in
-# CurrentUser\My; never creates new ones (clones and the running test VM must trust the same root).
-# Copy both files to the same paths in the repo checkout on the Proxmox node before the Packer build.
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $ca = Get-ChildItem Cert:\CurrentUser\My | Where-Object Subject -eq 'CN=Ludius Range Root CA' | Select-Object -First 1

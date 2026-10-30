@@ -27,9 +27,7 @@ if _version_not_supported:
 
 
 class HostAgentStub:
-    """One host agent per hypervisor host. The controller never learns which
-    hypervisor is behind it.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -70,9 +68,7 @@ class HostAgentStub:
 
 
 class HostAgentServicer:
-    """One host agent per hypervisor host. The controller never learns which
-    hypervisor is behind it.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def Input(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -99,16 +95,13 @@ class HostAgentServicer:
         raise NotImplementedError('Method not implemented!')
 
     def ReadGuestFile(self, request, context):
-        """A guest file through the observer (done-checks). UNIMPLEMENTED when the VM's observer predates read_file.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def Info(self, request, context):
-        """Which hypervisor and host this agent drives. Only for refusing host-local fallbacks (PowerShell Direct, the
-        Hyper-V clock scripts) when the VM is not on this host's Hyper-V; the controller's VM work never branches on it.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -155,9 +148,7 @@ def add_HostAgentServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class HostAgent:
-    """One host agent per hypervisor host. The controller never learns which
-    hypervisor is behind it.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     @staticmethod
     def Input(request,

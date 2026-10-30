@@ -18,8 +18,6 @@ from ludius.v1 import observation_pb2 as obs
 
 
 class ToggleAgent:
-    """Start button toggles the Start menu (open/closed); `grows` makes every click a new screen instead."""
-
     vm = "t"
 
     def __init__(self, grows: bool = False) -> None:
@@ -49,7 +47,7 @@ class ToggleAgent:
         fg = ("Search", "SearchApp.exe") if self.open else ("File Explorer", "explorer.exe")
         box = obs.Rect(x=0, y=1040, width=48, height=40)
         els = [obs.Element(id=4, key="start", role="button", name="Start", bounds=box)]
-        if self.grows:  # e.g. a list that gains an item per click: real progress
+        if self.grows:
             els.append(obs.Element(id=9, key="n", role="text", name="count", value=str(self.clicks)))
         s = obs.Snapshot(screen_width=1920, screen_height=1080, dpi=96, settled=True, elements=els,
                          windows=[obs.Window(title=fg[0], process_name=fg[1], kind=obs.Window.FOREGROUND)])  # fmt: skip
@@ -57,8 +55,6 @@ class ToggleAgent:
 
 
 class PrefersStart:
-    """A Decisions stand-in that always wants the Start button while it is offered."""
-
     def decide(
         self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
     ) -> Decision:
@@ -91,7 +87,7 @@ def _run(tmp_path: Path, agent: ToggleAgent, decider: PrefersStart | None = None
 def test_open_close_toggle_is_not_progress(tmp_path: Path) -> None:
     events = _run(tmp_path, ToggleAgent())
     start = [e for e in events if e.get("event") == "step" and "'Start'" in e["option"]]
-    assert len(start) <= 3, [e["result"] for e in start]  # was 12: every toggle looked like a change
+    assert len(start) <= 3, [e["result"] for e in start]
     assert any(e.get("event") == "ladder" for e in events)
 
 
@@ -102,15 +98,11 @@ def test_new_screens_still_count_as_progress(tmp_path: Path) -> None:
 
 
 class StuckAgent(ToggleAgent):
-    """Clicks change nothing on screen."""
-
     def click(self, button: int = 0, count: int = 1) -> int:
         return 0
 
 
 class MovesOnShot(ToggleAgent):
-    """The foreground changes between the observation and the screenshot."""
-
     def screenshot(self) -> bytes:
         self.open = not self.open
         return b"PNG shot"
@@ -126,28 +118,22 @@ def test_screenshot_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         decider = SeesImages()
         events = _run(tmp_path / name, agent, decider)
         steps = [e["decision"]["image"] for e in events if e.get("event") == "step"]
-        assert [i is not None for i in decider.images] == [r is not None for r in steps]  # logged = sent
+        assert [i is not None for i in decider.images] == [r is not None for r in steps]
         return steps
 
-    # Every step makes progress: text only.
     assert reasons("grows", ToggleAgent(grows=True)) == [None] * 12
-    # Nothing changes: every later step follows a "no visible change".
     assert reasons("stuck", StuckAgent()) == [None] + ["no_change"] * 11
-    # A foreground window UIA can't read gets it too; LUDIUS_DECISION_IMAGE=1 forces it on every step.
     fg = obs.Window(title="x", process_name="x.exe", kind=obs.Window.FOREGROUND, no_tree=True)
     assert image_reason(None, obs.Snapshot(windows=[fg])) == "unreadable"
     assert image_reason("refused", obs.Snapshot(windows=[fg])) == "refused"
     assert image_reason(None, obs.Snapshot(windows=[obs.Window(kind=obs.Window.FOREGROUND)])) is None
     monkeypatch.setenv("LUDIUS_DECISION_IMAGE", "1")
     assert reasons("forced", ToggleAgent(grows=True)) == ["forced"] * 12
-    # A screenshot taken after the screen moved never goes along with the older state.
     assert reasons("moved", MovesOnShot()) == [None] * 12
-    assert reasons("failed", FailsOnShot()) == [None] * 12  # a failed capture: text only, no crash
+    assert reasons("failed", FailsOnShot()) == [None] * 12
 
 
 class Broke(PrefersStart):
-    """Decisions whose budget is spent: every request is refused before it is sent."""
-
     def decide(
         self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
     ) -> Decision:
@@ -180,7 +166,6 @@ class BrokeAssist:
 
 
 def open_ended(template: str = "notepad_write_note") -> Task:
-    """The template's first subgoal without a code check: only Decisions (and the LLM) can call it done."""
     tpl = load_templates()[template].model_copy(deep=True)
     task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
     tpl.subgoals[task.subgoal_names[0]].done = None
@@ -208,15 +193,13 @@ def test_a_spent_budget_abandons_the_task_the_same_way_at_every_site(tmp_path: P
     events = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     assert (out.status, out.reason) == ("abandoned", "budget spent")
     spent = next(i for i, e in enumerate(events) if e["event"] == "budget_spent")
-    assert any(e["event"] == "ladder" and e["reason"] == "budget spent" for e in events[spent:])  # closed like a person
+    assert any(e["event"] == "ladder" and e["reason"] == "budget spent" for e in events[spent:])
     assert [e["event"] for e in events].count("task_end") == 1
     assert events[-1]["status"] == "abandoned" and events[-1]["reason"] == "budget spent"
     assert events[-1]["steps"] == out.steps
 
 
 class Answers(PrefersStart):
-    """Says yes to a done question with probability `yes`; steps like PrefersStart otherwise."""
-
     def __init__(self, yes: float) -> None:
         self.yes, self.asked = yes, 0
 
@@ -238,7 +221,7 @@ def test_a_done_question_the_decider_answers_on_the_screenshot(tmp_path: Path, y
     runner = Runner(ToggleAgent(), decider, Persona(name="t", user="t"), GroundTruth(log), seed=1)  # type: ignore[arg-type]
     tpl = load_templates()["notepad_write_note"].model_copy(deep=True)
     task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
-    tpl.subgoals["open_from_start"].done = Done(ask="Is Notepad open?")  # ToggleAgent never shows Notepad
+    tpl.subgoals["open_from_start"].done = Done(ask="Is Notepad open?")
     status, _, _ = runner._subgoal(task, "open_from_start", task.subgoal("open_from_start"), budget=3, t0=1e18)  # pyright: ignore[reportPrivateUsage]
     events = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     assert (status == "done") is done and decider.asked >= 1

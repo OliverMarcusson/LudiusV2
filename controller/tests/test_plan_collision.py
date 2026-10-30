@@ -1,5 +1,3 @@
-"""A planned file or folder name never collides with an existing guest file, nor with another item of the plan."""
-
 from __future__ import annotations
 
 import datetime as dt
@@ -14,8 +12,8 @@ from ludius.policy import Policy
 
 DAY = dt.date(2026, 10, 28)
 EXISTING = [
-    "C:\\Users\\aberg\\Documents\\Close Checklist Q4.txt",  # a path, as a guest listing gives it
-    "Documents\\oct close q4",  # a folder
+    "C:\\Users\\aberg\\Documents\\Close Checklist Q4.txt",
+    "Documents\\oct close q4",
     "ar ageing note.rtf",
 ]
 
@@ -49,11 +47,11 @@ def check(*items: dict[str, Any], existing: list[str] = EXISTING) -> list[str]:
 @pytest.mark.parametrize(
     "name",
     [
-        "close checklist q4",  # extension hidden by Explorer
-        "CLOSE CHECKLIST Q4.TXT",  # case-insensitive, with extension
-        "close checklist q4.rtf",  # other extension, same stem
-        "Oct Close Q4",  # an existing folder
-        "ar ageing note",  # existing rtf, saved as txt
+        "close checklist q4",
+        "CLOSE CHECKLIST Q4.TXT",
+        "close checklist q4.rtf",
+        "Oct Close Q4",
+        "ar ageing note",
     ],
 )
 def test_names_of_existing_files_are_rejected(name: str) -> None:
@@ -69,9 +67,7 @@ def test_reserved_or_aliased_names_are_rejected(name: str) -> None:
 
 def test_same_name_twice_in_one_plan_is_rejected_whatever_the_template() -> None:
     first = note("budget q4", body="accruals first, then prepaids")
-    again = note(
-        "Budget Q4.txt", "10:00", body="ask sdekker about freight estimates"
-    )  # short names skip near-duplicate
+    again = note("Budget Q4.txt", "10:00", body="ask sdekker about freight estimates")
     folder = note("budget q4", "11:00", "explorer_new_folder")
     assert check(first, again, folder, existing=[]) == [
         "file_name: 'Budget Q4.txt' already exists or is used by another item, choose a different name",
@@ -90,7 +86,7 @@ def test_intentional_existing_file_workflow_stays_valid() -> None:
             "folder_name": "oct close q4",
         },
     }
-    assert check(move) == []  # acts on the existing file and folder, creates only new_name
+    assert check(move) == []
     clash = {**move, "params": {**move["params"], "new_name": "ar ageing note"}}
     assert "new_name: 'ar ageing note' already exists" in check(clash)[0]
     fresh = note("another one")
@@ -111,7 +107,7 @@ def test_collision_is_repaired_once_then_dropped_if_unresolved() -> None:
 
     llm = ScriptedLlm({"items": [bad]}, {"items": [bad, note("fresh topic notes", "10:00")]})
     plan, rejects = plan_day(llm, narrative, anna, DAY, templates, "", [], existing=EXISTING)  # type: ignore[arg-type]
-    assert [it.params["file_name"] for it in plan.items] == ["fresh topic notes"]  # the colliding item never runs
+    assert [it.params["file_name"] for it in plan.items] == ["fresh topic notes"]
     assert len(rejects) == 1 and "already exists" in rejects[0] and not llm.answers
 
 
@@ -134,7 +130,7 @@ def test_existing_files_come_from_all_plans_and_the_guest_inventory(tmp_path: Pa
             "C:\\Users\\aberg\\Documents\\admission test note.txt",
         ]
     )
-    assert world_state.existing_files(world, "lnord") == ["old plan note"]  # per profile, no inventory
+    assert world_state.existing_files(world, "lnord") == ["old plan note"]
 
 
 def test_generate_day_feeds_the_inventory_to_the_planner(tmp_path: Path) -> None:
@@ -147,13 +143,10 @@ def test_generate_day_feeds_the_inventory_to_the_planner(tmp_path: Path) -> None
     g = nightly.generate_day(llm, world, anna, src, DAY)  # type: ignore[arg-type]
     assert "- admission test note.txt" in llm.prompts[0]
     assert [it.params["file_name"] for it in g.plan.items] == ["admission note oct"]
-    # This world has no org chart: the only note is that aberg has no manager to send requests (since 3ccc614).
     assert g.rejects == ["requests: aberg: no manager with a mailbox in the org chart"]
 
 
 def test_review_gaps_content_override_long_extension_and_renaming_earlier_content() -> None:
-    # Review of 4c709d9: runtime content overrides params; any extension hides the stem; a rename's source
-    # may be a name the persona wrote earlier.
     assert "already exists" in check({**note("fresh"), "content": {"file_name": "ar ageing note"}})[0]
     assert "already exists" in check(note("notes"), existing=["notes.markdown"])[0]
     templates = cli.plan_sources().templates
@@ -169,7 +162,6 @@ def test_review_gaps_content_override_long_extension_and_renaming_earlier_conten
 
 
 def test_dotted_folder_names_stay_distinct() -> None:
-    # Re-check of 24ed2ec: stripping any extension made finance.receivables block finance.payables.
     folder = note("finance.payables", template="explorer_new_folder")
     assert check(folder, existing=["finance.receivables"]) == []
     assert check(note("finance.receivables", at="09:30", template="explorer_new_folder"), folder, existing=[]) == []

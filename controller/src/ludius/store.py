@@ -1,18 +1,3 @@
-"""World state and traces in PostgreSQL (spec section 9).
-
-The run directory stays the source of truth while a day runs (append-only JSONL, YAML world files), so the
-local CLI keeps working without a database. sync() mirrors it into PostgreSQL, incrementally and idempotently:
-- trace: one row per ground-truth line (every *.jsonl under the run directory), keyed by (source, line);
-  logs are append-only, so only lines past the stored maximum are inserted, and a log that got shorter is
-  an error rather than a silent divergence;
-- world_doc: one row per world/plan YAML file (narrative, revisions, derived state, day plans), replaced
-  when its content hash changes;
-- screenshot: with an S3 bucket (MinIO), every *.png is stored once under its content hash and the row maps its
-  run path to that object; screenshot() reads it back and checks the hash.
-Needs the `state` dependency group, a DSN (`ludius store sync --dsn ...` or LUDIUS_PG) and optionally an S3 URL
-(`--s3 http://KEY:SECRET@host:9000/bucket` or LUDIUS_S3).
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -68,7 +53,6 @@ class Bucket:
 
 
 def bucket(url: str) -> Bucket:
-    """`http(s)://ACCESS:SECRET@host:port/bucket`, created if missing."""
     u = urlsplit(url)
     if u.scheme not in ("http", "https") or not u.hostname or not u.username or not u.password:
         raise ValueError("S3 URL must be http(s)://ACCESS:SECRET@host:port/bucket")
@@ -104,7 +88,7 @@ def _key(root: Path, p: Path) -> str:
 def _lines(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     lines = text.split("\n")
-    return lines[:-1]  # the last piece is "" after a final newline, or a line still being written: skip it
+    return lines[:-1]
 
 
 def sync(conn: psycopg.Connection[tuple[Any, ...]], root: Path, shots: Bucket | None = None) -> Synced:
@@ -136,7 +120,7 @@ def sync(conn: psycopg.Connection[tuple[Any, ...]], root: Path, shots: Bucket | 
                 "insert into world_doc (key, body, sha256) values (%s, %s, %s) on conflict (key) do update "
                 "set body = excluded.body, sha256 = excluded.sha256, updated = now() "
                 "where world_doc.sha256 <> excluded.sha256",
-                (_key(root, doc), Jsonb(yaml.safe_load(raw), dumps=_dumps), sha),  # YAML dates become strings
+                (_key(root, doc), Jsonb(yaml.safe_load(raw), dumps=_dumps), sha),
             )
             out.docs += cur.rowcount
         for png in sorted(root.rglob("*.png")) if shots else []:
@@ -147,8 +131,6 @@ def sync(conn: psycopg.Connection[tuple[Any, ...]], root: Path, shots: Bucket | 
             row = conn.execute("select sha256 from screenshot where key = %s", (key,)).fetchone()
             if row and row[0] == sha:
                 continue
-            # The object goes first: a row never points at a missing object; an object left by a failed sync is
-            # the same content-addressed object the retry writes.
             shots.client.put_object(shots.name, _object(sha), io.BytesIO(raw), len(raw), content_type="image/png")
             conn.execute(
                 "insert into screenshot (key, sha256, size) values (%s, %s, %s) on conflict (key) do update "
@@ -171,7 +153,6 @@ def doc(conn: psycopg.Connection[tuple[Any, ...]], key: str) -> Any:
 
 
 def screenshot(conn: psycopg.Connection[tuple[Any, ...]], shots: Bucket, key: str) -> bytes:
-    """A synced screenshot's bytes, read back from the bucket and checked against the stored hash."""
     row = conn.execute("select sha256 from screenshot where key = %s", (key,)).fetchone()
     if row is None:
         raise KeyError(key)

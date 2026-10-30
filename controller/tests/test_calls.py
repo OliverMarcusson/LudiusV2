@@ -1,5 +1,3 @@
-"""OpenRouter call counters: one count per request sent, retries included, Decisions and LLM kept apart."""
-
 import json
 from pathlib import Path
 
@@ -40,12 +38,12 @@ def test_counts_each_request_and_keeps_kinds_apart(tmp_path: Path, monkeypatch: 
     }
     decider._http = _replies(httpx.Response(503), httpx.Response(200, json=answer))  # pyright: ignore[reportPrivateUsage]
     assert decider.decide({}, {"a": "open"}, ask_progress=False).choice == "a"
-    assert _counts(calls.PATH) == (2, 0)  # the 5xx retry was a second request
+    assert _counts(calls.PATH) == (2, 0)
 
     llm = LlmClient("k")
     llm._http = _replies(_chat("nope"), _chat('{"ok": true}'))  # pyright: ignore[reportPrivateUsage]
     assert llm.json(_Answer, "s", "u").ok
-    assert _counts(calls.PATH) == (2, 2)  # the validation re-ask posted again
+    assert _counts(calls.PATH) == (2, 2)
 
 
 @pytest.mark.parametrize("stored", [None, "{}", '{"llm": -1}', '{"llm": 1.5}', '{"llm": true}', "not json"])
@@ -57,4 +55,4 @@ def test_capped_counter_fails_closed_when_lost_or_invalid(
     if stored is not None:
         calls.PATH.write_text(stored, encoding="utf-8")
     with pytest.raises(calls.CapReached):
-        calls.count("llm")  # a lost counter must not grant the whole ceiling again
+        calls.count("llm")

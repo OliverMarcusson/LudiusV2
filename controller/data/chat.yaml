@@ -1,5 +1,2 @@
-# The range chat: Mattermost on chat01 (infra/ansible/roles/chat01), the range's Slack. One team; its channels by
-# display name. The role creates them (Town Square and Off-Topic come with every team); a chat.post item may only
-# name one of these (planner.item_problem), or a team channel of its persona's (world/narrative.yaml channels).
 team: {name: harbourline, display_name: Harbourline}
 channels: [Town Square, Off-Topic, Operations, Coffee Corner]
