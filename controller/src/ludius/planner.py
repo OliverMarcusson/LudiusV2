@@ -126,7 +126,7 @@ class Narrative(Strict):
 
     def colleagues(self, user: str) -> set[str]:
         return {p.user for p in self.people
-                if p.user and p.user != user and (not self.accounts or p.user in self.accounts)}  # fmt: skip
+                if p.user and p.user != user and p.user in self.accounts}  # fmt: skip
 
 
 class PlanItem(TaskInstance):

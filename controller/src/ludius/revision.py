@@ -165,6 +165,8 @@ def revision_lock(world: World) -> Generator[None]:
 def revise_if_due(llm: LlmClient, world: World, personas: list[Persona], day: dt.date) -> AutoRevision:
     with revision_lock(world):
         n = with_personas(world.narrative(), personas)
+        if n.accounts != world.narrative().accounts:
+            world.save_narrative(n)
         if not due(n, day):
             when = "after" if n.revised > day.isoformat() else "this week, on"
             return AutoRevision(n, False, f"not due: narrative last revised {when} {n.revised}", [])

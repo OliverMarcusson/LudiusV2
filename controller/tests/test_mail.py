@@ -298,7 +298,9 @@ def _range(tmp_path: Path, to_name: str, narrative: bool = True) -> Path:
 
     people = [Person(name=n, role="r", department="d", user=u) for u, n in PEOPLE.items()]
     if narrative:
-        n = Narrative(company="c", city="Lund", summary="s", people=people, projects=[], events=[])
+        n = Narrative(
+            company="c", city="Lund", summary="s", people=people, projects=[], events=[], accounts=list(PEOPLE)
+        )
         (tmp_path / "world").mkdir()
         (tmp_path / "world" / "narrative.yaml").write_text(yaml.safe_dump(n.model_dump()), encoding="utf-8")
     plan = {"persona": "aberg", "date": "2026-10-29", "items": [item(params={"to_name": to_name})]}

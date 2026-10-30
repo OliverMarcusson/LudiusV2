@@ -118,6 +118,7 @@ def test_no_evidence_or_future_revision_keeps_the_narrative_and_calls_no_model(t
     world = _world(tmp_path)
     quiet = revision.revise_if_due(llm, world, PERSONAS, DAY)  # type: ignore[arg-type]
     assert not quiet.revised and "no revision yet" in quiet.note and world.narrative().revised == ""
+    assert world.narrative().accounts == ["aberg", "lnord"]
     assert not (tmp_path / "world" / "revisions").exists()
 
     future = _world(tmp_path, revised="2026-11-09")
@@ -196,7 +197,7 @@ def test_only_persona_accounts_are_colleagues() -> None:
             ]
         }
     )
-    assert n.colleagues("aberg") == {"rjansen", "lnord"}
+    assert n.colleagues("aberg") == set()
     n = revision.with_personas(n, PERSONAS)
     assert n.accounts == ["aberg", "lnord"] and n.colleagues("aberg") == {"lnord"}
     item = planner.PlanItem(

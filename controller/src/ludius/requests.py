@@ -276,7 +276,7 @@ def _plan(
     except LlmError as e:
         day.rejects.append(f"manager LLM: {e}")
         return day
-    people = {p.user: p for p in n.people if p.user}
+    people = {p.user: p for p in n.people if p.user in mates}
     subjects = {u: None if m is None else {x.subject.casefold() for x in m} for u, m in inbox.items()}
     for a in asks:
         if why := problem(a, left, allowed, people, boss, policy, subjects, existing):

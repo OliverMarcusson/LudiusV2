@@ -300,7 +300,9 @@ def test_the_writer_cannot_change_fixed_values(monkeypatch: pytest.MonkeyPatch) 
     people = [
         Person(name=n, role="r", department="d", user=u) for n, u in (("Anna Berg", "aberg"), ("Lars Nord", "lnord"))
     ]
-    narrative = Narrative(company="H", city="R", summary="s", people=people, projects=[], events=[])
+    narrative = Narrative(
+        company="H", city="R", summary="s", people=people, projects=[], events=[], accounts=[p.user for p in people]
+    )
     anna = next(p for p in cli.plan_sources().personas if p.user == "aberg")
     fixed = {"to": "lnord@ludius.internal", "to_name": "Lars Nord", "subject": "ERP roles"}
     monkeypatch.setattr(planner, "day_slots", lambda *_a, **_k: [  # pyright: ignore[reportUnknownLambdaType]
