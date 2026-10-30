@@ -160,6 +160,15 @@ def launch_target(e: obs.Element | None, snap: obs.Snapshot) -> bool:
     return w.process_name.lower() in LAUNCH_PROCESSES or (run and e.name == "Open:")
 
 
+def field_of_another_step(e: obs.Element | None, task: Task, sg: Subgoal) -> bool:
+    if e is None or (sg.field and re.search(task.fmt_re(sg.field), e.name)):
+        return False
+    return any(s.field and re.search(task.fmt_re(s.field), e.name) for s in task.template.subgoals.values())
+
+
+REASON_OTHER_FIELD = "that field belongs to another step of this task (e.g. the address bar): click into the page first"
+
+
 def commits_unguarded(k: str, focused: obs.Element | None, task: Task, sg: Subgoal) -> bool:
     commits = any(
         c.keys.lower() == k.lower() and (focused is None or element_matches(focused, c.focus, task))
@@ -195,12 +204,14 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
             and policy.text_allowed(content, e) is None
             and (sg.text or search_target(e, v.snapshot, task))
             and (sg.text != LAUNCH_TEXT or launch_target(e, v.snapshot))
+            and not field_of_another_step(e, task, sg)
         ):
             text = f"type the text to enter into [{e.id}] {e.role} '{e.name}'"
             add("type", text, element=e, content=sg.text or "", literal=literal)
     elements = len(opts)
     focused = next((e for e in v.snapshot.elements if e.focused), None)
     if (sg.text and content is not None and policy.text_allowed(content, None) is None
+            and not field_of_another_step(focused, task, sg)
             and (sg.text != LAUNCH_TEXT or launch_target(focused, v.snapshot))):  # fmt: skip
         add("type", "type the text to enter at the keyboard focus", content=sg.text or "", literal=literal)
     focus = next((e for e in v.allowed if e.focused and e.role in EDITABLE and not e.read_only), None)

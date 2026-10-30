@@ -15,12 +15,14 @@ from ludius.assist import Assist
 from ludius.calls import CapReached
 from ludius.decisions import Decision, DecisionError
 from ludius.options import (
+    REASON_OTHER_FIELD,
     Option,
     StepView,
     build_options,
     build_state,
     commits_unguarded,
     describe,
+    field_of_another_step,
     launch_target,
     search_target,
     view,
@@ -300,6 +302,8 @@ class Runner:
             focus = next((e for e in fresh.elements if e.focused), None)
             if focus is not None and (focus.key not in allowed or self.policy.text_allowed(text, focus)):
                 return "the keyboard focus is not a field this task may type into", None
+            if field_of_another_step(focus, task, sg):
+                return REASON_OTHER_FIELD, None
             if sg.text == LAUNCH_TEXT and not launch_target(focus, fresh):
                 return LAUNCH_REASON, None
             if sg.replace and focus is not None:
@@ -316,6 +320,8 @@ class Runner:
             return "the target field changed before typing", None
         if r := self.policy.text_allowed(text, target):
             return r, None
+        if field_of_another_step(target, task, sg):
+            return REASON_OTHER_FIELD, None
         if not sg.text and not sg.copy_text and not search_target(target, fresh, task):
             return "template text goes into an edit field of the task's foreground app only", None
         if sg.text == LAUNCH_TEXT and not launch_target(target, fresh):

@@ -91,3 +91,22 @@ def test_chat_post_needs_the_message_posted_since_the_start(monkeypatch: pytest.
                 random.Random(0))  # fmt: skip
     task.owner = "aberg"
     assert not _chat_post_ok(t.subgoals["send_message"].done.chat_post, task)  # type: ignore[union-attr, arg-type]
+
+
+def test_a_name_is_never_typed_into_the_field_of_another_step() -> None:
+    from ludius.options import build_options, field_of_another_step, view
+    from ludius.policy import Policy
+    from ludius.v1 import observation_pb2 as obs
+
+    t = cli.load_templates()["chat_direct_message"]
+    params = {"to": "mvellinga@ludius.internal", "to_name": "Marcus Vellinga", "message": "soup day"}
+    task = Task(t, TaskInstance(template=t.task, params=params, variant=0), random.Random(0))
+    box = obs.Rect(x=10, y=10, width=50, height=9)
+    fg = obs.Window(kind=obs.Window.FOREGROUND, process_name="msedge.exe", title="Town Square - Mattermost")
+    for name, typed in [("Address and search bar", False), ("quick switch input", True)]:
+        e = obs.Element(id=1, key="k1", role="edit", name=name, enabled=True, bounds=box, window=0, focused=True)
+        snap = obs.Snapshot(windows=[fg], elements=[e])
+        sg = task.subgoal("open_conversation")
+        opts = build_options(view(snap, task, sg, Policy()), task, sg, Policy())
+        assert any(o.kind == "type" for o in opts) is typed, name
+        assert field_of_another_step(e, task, task.subgoal("open_chat")) is False
