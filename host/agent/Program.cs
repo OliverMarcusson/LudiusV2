@@ -11,11 +11,7 @@ using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddGrpc();
-// Agent:Backend picks the hypervisor: hyperv (default on Windows) or proxmox (default elsewhere, one agent per node).
 var backend = builder.Configuration["Agent:Backend"] ?? (OperatingSystem.IsWindows() ? "hyperv" : "proxmox");
-// The host's cap on running range VMs, either backend: 1 unless this host's config says more (the owner's desktop keeps
-// 1; the rented Proxmox box sets 8, one per persona). Infrastructure VMs are exempt (Hyper-V: build\srvm-id;
-// Proxmox: Proxmox:CapExempt, "110:ludius-srv01,111:ludius-ex01", VMID and name).
 var maxRunning = int.Parse(builder.Configuration["Agent:MaxRunningVms"] ?? "1");
 if (maxRunning < 1) throw new InvalidOperationException("Agent:MaxRunningVms must be at least 1");
 IHypervisor hypervisor = backend switch
@@ -32,13 +28,12 @@ builder.Services.AddSingleton<FeedHub>();
 var app = builder.Build();
 app.MapGrpcService<AgentService>();
 Monitor.Map(app);
-if (backend == "hyperv") ClockSweep.Start(app); // the sweep resets clocks through infra/hyperv (time-jump is Hyper-V only)
+if (backend == "hyperv") ClockSweep.Start(app);
 app.Run();
 
 static ProxmoxOptions ProxmoxConfig(IConfiguration c)
 {
     var o = new ProxmoxOptions();
-    // The vsock port follows the observer's service id (its first field), as Hyper-V's VSOCK template does.
     if (c["Agent:ObserverService"] is { } svc) o = o with { VsockPort = BitConverter.ToUInt32(Guid.Parse(svc).ToByteArray(), 0) };
     if (c["Proxmox:VsockPort"] is { } port) o = o with { VsockPort = uint.Parse(port) };
     if (c["Proxmox:RunDir"] is { } run) o = o with { RunDir = run };
@@ -51,8 +46,6 @@ static ProxmoxOptions ProxmoxConfig(IConfiguration c)
     return o;
 }
 
-// Orphaned time-jumps: every 60 s, infra/hyperv/clock-sweep.ps1 resets the range clocks of any clock lease
-// (runs/locks/clock-<vm>.json) its controller stopped renewing, i.e. a controller that was killed mid-day.
 static class ClockSweep
 {
     public static void Start(WebApplication app)
@@ -84,16 +77,12 @@ static class ClockSweep
     }
 }
 
-// Operator monitor: a view-only web page of the VMs' desktops on its own HTTP/1.1 endpoint.
-// GET routes only, and nothing here reaches input, the guest channel or lifecycle.
 static class Monitor
 {
     public static void Map(WebApplication app)
     {
         var host = new Uri(app.Configuration["Kestrel:Endpoints:Monitor:Url"]!);
         var onMonitor = $"*:{host.Port}";
-        // Public origins a proxy serves the monitor under (Cloudflare Tunnel), exact, ';'-separated. Empty by default;
-        // set it outside appsettings.json, e.g. Monitor__AllowedOrigins=https://monitor.ludius.se.
         var allowedOrigins = ParseOrigins(app.Configuration["Monitor:AllowedOrigins"]);
         app.Use(async (ctx, next) =>
         {
@@ -115,68 +104,46 @@ static class Monitor
             app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
         }
 
-        // Only range VMs are shown; other VMs on the host stay invisible, also to direct frame requests.
         var include = new System.Text.RegularExpressions.Regex(app.Configuration["Monitor:Include"] ?? "^ludius-",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         var api = app.MapGroup("/api").RequireHost(onMonitor);
         api.MapGet("/vms", (IHypervisor hv) => hv.ListVms().Where(v => include.IsMatch(v.Name)));
 
-        // OpenRouter request counts the controller writes (counts and timestamps only). Shared read so the
-        // controller can still replace the file while it is open here.
         var calls = Path.GetFullPath(app.Configuration["Monitor:Calls"] ?? "../../runs/openrouter-calls.json", app.Environment.ContentRootPath);
+        ConsoleData.Map(api, app, Path.GetDirectoryName(calls)!);
         api.MapGet("/calls", () =>
         {
             try
             {
                 using var f = new FileStream(calls, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                 var text = new StreamReader(f).ReadToEnd();
-                // A counter file from before the rename says "jev": serve it as "decision", same count.
                 var o = System.Text.Json.Nodes.JsonNode.Parse(text) as System.Text.Json.Nodes.JsonObject;
                 if (o is not null && !o.ContainsKey("decision") && o.Remove("jev", out var old))
                     o["decision"] = old;
                 return Results.Text(o?.ToJsonString() ?? text, "application/json");
             }
-            catch (FileNotFoundException) { return Results.Json(new { decision = 0, llm = 0 }); }
-            catch (DirectoryNotFoundException) { return Results.Json(new { decision = 0, llm = 0 }); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
+            { return Results.Problem("Call counters unavailable", statusCode: 503); }
         });
 
-        // Per-persona activity lines the controller's summariser writes (`ludius range summaries`), beside the counters
-        // by default. Served as written once it parses as a JSON object; the page shows its text as text only.
-        var summaries = Path.GetFullPath(app.Configuration["Monitor:Summaries"]
-            ?? Path.Combine(Path.GetDirectoryName(calls)!, "monitor-summaries.json"), app.Environment.ContentRootPath);
-        api.MapGet("/summaries", () =>
-        {
-            try
-            {
-                using var f = new FileStream(summaries, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                return System.Text.Json.Nodes.JsonNode.Parse(new StreamReader(f).ReadToEnd()) is System.Text.Json.Nodes.JsonObject o
-                    ? Results.Text(o.ToJsonString(), "application/json")
-                    : Results.Problem("summaries file is not a JSON object", statusCode: 502);
-            }
-            catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
-            {
-                return Results.Json(new { updated = (string?)null, personas = new { } });
-            }
-            catch (JsonException) { return Results.Problem("summaries file is not JSON", statusCode: 502); }
-        });
+        var interactions = Path.GetFullPath(app.Configuration["Monitor:Interactions"]
+            ?? Path.Combine(Path.GetDirectoryName(calls)!, "monitor-interactions.jsonl"), app.Environment.ContentRootPath);
+        api.MapGet("/interactions", () => Results.Json(new { interactions = ConsoleData.LastLines(interactions, 20) }));
 
         var admission = Path.GetFullPath(app.Configuration["Monitor:Admission"] ?? "../../runs/admission", app.Environment.ContentRootPath);
         api.MapGet("/admission", () => Results.Json(Admission(admission, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
 
-        // A 15 fps feed per VM: binary messages are JPEG frames, text messages report why there is no frame. A viewer
-        // whose single send takes longer than SlowViewer is disconnected (the page reconnects); others never wait on it.
         app.UseWebSockets();
         api.MapGet("/vms/{name}/stream", async (HttpContext ctx, string name, int? w, FeedHub hub) =>
         {
             if (!include.IsMatch(name) || !VmName.Valid(name)) return Results.NotFound();
             if (!ctx.WebSockets.IsWebSocketRequest) return Results.BadRequest("WebSocket only");
-            // WebSockets ignore CORS: without this any page in an operator's browser could watch the desktops.
             if (!OriginAllowed(ctx.Request.Headers.Origin.ToString(), ctx.Request.Host.Value, allowedOrigins))
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             var ct = ctx.RequestAborted;
             using var feed = hub.Subscribe(name, Math.Clamp(w ?? 640, 160, 1920));
-            var closed = ws.ReceiveAsync(new byte[16], ct); // view only: any client message ends the feed
+            var closed = ws.ReceiveAsync(new byte[16], ct);
             using var slow = CancellationTokenSource.CreateLinkedTokenSource(ct);
             try
             {
@@ -199,13 +166,11 @@ static class Monitor
 
     static readonly TimeSpan SlowViewer = TimeSpan.FromSeconds(10);
 
-    // A WebSocket's Origin: none (not a browser), the agent's own host, or one of the configured public origins exactly.
     public static bool OriginAllowed(string origin, string? host, IReadOnlySet<string> allowed) =>
         origin.Length == 0
         || (Uri.TryCreate(origin, UriKind.Absolute, out var o) && o.Authority == host)
         || allowed.Contains(origin);
 
-    // Each entry must be a bare http(s) origin (no path, query or user info); anything else stops the agent at start.
     public static IReadOnlySet<string> ParseOrigins(string? value)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
@@ -214,20 +179,16 @@ static class Monitor
             if (!Uri.TryCreate(entry, UriKind.Absolute, out var u) || u.Scheme is not ("https" or "http") || u.UserInfo != ""
                 || u.Query != "" || u.Fragment != "" || u.AbsolutePath != "/" || entry.EndsWith('/'))
                 throw new InvalidOperationException($"Monitor:AllowedOrigins: {entry} is not an origin like https://monitor.example");
-            set.Add(u.GetLeftPart(UriPartial.Authority)); // the form browsers send: lower-case host, no default port
+            set.Add(u.GetLeftPart(UriPartial.Authority));
         }
         return set;
     }
 
     static readonly Regex AdmissionLog = new(@"^\d{8}-\d{6}-([a-z0-9_]{1,64})\.jsonl$");
     static readonly Regex Token = new(@"^[A-Za-z0-9_.:+-]{1,64}$");
-    const long MaxAdmissionRead = 8 << 20; // admission logs run to about 200 KB
-    const long ActiveMs = 90_000; // the longest quiet stretch inside a batch so far is 44 s
+    const long MaxAdmissionRead = 8 << 20;
+    const long ActiveMs = 90_000;
 
-    // Progress of the newest admission log (runs/admission/<started>-<task>.jsonl), as a summary of identifiers,
-    // counts and times only: no paths, option texts, typed text or raw lines leave the agent.
-    // running: an event within ActiveMs. completed: the log ends with admission_end (stopped: ended early). stale: quiet mid-run, so the
-    // worker may be stuck or gone. idle: quiet after a run ended, so the batch finished or stopped (the log can't tell).
     static object Admission(string dir, long now)
     {
         var file = Directory.Exists(dir)
@@ -253,7 +214,7 @@ static class Monitor
         {
             JsonDocument doc;
             try { doc = JsonDocument.Parse(line); }
-            catch (JsonException) { continue; } // a line still being written, or the cut at a truncation
+            catch (JsonException) { continue; }
             using (doc)
             {
                 var e = doc.RootElement;
@@ -277,7 +238,7 @@ static class Monitor
                         if (status == "done") done++; else failed++;
                         inRun = false;
                         break;
-                    case "admission_run": // per attempt, also when a run errored before task_end
+                    case "admission_run":
                         perRun = true;
                         if (Tok(e, "status") == "done") runDone++; else runFailed++;
                         inRun = false;
@@ -301,10 +262,6 @@ static class Monitor
     }
 }
 
-// One capture loop per VM and size, shared by every viewer and stopped with the last one. A tick every
-// 1/15 s starts a capture unless three are already running; frames go out in order, older ones are dropped.
-// Each viewer has a latest-frame slot: a viewer that stops reading only loses frames, nobody waits on it.
-// A backend that returns the same byte[] again (nothing changed on screen, Proxmox) is sent at most once a second.
 sealed class FeedHub(IHypervisor hv)
 {
     const int Fps = 15;
@@ -317,9 +274,9 @@ sealed class FeedHub(IHypervisor hv)
         public readonly List<Channel<Frame>> Viewers = [];
         public readonly CancellationTokenSource Stop = new();
         public long Sent;
-        public byte[]? Last; // the last frame sent, for an unchanged screen and for viewers that join
+        public byte[]? Last;
         public DateTime LastAt;
-        public DateTime QuietUntil; // after an error (VM off): one attempt per second, not fifteen
+        public DateTime QuietUntil;
     }
 
     public sealed class Subscription(ChannelReader<Frame> reader, Action leave) : IDisposable
@@ -365,7 +322,7 @@ sealed class FeedHub(IHypervisor hv)
         {
             while (await timer.WaitForNextTickAsync(feed.Stop.Token))
             {
-                if (DateTime.UtcNow < feed.QuietUntil || !slots.Wait(0)) continue; // host slower than 12 fps: skip a tick
+                if (DateTime.UtcNow < feed.QuietUntil || !slots.Wait(0)) continue;
                 var n = ++seq;
                 _ = Task.Run(() =>
                 {
@@ -386,7 +343,7 @@ sealed class FeedHub(IHypervisor hv)
     {
         lock (feeds)
         {
-            if (n <= feed.Sent) return; // a slower, older capture finished after a newer one
+            if (n <= feed.Sent) return;
             feed.Sent = n;
             var now = DateTime.UtcNow;
             if (frame.Jpeg is { } jpeg && ReferenceEquals(jpeg, feed.Last) && now - feed.LastAt < TimeSpan.FromSeconds(1)) return;
@@ -434,8 +391,6 @@ sealed class AgentService(IHypervisor hv, ILogger<AgentService> log) : HostAgent
         return new ObserveResult { Snapshot = res.Snapshot, Hello = vm.Channel.Hello, HostTimeMs = Now };
     });
 
-    // Read-only, through the observer (it runs as the persona and reads only its own profile). An observer that
-    // predates read_file answers "unknown request": UNIMPLEMENTED, so the controller uses its older path.
     public override async Task<FileContent> ReadGuestFile(GuestFileRequest r, ServerCallContext ctx) => await Guard(async () =>
     {
         var vm = hv.Get(r.Vm);

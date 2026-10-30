@@ -1,10 +1,16 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App.tsx'
+import { StrictMode } from "react"
+import { createRoot } from "react-dom/client"
+import "./index.css"
+import App from "./components/console.tsx"
+import { PortraitProvider } from "./components/portraits"
+import { ThemeProvider } from "./components/theme"
 
-createRoot(document.getElementById('root')!).render(
+createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
-  </StrictMode>,
+    <ThemeProvider>
+      <PortraitProvider>
+        <App />
+      </PortraitProvider>
+    </ThemeProvider>
+  </StrictMode>
 )

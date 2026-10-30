@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { STALE_MS, age, frameWidth, useStream, type Summary, type Vm } from "@/lib/feeds"
+import { STALE_MS, age, frameWidth, useStream, type Vm } from "@/lib/feeds"
 
 type Health = "live" | "stale" | "lost" | "idle"
 
@@ -26,23 +26,18 @@ const STATE_LABEL: Record<string, string> = {
   other: "Unknown",
 }
 
-// One VM's desktop: the frame, a freshness line that drains between frames, and its caption.
 export function Feed({
   vm,
   now,
   paused,
   maxWidth,
   large = false,
-  summary,
-  summaryNote = null,
 }: {
   vm: Vm
   now: number
   paused: boolean
   maxWidth: number
   large?: boolean
-  summary?: Summary
-  summaryNote?: string | null // why the line may be out of date: summariser stopped, agent not answering
 }) {
   const box = useRef<HTMLDivElement>(null)
   const [cssWidth, setCssWidth] = useState(0)
@@ -57,7 +52,6 @@ export function Feed({
   const canvas = useRef<HTMLCanvasElement>(null)
   const bar = useRef<HTMLDivElement>(null)
   const drain = useRef<Animation | null>(null)
-  // Freshness: every frame refills the line, which then drains over STALE_MS unless the next frame arrives.
   const onFrame = useCallback(() => {
     if (!bar.current || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
     drain.current?.cancel()
@@ -68,7 +62,6 @@ export function Feed({
     })
   }, [])
 
-  // Picture-in-picture: the canvas as a 12 fps video stream, so the feed can be watched over other windows.
   const video = useRef<HTMLVideoElement>(null)
   const [pip, setPip] = useState(false)
   const togglePip = async () => {
@@ -101,13 +94,11 @@ export function Feed({
   const ratio = vm.width && vm.height ? `${vm.width} / ${vm.height}` : "16 / 9"
 
   return (
-    <figure className="flex min-w-0 flex-col gap-2">
+    <figure className="desktop-feed flex min-w-0 flex-col gap-2">
       <div
         ref={box}
         className={cn(
-          "relative overflow-hidden rounded-md bg-black ring-1 ring-border group-hover:ring-foreground/45",
-          summary?.health === "warn" && "ring-2 ring-stale group-hover:ring-stale",
-          summary?.health === "fail" && "ring-2 ring-lost group-hover:ring-lost",
+          "desktop-screen relative overflow-hidden rounded-md bg-black ring-1 ring-border group-hover:ring-foreground/45",
         )}
         style={{ aspectRatio: ratio }}
       >
@@ -136,7 +127,6 @@ export function Feed({
           </div>
         )}
       </div>
-      {/* The caption carries the same facts as text (fps, or the frame's age). */}
       <div className="h-0.5 overflow-hidden rounded-full bg-border" aria-hidden>
         <div
           ref={bar}
@@ -173,46 +163,13 @@ export function Feed({
           )}
           <span className="flex items-center gap-1.5">
             <span className={cn("size-2 self-center rounded-full", DOT[h])} aria-hidden />
-            <span className={cn(h === "lost" && "text-lost", h === "stale" && "text-stale")}>
+            <span className={cn("tabular-nums", h === "lost" && "text-lost", h === "stale" && "text-stale")}>
               {!running ? STATE_LABEL[vm.state] : paused ? "Paused" : age(frame.at, now, frame.fps)}
             </span>
           </span>
         </span>
       </figcaption>
-      <Activity summary={summary} note={summaryNote} large={large} />
     </figure>
-  )
-}
-
-const hhmm = (d: Date) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-
-// What the persona is doing, in one line from the controller's summariser. Only "ok" text reads as current;
-// anything older or uncertain says so in the line itself.
-function Activity({ summary, note, large }: { summary?: Summary; note: string | null; large: boolean }) {
-  const s = summary
-  const marker =
-    note ??
-    (s?.state === "stale"
-      ? "stale: last update failed"
-      : s?.state === "pending"
-        ? "from the log, summary pending"
-        : null)
-  return (
-    <p
-      className={cn("text-muted-foreground", large ? "text-sm" : "text-xs")}
-      title={s?.model ? `Written by ${s.model}${s.at ? ` at ${s.at.toLocaleString()}` : ""}` : undefined}
-    >
-      <span className={cn(s?.state === "ok" && !note && "text-foreground", s?.state === "paused" && "text-stale")}>
-        {s ? s.text : "no activity summary"}
-      </span>
-      {s?.at && s.state !== "idle" && s.state !== "unknown" && <span className="tabular-nums"> · {hhmm(s.at)}</span>}
-      {marker && <span className="text-stale"> · {marker}</span>}
-      {s && s.health !== "ok" && (
-        <span className={cn("block font-medium", s.health === "fail" ? "text-lost" : "text-stale")}>
-          {s.health === "fail" ? "Failing" : "Warning"}: {s.reason}
-        </span>
-      )}
-    </p>
   )
 }
 

@@ -1,6 +1,5 @@
 import { type RefObject, useEffect, useState } from "react"
 
-// Read-only views of the host agent's monitor API. Nothing here can send input to a VM.
 
 export type VmState = "running" | "off" | "saved" | "paused" | "starting" | "stopping" | "saving" | "other"
 
@@ -25,7 +24,6 @@ export function useVms(intervalMs = 5000): { vms: Vm[]; error: string | null; lo
         const res = await fetch("/api/vms", { cache: "no-store" })
         if (!res.ok) throw new Error(`host agent answered ${res.status}`)
         if (!stop) {
-          // Range servers (ludius-srv01) host no persona: nothing to watch there.
           setVms(((await res.json()) as Vm[]).filter((v) => !/-srv\d*$/.test(v.name)))
           setError(null)
         }
@@ -47,22 +45,18 @@ export function useVms(intervalMs = 5000): { vms: Vm[]; error: string | null; lo
   return { vms, error, loaded }
 }
 
-// OpenRouter requests the controller has sent, cumulative across runs (runs/openrouter-calls.json).
-// Polling only reads the totals; it never makes a request of its own to OpenRouter.
 export interface Calls {
   decision: number
   llm: number
-  since: Date | null // when counting started; null before the first call
+  since: Date | null
 }
 
-// loading: no answer yet. ok: `data` is current. stale: the last poll failed, `data` is the last good answer
-// from `at`. unavailable: no good answer yet, `error` says why.
 export type PollStatus = "loading" | "ok" | "stale" | "unavailable"
 
 export interface Polled<T> {
   status: PollStatus
   data: T | null
-  at: number | null // ms epoch of the last good answer
+  at: number | null
   error: string | null
 }
 
@@ -75,18 +69,14 @@ function record(data: unknown, what: string): Record<string, unknown> {
   return data as Record<string, unknown>
 }
 
-// Accept only what the counters can show truthfully: two non-negative integers and an optional valid date.
 export function parseCalls(data: unknown): Calls {
   const { decision, jev, llm, since } = record(data, "counter data")
-  const decisions = decision ?? jev // counter files from before the rename say `jev`
+  const decisions = decision ?? jev
   if (!count(decisions) || !count(llm)) throw new Error("malformed counter data")
   const at = typeof since === "string" ? new Date(since) : null
   return { decision: decisions, llm, since: at && !Number.isNaN(at.getTime()) ? at : null }
 }
 
-// running: an event in the last 90 s. completed: the log ends with an admission_end record. stale: quiet in the
-// middle of a run, so the worker may be stuck or gone. idle: quiet after a run ended, so the batch finished or
-// stopped; the log alone can't tell which. none: no admission log yet.
 export type AdmissionState = "running" | "completed" | "stale" | "idle" | "none"
 
 export interface Admission {
@@ -99,11 +89,11 @@ export interface Admission {
   subgoal: string | null
   action: string | null
   result: string | null
-  status: string | null // how the last finished run ended, e.g. done or abandoned
+  status: string | null
   done: number
   failed: number
   admitted: boolean | null
-  stopped: boolean // admission ended early, e.g. a failed checkpoint restore
+  stopped: boolean
   ageMs: number | null
   truncated: boolean
 }
@@ -111,7 +101,6 @@ export interface Admission {
 const ADMISSION_STATES: readonly string[] = ["running", "completed", "stale", "idle", "none"]
 const TOKEN = /^[A-Za-z0-9_.:+-]{1,64}$/
 
-// The agent already sends identifiers only; check again so nothing else can reach the page.
 export function parseAdmission(data: unknown): Admission {
   const r = record(data, "admission data")
   if (typeof r.state !== "string" || !ADMISSION_STATES.includes(r.state)) throw new Error("malformed admission data")
@@ -139,8 +128,6 @@ export function parseAdmission(data: unknown): Admission {
   return a
 }
 
-// Polls a read-only JSON route. Each request is aborted after 5 s; a failed poll keeps the last good answer but
-// marks it stale. `parse` must be stable (a module-level function) and throw on anything it can't show.
 export function usePolled<T>(url: string, parse: (data: unknown) => T, intervalMs = 2000): Polled<T> {
   const [state, setState] = useState<Polled<T>>({ status: "loading", data: null, at: null, error: null })
   useEffect(() => {
@@ -174,33 +161,9 @@ export function usePolled<T>(url: string, parse: (data: unknown) => T, intervalM
   return state
 }
 
-// One line per persona from the controller's summariser (runs/monitor-summaries.json), keyed by VM name.
-// ok/pending/stale: what the persona is doing (stale: the last request failed, the text is older); paused: the
-// summaries' daily cap is spent; idle/unknown: no task running, or the record can't tell.
-export type SummaryState = "ok" | "pending" | "stale" | "paused" | "idle" | "unknown"
-
-export interface Summary {
-  state: SummaryState
-  text: string
-  at: Date | null // when the text was written
-  model: string | null // the model that wrote it (the routed one, for a router)
-  health: PersonaHealth // by rule from the day log: stalled, looping or failing
-  reason: string // why it is not ok; "" when ok
-}
-
-export type PersonaHealth = "ok" | "warn" | "fail"
-const HEALTH: readonly string[] = ["ok", "warn", "fail"]
-
-export interface Summaries {
-  updated: Date | null // the summariser's last pass; null when it never ran
-  byVm: Record<string, Summary>
-  interactions: Interaction[] // the newest verified persona-to-persona effects, oldest first
-}
-
-// A verified effect between two range personas (ludius.interactions): never from a plan.
 export interface Interaction {
   id: string
-  from: string // persona user names
+  from: string
   to: string
   kind: "mail" | "reply" | "invite" | "request" | "request_done"
   label: string
@@ -227,52 +190,23 @@ function parseInteractions(v: unknown): Interaction[] {
   })
 }
 
-const MODEL = /^[A-Za-z0-9_.:+/-]{1,96}$/
-const SUMMARY_STATES: readonly string[] = ["ok", "pending", "stale", "paused", "idle", "unknown"]
-
-const date = (v: unknown) => {
-  const d = typeof v === "string" ? new Date(v) : null
-  return d && !Number.isNaN(d.getTime()) ? d : null
-}
-
-export function parseSummaries(data: unknown): Summaries {
-  const r = record(data, "summary data")
-  const byVm: Record<string, Summary> = {}
-  for (const v of Object.values(record(r.personas ?? {}, "summary data"))) {
-    const p = record(v, "summary data")
-    if (typeof p.vm !== "string" || typeof p.state !== "string" || !SUMMARY_STATES.includes(p.state)) continue
-    if (typeof p.text !== "string") continue
-    byVm[p.vm] = {
-      state: p.state as SummaryState,
-      text: p.text.slice(0, 240),
-      at: date(p.at),
-      model: typeof p.model === "string" && MODEL.test(p.model) ? p.model : null,
-      health: typeof p.health === "string" && HEALTH.includes(p.health) ? (p.health as PersonaHealth) : "ok",
-      reason: typeof p.reason === "string" ? p.reason.slice(0, 240) : "",
-    }
-  }
-  return { updated: date(r.updated), byVm, interactions: parseInteractions(r.interactions) }
-}
-
 export const useCalls = () => usePolled("/api/calls", parseCalls)
-export const useSummaries = () => usePolled("/api/summaries", parseSummaries, 5000)
+const parseInteractionList = (data: unknown) => parseInteractions(record(data, "interaction data").interactions)
+export const useInteractions = () => usePolled("/api/interactions", parseInteractionList, 5000)
 export const useAdmission = () => usePolled("/api/admission", parseAdmission)
 
 export interface Stream {
-  at: number | null // ms epoch of the last frame drawn
-  fps: number // frames drawn during the last second
+  at: number | null
+  fps: number
   error: string | null
 }
 
-// A VM's 12 fps feed over a WebSocket: each binary message is a JPEG, drawn straight onto the canvas so the
-// page doesn't re-render per frame. Stats update once a second. Closed while paused or the tab is hidden (unless
-// the feed is in picture-in-picture, which is watched from other tabs); reconnects after 2 s when the connection drops.
 export function useStream(
   vm: string,
   width: number,
   enabled: boolean,
   canvas: RefObject<HTMLCanvasElement | null>,
-  onFrame: () => void, // must be stable (useCallback)
+  onFrame: () => void,
   keepAlive = false,
 ): Stream {
   const [stats, setStats] = useState<Stream>({ at: null, fps: 0, error: null })
@@ -297,7 +231,7 @@ export function useStream(
           error = e.data
           return
         }
-        if (drawing) return // still decoding the previous frame: drop this one rather than queue
+        if (drawing) return
         drawing = true
         try {
           const bmp = await createImageBitmap(e.data)
@@ -315,7 +249,6 @@ export function useStream(
           error = null
           onFrame()
         } catch {
-          // a corrupt frame: skip it
         } finally {
           drawing = false
         }
@@ -365,7 +298,6 @@ function usePageVisible(): boolean {
   return visible
 }
 
-// Request widths in 160 px steps so viewers of the same size share one capture loop on the agent.
 export function frameWidth(cssWidth: number, max: number): number {
   const px = Math.round(cssWidth * (window.devicePixelRatio || 1))
   return Math.min(max, Math.max(320, Math.ceil(px / 160) * 160))
@@ -374,7 +306,7 @@ export function frameWidth(cssWidth: number, max: number): number {
 export function age(at: number | null, now: number, fps: number): string {
   if (at === null) return "no frame yet"
   const s = Math.max(0, Math.round((now - at) / 1000))
-  if (s < 2) return `${fps} fps`
+  if (now - at < STALE_MS) return `${fps} fps`
   if (s < 60) return `${s} s ago`
   return `${Math.floor(s / 60)} min ago`
 }

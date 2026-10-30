@@ -4,6 +4,8 @@ What can only be verified on the box. Everything else (QMP command shapes, Proxm
 channel framing, the observer's file read) is covered offline by `dotnet test host/agent.tests`, on Windows and in
 `mcr.microsoft.com/dotnet/sdk:10.0` (Linux). Tick each item with the evidence (command output) next to it.
 
+Running a multi-day warp on the live range (sync, snapshot, launch, watch, roll back): [range-operations.md](range-operations.md).
+
 ## 1. Host
 
 - [ ] Proxmox VE 8.x installed; `pveversion -v` and `qemu-system-x86_64 --version` (QEMU >= 7.1: `screendump` needs
