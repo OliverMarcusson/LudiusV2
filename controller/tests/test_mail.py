@@ -368,8 +368,46 @@ def test_a_blocked_subgoal_waits_without_asking_decisions(tmp_path: Path, monkey
     task = Task(t, PlanItem.model_validate(item()), random.Random(0))
     task.owner, task.started_ms = "aberg", 1
     runner = Runner(Agent(), NoDecisions(), Persona(name="t", user="aberg"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
-    status, steps, _ = runner._subgoal(task, "send_button", task.subgoal("send_button"), budget=12, t0=1e18)  # pyright: ignore[reportPrivateUsage]
-    assert (status, steps, len(polls)) == ("done", 2, 3)
+    status, steps, _ = runner._subgoal(task, "send_button", task.subgoal("send_button"), budget=1, t0=1e18)  # pyright: ignore[reportPrivateUsage]
+    assert (status, steps, len(polls)) == ("done", 0, 3)
+
+
+def test_a_send_field_that_lost_focus_is_clicked_and_waiting_is_capped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ludius import loop
+    from ludius.loop import GroundTruth, Runner
+    from ludius.tasks import Persona
+
+    win = obs.Window(kind=obs.Window.FOREGROUND, process_name="msedge.exe", title="Marcus Vellinga - Mattermost")
+    box = obs.Element(id=1, role="edit", name="Write to Marcus Vellinga", value="lunch at noon?", actions=["value"],
+                      bounds=obs.Rect(x=10, y=10, width=200, height=20))  # fmt: skip
+    clicks: list[int] = []
+
+    class Agent:
+        vm = "t"
+
+        def observe(self, **_: Any) -> Any:
+            snap = obs.Snapshot(screen_width=1920, screen_height=1080, dpi=96, windows=[win], elements=[box])
+            return type("R", (), {"snapshot": snap})()
+
+        def screenshot(self) -> bytes:
+            raise RuntimeError("no screen")
+
+        def move(self, *_: object) -> None:
+            pass
+
+        def click(self, count: int = 1) -> None:
+            clicks.append(count)
+
+    monkeypatch.setattr(loop, "BLOCKED_WAIT_S", 0)
+    monkeypatch.setattr(loop, "WAIT_CAP_S", 0)
+    t = cli.load_templates()["chat_direct_message"]
+    params = {"to": "mvellinga@ludius.internal", "to_name": "Marcus Vellinga", "message": "lunch at noon?"}
+    task = Task(t, PlanItem.model_validate(item("chat_direct_message", params=params)), random.Random(0))
+    runner = Runner(Agent(), None, Persona(name="t", user="aberg"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    status, steps, why = runner._subgoal(task, "send_message", task.subgoal("send_message"), budget=1, t0=1e18)  # pyright: ignore[reportPrivateUsage]
+    assert (status, steps, clicks) == ("failed", 0, [1]) and why.startswith("waited too long: precondition")
 
 
 def test_reply_never_offers_the_info_bar() -> None:

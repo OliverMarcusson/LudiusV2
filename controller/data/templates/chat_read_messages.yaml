@@ -42,7 +42,7 @@ subgoals:
   read_newest:
     goal: "Read the newest messages from {to_name}; scroll down to the end of the conversation if needed"
     steps: 6
-    done: {ask: "Is the conversation with {to_name} open with messages visible in it?"}
+    done: {ask: "Is the direct message conversation with {to_name} open, its name shown above the messages, scrolled to the newest message at the bottom? An empty conversation with no messages yet also counts."}
   close_edge:
     goal: "Close Microsoft Edge"
     done: {window: {process: msedge.exe, absent: true}}

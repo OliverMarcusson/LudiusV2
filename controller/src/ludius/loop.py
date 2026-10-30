@@ -37,6 +37,7 @@ from ludius.tasks import (
     check_done,
     declared_commits,
     file_baseline,
+    guard_matches,
     mail_baseline,
     pixels_window,
     preconditions,
@@ -53,6 +54,7 @@ OFF_TRACK_THRESHOLD = 0.8
 NEAR_TIE = 0.05
 BLOCKED_WAIT_S = 1.5
 SLOW_KEY_WAIT_S = 4.0
+WAIT_CAP_S = 90.0
 LAUNCH_REASON = "the launch query goes into the Start search box only"
 REPLACE_REASON = "replacing text needs a target field that holds the keyboard focus"
 NARRATIVE = requests.ROOT / "world" / "narrative.yaml"
@@ -140,6 +142,21 @@ class Runner:
         self.mapping_ok = True
         self._steps = 0
         self.image = os.environ.get("LUDIUS_DECISION_IMAGE") == "1"
+
+    def _refocus(self, task: Task, name: str, sg: Subgoal, snap: obs.Snapshot) -> None:
+        fg = next((i for i, w in enumerate(snap.windows) if w.kind == obs.Window.FOREGROUND), None)
+        for c in sg.require:
+            if not c.focused:
+                continue
+            loose = c.model_copy(update={"focused": None})
+            hits = [e for e in snap.elements if e.window == fg and not e.focused and guard_matches(e, loose, task)]
+            if len(hits) == 1:
+                self._move_to(hits[0])
+                self.agent.click()
+                self._caret_to_end(hits[0], sg)
+                self.log.write(event="refocus", host_ms=_now(), task=task.template.task, subgoal=name,
+                               element=describe(hits[0]))  # fmt: skip
+                return
 
     def _shot(self, here: tuple[Any, ...]) -> bytes | None:
         try:
@@ -415,10 +432,13 @@ class Runner:
         sat: list[str] = []
         shot_why: str | None = None
         step = 0
+        waited, wait_why = 0.0, ""
         while step < budget:
             step += 1
             if time.monotonic() - t0 > task.template.budget_minutes * 60:
                 return "failed", step - 1, "time budget"
+            if waited > WAIT_CAP_S:
+                return "failed", step - 1, f"waited too long: {wait_why}"
             if snap.locked:
                 return "failed", step - 1, "session locked"
             if not self.mapping_ok:
@@ -454,8 +474,10 @@ class Runner:
             ):
                 self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
                                reason="done on screen, waiting for the outside check")  # fmt: skip
+                w0 = time.monotonic()
                 time.sleep(BLOCKED_WAIT_S)
                 snap = self.observe(timeout_ms=10000)
+                step, waited, wait_why = step - 1, waited + time.monotonic() - w0, "the outside check"
                 continue
             ask = sg.done.ask if sg.done else None
             if ask and self._decider_says_done(task, name, ask, snap):
@@ -484,8 +506,11 @@ class Runner:
             if blocked:
                 self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
                                reason=blocked)  # fmt: skip
+                w0 = time.monotonic()
+                self._refocus(task, name, sg, snap)
                 time.sleep(BLOCKED_WAIT_S)
                 snap = self.observe(timeout_ms=10000)
+                step, waited, wait_why = step - 1, waited + time.monotonic() - w0, blocked
                 continue
             v = view(snap, task, sg, self.policy)
             options = self._recovery_options(v) if recovering else build_options(v, task, sg, self.policy)
@@ -542,10 +567,12 @@ class Runner:
                 continue
 
             self.think()
-            host_ms = _now()
+            host_ms, w0 = _now(), time.monotonic()
             refused = self.act(chosen, task, sg)
             guarded = bool(sg.require) and not refused and chosen.kind != "rescan"
             snap = self.observe(timeout_ms=10000 if chosen.kind == "rescan" else 5000)
+            if chosen.kind == "rescan":
+                step, waited, wait_why = step - 1, waited + time.monotonic() - w0, "the screen to load"
             if chosen.kind == "key" and not refused and chosen.keys in sg.keys and fingerprint(snap) == here:
                 time.sleep(SLOW_KEY_WAIT_S)
                 snap = self.observe(timeout_ms=10000)
