@@ -19,6 +19,13 @@
     state: domain
     reboot: true
 
+- name: Keep the machine password through range clock warps
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters
+    name: DisablePasswordChange
+    data: 1
+    type: dword
+
 - name: Autologon as the persona's domain account
   ansible.windows.win_regedit:
     path: HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon
