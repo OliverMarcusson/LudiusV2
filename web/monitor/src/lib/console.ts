@@ -35,6 +35,7 @@ export interface Catalog {
         done: number | null
         abandoned: number | null
         next: PlanItem | null
+        reacting?: PlanItem | null
       }[]
     | null
 }

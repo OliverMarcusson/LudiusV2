@@ -391,7 +391,11 @@ export default function LiveMonitor({ catalog }: { catalog: Catalog | null }) {
                                 : `${day.done} done / ${day.abandoned} abandoned`}
                             </span>
                           </p>
-                          {day.next && (
+                          {day.reacting ? (
+                            <p className="mt-1 truncate text-foreground">
+                              Reacting now: {day.reacting.at} / {activityName(day.reacting.template)}
+                            </p>
+                          ) : day.next && (
                             <p className="mt-1 truncate">
                               Without an outcome: {day.next.at} / {activityName(day.next.template)}
                             </p>

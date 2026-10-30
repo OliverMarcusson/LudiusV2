@@ -85,7 +85,12 @@ static class ConsoleData
                 var start = events is null ? -1 : Array.FindLastIndex(events, e => Text(e, "event") == "day_start");
                 var ends = events?.Skip(Math.Max(0, start)).Where(e => Text(e, "event") == "item_end").ToArray();
                 var next = day?.Plan?.OfType<JsonObject>().FirstOrDefault(item => !(ends?.Any(e => Text(e, "at") == Text(item, "at") && Text(e, "template") == Text(item, "template")) ?? false));
-                return new { user, date, done = ends?.Count(e => Text(e, "status") == "done"), abandoned = ends?.Count(e => Text(e, "status") == "abandoned"), next };
+                var since = events?.Skip(Math.Max(0, start)).ToArray();
+                var react = since is null ? -1 : Array.FindLastIndex(since, e => Text(e, "event") == "reaction_start");
+                var reacting = react >= 0 && !since![react..].Any(e => Text(e, "event") == "reaction_end")
+                    ? new { at = Text(since[react], "logical").Split('T').Last(), template = Text(since[react], "template"), context = Text(since[react], "context") }
+                    : null;
+                return new { user, date, done = ends?.Count(e => Text(e, "status") == "done"), abandoned = ends?.Count(e => Text(e, "status") == "abandoned"), next, reacting };
             }).ToArray(),
             sources = new { narrative = company is null ? "missing" : "ok", people = people is null ? "missing" : "ok",
                 plans = Directory.Exists(Path.Combine(runs, "plans")) ? "ok" : "missing", days = Directory.Exists(Path.Combine(runs, "days")) ? "ok" : "missing" },
