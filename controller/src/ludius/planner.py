@@ -71,6 +71,12 @@ CHAT_CHANNELS: list[str] = yaml.safe_load(
     (Path(__file__).resolve().parents[2] / "data" / "chat.yaml").read_text("utf-8")
 )["channels"]
 SHOWN_EXISTING = 80
+GOSSIP_LEVEL = 0
+GOSSIP = (
+    "harmless office gossip about colleagues or the company (who is back from holiday, the new coffee machine, a "
+    "project running late, a rumour about the office move), never about anyone's misconduct, health, pay, "
+    "relationships or job",
+)
 
 
 class Person(Strict):
@@ -303,10 +309,11 @@ def plan_day(
         )
         + (
             f" Team chat: now and then one line of small talk ({chats['chat.post']} in Coffee Corner or Off-Topic, "
-            f"or {chats['chat.dm']} to a colleague). To ask a colleague for something concrete the persona needs (a "
-            f"note, a file, a mail with a figure), {chats['chat.dm']} saying what, no handoff: they see it in the "
-            f"chat and answer there the same day. Chat messages to this persona are answered as they come in, not "
-            f"planned; {chats['chat.read']} only to look up an older conversation."
+            f"or {chats['chat.dm']} to a colleague). Most days one {chats['chat.dm']} to a colleague the persona "
+            f"is friendly with, with {GOSSIP[GOSSIP_LEVEL]}. To ask a colleague for something concrete the persona "
+            f"needs (a note, a file, a mail with a figure), {chats['chat.dm']} saying what, no handoff: they see it "
+            f"in the chat and answer there the same day. Chat messages to this persona are answered as they come in, "
+            f"not planned; {chats['chat.read']} only to look up an older conversation."
             if colleagues and len(chats) == 3
             else ""
         )
