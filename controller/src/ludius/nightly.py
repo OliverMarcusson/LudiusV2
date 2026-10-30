@@ -128,7 +128,7 @@ def generate_day(
     src: Sources,
     date: dt.date,
     scenario: planner.Scenario | None = None,
-    shared: Callable[[], AbstractContextManager[object]] = nullcontext,
+    shared: Callable[..., AbstractContextManager[object]] = nullcontext,
 ) -> Generated:
     with shared():
         auto = revision.revise_if_due(llm, world, src.personas, date)
@@ -139,18 +139,19 @@ def generate_day(
         notes: list[str] = []
         mapped: list[planner.PlanItem] = []
         boss = requests.manager_of(auto.narrative, persona.user, src.personas)
-        if isinstance(boss, str):
-            notes.append(f"requests: {boss}")
-        else:
-            reports = [p.user for p in src.personas if p.user == persona.user or requests.manager_of(
-                auto.narrative, p.user, src.personas) == boss]  # fmt: skip
+    if isinstance(boss, str):
+        notes.append(f"requests: {boss}")
+    else:
+        reports = [p.user for p in src.personas if p.user == persona.user or requests.manager_of(
+            auto.narrative, p.user, src.personas) == boss]  # fmt: skip
+        with shared(boss.user):
             day = requests.ensure(
                 llm, world, auto.narrative, {u: world_state.brief(state, u, date) for u in reports}, src.personas,
                 src.templates, src.policy, date, boss, {u: src.inbox(u) for u in reports},
                 {u: world_state.existing_files(world, u) for u in reports},
             )  # fmt: skip
-            notes += [f"requests by {boss.user}: {r}" for r in day.rejects]
-            notes += [f"requests by {boss.user}: {r.status} to {r.to} {r.subject!r}" for r in day.requests]
+        notes += [f"requests by {boss.user}: {r}" for r in day.rejects]
+        notes += [f"requests by {boss.user}: {r.status} to {r.to} {r.subject!r}" for r in day.requests]
     inbox_mails = src.inbox(persona.user)
     decider = src.decider() if src.decider is not None else None
     if not isinstance(boss, str) and decider is not None:
@@ -271,7 +272,7 @@ def ensure_day(
     persona: Persona,
     src: Sources,
     date: dt.date,
-    shared: Callable[[], AbstractContextManager[object]] = nullcontext,
+    shared: Callable[..., AbstractContextManager[object]] = nullcontext,
 ) -> Planned:
     path = world.plan_path(persona.user, date.isoformat())
     if path.exists():
@@ -290,12 +291,14 @@ def ensure_day(
     )  # fmt: skip
 
 
-def shared_lock(world: World) -> Callable[[], AbstractContextManager[None]]:
-    lock = threading.Lock()
+def shared_lock(world: World) -> Callable[..., AbstractContextManager[None]]:
+    guard, locks = threading.Lock(), dict[str, threading.Lock]()
 
     @contextmanager
-    def shared() -> Generator[None]:
-        with lock, durable.desk_lock(world.root / "locks" / "nightly.lock"):
+    def shared(key: str = "") -> Generator[None]:
+        with guard:
+            lock = locks.setdefault(key, threading.Lock())
+        with lock, durable.desk_lock(world.root / "locks" / (f"nightly-{key}.lock" if key else "nightly.lock")):
             yield
 
     return shared

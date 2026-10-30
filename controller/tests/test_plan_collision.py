@@ -310,3 +310,25 @@ def test_the_writer_cannot_change_fixed_values(monkeypatch: pytest.MonkeyPatch) 
     plan, _ = plan_day(ScriptedLlm({"items": [mail]}), narrative, anna, DAY, cli.plan_sources().templates, "", [])  # type: ignore[arg-type]
     [it] = plan.items
     assert {**it.params, **it.content}["subject"] == "ERP roles" and {**it.params, **it.content}["to"] == fixed["to"]
+
+
+def test_managers_plan_their_requests_in_parallel_but_each_manager_once(tmp_path: Path) -> None:
+    import threading
+
+    shared = nightly.shared_lock(World(tmp_path))
+    held: list[str] = []
+
+    def other() -> None:
+        with shared("boss-b"):
+            held.append("boss-b")
+
+    with shared("boss-a"):
+        t = threading.Thread(target=other)
+        t.start()
+        t.join(5)
+        assert held == ["boss-b"]
+        with (
+            pytest.raises(nightly.durable.DeskBusy),
+            nightly.durable.desk_lock(tmp_path / "locks" / "nightly-boss-a.lock"),
+        ):
+            pass
