@@ -8,7 +8,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ludius import keys
+from ludius import calls, keys
 from ludius.loop import Clock, GroundTruth, Outcome, Runner
 from ludius.planner import BREAK, DayPlan, PlanItem
 from ludius.session import EscalationDenied, Session
@@ -119,6 +119,12 @@ class DayRunner:
                        done=sum(r.status == "done" for r in results), items=len(results))  # fmt: skip
 
     def slot(
+        self, day: dt.date, item: PlanItem, interrupts: list[PlanItem], jump_at: str | None = None
+    ) -> list[ItemResult]:
+        with calls.on_day(day):
+            return self._slot(day, item, interrupts, jump_at)
+
+    def _slot(
         self, day: dt.date, item: PlanItem, interrupts: list[PlanItem], jump_at: str | None = None
     ) -> list[ItemResult]:
         first = len(self.results)

@@ -188,3 +188,15 @@ def test_status_reads_current_task_counts_and_budget(tmp_path: Path, monkeypatch
     assert r.worker == "pid 5, 2 starts"
     text = rangerun.summary(world, ["aberg", "lnord"], day, tmp_path / "range", {})
     assert "10:00 outlook" in text and "down" in text and "plan worker down" in text
+
+
+def test_a_warp_day_spends_its_own_persona_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(calls, "PATH", tmp_path / "calls.json")
+    monkeypatch.setenv("LUDIUS_CAP_PERSONA_DECISION", "1")
+    monkeypatch.setattr(calls, "persona", "aberg")
+    for d in (dt.date(2027, 1, 25), dt.date(2027, 1, 26)):
+        with calls.on_day(d):
+            calls.count("decision")
+            with pytest.raises(calls.CapReached, match="2027-01-2"):
+                calls.count("decision")
+    assert calls.persona_day("aberg", dt.date(2027, 1, 25)) == {"decision": 1, "llm": 0}

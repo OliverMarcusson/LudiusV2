@@ -24,6 +24,19 @@ def for_persona(user: str) -> Generator[None]:
         _local.persona = None
 
 
+@contextmanager
+def on_day(day: dt.date) -> Generator[None]:
+    old, _local.day = getattr(_local, "day", None), day
+    try:
+        yield
+    finally:
+        _local.day = old
+
+
+def today() -> dt.date:
+    return getattr(_local, "day", None) or dt.date.today()
+
+
 Kind = Literal["decision", "llm"]
 
 
@@ -95,12 +108,12 @@ def persona_path(user: str) -> Path:
     return PATH.parent / "calls" / f"{user}.json"
 
 
-def persona_day(user: str, day: dt.date | None = None) -> dict[str, int]:
+def persona_day(user: str, on: dt.date | None = None) -> dict[str, int]:
     try:
         data: dict[str, Any] = json.loads(persona_path(user).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
-    got: dict[str, Any] = data.get((day or dt.date.today()).isoformat()) or {}
+    got: dict[str, Any] = data.get((on or today()).isoformat()) or {}
     return {k: int(got.get(k, 0)) for k in ("decision", "llm")}
 
 
@@ -114,12 +127,12 @@ def _persona_count(user: str, kind: Kind, cap: str | None) -> None:
         if cap is not None:
             raise
         data = {}
-    day = dt.date.today().isoformat()
-    counts = {"decision": 0, "llm": 0, **data.get(day, {})}
+    key = today().isoformat()
+    counts = {"decision": 0, "llm": 0, **data.get(key, {})}
     if cap is not None and counts[kind] >= int(cap):
-        raise CapReached(f"{user}: {kind} cap LUDIUS_CAP_PERSONA_{kind.upper()}={cap} for {day} reached; nothing sent")
+        raise CapReached(f"{user}: {kind} cap LUDIUS_CAP_PERSONA_{kind.upper()}={cap} for {key} reached; nothing sent")
     counts[kind] += 1
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps({**data, day: counts}), encoding="utf-8")
+    tmp.write_text(json.dumps({**data, key: counts}), encoding="utf-8")
     os.replace(tmp, path)
