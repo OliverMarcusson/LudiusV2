@@ -106,7 +106,7 @@
 <body>
 <main>
   <h1>Ludius V2: progress against the spec</h1>
-  <p class="meta"><span>Updated 30 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/a160a52"><code>a160a52</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
+  <p class="meta"><span>Updated 30 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/4d4fba2"><code>4d4fba2</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
 
   <div class="summary" id="summary"></div>
   <p class="meta">The percentage gives every partial requirement half credit. Improvements within a partial row do not move the score. Current priority: finish end-to-end acceptance cases and close requirements; deferred infrastructure remains in the total.</p>
@@ -130,6 +130,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-30">30 Oct 2026</time><span>Own files picked by code (4d4fba2). For tasks that work on a file the persona made earlier (tidy Downloads, zip, unzip, recycle, edit), the planner now picks a file that really fits instead of letting the language model guess a name. Found in a live plan: tidying Downloads was planned for personas with nothing in Downloads.</span></li>
       <li><time datetime="2026-10-30">30 Oct 2026</time><span>Day planner rebuilt (a160a52). Code now lays out the day: the morning mail check, follow-ups, invitation answers, the gossip message, lunch, times and how much work fits. The Decider picks which kinds of task suit the persona that day. The language model only writes the content and cannot change recipients, subjects or times. Live: Lars got 7 items and Daan 5, with recipients and subjects as code set them.</span></li>
       <li><time datetime="2026-10-30">30 Oct 2026</time><span>Only the tasks a request needs (9ff9d21). The same Decider call also picks which kinds of work task a chat request calls for. Only those, plus the chat replies, are offered to the reply planner. Live: Daan asked Lars for a short note on who still needs ERP access; only the Word document task was offered, and Lars wrote it and told Daan it was done.</span></li>
       <li><time datetime="2026-10-30">30 Oct 2026</time><span>Chat rules chosen by the Decider (107e097). Before a persona answers new chat messages, one Decider call says whether they hold a request, a question, an offer or small talk. Only the matching rules go to the reply planner; the safety rules are always there. Live: Daan asked Lars about the Thursday supplier call and chatted a little; Lars sent one short reply.</span></li>
