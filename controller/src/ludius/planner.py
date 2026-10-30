@@ -41,6 +41,7 @@ BREAK = "break"
 NEAR_DUPLICATE = 0.85
 MIN_COMPARE = 12
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_LOCATION = re.compile(r"[A-Za-z0-9][A-Za-z0-9 .-]{1,39}")
 _PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")
 VALUE_MAX = 300
 _NAME_KEYS = ("file_name", "folder_name", "new_name")
@@ -208,6 +209,7 @@ def plan_day(
     mail_threads: dict[str, tuple[str, str]] | None = None,
     inbox: set[tuple[str, str]] | None = None,
     owned: dict[str, str] | None = None,
+    invites: set[tuple[str, str]] | None = None,
 ) -> tuple[DayPlan, list[str]]:
     policy = policy or Policy()
     followups = followups or {}
@@ -299,7 +301,8 @@ def plan_day(
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
     fill_recipient_names(draft.items, people)
     rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                       mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned, shares)  # fmt: skip
+                       mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned, shares,
+                       invites)  # fmt: skip
     missing = sorted(set(followups) - {it.followup for it in draft.items})
     if rejects or missing:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
@@ -310,7 +313,7 @@ def plan_day(
         fill_recipient_names(draft.items, people)
         rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
                            mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned,
-                           shares)  # fmt: skip
+                           shares, invites)  # fmt: skip
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     missing = sorted(set(followups) - {it.followup for it in items})
@@ -351,6 +354,7 @@ def validate(
     teams: Iterable[str] = (),
     owned: dict[str, str] | None = None,
     shares: Iterable[str] = (),
+    invites: set[tuple[str, str]] | None = None,
 ) -> list[tuple[int, str]]:
     rejects: list[tuple[int, str]] = []
     seen = list(history)
@@ -364,6 +368,8 @@ def validate(
         cap = (t.capability if (t := templates.get(it.template)) else None) or ""
         if not why and cap == "mail.reply":
             why = _reply_thread(it, mail_threads or {}, inbox or set[tuple[str, str]]())
+        if not why and cap == "calendar.respond":
+            why = _invite(it, invites or set[tuple[str, str]]())
         if not why and cap == "mail.save" and not it.params.get("file_name", "").lower().endswith(ATTACHABLE):
             why = f"file_name: the attachment's exact name, a {', '.join(ATTACHABLE)} file"
         if not why and cap in ("mail.read", "mail.save"):
@@ -481,6 +487,8 @@ def _recipient(it: PlanItem, colleagues: set[str], people: dict[str, str]) -> st
 
 
 def _meeting(values: dict[str, str]) -> str | None:
+    if not _LOCATION.fullmatch(values.get("location", "")):
+        return "location: 2-40 letters, digits, spaces, '-' or '.' (no @, comma or semicolon)"
     try:
         date = dt.date.fromisoformat(values["date"])
     except ValueError:
@@ -527,6 +535,15 @@ def _sender(it: PlanItem, colleagues: set[str]) -> str | None:
         return None
     user, _, domain = sender.strip().lower().partition("@")
     return None if domain == MAIL_DOMAIN and user in colleagues else f"sender {sender!r} is not a colleague's address"
+
+
+def _invite(it: PlanItem, invites: set[tuple[str, str]]) -> str | None:
+    values = {**it.params, **it.content}
+    if values.get("response") not in ("accept", "decline"):
+        return "response: accept or decline"
+    if (values.get("to", "").strip().lower().partition("@")[0], values.get("subject", "")) not in invites:
+        return "answer only a listed meeting invitation: to is its organizer, subject its exact subject"
+    return None
 
 
 def _read_mail(it: PlanItem, colleagues: set[str], inbox: set[tuple[str, str]], earlier: list[PlanItem]) -> str | None:

@@ -26,7 +26,7 @@ from ludius.options import (
     view,
 )
 from ludius.policy import OVERWRITE_REASON, Policy, alt_f4_safe, overwrite_prompt
-from ludius.reply import Composer, prepare_read
+from ludius.reply import Composer, prepare_answer, prepare_read
 from ludius.tasks import (
     LAUNCH_TEXT,
     RESERVED_RECIPIENT,
@@ -43,7 +43,6 @@ from ludius.tasks import (
     preconditions,
     profile,
     recipient_reserved,
-    send_confirmation,
 )
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
@@ -334,7 +333,10 @@ class Runner:
         if task.template.capability == "mail.read":
             why, rec = prepare_read(task, self.policy, self.composer.narrative if self.composer else NARRATIVE)
             self.log.write(event="task_content", host_ms=_now(), task=task.template.task, reason=why, **rec)
-        if task.template.sends_mail and not why:
+        if task.template.capability == "calendar.respond":
+            why, rec = prepare_answer(task, self.policy, self.composer.narrative if self.composer else NARRATIVE)
+            self.log.write(event="task_content", host_ms=_now(), task=task.template.task, reason=why, **rec)
+        if (task.template.sends_mail or task.template.capability == "calendar.respond") and not why:
             task.mail_before = mail_baseline(task)
         if why := why or file_baseline(task, self.policy):
             self.log.write(event="blocked", host_ms=_now(), task=task.template.task, reason=why)
@@ -396,7 +398,7 @@ class Runner:
         verifications = 0
         last_result = "start of subgoal"
         no_change = 0
-        typed_ok = pressed_ok = False
+        typed_ok = pressed_ok = clicked_ok = False
         recovering = False
         dead: dict[tuple[Any, ...], set[tuple[str, str]]] = {}
         snap = self.observe()
@@ -420,7 +422,7 @@ class Runner:
                 self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
                                reason="elevation required")  # fmt: skip
                 return "failed", step - 1, "blocked: elevation required"
-            code_done = check_done(sg.done, snap, task, typed_ok, pressed_ok=pressed_ok)
+            code_done = check_done(sg.done, snap, task, typed_ok, pressed_ok=pressed_ok, clicked_ok=clicked_ok)
             if code_done:
                 self.log.write(
                     event="subgoal_done",
@@ -432,7 +434,8 @@ class Runner:
                     steps=step - 1,
                 )
                 return "done", step - 1, ""
-            if code_done is False and check_done(sg.done, snap, task, typed_ok, outside=False, pressed_ok=pressed_ok):
+            if code_done is False and check_done(sg.done, snap, task, typed_ok, outside=False, pressed_ok=pressed_ok,
+                                                       clicked_ok=clicked_ok):
                 self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
                                reason="done on screen, waiting for the outside check")  # fmt: skip
                 time.sleep(BLOCKED_WAIT_S)
@@ -451,14 +454,7 @@ class Runner:
                 self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
                                reason=OVERWRITE_REASON)  # fmt: skip
                 return "failed", step - 1, OVERWRITE_REASON
-            if (blocked := preconditions(sg, snap, task)) and guarded and (ok := send_confirmation(snap, task)):
-                guarded = False
-                self._move_to(ok)
-                self.agent.click()
-                self.log.write(event="confirm", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
-                               element=ok.name)  # fmt: skip
-                snap = self.observe(timeout_ms=10000)
-                continue
+            blocked = preconditions(sg, snap, task)
             popup = self._popup_over(sg, snap, task) if blocked else None
             if popup is None:
                 sat = []
@@ -540,6 +536,7 @@ class Runner:
             if chosen.kind == "type":
                 typed_ok = not refused and _typed_landed(snap, chosen, sg)
             pressed_ok = pressed_ok or (guarded and chosen.kind == "key" and chosen.keys in sg.keys)
+            clicked_ok = clicked_ok or (sg.in_window is not None and not refused and chosen.kind == "click")
             outcome = "back to an earlier screen" if changed and revisit else "changed" if changed else "no change"
             last_result = "no visible change" if not changed else outcome
             if refused:

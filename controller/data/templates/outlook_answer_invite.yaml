@@ -1,0 +1,45 @@
+task: outlook_answer_invite
+app: outlook
+capability: calendar.respond
+params: [to, to_name, subject, response]
+about: "Accept or decline a colleague's meeting invitation in the Outlook Inbox; Outlook sends the answer to the organizer. to: the organizer's address (<user>@ludius.internal); subject: the invitation's exact subject, as listed; response: accept or decline."
+example: {to: mvellinga@ludius.internal, to_name: Marcus Vellinga, subject: lund accruals q4 review, response: accept}
+variants:
+  - [open_outlook, open_invite, choose, send, close_outlook]
+budget_steps: 30
+budget_minutes: 6
+on_abandon: close_without_saving
+subgoals:
+  open_outlook:
+    goal: "Open Outlook by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    steps: 8
+    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}
+  open_invite:
+    goal: "In the Inbox, open the meeting invitation {subject} from {to_name} in its own window (double-click it)"
+    keys: [Enter]
+    done: {window: {process: outlook.exe, title: '^{subject}\s*-\s*Meeting'}}
+  choose:
+    goal: "In the invitation's window, click its {response} button"
+    steps: 4
+    in_window: {process: outlook.exe, title: '^{subject}\s*-\s*Meeting'}
+    avoid:
+      - {name: '^(?!{response}$)(Accept|Decline)$'}
+      - {name: '^(Tentative|Propose New Time|Other Actions|Edit the Response before Sending|Do Not Send a Response)$'}
+      - {name: '^(Previous Item|Next Item|Previous|Next)$'}
+    done: {element: {role: menu item, name: '^Send the Response Now$'}, clicked: true}
+  send:
+    goal: "Click Send the Response Now in the menu that opened"
+    steps: 8
+    in_window: {process: outlook.exe, class_name: Net UI Tool Window}
+    allow_destructive: ["Send the Response Now"]
+    avoid:
+      - {name: '^(Accept|Decline)$'}
+      - {name: '^(Tentative|Propose New Time|Other Actions|Edit the Response before Sending|Do Not Send a Response)$'}
+      - {name: '^(Previous Item|Next Item|Previous|Next)$'}
+    done: {response: {}}
+  close_outlook:
+    goal: "Close Outlook"
+    done: {window: {process: outlook.exe, absent: true}}

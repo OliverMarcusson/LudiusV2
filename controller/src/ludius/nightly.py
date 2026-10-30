@@ -170,6 +170,10 @@ def generate_day(
                        + (f" (attached: {', '.join(files[u, s])})" if (u, s) in files else "")
                        for u, s in inbox if s not in asked)  # fmt: skip
     listed = f"Inbox on the mail server (newest first; a reply answers one of these):\n{listed}" if listed else ""
+    invites = reply.hints(inbox_mails, persona.user, people, src.policy, mail.MEETING_REQUEST)
+    if invites:
+        listed += ("\nMeeting invitations waiting for an answer (an answer accepts or declines one):\n"
+                   + "\n".join(f"- from {u}@{mail.DOMAIN}: {s}" for u, s in invites))  # fmt: skip
     planned = "\n".join(f"- {it.at} {it.template}: {it.context}" for it in mapped)
     planned = f"Already planned from the manager's requests (keep these times free, do not plan them again):\n{planned}"
     context = "\n".join(x for x in (summary, world_state.brief(state, persona.user, date), listed,
@@ -181,7 +185,7 @@ def generate_day(
     plan, rejects = planner.plan_day(
         llm, auto.narrative, persona, date, src.templates, context, world.history(persona.user),
         policy=src.policy, scenario=scenario, existing=existing, followups=followups,
-        mail_threads=threads, inbox=set(inbox), owned=owned,
+        mail_threads=threads, inbox=set(inbox), owned=owned, invites=set(invites),
     )  # fmt: skip
     colleagues = {p.user for p in auto.narrative.people if p.user and p.user != persona.user}
     teams = [c for c, members in auto.narrative.channels.items() if persona.user in members]
@@ -205,7 +209,7 @@ def generate_day(
         why = dict(planner.validate(
             [*rest, it], planner.role_templates(src.templates, persona), world.history(persona.user),
             src.policy, colleagues, None, set(followups), existing, threads, people, persona.user, date.isoformat(),
-            set(inbox), teams, owned, shares,
+            set(inbox), teams, owned, shares, set(invites),
         )).get(len(rest)) or requests.planned(it, src.templates, world.root)  # fmt: skip
         if why:
             requests.remember(world.root, persona.user, it.request, f"rejected: {why}")
@@ -243,10 +247,12 @@ def check_existing(world: World, persona: Persona, date: dt.date, src: Sources) 
     colleagues = {p.user for p in narrative.people if p.user and p.user != persona.user}
     threads = world_state.mail_threads(world_state.build(world, narrative, src.personas, date), persona.user)
     people = {p.user: p.name for p in narrative.people if p.user}
-    inbox = set(reply.hints(src.inbox(persona.user), persona.user, people, src.policy))
+    inbox_mails = src.inbox(persona.user)
+    inbox = set(reply.hints(inbox_mails, persona.user, people, src.policy))
+    invites = set(reply.hints(inbox_mails, persona.user, people, src.policy, mail.MEETING_REQUEST))
     rejects = planner.validate(
         plan.items, planner.role_templates(src.templates, persona), [], src.policy, colleagues,
-        followups={i.followup for i in plan.items if i.followup}, mail_threads=threads, inbox=inbox,
+        followups={i.followup for i in plan.items if i.followup}, mail_threads=threads, inbox=inbox, invites=invites,
         people=people, user=persona.user, day=date.isoformat(),
         teams=[c for c, members in narrative.channels.items() if persona.user in members],
         owned=planner.owned_files(world.root, persona.user, date.isoformat()),

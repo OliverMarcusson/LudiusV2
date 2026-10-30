@@ -100,12 +100,42 @@ def to_read(owner: str, sender: str, subject: str, people: dict[str, str], polic
     return "already read at task start: its read flag could not show this task's read" if read else m
 
 
-def prepare_read(task: Task, policy: Policy, narrative: Path) -> tuple[str | None, dict[str, Any]]:
+def to_answer(owner: str, sender: str, subject: str, people: dict[str, str], policy: Policy) -> mail.Message | str:
+    if why := _colleague(sender, owner, people, policy):
+        return why
+    same = mail.matching(owner, "inbox", subject)
+    if same is None:
+        return "inbox unreadable on the server"
+    ours = [m for m in same if m.cls == mail.MEETING_REQUEST and m.sender == m.organizer == sender.strip().lower()]
+    if len(same) != 1 or len(ours) != 1:
+        return f"{len(ours)} invitation(s) from {sender}, {len(same)} mail(s) in all, subject {subject!r} in the Inbox"
+    if policy.mail_reserved(ours[0].sender, ours[0].subject, ours[0].body):
+        return "scenario-reserved invitation"
+    return ours[0]
+
+
+def _people(narrative: Path) -> dict[str, str] | str:
     try:
-        people = {p["user"]: p["name"] for p in yaml.safe_load(narrative.read_text(encoding="utf-8"))["people"]
-                  if p.get("user")}  # fmt: skip
+        return {p["user"]: p["name"] for p in yaml.safe_load(narrative.read_text(encoding="utf-8"))["people"]
+                if p.get("user")}  # fmt: skip
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:
-        return f"narrative unreadable: {e}", {}
+        return f"narrative unreadable: {e}"
+
+
+def prepare_answer(task: Task, policy: Policy, narrative: Path) -> tuple[str | None, dict[str, Any]]:
+    people = _people(narrative)
+    if isinstance(people, str):
+        return people, {}
+    m = to_answer(task.owner, task.values.get("to", ""), task.values.get("subject", ""), people, policy)
+    if isinstance(m, str):
+        return m, {}
+    return None, {"mail_id": m.id, "sender": m.sender, "subject": m.subject, "start_ms": m.start_ms}
+
+
+def prepare_read(task: Task, policy: Policy, narrative: Path) -> tuple[str | None, dict[str, Any]]:
+    people = _people(narrative)
+    if isinstance(people, str):
+        return people, {}
     m = to_read(task.owner, task.values.get("sender", ""), task.values.get("subject", ""), people, policy)
     if isinstance(m, str):
         return m, {}
@@ -115,12 +145,12 @@ def prepare_read(task: Task, policy: Policy, narrative: Path) -> tuple[str | Non
 
 
 def hints(
-    inbox: list[mail.Message] | None, owner: str, people: dict[str, str], policy: Policy
+    inbox: list[mail.Message] | None, owner: str, people: dict[str, str], policy: Policy, cls: str = "IPM.Note"
 ) -> list[tuple[str, str]]:
     return [
         (m.sender.partition("@")[0], m.subject)
         for m in inbox or []
-        if m.cls == "IPM.Note" and m.subject and not _colleague(m.sender, owner, people, policy)
+        if m.cls == cls and m.subject and not _colleague(m.sender, owner, people, policy)
         and not policy.mail_reserved(m.sender, m.subject, m.body)
     ]  # fmt: skip
 

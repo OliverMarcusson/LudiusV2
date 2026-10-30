@@ -20,7 +20,7 @@ AT = local_ms("2026-11-05", "10:30", "Europe/Stockholm"), local_ms("2026-11-05",
 
 def item(**params: str) -> dict[str, Any]:
     p = {"to": "mvellinga@ludius.internal", "to_name": "Marcus Vellinga", "subject": "lund accruals q4 review",
-         "date": "2026-11-05", "start": "10:30", "end": "11:15"}  # fmt: skip
+         "location": "small meeting room", "date": "2026-11-05", "start": "10:30", "end": "11:15"}  # fmt: skip
     return {"at": "09:00", "template": "outlook_send_invite", "params": p | params, "context": "Review with Marcus."}
 
 
@@ -41,9 +41,8 @@ def test_template_gets_the_meeting_send_contract() -> None:
     send = t.subgoals["send_shortcut"]
     required = "^({to}|{to_name}|{to_name} <{to}>);?$"
     meeting_require = [ElementCheck(role="edit", name="^Required$", value=required),
-                       ElementCheck(role="edit", name="^Optional$", value="^$"),
-                       ElementCheck(role="edit", name="^Location$", value="^$")]  # fmt: skip
-    meeting_forbid = [ElementCheck(name=f"^{n}$", value=r"\S") for n in ("Optional", "Location", "Resources")]
+                       ElementCheck(role="edit", name="^Optional$", value="^$")]  # fmt: skip
+    meeting_forbid = [ElementCheck(name=f"^{n}$", value=r"\S") for n in ("Optional", "Resources")]
     meeting_avoid = [
         ElementCheck(role="edit", name="^Info Bar$"),
         ElementCheck(
@@ -53,8 +52,8 @@ def test_template_gets_the_meeting_send_contract() -> None:
         ElementCheck(name="^Scheduling Assistant$"),
         ElementCheck(role="data item"),
     ]
-    assert send.done and send.done.invite and send.require[:3] == meeting_require
-    assert send.forbid[:3] == meeting_forbid and t.processes == ["outlook.exe"]
+    assert send.done and send.done.invite and send.require[:2] == meeting_require
+    assert send.forbid[:2] == meeting_forbid and t.processes == ["outlook.exe"]
     assert all(sg.avoid[: len(meeting_avoid)] == meeting_avoid for sg in t.subgoals.values())
     assert all("send_shortcut" in v for v in t.variants)
 
@@ -71,6 +70,8 @@ def test_planned_meeting_is_valid_and_bounded() -> None:
         ({"end": "13:00"}, "15-120 minutes"),
         ({"start": "10.30"}, "HH:MM"),
         ({"to": "someone@example.com"}, "not a colleague"),
+        ({"location": "room 1; boss@ludius.internal"}, "location"),
+        ({"location": ""}, "location"),
     ):
         assert any(why in r for r in check(item(**bad))), bad
     assert any("after 2026-11-05" in r for r in check(item(), day="2026-11-05"))
@@ -91,7 +92,7 @@ def test_send_needs_the_planned_meeting_in_the_form() -> None:
 
     def form(**over: str) -> obs.Snapshot:
         values = {"Title": "lund accruals q4 review", "Required": "Marcus Vellinga <mvellinga@ludius.internal>",
-                  "Optional": "", "Location": "", "Start date, combo": "Thu 05/11/2026",
+                  "Optional": "", "Location": "small meeting room", "Start date, combo": "Thu 05/11/2026",
                   "Start time, combo": "10:30", "End date, combo": "Thu 05/11/2026",
                   "End time, combo": "11:15"} | over  # fmt: skip
         els = [obs.Element(role="edit", name=k, value=v, actions=["value"]) for k, v in values.items()]
@@ -251,27 +252,6 @@ def test_abandon_leaves_a_modal_that_ignores_close_keys_by_dont_send_or_cancel(t
     assert agent.clicked == [] and len(agent.chords) == 1
 
 
-def test_the_guarded_sends_own_prompt_is_confirmed_once_and_nothing_else(tmp_path: Path) -> None:
-    from ludius.tasks import send_confirmation
-
-    t = task()
-    fg = obs.Window(kind=obs.Window.FOREGROUND, process_name="OUTLOOK.EXE", title="Microsoft Outlook")
-    text = "Do you want to send this meeting request without a location?"
-    prompt = obs.Snapshot(windows=[fg], elements=[
-        obs.Element(role="edit", name="RichEdit Control", value=text),
-        obs.Element(role="button", name="Don't Send"), obs.Element(role="button", name="Send Anyway")])  # fmt: skip
-    assert (b := send_confirmation(prompt, t)) is not None and b.name == "Send Anyway"
-    other = obs.Snapshot(windows=[fg], elements=[obs.Element(role="edit", value="Send this to everyone?"),
-                                                 obs.Element(role="button", name="Send Anyway")])  # fmt: skip
-    assert send_confirmation(other, t) is None
-    edge = obs.Window(kind=obs.Window.FOREGROUND, process_name="msedge.exe")
-    assert send_confirmation(obs.Snapshot(windows=[edge], elements=list(prompt.elements)), t) is None
-    mail_task = Task(cli.load_templates()["outlook_send_mail"], PlanItem.model_validate(
-        {"at": "09:00", "template": "outlook_send_mail", "params": {"to": "mvellinga@ludius.internal",
-         "to_name": "Marcus Vellinga", "subject": "s", "body": "b"}}), random.Random(0))  # fmt: skip
-    assert send_confirmation(prompt, mail_task) is None
-
-
 def test_a_save_name_typed_at_the_focus_replaces_the_box(tmp_path: Path) -> None:
     from ludius.options import Option
     from ludius.tasks import TaskInstance
@@ -322,3 +302,58 @@ def test_a_url_typed_again_replaces_what_the_address_bar_holds(tmp_path: Path) -
     agent.snaps, agent.chords = [runner.snap], []
     assert runner.act(Option("o1", "type", "type", content="chat_url"), t, t.subgoal("open_chat")) is not None
     assert agent.chords == []
+
+
+def test_answer_needs_a_listed_invite_and_one_new_matching_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ludius.planner import _invite
+    a = {"at": "09:00", "template": "outlook_answer_invite", "context": "Answer Marcus.",
+         "params": {"to": "mvellinga@ludius.internal", "to_name": "Marcus Vellinga", "subject": "q4",
+                    "response": "accept"}}  # fmt: skip
+    listed = {("mvellinga", "q4")}
+    assert _invite(PlanItem.model_validate(a), listed) is None
+    assert _invite(PlanItem.model_validate(a | {"params": a["params"] | {"response": "maybe"}}), listed)
+    assert _invite(PlanItem.model_validate(a | {"params": a["params"] | {"subject": "q3"}}), listed)
+    me, org = "aberg@ludius.internal", "mvellinga@ludius.internal"
+    pos = mail.Message(me, 5_000, 5_000, "", (org,), 9, mail.RESPONSES["accept"])
+    box: list[mail.Message] = []
+    monkeypatch.setattr(mail, "messages", lambda user, folder, subject: list(box))
+    assert not mail.responded(org, "q4", me, "accept", 1_000, frozenset())
+    box[:] = [pos]
+    assert mail.responded(org, "q4", me, "accept", 1_000, frozenset())
+    assert not mail.responded(org, "q4", me, "decline", 1_000, frozenset())
+    assert not mail.responded(org, "q4", me, "accept", 1_000, frozenset({("mvellinga", "inbox", 9)}))
+    assert not mail.responded(org, "q4", me, "accept", 1_000, None)
+    for bad in (dataclasses.replace(pos, sender="lnord@ludius.internal"), dataclasses.replace(pos, cls="IPM.Note")):
+        box[:] = [bad]
+        assert not mail.responded(org, "q4", me, "accept", 1_000, frozenset()), bad
+    box[:] = [pos, dataclasses.replace(pos, id=10, cls=mail.RESPONSES["decline"])]
+    assert not mail.responded(org, "q4", me, "accept", 1_000, frozenset())
+
+
+def test_to_answer_needs_the_sender_to_be_the_organizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ludius import reply
+    org = "mvellinga@ludius.internal"
+    req = mail.Message(org, 0, 0, "", ("aberg@ludius.internal",), 7, mail.MEETING_REQUEST, subject="q4", organizer=org)
+    box = [req]
+    monkeypatch.setattr(mail, "matching", lambda user, folder, subject: list(box))
+    assert reply.to_answer("aberg", org, "q4", PEOPLE, Policy()) == req
+    box[:] = [dataclasses.replace(req, organizer="boss@ludius.internal")]
+    assert isinstance(reply.to_answer("aberg", org, "q4", PEOPLE, Policy()), str)
+
+
+def test_the_response_menu_counts_only_after_a_click_in_the_invitation_and_send_stays_in_it() -> None:
+    a = {"at": "09:00", "template": "outlook_answer_invite", "context": "Answer Marcus.",
+         "params": {"to": "mvellinga@ludius.internal", "to_name": "Marcus Vellinga", "subject": "q4",
+                    "response": "decline"}}  # fmt: skip
+    t = Task(cli.load_templates()["outlook_answer_invite"], PlanItem.model_validate(a), random.Random(0))
+    choose, send = t.template.subgoals["choose"], t.template.subgoals["send"]
+    menu = obs.Window(kind=obs.Window.FOREGROUND, process_name="OUTLOOK.EXE", class_name="Net UI Tool Window")
+    item = obs.Element(role="menu item", name="Send the Response Now")
+    snap = obs.Snapshot(windows=[menu], elements=[item])
+    assert check_done(choose.done, snap, t, False) is False
+    assert check_done(choose.done, snap, t, False, clicked_ok=True) is True
+    assert preconditions(send, snap, t, item) is None
+    other = obs.Window(kind=obs.Window.FOREGROUND, process_name="OUTLOOK.EXE", title="other - Meeting")
+    decline = obs.Element(role="button", name="Decline")
+    assert preconditions(send, obs.Snapshot(windows=[other], elements=[decline]), t, decline)
+    assert any(c.name and "Accept|Decline" in c.name and "?!" not in c.name for c in send.avoid)

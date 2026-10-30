@@ -23,6 +23,7 @@ PR_SENDER_SMTP, PR_SENT_REPRESENTING_SMTP, PR_DELIVERY_TIME = 0x5D01001F, 0x5D02
 PR_CLIENT_SUBMIT_TIME = 0x00390040
 PR_MESSAGE_CLASS, PR_START_DATE, PR_END_DATE, PR_CREATION_TIME = 0x001A001F, 0x00600040, 0x00610040, 0x30070040
 MEETING_REQUEST, APPOINTMENT = "IPM.Schedule.Meeting.Request", "IPM.Appointment"
+RESPONSES = {"accept": "IPM.Schedule.Meeting.Resp.Pos", "decline": "IPM.Schedule.Meeting.Resp.Neg"}
 MINUTE_MS = 60_000
 PR_SMTP_ADDRESS, PR_EMAIL_ADDRESS = 0x39FE001F, 0x3003001F
 PR_RECIPIENT_FLAGS, RECIP_ORGANIZER = 0x5FFD0003, 0x2
@@ -278,7 +279,7 @@ def invited(
 
     def ours(m: Message, u: str, f: str) -> bool:
         return ((u, f, m.id) not in before and (m.start_ms, m.end_ms) == (start_ms, end_ms)
-                and tuple(r for r in m.recipients if r != organizer) == (address,))  # fmt: skip
+                and tuple(dict.fromkeys(r for r in m.recipients if r != organizer)) == (address,))  # fmt: skip
 
     request = any(
         ours(m, user, "inbox") and m.cls == MEETING_REQUEST and organizer == m.sender == m.organizer
@@ -292,6 +293,16 @@ def invited(
         and m.created_ms // MINUTE_MS >= since_ms // MINUTE_MS
         for m in messages(me, "calendar", subject)
     )
+
+
+def responded(address: str, subject: str, sender: str, response: str, since_ms: int, before: Seen | None) -> bool:
+    address, sender = address.strip().lower(), sender.strip().lower()
+    user, _, domain = address.partition("@")
+    if domain != DOMAIN or sender.partition("@")[2] != DOMAIN or address == sender or since_ms <= 0 or before is None:
+        return False
+    new = [m.cls for m in messages(user, "inbox", subject) if (user, "inbox", m.id) not in before
+           and m.cls in RESPONSES.values() and m.sender == sender and _recent(m, since_ms)]  # fmt: skip
+    return new == [RESPONSES.get(response.lower())]
 
 
 def deliver(sender: str, sender_name: str, to: str, to_name: str, subject: str, body: str, msgid: str) -> bool:

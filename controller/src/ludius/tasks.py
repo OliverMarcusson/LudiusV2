@@ -84,6 +84,12 @@ class InviteCheck(Strict):
     end: str = "{end}"
 
 
+class ResponseCheck(Strict):
+    mailbox: str = "{to}"
+    subject: str = "{subject}"
+    response: str = "{response}"
+
+
 EDITABLE = (".docx", ".txt", ".xlsx")
 ATTACHABLE = (".docx", ".xlsx", ".pptx", ".txt", ".pdf")
 ATTACH_MAX_BYTES = 5_000_000
@@ -185,9 +191,11 @@ class Done(Strict):
     added: AddedCheck | None = None
     typed: bool = False
     pressed: bool = False
+    clicked: bool = False
     pixels: PixelsCheck | None = None
     mail: MailCheck | None = None
     invite: InviteCheck | None = None
+    response: ResponseCheck | None = None
     file: FileCheck | None = None
     read: bool = False
     ask: str | None = None
@@ -236,6 +244,7 @@ Capability = Literal[
     "mail.read",
     "mail.save",
     "calendar.invite",
+    "calendar.respond",
     "file.move",
     "file.write",
     "file.edit",
@@ -257,6 +266,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "mail.read": {"sender", "subject"},
     "mail.save": {"sender", "subject"},
     "calendar.invite": {"to", "to_name"},
+    "calendar.respond": {"to", "to_name", "subject", "response"},
     "file.move": {"file_name", "folder_name"},
     "file.edit": {"file_name"},
     "file.reuse": {"file_name"},
@@ -278,18 +288,12 @@ def declared_commits(task: Task, sg: Subgoal) -> list[str]:
     return [*sg.allow_destructive, *(["Save"] if task.template.writes else [])]
 
 
-class Confirm(Strict):
-    prompt: str
-    button: str
-
-
 class Form(Strict):
     recipients: Literal["value"] = "value"
     to: ElementCheck
     empty: list[ElementCheck] = Field(default_factory=list[ElementCheck])
     never_filled: list[ElementCheck] = Field(default_factory=list[ElementCheck])
     avoid: list[ElementCheck] = Field(default_factory=list[ElementCheck])
-    confirm: list[Confirm] = Field(default_factory=list[Confirm])
 
     @model_validator(mode="after")
     def _selectors(self) -> Form:
@@ -690,12 +694,14 @@ def pixels_region(snap: obs.Snapshot, window: int, task: Task) -> list[obs.Eleme
 
 
 def check_done(
-    done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool, outside: bool = True, pressed_ok: bool = False
+    done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool, outside: bool = True, pressed_ok: bool = False,
+    clicked_ok: bool = False,
 ) -> bool | None:
     if done is None or done.ask:
         return None
-    if (done.mail or done.invite or done.file or done.read) and not (
-        done.window or done.foreground or done.element or done.added or done.typed or done.pressed or done.pixels
+    if (done.mail or done.invite or done.response or done.file or done.read) and not (
+        done.window or done.foreground or done.element or done.added or done.typed or done.pressed or done.clicked
+        or done.pixels
     ):
         return _outside_ok(done, task) if outside else None
     on_pixels = any(pixels_window(w) for w in snap.windows)
@@ -705,7 +711,7 @@ def check_done(
         and not (done.window or done.foreground or done.element or done.added or done.typed)
     ):
         return None
-    if (done.typed and not typed_ok) or (done.pressed and not pressed_ok):
+    if (done.typed and not typed_ok) or (done.pressed and not pressed_ok) or (done.clicked and not clicked_ok):
         return False
     if on_pixels and not done.pixels:
         return False
@@ -764,6 +770,7 @@ def _marked(mark: str, snap: obs.Snapshot, task: Task) -> list[obs.Element]:
 
 def _outside_ok(done: Done, task: Task) -> bool:
     return ((done.mail is None or _mail_ok(done.mail, task)) and (done.invite is None or _invite_ok(done.invite, task))
+            and (done.response is None or _response_ok(done.response, task))
             and (done.file is None or _file_ok(done.file, task)) and (not done.read or _read_ok(task)))  # fmt: skip
 
 
@@ -847,6 +854,11 @@ def local_ms(date: str, hhmm: str, tz: str) -> int:
     return int(dt.datetime.fromisoformat(f"{date}T{hhmm}").replace(tzinfo=ZoneInfo(tz)).timestamp() * 1000)
 
 
+def _response_ok(c: ResponseCheck, task: Task) -> bool:
+    return bool(task.owner) and mail.responded(task.fmt(c.mailbox), task.fmt(c.subject), f"{task.owner}@{mail.DOMAIN}",
+                                               task.fmt(c.response), task.started_ms, task.mail_before)
+
+
 def _invite_ok(c: InviteCheck, task: Task) -> bool:
     if not task.owner:
         return False
@@ -861,6 +873,8 @@ def _sent_check(done: Done | None) -> tuple[str, str, str, str] | None:
         return done.mail.mailbox, done.mail.folder, done.mail.subject, "sent"
     if done and done.invite:
         return done.invite.mailbox, "inbox", done.invite.subject, "calendar"
+    if done and done.response:
+        return done.response.mailbox, "inbox", done.response.subject, "sent"
     return None
 
 
@@ -874,19 +888,6 @@ def mail_baseline(task: Task) -> mail.Seen | None:
                 return None
             seen |= found
     return frozenset(seen)
-
-
-def send_confirmation(snap: obs.Snapshot, task: Task) -> obs.Element | None:
-    fg = next((i for i, w in enumerate(snap.windows) if w.kind == obs.Window.FOREGROUND), None)
-    apps = {p.lower() for p in task.template.processes}
-    if fg is None or snap.windows[fg].process_name.lower() not in apps:
-        return None
-    mine = [e for e in snap.elements if e.window == fg]
-    form = profile(task.template.app).forms.get(task.template.send_form)
-    for c in form.confirm if form and task.template.sends_mail else []:
-        if any(re.fullmatch(c.prompt, e.name) or re.fullmatch(c.prompt, e.value) for e in mine):
-            return next((e for e in mine if e.role == "button" and e.name.replace("&", "") == c.button), None)
-    return None
 
 
 RESERVED_RECIPIENT = "precondition: the planned recipient is scenario-reserved"

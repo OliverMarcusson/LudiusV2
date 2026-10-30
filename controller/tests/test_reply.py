@@ -216,7 +216,7 @@ def test_done_needs_the_reply_link(monkeypatch: pytest.MonkeyPatch) -> None:
                             (TO,), id=1 if user == "mvellinga" else 2, prefix=prefix, in_reply_to=irt)  # fmt: skip
 
     def args(**kw: Any) -> bool:
-        def messages(user: str, folder: str, subject: str) -> list[mail.Message]:
+        def messages(user: str, folder: str, subject: str, *_: Any) -> list[mail.Message]:
             return [copy(user, **kw)]
 
         monkeypatch.setattr(mail, "messages", messages)

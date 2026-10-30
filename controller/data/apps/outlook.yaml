@@ -16,12 +16,10 @@ forms:
   meeting:
     recipients: value
     to: {role: edit, name: "^Required$"}
-    empty: [{role: edit, name: "^Optional$"}, {role: edit, name: "^Location$"}]
+    empty: [{role: edit, name: "^Optional$"}]
     never_filled: [{name: "^Resources$"}]
     avoid:
       - {role: edit, name: "^Info Bar$"}
       - {role: button, name: "^(Required|Optional|Location|Rooms|Room Finder|Address Book|Add Attendees|Scheduling Assistant)$"}
       - {name: "^Scheduling Assistant$"}
       - {role: data item}
-    confirm:
-      - {prompt: 'Do you want to send this meeting request without a location\?', button: Send Anyway}
