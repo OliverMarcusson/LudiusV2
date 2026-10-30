@@ -166,7 +166,7 @@ static class ConsoleData
     {
         var journal = Lines(Path.Combine(runs, "range", "warp.jsonl"));
         if (journal is null || journal.Count == 0) return new { phase = "none" };
-        string phase = "none", date = "";
+        string phase = "none", date = "", error = "";
         string? logical = null;
         long setAt = 0, last = 0;
         var (day, planned) = (0, false);
@@ -180,7 +180,7 @@ static class ConsoleData
             switch (Text(e, "event"))
             {
                 case "clock_set":
-                    if (phase is "finished" or "stopped" or "failed") (phase, day, planned) = ("none", 0, false);
+                    if (phase is "finished" or "stopped" or "failed") (phase, day, planned, error) = ("none", 0, false, "");
                     (logical, setAt) = (Text(e, "logical"), last);
                     if (planned) (phase, planned) = ("preparing", false);
                     else { (phase, date) = ("planning", ""); day++; users = []; unplanned = []; results.Clear(); }
@@ -194,7 +194,7 @@ static class ConsoleData
                     break;
                 case "day" when User.IsMatch(Text(e, "persona")): results[Text(e, "persona")] = e["result"] is JsonArray ? "done" : "failed"; break;
                 case "interrupted": phase = "stopped"; break;
-                case "warp_failed" or "clock_reset_failed": phase = "failed"; break;
+                case "warp_failed" or "clock_reset_failed": phase = "failed"; error = Text(e, "error"); break;
                 case "clock_reset": if (phase is not ("stopped" or "failed")) phase = "finished"; logical = null; break;
             }
         }
@@ -216,7 +216,7 @@ static class ConsoleData
             ? Directory.GetFiles(Path.Combine(runs, "plans"), $"{eve.Date.AddDays(1):yyyy-MM-dd}-*.yaml")
                 .Count(f => new DateTimeOffset(File.GetLastWriteTimeUtc(f)).ToUnixTimeMilliseconds() >= setAt)
             : 0;
-        return new { phase, day, date, ageMs = Math.Max(0, now - last), clock, unplanned, plans, personas };
+        return new { phase, day, date, ageMs = Math.Max(0, now - last), clock, unplanned, plans, personas, error };
     }
 
     static List<JsonObject>? Lines(string path)

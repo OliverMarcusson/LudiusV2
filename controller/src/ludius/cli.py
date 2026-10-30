@@ -606,18 +606,26 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
     signal.signal(signal.SIGTERM, term)
     reset_failed, failure, failed, playing, open_days = False, None, 0, list[str](), list[str]()
     try:
+        if not world.narrative_path.exists():
+            raise RuntimeError(
+                f"no company narrative at {world.narrative_path}; run `ludius plan narrative --date {start}`"
+            )
         sup.step()
         for d in days:
             jump(dt.datetime.combine(d - dt.timedelta(days=1), dt.time.fromisoformat(args.plan_at), tz))
             plans: dict[str, planner.DayPlan] = {}
+            why: list[str] = []
             for u, got in nightly.ensure_days(llm, world, [p for p in src.personas if p.user in users], src, d).items():
                 try:
                     if isinstance(got, Exception):
                         raise got
                     plans[u] = planner.load_plan(Path(got.path))
                 except Exception as e:  # noqa: BLE001  one persona without a plan leaves the others' days to run
+                    why.append(f"{u}: {str(e)[:300]}")
                     note(event="no_plan", persona=u, date=d, error=str(e)[:300])
             note(event="planned", date=d, items={u: len(p.items) for u, p in plans.items()})
+            if not plans:
+                raise RuntimeError(f"no persona got a plan for {d}: {why[0] if why else 'see no_plan'}")
             failed += len(users) - len(plans)
             plans = {u: p for u, p in plans.items() if p.items}
             if not plans:

@@ -1,5 +1,6 @@
 import argparse
 import datetime as dt
+import json
 import re
 import time
 from pathlib import Path
@@ -181,6 +182,8 @@ def test_warp_exits_3_when_reset_fails_after_the_warp_failed(
 
     monkeypatch.setattr(cli, "RUNS", tmp_path)
     monkeypatch.setattr(cli, "_range_clock", lambda strict=True: Broken(110, [111]))
+    (tmp_path / "world").mkdir()
+    (tmp_path / "world" / "narrative.yaml").write_text("{}")
 
     def lease(vm: str | None = None) -> Lease:
         return Lease(tmp_path / f"clock-{vm}.json", vm or "range", renew_s=3600)
@@ -197,3 +200,24 @@ def test_warp_exits_3_when_reset_fails_after_the_warp_failed(
     err = capsys.readouterr().err
     assert "reset FAILED" in err and "guest agent hung mid-jump" in err
     assert (tmp_path / "clock-range.json").exists()
+
+
+def test_warp_without_narrative_fails_visibly_before_any_jump(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from ludius import cli, rangerun
+    from ludius.clocklease import Lease
+
+    class Untouched(RangeClock):
+        def set(self, at: dt.datetime) -> dict[int, float]:
+            raise AssertionError("clock jumped")
+
+    monkeypatch.setattr(cli, "RUNS", tmp_path)
+    monkeypatch.setattr(cli, "_range_clock", lambda strict=True: Untouched(110, [111]))
+    monkeypatch.setattr(cli, "_clock_lease", lambda vm=None: Lease(tmp_path / "clock.json", "range", renew_s=3600))
+    monkeypatch.setattr(cli, "plan_sources", lambda: None)
+    monkeypatch.setattr(rangerun, "specs", lambda *_: [])
+    args = argparse.Namespace(start="2099-01-05", days=1, timezone="Europe/Stockholm", plan_at="22:00", agent=None,
+                              temporal="127.0.0.1:7233", model="m")  # fmt: skip
+    with pytest.raises(RuntimeError, match="plan narrative --date 2099-01-05"):
+        cli._range_warp(args, [], dt.date(2099, 1, 1))  # pyright: ignore[reportPrivateUsage]
+    events = [json.loads(x)["event"] for x in (tmp_path / "range" / "warp.jsonl").read_text().splitlines()]
+    assert events == ["warp_failed"]

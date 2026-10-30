@@ -280,7 +280,7 @@ const STEPS = [
 const ENDED: Record<string, string> = {
   finished: "The warp finished and the range is back on real time.",
   stopped: "The warp was stopped and the range is back on real time.",
-  failed: "The warp failed. Check runs/range/warp.jsonl on the range server.",
+  failed: "The warp failed.",
 };
 
 function Status({ catalog }: { catalog: Catalog | null }) {
@@ -387,6 +387,11 @@ function Status({ catalog }: { catalog: Catalog | null }) {
           )}
         >
           {ENDED[run.phase]}
+          {run.phase === "failed" && run.error && (
+            <span className="mt-1 block font-mono text-xs break-words">
+              {run.error}
+            </span>
+          )}
         </p>
       )}
       {!!run.unplanned?.length && (

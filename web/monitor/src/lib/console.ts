@@ -111,6 +111,7 @@ export interface RunStatus {
   clock?: { ms: number; offset: number } | null
   unplanned?: string[]
   plans?: number
+  error?: string
   personas?: { user: string; status: "waiting" | "running" | "done" | "failed"; items: number; done: number }[]
 }
 const PHASES = ["none", "planning", "preparing", "running", "finished", "stopped", "failed"]
