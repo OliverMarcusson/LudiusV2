@@ -199,6 +199,8 @@ class Subgoal(Strict):
     # The target holds a value the typed text replaces (Outlook's prefilled meeting date and times): select all
     # (Ctrl+A) in the focused field right before typing, or the text is inserted into the old value.
     replace: bool = False
+    # replace's own field, a name pattern, when the done check names no element (Edge's address bar).
+    field: str = ""
     forbid: list[ElementCheck] = Field(default_factory=list[ElementCheck])
     # Elements never offered as a target in this subgoal, e.g. Outlook's Info Bar, whose click opens the
     # conversation's latest message and took the caret away from the reply being typed.

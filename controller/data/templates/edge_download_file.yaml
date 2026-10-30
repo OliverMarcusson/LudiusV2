@@ -29,6 +29,8 @@ subgoals:
     goal: "Search the intranet for the page: {page}"
     text: page
     keys: [Ctrl+L, Enter]
+    replace: true  # a retry replaces what the address bar holds, never appends to it
+    field: "^Address and search bar$"
     done: {foreground: {process: msedge.exe, title: "{page}"}}
   open_page:
     goal: "Open the intranet page titled: {page}"

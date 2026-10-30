@@ -27,6 +27,8 @@ subgoals:
     goal: "Search the web for: {search_query}"
     text: search_query
     keys: [Ctrl+L, Enter]
+    replace: true  # a retry replaces what the address bar holds, never appends to it
+    field: "^Address and search bar$"
     allow_destructive: ["(?i)accept.*|reject.*"]
     done: {foreground: {process: msedge.exe, title: "{search_query}"}}
   open_result:

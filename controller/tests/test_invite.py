@@ -302,3 +302,33 @@ def test_a_save_name_typed_at_the_focus_replaces_the_box(tmp_path: Path) -> None
     agent.snaps, agent.chords = [runner.snap], []
     assert runner.act(Option("o1", "type", "type", content="file_name"), t, t.subgoal("name_file")) is not None
     assert agent.chords == []
+
+
+def test_a_url_typed_again_replaces_what_the_address_bar_holds(tmp_path: Path) -> None:
+    """Live team4: each retry appended chat_url to the address bar ('intranet...testchat...testchat...test')."""
+    from ludius.options import Option
+    from ludius.tasks import TaskInstance
+
+    def edit(name: str, value: str) -> obs.Element:
+        return obs.Element(key=name, role="edit", name=name, value=value, focused=True, enabled=True,
+                           actions=["value"], bounds=obs.Rect(x=1, y=1, width=50, height=20))  # fmt: skip
+
+    fg = obs.Window(kind=obs.Window.FOREGROUND, process_name="msedge.exe", title="Intranet")
+    bar = edit("Address and search bar", "intranet.corp.ludius.test")
+    agent = FakeAgent([])
+    agent.type = lambda text, mean, jitter: agent.chords.append([-1])  # type: ignore[attr-defined]
+    runner = Runner(agent, None, cli.load_persona(None), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    t = Task(cli.load_templates()["chat_post_message"], TaskInstance(template="chat_post_message",
+             params={"channel": "Off-Topic", "message": "hi"}, variant=0), random.Random(0))  # fmt: skip
+    for o in (Option("o1", "type", "type", content="chat_url"), Option("o2", "type", "type", element=bar,
+                                                                         content="chat_url")):  # fmt: skip
+        runner.snap = obs.Snapshot(windows=[fg], elements=[bar])
+        agent.snaps, agent.chords = [runner.snap], []
+        assert runner.act(o, t, t.subgoal("open_chat")) is None
+        assert agent.chords == [keys.chord("Ctrl+A"), [-1]]
+    # Another field holding the focus: never select-all there.
+    box = edit("Search the web", "")
+    runner.snap = obs.Snapshot(windows=[fg], elements=[box])
+    agent.snaps, agent.chords = [runner.snap], []
+    assert runner.act(Option("o1", "type", "type", content="chat_url"), t, t.subgoal("open_chat")) is not None
+    assert agent.chords == []

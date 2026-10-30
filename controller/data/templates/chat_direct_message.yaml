@@ -35,6 +35,8 @@ subgoals:
     goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click the GitLab button (it signs in with the Windows account; never type a password)"
     text: chat_url
     keys: [Ctrl+L, Enter]
+    replace: true  # a retry replaces what the address bar holds, never appends to it
+    field: "^Address and search bar$"
     done: {ask: "Is the Mattermost team chat open and signed in, showing its list of channels?"}
   open_conversation:
     goal: "Open the direct messages with {to_name}: press Ctrl+K, type the name and press Enter, or click the name under Direct Messages"

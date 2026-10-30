@@ -115,6 +115,12 @@ def fingerprint(s: obs.Snapshot) -> tuple[Any, ...]:
     )
 
 
+def _replace_field(e: obs.Element, task: Task, sg: Subgoal) -> bool:
+    """Whether e is the field a replace subgoal selects all in: its `field`, else its done check's element."""
+    field = sg.field or (sg.done.element.name if sg.done and sg.done.element and sg.done.element.name else "")
+    return re.search(task.fmt_re(field), e.name) is not None
+
+
 class Runner:
     def __init__(
         self,
@@ -264,7 +270,7 @@ class Runner:
                 if e is None or not e.focused:
                     return "the focusing click did not put the keyboard focus in the target field"
                 self._caret_to_end(e, sg)
-            if sg.replace and e is not None:  # checked to be the target: the text replaces its old value
+            if sg.replace and e is not None and _replace_field(e, task, sg):  # the text replaces its old value
                 self.agent.chord(keys.chord("Ctrl+A"))  # no element known (pixels only): typed as before
             elif sg.text == LAUNCH_TEXT:  # checked to be the Start search box: a retry never appends to an old query
                 self.agent.chord(keys.chord("Ctrl+A"))  # (warp6 dkoster: "edgeoutlookoutlookoutlook")
@@ -305,8 +311,7 @@ class Runner:
             if sg.text == LAUNCH_TEXT and not launch_target(focus, fresh):
                 return LAUNCH_REASON, None
             if sg.replace and focus is not None:  # its old value is selected first: only in the subgoal's own field
-                field = sg.done.element.name if sg.done and sg.done.element and sg.done.element.name else ""
-                if self._focus_shared or not re.search(task.fmt_re(field), focus.name):
+                if self._focus_shared or not _replace_field(focus, task, sg):
                     return REPLACE_REASON, None  # (Ctrl+A in Notepad's document would select the note's body)
                 return None, focus
             return None, None
