@@ -72,7 +72,8 @@ class RangeClock:
         if bad := self.verify():
             raise ValueError("range clock refused, not range VMs: " + "; ".join(f"{k}: {v}" for k, v in bad.items()))
         target = at.timestamp()
-        dc_now = self.now() + self._offset(self.dc)
+        dc_off = self._offset(self.dc)
+        dc_now = self.now() + dc_off
         if target <= dc_now:
             raise ValueError(f"range clock is forward only: DC at {_iso(dc_now)}, asked {_iso(target)}")
         return self._apply(target - self.now())

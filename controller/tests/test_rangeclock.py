@@ -58,6 +58,24 @@ def test_a_guest_agent_that_is_down_for_a_while_is_retried_with_a_fresh_target()
     assert all(abs(v - 86400) < 1 for v in got.values())
 
 
+def test_forward_only_holds_when_the_dc_check_is_retried() -> None:
+    r = Range()
+    down = {110: 3}
+
+    def run(vmid: int, script: str) -> str:
+        if down.get(vmid):
+            down[vmid] -= 1
+            raise AgentDown("QEMU guest agent is not running")
+        return r.run(vmid, script)
+
+    def sleep(s: float) -> None:
+        r.t += s
+
+    with pytest.raises(ValueError, match="forward only"):
+        RangeClock(110, [111], run, r.now, sleep=sleep).set(dt.datetime.fromtimestamp(r.t + 5, dt.UTC))
+    assert r.sets == []
+
+
 def test_member_that_does_not_move_fails() -> None:
     r = Range(stuck=122)
     c = RangeClock(110, [111, 122], r.run, r.now)
