@@ -409,6 +409,11 @@ def test_a_send_field_that_lost_focus_is_clicked_and_waiting_is_capped(
     status, steps, why = runner._subgoal(task, "send_message", task.subgoal("send_message"), budget=1, t0=1e18)  # pyright: ignore[reportPrivateUsage]
     assert (status, steps, clicks) == ("failed", 0, [1]) and why.startswith("waited too long: precondition")
 
+    clicks.clear()
+    box.value = "lunch at one?"
+    runner._subgoal(task, "send_message", task.subgoal("send_message"), budget=1, t0=1e18)  # pyright: ignore[reportPrivateUsage]
+    assert clicks == []
+
 
 def test_reply_never_offers_the_info_bar() -> None:
     from ludius.options import StepView, build_options

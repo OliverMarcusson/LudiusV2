@@ -144,12 +144,16 @@ class Runner:
         self.image = os.environ.get("LUDIUS_DECISION_IMAGE") == "1"
 
     def _refocus(self, task: Task, name: str, sg: Subgoal, snap: obs.Snapshot) -> None:
+        loose_sg = sg.model_copy(update={"require": [c.model_copy(update={"focused": None}) for c in sg.require]})
+        if preconditions(loose_sg, snap, task):
+            return
         fg = next((i for i, w in enumerate(snap.windows) if w.kind == obs.Window.FOREGROUND), None)
         for c in sg.require:
             if not c.focused:
                 continue
             loose = c.model_copy(update={"focused": None})
-            hits = [e for e in snap.elements if e.window == fg and not e.focused and guard_matches(e, loose, task)]
+            hits = [e for e in snap.elements if e.window == fg and not e.focused and guard_matches(e, loose, task)
+                    and not self.policy.element_allowed(e, sg.allow_destructive, snap)]  # fmt: skip
             if len(hits) == 1:
                 self._move_to(hits[0])
                 self.agent.click()
