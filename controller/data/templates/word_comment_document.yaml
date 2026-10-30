@@ -1,0 +1,54 @@
+task: word_comment_document
+app: word
+capability: file.edit
+processes: [winword.exe, explorer.exe]
+writes: ['Documents\{file_name}.docx']
+params: [file_name, comment]
+about: "Add one review comment to one of the persona's own Word documents (a .docx under Own recent files) and save it; the text stays as it was. file_name: that file's name exactly, without folder and extension; comment: one line, a short remark a reviewer would leave. Text: a plain sentence of letters, digits, spaces and , . ; : ! ? & % # + / -, starting with a letter or digit; no quotes, no ' - ' or '--'."
+example: {file_name: admission test memo, comment: check the dates against the calendar}
+variants:
+  - [open_explorer_keys, go_documents, open_file, new_comment, write_comment, save_keys, close_app, close_explorer]
+budget_steps: 40
+budget_minutes: 8
+on_abandon: close_without_saving
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_documents:
+    goal: "Go to the Documents folder"
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
+  open_file:
+    goal: "Open the document {file_name} with a double-click"
+    steps: 14
+    in_window: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+    breadcrumb: ['This PC', Documents]
+    done: {foreground: {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}}
+  new_comment:
+    goal: "Insert a new comment with Ctrl+Alt+M"
+    keys: [Ctrl+Alt+M]
+    steps: 6
+    in_window: &word {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}
+    avoid: [{role: edit}, {role: combo box}, {name: '^(File Tab|Save As)$'}]
+    done: {element: {role: edit, name: 'Comment$', focused: true}}
+  write_comment:
+    goal: "Type the comment into the new comment box: {comment}"
+    text: comment
+    unreadable_ok: true
+    in_window: *word
+    avoid: [{role: combo box}, {name: '^(File Tab|Save As)$'}]
+    done: {typed: true}
+  save_keys:
+    goal: "Save the document with Ctrl+S"
+    keys: [Ctrl+S]
+    in_window: *word
+    avoid: [{name: '^(File Tab|Save As)$'}]
+    done: {file: {path: 'Documents\{file_name}.docx', comment: "{comment}"}}
+  close_app:
+    goal: "Close Word"
+    done: {window: {process: winword.exe, absent: true}}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}

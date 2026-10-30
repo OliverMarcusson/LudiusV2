@@ -9,6 +9,7 @@ import os
 import random
 import re
 import zipfile
+from collections import Counter
 from pathlib import Path
 from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo
@@ -102,6 +103,7 @@ class FileCheck(Strict):
     attachment_of: list[str] | None = None
     export_of: str | None = None
     extract_of: str | None = None
+    comment: str | None = None
 
     @model_validator(mode="after")
     def _noise_folder(self) -> FileCheck:
@@ -110,6 +112,14 @@ class FileCheck(Strict):
         if self.source is not None and (self.append is None or guestfile.profile_path("u", self.source) is None
                                         or self.source.lower()[-5:] != ext or self.source == self.path):  # fmt: skip
             raise ValueError(f"file check {self.path!r}: a source goes with append, another noise file, same type")
+        if self.comment is not None:
+            if guestfile.profile_path("u", self.path) is None or not self.path.lower().endswith(".docx"):
+                raise ValueError(f"file check {self.path!r}: a comment goes on a noise .docx")
+            if self.recycled or any(getattr(self, k) is not None for k in (*need.values(), "download", "append",
+                                                                            "share", "moved_from", "attachment_of",
+                                                                            "export_of", "extract_of")):
+                raise ValueError(f"file check {self.path!r}: a comment check stands alone")
+            return self
         if self.extract_of is not None:
             paths = (self.path, self.extract_of)
             if any(guestfile.profile_path("u", x) is None for x in paths) or self.extract_of[-4:].lower() != ".zip":
@@ -473,13 +483,13 @@ class Template(Strict):
                 raise ValueError(f"{self.task}: move check {sg.done.file.path!r} needs file.organize removing it")
             elif sg.done and sg.done.file and sg.done.file.path not in self.writes:
                 raise ValueError(f"{self.task}: file check {sg.done.file.path!r} is not a declared write")
-        appends = [sg.done.file for sg in self.subgoals.values() if sg.done and sg.done.file and sg.done.file.append]
+        appends = [f for sg in self.subgoals.values() if sg.done and (f := sg.done.file) and (f.append or f.comment)]
         kinds = {"file.reuse" if c.source else "file.edit" for c in appends}
         revise = self.capability == "mail.send" and kinds == {"file.edit"}
         if revise and not {c.path for c in appends} <= set(self.attaches):
             raise ValueError(f"{self.task}: a mail.send edits only the file it attaches")
         if not revise and kinds != ({self.capability} & {"file.edit", "file.reuse"}):
-            raise ValueError(f"{self.task}: file.edit takes an append check, file.reuse one with a source")
+            raise ValueError(f"{self.task}: file.edit takes an append or comment check, file.reuse one with a source")
         if any(c.source in self.writes for c in appends):
             raise ValueError(f"{self.task}: a reused source is read, never a write")
         return self
@@ -569,6 +579,7 @@ class Task:
         self.files_absent: frozenset[str] | None = None
         self.files_before: dict[str, list[str]] = {}
         self.sources_before: dict[str, bytes] = {}
+        self.comments_before: dict[str, list[str]] = {}
         self.saved_sha: dict[str, str] = {}
         self.files_present: frozenset[str] = frozenset()
         self.read_id = 0
@@ -997,7 +1008,16 @@ def file_baseline(task: Task, policy: Any) -> str | None:
             if n.exists:
                 return f"{rel}: already exists, never overwritten"
             absent.add(rel)
-    checked = [task.fmt(c.path) for c in files if c.append is None and not c.recycled and c.share is None]
+    for rel in dict.fromkeys(task.fmt(c.path) for c in files if c.comment is not None):
+        f = guestfile.read(task.owner, rel)
+        if f is not None and not f.exists:
+            return f"{rel}: not there, nothing to comment on"
+        paras, notes = (guestfile.docx_paragraphs(f.data), guestfile.docx_comments(f.data)) if f else (None, None)
+        if paras is None or notes is None:
+            return f"{rel}: unreadable on the guest"
+        task.files_before[rel], task.comments_before[rel] = [x.casefold() for x in paras], notes
+    checked = [task.fmt(c.path) for c in files
+               if c.append is None and c.comment is None and not c.recycled and c.share is None]
     if task.inst.request:
         checked += [w for w in write_paths(task) if not w.endswith(".*") and w not in edits]
     for rel in dict.fromkeys(r for r in checked if r not in absent):
@@ -1022,6 +1042,16 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
     if c.recycled:
         f = guestfile.read(task.owner, rel)
         return rel in task.files_present and f is not None and not f.exists
+    if c.comment is not None:
+        f, before = guestfile.read(task.owner, rel), task.comments_before.get(rel)
+        if before is None or f is None or not f.exists or f.written_ms < task.started_ms:
+            return False
+        paras, notes = guestfile.docx_paragraphs(f.data), guestfile.docx_comments(f.data)
+        if paras is None or notes is None or [x.casefold() for x in paras] != task.files_before.get(rel):
+            return False
+        new = Counter(notes) - Counter(before)
+        want = " ".join(task.fmt(c.comment).split()).casefold()
+        return Counter(before) <= Counter(notes) and [" ".join(x.split()).casefold() for x in new.elements()] == [want]
     if c.append is not None:
         if c.source is not None:
             src = task.fmt(c.source)

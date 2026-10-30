@@ -162,6 +162,21 @@ def docx_paragraphs(data: bytes) -> list[str] | None:
         return None
 
 
+def docx_comments(data: bytes) -> list[str] | None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            parts = _parts(z)
+            if parts is None or "word/document.xml" not in parts:
+                return None
+            if "word/comments.xml" not in parts:
+                return []
+            root = ET.fromstring(z.read("word/comments.xml"))
+            paras = ([_runs(p, f"{_W}t", f"{_W}tab") for p in c.iter(f"{_W}p")] for c in root.iter(f"{_W}comment"))
+            return [" ".join(x.strip() for x in ps if x.strip()) for ps in paras]
+    except (zipfile.BadZipFile, ET.ParseError, ValueError, KeyError, OSError):
+        return None
+
+
 def pptx_slides(data: bytes) -> list[list[str]] | None:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:

@@ -244,7 +244,8 @@ def test_pdf_export_needs_a_new_pdf_and_the_document_unchanged(monkeypatch: pyte
     disk[src] = guestfile.GuestFile(True, 2_000_000, docx("Close memo", "changed"))
     assert check_done(done, snap, tk, False) is False
     disk[src] = guestfile.GuestFile(True, 500, old)
-    for bad in (guestfile.GuestFile(True, 2_000_000, b"%PDF-1.7 cut"), guestfile.GuestFile(True, 999_999, b"%PDF- %%EOF")):
+    cut, early = b"%PDF-1.7 cut", b"%PDF- %%EOF"
+    for bad in (guestfile.GuestFile(True, 2_000_000, cut), guestfile.GuestFile(True, 999_999, early)):
         disk[pdf] = bad
         assert check_done(done, snap, tk, False) is False
 
@@ -315,4 +316,48 @@ def test_extract_needs_the_archived_bytes_in_a_new_file(monkeypatch: pytest.Monk
     disk[out] = guestfile.GuestFile(True, 400, b"doc")
     assert check_done(done, snap, tk, False) is True
     disk[out] = guestfile.GuestFile(True, 2_000_000, b"other")
+    assert check_done(done, snap, tk, False) is False
+
+
+def test_a_comment_needs_one_new_comment_and_the_text_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LUDIUS_APPS")
+    disk: dict[str, Any] = {}
+    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get("file"))
+    templates = cli.plan_sources().templates
+    plan = it("11:00", "word_comment_document", file_name="Close Memo", comment="check the dates")
+    assert validate([plan], templates, [], Policy(), owned={"documents\close memo.docx": "2026-11-01"}) == []
+    assert "own files" in validate([plan], templates, [], Policy(), owned={})[0][1]
+    bad = it("11:00", "word_comment_document", file_name="Close Memo", comment="'quoted'")
+    assert "comment" in validate([bad], templates, [], Policy(), owned={"documents\close memo.docx": "x"})[0][1]
+    t = templates["word_comment_document"]
+    tk = Task(t, TaskInstance(template=t.task, params={"file_name": "close memo", "comment": "check the dates"}),
+              random.Random(0))  # fmt: skip
+    tk.owner, tk.started_ms = "aberg", 1_000_000
+    done, snap = t.subgoals["save_keys"].done, obs.Snapshot()
+
+    def noted(*comments: str, text: tuple[str, ...] = ("Close memo", "Accruals")) -> bytes:
+        body = "".join(f'<w:comment w:id="{i}"><w:p><w:r><w:t>{c}</w:t></w:r></w:p></w:comment>'
+                       for i, c in enumerate(comments))  # fmt: skip
+        with zipfile.ZipFile(io.BytesIO(docx(*text))) as z:
+            parts = {n: z.read(n) for n in z.namelist()}
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            for n, b in parts.items():
+                z.writestr(n, b)
+            z.writestr("word/comments.xml", f'<w:comments xmlns:w="{guestfile._W[1:-1]}">{body}</w:comments>')
+        return out.getvalue()
+
+    disk["file"] = guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) == "Documents\close memo.docx: not there, nothing to comment on"
+    disk["file"] = guestfile.GuestFile(True, 500, b"not a zip")
+    assert file_baseline(tk, Policy()) == "Documents\close memo.docx: unreadable on the guest"
+    disk["file"] = guestfile.GuestFile(True, 500, noted("old note"))
+    assert file_baseline(tk, Policy()) is None
+    disk["file"] = guestfile.GuestFile(True, 2_000_000, noted("old note", "Check the  dates"))
+    assert check_done(done, snap, tk, False) is True
+    for wrong in (noted("old note"), noted("Check the dates"), noted("old note", "check the dates", "check the dates"),
+                  noted("old note", "check the date"), noted("old note", "check the dates", text=("Close memo",))):
+        disk["file"] = guestfile.GuestFile(True, 2_000_000, wrong)
+        assert check_done(done, snap, tk, False) is False
+    disk["file"] = guestfile.GuestFile(True, 999_999, noted("old note", "check the dates"))
     assert check_done(done, snap, tk, False) is False

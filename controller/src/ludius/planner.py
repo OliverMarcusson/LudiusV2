@@ -672,6 +672,7 @@ def _office_keys(t: Template) -> set[str]:
     checks = [sg.done.file for sg in t.subgoals.values() if sg.done and sg.done.file]
     text = " ".join([c.paragraphs or "" for c in checks] + [s for c in checks for s in c.slides or []])
     text += " " + " ".join(c.append or "" for c in checks if c.path.lower().endswith(".docx"))
+    text += " " + " ".join(c.comment or "" for c in checks)
     return set(re.findall(r"\{(\w+)\}", text))
 
 
