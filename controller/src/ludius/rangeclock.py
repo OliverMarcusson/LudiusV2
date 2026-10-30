@@ -11,19 +11,19 @@ from dataclasses import dataclass
 MAX_SKEW_S = 60.0
 POOL = "ludius"
 Exec = Callable[[int, str], str]
+RETRIES, RETRY_S = 6, 10.0
+
+
+class AgentDown(RuntimeError):
+    pass
 
 
 def qm_exec(vmid: int, script: str) -> str:
     argv = ["qm", "guest", "exec", str(vmid), "--timeout", "60", "--", "powershell", "-NoProfile", "-NonInteractive",
             "-Command", script]  # fmt: skip
     out = subprocess.run(argv, capture_output=True, text=True, timeout=90)
-    for _ in range(2):
-        if out.returncode == 0:
-            break
-        time.sleep(3)
-        out = subprocess.run(argv, capture_output=True, text=True, timeout=90)
     if out.returncode:
-        raise RuntimeError(f"VM {vmid}: qm guest exec exit {out.returncode}: {out.stderr.strip()[-300:]}")
+        raise AgentDown(f"VM {vmid}: qm guest exec exit {out.returncode}: {out.stderr.strip()[-300:]}")
     res = json.loads(out.stdout)
     if res.get("exitcode") != 0 or not res.get("exited", 1):
         raise RuntimeError(f"VM {vmid}: exit {res.get('exitcode')}: {str(res.get('err-data', ''))[-300:]}")
@@ -43,6 +43,15 @@ class RangeClock:
     run: Exec = qm_exec
     now: Callable[[], float] = time.time
     verify: Callable[[], dict[int, str]] = lambda: {}
+    sleep: Callable[[float], None] = time.sleep
+
+    def _retry[T](self, act: Callable[[], T]) -> T:
+        for _ in range(RETRIES):
+            try:
+                return act()
+            except AgentDown:
+                self.sleep(RETRY_S)
+        return act()
 
     def offsets(self) -> dict[int, float]:
         vms = [self.dc, *self.members]
@@ -50,9 +59,12 @@ class RangeClock:
             return dict(zip(vms, pool.map(self._offset, vms), strict=True))
 
     def _offset(self, vmid: int) -> float:
-        t0 = self.now()
-        guest = int(self.run(vmid, _NOW).strip()) / 1000
-        return guest - (t0 + self.now()) / 2
+        def once() -> float:
+            t0 = self.now()
+            guest = int(self.run(vmid, _NOW).strip()) / 1000
+            return guest - (t0 + self.now()) / 2
+
+        return self._retry(once)
 
     def set(self, at: dt.datetime) -> dict[int, float]:
         if at.tzinfo is None:
@@ -87,7 +99,7 @@ class RangeClock:
                 errors.append(f"VM {vmid}: {e}")
 
         def set_one(vmid: int) -> str:
-            return self.run(vmid, _SET.format(ms=int((self.now() + offset) * 1000)) + _NOW)
+            return self._retry(lambda: self.run(vmid, _SET.format(ms=int((self.now() + offset) * 1000)) + _NOW))
 
         def measure(vmid: int) -> None:
             got[vmid] = self._offset(vmid)
