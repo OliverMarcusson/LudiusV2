@@ -275,3 +275,44 @@ def test_zip_needs_exactly_the_file_inside(monkeypatch: pytest.MonkeyPatch) -> N
     for bad in (pack(close_memo=b"other"), pack(close_memo=b"doc", other=b"x"), b"PK not a zip"):
         disk[zp] = guestfile.GuestFile(True, 2_000_000, bad)
         assert check_done(done, snap, tk, False) is False
+
+
+def test_extract_needs_the_archived_bytes_in_a_new_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    def pack(**files: bytes) -> bytes:
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            for name, data in files.items():
+                z.writestr(name.replace("_", " ") + ".docx", data)
+        return out.getvalue()
+
+    templates = cli.plan_sources().templates
+    params = {"file_name": "close memo", "file_ext": "docx"}
+    item = it("11:00", "explorer_extract_zip", **params)
+    owned = {r"documents\close memo.zip": "2026-11-01"}
+    assert validate([item], templates, [], Policy(), owned=owned, day="2026-11-02") == []
+    assert validate([item], templates, [], Policy(), owned={}, day="2026-11-02")
+    disk: dict[str, Any] = {}
+    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+    t = templates["explorer_extract_zip"]
+    tk = Task(t, TaskInstance(template=t.task, params=params), random.Random(0))
+    tk.owner, tk.started_ms = "aberg", 1_000_000
+    zp, out = r"Documents\close memo.zip", r"Documents\close memo\close memo.docx"
+    disk[zp] = guestfile.GuestFile(True, 500, pack(close_memo=b"doc", other=b"x"))
+    disk[out] = guestfile.GuestFile(False)
+    assert "nothing to extract" in (file_baseline(tk, Policy()) or "")
+    disk[zp] = guestfile.GuestFile(True, 500, pack(close_memo=b"doc"))
+    disk[out] = guestfile.GuestFile(True, 500, b"doc")
+    assert file_baseline(tk, Policy()) == f"{out}: already exists, never overwritten"
+    disk[out] = guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) is None
+    del disk[out]
+    assert file_baseline(tk, Policy()) == f"{out}: unreadable on the guest"
+    disk[r"Documents\close memo"] = guestfile.GuestFile(True, 500, b"x")
+    assert "not a folder" in (file_baseline(tk, Policy()) or "")
+    disk[r"Documents\close memo"] = guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) is None and out in (tk.files_absent or ())
+    done, snap = t.subgoals["extract"].done, obs.Snapshot()
+    disk[out] = guestfile.GuestFile(True, 400, b"doc")
+    assert check_done(done, snap, tk, False) is True
+    disk[out] = guestfile.GuestFile(True, 2_000_000, b"other")
+    assert check_done(done, snap, tk, False) is False

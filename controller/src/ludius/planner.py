@@ -400,8 +400,8 @@ def validate(
 def _owned(it: PlanItem, t: Template, owned: dict[str, str], day: str, items: list[PlanItem]) -> str | None:
     recycle = t.capability == "file.recycle"
     shared = [sg.done.file.path for sg in t.subgoals.values() if sg.done and sg.done.file and sg.done.file.share]
-    sources = [sg.done.file.source or sg.done.file.export_of for sg in t.subgoals.values()
-               if sg.done and sg.done.file and (sg.done.file.source or sg.done.file.export_of)]  # fmt: skip
+    sources = [f.source or f.export_of or f.extract_of for sg in t.subgoals.values()
+               if sg.done and (f := sg.done.file) and (f.source or f.export_of or f.extract_of)]  # fmt: skip
     try:
         named = t.removes if recycle or t.capability == "file.organize" else shared or sources or t.attaches or t.writes
         paths = [w.format_map({**it.params, **it.content}) for w in named]

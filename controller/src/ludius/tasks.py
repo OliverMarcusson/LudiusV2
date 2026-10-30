@@ -100,6 +100,7 @@ class FileCheck(Strict):
     moved_from: str | None = None
     attachment_of: list[str] | None = None
     export_of: str | None = None
+    extract_of: str | None = None
 
     @model_validator(mode="after")
     def _noise_folder(self) -> FileCheck:
@@ -108,6 +109,15 @@ class FileCheck(Strict):
         if self.source is not None and (self.append is None or guestfile.profile_path("u", self.source) is None
                                         or self.source.lower()[-5:] != ext or self.source == self.path):  # fmt: skip
             raise ValueError(f"file check {self.path!r}: a source goes with append, another noise file, same type")
+        if self.extract_of is not None:
+            paths = (self.path, self.extract_of)
+            if any(guestfile.profile_path("u", x) is None for x in paths) or self.extract_of[-4:].lower() != ".zip":
+                raise ValueError(f"file check {self.path!r}: an extract goes from a noise .zip to a noise file")
+            if self.recycled or any(getattr(self, k) is not None for k in (*need.values(), "download", "append",
+                                                                            "share", "moved_from", "attachment_of",
+                                                                            "export_of")):  # fmt: skip
+                raise ValueError(f"file check {self.path!r}: an extract check stands alone")
+            return self
         if self.export_of is not None:
             paths = (self.path, self.export_of)
             kinds = (".pdf", ".zip")
@@ -885,7 +895,8 @@ def file_reserved(user: str, rel: str, policy: Any) -> bool:
 
 def file_baseline(task: Task, policy: Any) -> str | None:
     files = [sg.done.file for sg in task.template.subgoals.values() if sg.done and sg.done.file]
-    sources = [task.fmt(c.source or c.export_of or "") for c in files if c.source or c.export_of]
+    sources = [task.fmt(c.source or c.export_of or c.extract_of or "") for c in files
+               if c.source or c.export_of or c.extract_of]  # fmt: skip
     attached = [task.fmt(a) for a in task.template.attaches]
     for rel in [*write_paths(task), *(task.fmt(r) for r in task.template.removes), *sources, *attached]:
         if file_reserved(task.owner, rel, policy):
@@ -934,6 +945,21 @@ def file_baseline(task: Task, policy: Any) -> str | None:
         if not f.exists:
             return f"{src}: not there, nothing to export"
         task.sources_before[src] = f.data
+    for c in (c for c in files if c.extract_of is not None):
+        rel, src = task.fmt(c.path), task.fmt(c.extract_of or "")
+        f = guestfile.read(task.owner, src)
+        if f is None:
+            return f"{src}: unreadable on the guest"
+        member = _zip_single(f.data) if f.exists else None
+        if member is None or member[0].casefold() != _leaf(rel).casefold():
+            return f"{src}: not an archive of exactly {_leaf(rel)}, nothing to extract"
+        task.sources_before[rel] = member[1]
+        parent = rel.rpartition("\\")[0]
+        folder = guestfile.read(task.owner, parent)
+        if folder is not None and folder.exists:
+            return f"{parent}: a file, not a folder to extract into"
+        if folder is not None:
+            absent.add(rel)
     for c in (c for c in files if c.attachment_of):
         rel, (sender, subject) = task.fmt(c.path), (task.fmt(x) for x in c.attachment_of or [])
         got = mail.matching(task.owner, "inbox", subject, True)
@@ -972,7 +998,7 @@ def file_baseline(task: Task, policy: Any) -> str | None:
     checked = [task.fmt(c.path) for c in files if c.append is None and not c.recycled and c.share is None]
     if task.inst.request:
         checked += [w for w in write_paths(task) if not w.endswith(".*") and w not in edits]
-    for rel in dict.fromkeys(checked):
+    for rel in dict.fromkeys(r for r in checked if r not in absent):
         f = guestfile.read(task.owner, rel)
         if f is None:
             return f"{rel}: unreadable on the guest"
@@ -1023,6 +1049,8 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
         return moved and s is not None and not s.exists
     if c.download is not None:
         return f is not None and f.exists and f.data == intranet.download_bytes(task.fmt(c.download))
+    if c.extract_of is not None:
+        return f is not None and f.exists and f.data == task.sources_before.get(rel)
     if c.attachment_of is not None:
         return f is not None and f.exists and hashlib.sha256(f.data).hexdigest() == task.saved_sha.get(rel)
     if f is None or not f.exists or f.written_ms < task.started_ms:
@@ -1046,12 +1074,17 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
 
 
 def _zip_holds(data: bytes, name: str, want: bytes) -> bool:
+    m = _zip_single(data)
+    return m is not None and m[0].casefold() == name.casefold() and m[1] == want
+
+
+def _zip_single(data: bytes) -> tuple[str, bytes] | None:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             items = z.infolist()
-            return [i.filename.casefold() for i in items] == [name.casefold()] and z.read(items[0]) == want
+            return (items[0].filename, z.read(items[0])) if len(items) == 1 and not items[0].is_dir() else None
     except (zipfile.BadZipFile, OSError, ValueError, NotImplementedError, EOFError):
-        return False
+        return None
 
 
 def _leaf(rel: str) -> str:

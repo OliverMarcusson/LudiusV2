@@ -1,0 +1,55 @@
+task: explorer_extract_zip
+app: explorer
+capability: file.export
+processes: [explorer.exe]
+params: [file_name, file_ext]
+writes: ['Documents\{file_name}\{file_name}.{file_ext}']
+about: "Unpack one of the persona's own ZIP archives in Documents (under Own recent files, a .zip holding one file) into a folder of the same name next to it, with Extract All. file_name: the archive's name exactly, without folder and .zip; file_ext: the extension of the file inside without the dot (docx, xlsx, pptx, txt or pdf)."
+example: {file_name: q4 accruals, file_ext: xlsx}
+variants:
+  - [open_explorer_keys, go_documents, show_extensions, select_file, menu_keys, extract_all, extract, close_explorer]
+budget_steps: 45
+budget_minutes: 9
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_documents:
+    goal: "Go to the Documents folder"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
+  show_extensions:
+    goal: "Turn on File name extensions on File Explorer's View tab, so the archive shows as {file_name}.zip"
+    steps: 8
+    avoid: [{role: edit}, {name: '(?i)^(hidden items|item check boxes|hide selected items|options)$'}]
+    done: {element: {role: check box, name: '^File name extensions$', value: '^on$'}}
+  select_file:
+    goal: "Click the archive {file_name}.zip once to select it"
+    in_window: &documents {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+    avoid: [{role: edit}]
+    done: {element: {role: list item, name: '^{file_name}\.zip$', selected: true}}
+  menu_keys:
+    goal: "Press Shift+F10 to open the menu of the selected archive {file_name}.zip"
+    keys: [Shift+F10]
+    steps: 3
+    in_window: *documents
+    require: [{role: list item, name: '^{file_name}\.zip$', selected: true}]
+    forbid: [{role: list item, name: '^(?!{file_name}\.zip$)', selected: true}]
+    avoid: [{role: edit}, {role: menu item}]
+    done: {element: {role: menu item, name: '^Extract All'}}
+  extract_all:
+    goal: "In the open menu choose Extract All..."
+    steps: 4
+    avoid: [{role: edit}, {role: menu item, name: '^(?!Extract All)'}]
+    done: {element: {role: button, name: '^Extract$'}}
+  extract:
+    goal: "In the Extract Compressed (Zipped) Folders window keep the suggested folder and click Extract"
+    steps: 5
+    avoid: [{role: edit}, {name: '(?i)^(browse|cancel)'}]
+    done: {file: {path: 'Documents\{file_name}\{file_name}.{file_ext}', extract_of: 'Documents\{file_name}.zip'}}
+  close_explorer:
+    goal: "Close every File Explorer window"
+    steps: 8
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}
