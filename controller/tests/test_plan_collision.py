@@ -222,6 +222,30 @@ def test_follow_ups_stay_within_the_budget_and_threads_need_a_reply() -> None:
         assert 5 <= len(work) <= 8 and "f0" not in {it.followup for it in work}
 
 
+def test_code_picks_an_own_file_that_fits_the_template() -> None:
+    src = cli.plan_sources()
+    anna = next(p for p in src.personas if p.user == "aberg")
+    keys = ("explorer_file_download", "explorer_zip_file", "explorer_extract_zip")
+    templates = {k: src.templates[k] for k in keys}
+    for owned, want in (({"downloads\\q4 plan.xlsx": "2026-01-01"}, {"explorer_file_download"}),
+                        ({"documents\\notes.txt": "2026-01-01"}, {"explorer_zip_file"}),
+                        ({"documents\\notes.zip": "2026-01-01"}, {"explorer_extract_zip"})):  # fmt: skip
+        items = planner.day_slots(
+            anna, DAY, templates, {}, set(), [], {}, {}, set(), set(), owned, [], None, [], {}, {}, set(), [],
+        )  # fmt: skip
+        work = [it for it in items if it.template != planner.BREAK]
+        assert {it.template for it in work} == want
+        [it] = work
+        assert (
+            it.params
+            == {
+                "explorer_file_download": {"file_name": "q4 plan.xlsx"},
+                "explorer_zip_file": {"file_name": "notes", "file_ext": "txt"},
+                "explorer_extract_zip": {"file_name": "notes"},
+            }[it.template]
+        )
+
+
 def test_the_writer_cannot_change_fixed_values(monkeypatch: pytest.MonkeyPatch) -> None:
     people = [
         Person(name=n, role="r", department="d", user=u) for n, u in (("Anna Berg", "aberg"), ("Lars Nord", "lnord"))

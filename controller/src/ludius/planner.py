@@ -287,9 +287,27 @@ def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], p
     def of(cap: str) -> list[str]:
         return [k for k, t in templates.items() if t.capability == cap and not t.resembles]
 
+    def own(k: str) -> list[dict[str, str]] | None:
+        t, fits, known = templates[k], list[dict[str, str]](), not owned
+        for path in owned:
+            name = path.rsplit("\\", 1)[-1]
+            stem, _, ext = name.rpartition(".")
+            for c in ({"file_name": name}, {"file_name": stem}, {"file_name": stem, "file_ext": ext}):
+                try:
+                    why = _owned(PlanItem(at="00:00", template=k, params=c), t, owned, date.isoformat(), [])
+                except KeyError:
+                    why = None
+                known |= why != "missing parameters"
+                if why is None:
+                    fits.append(c)
+                    break
+        return fits if known else None
+
     def slot(k: str, why: str = "") -> PlanItem:
         it = PlanItem(at="00:00", template=k, context=why)
         cap = templates[k].capability or ""
+        if (cap in OWN_FILES or templates[k].attaches) and (fits := own(k)):
+            it.params |= rng.choice(fits)
         if cap in TO_SOMEONE:
             to(it)
         elif cap == "mail.reply":
@@ -319,7 +337,7 @@ def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], p
                 and (cap != "chat.post" or bool(channels))
                 and (cap != "file.share" or bool(shares))
                 and (cap != "file.download" or bool(intranet.downloads()))
-                and (not (cap in OWN_FILES or t.attaches) or bool(owned))
+                and (not (cap in OWN_FILES or t.attaches) or own(k) != [])
             )
         )
 
