@@ -32,6 +32,7 @@ from ludius.reply import Composer, prepare_answer, prepare_file, prepare_read
 from ludius.tasks import (
     LAUNCH_TEXT,
     RESERVED_RECIPIENT,
+    Done,
     Persona,
     Subgoal,
     Task,
@@ -49,6 +50,9 @@ from ludius.tasks import (
 )
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
+
+STUCK = "stuck"
+MAX_DETOURS = 2
 
 Clock = Literal["realtime", "compressed", "time-jump"]
 DONE_THRESHOLD = 0.85
@@ -375,16 +379,20 @@ class Runner:
             self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status="abandoned",
                            reason=f"start: {why}", steps=0)  # fmt: skip
             return Outcome("abandoned", 0, f"start: {why}", done)
-        assisted = False
         for name in task.subgoal_names:
             sg = task.subgoal(name)
-            result = self._subgoal(task, name, sg, budget=min(sg.steps, task.template.budget_steps - steps), t0=t0)
+            result = self._subgoal(task, name, sg, budget=min(sg.steps, task.template.budget_steps - steps), t0=t0,
+                                   may_detour=self.assist is not None)  # fmt: skip
             steps = self._steps = steps + result[1]
-            if result[0] != "done" and result[2] == "step budget" and sg.done is None and self.assist and not assisted:
-                assisted = True
-                steps = self._steps = steps + self._assisted(task, name, sg, t0, steps)
+            detours = 0
+            while (result[0] != "done" and (result[2] == "step budget" or result[2].startswith(STUCK))
+                   and self.assist is not None and detours < MAX_DETOURS
+                   and task.template.budget_steps - steps > 0):  # fmt: skip
+                detours += 1
+                steps = self._steps = steps + self._assisted(task, name, sg, t0, steps, result[2])
                 left = task.template.budget_steps - steps
-                result = self._subgoal(task, name, sg, budget=min(sg.steps // 2 + 2, left), t0=t0)
+                result = self._subgoal(task, name, sg, budget=min(sg.steps // 2 + 2, left), t0=t0,
+                                       may_detour=detours < MAX_DETOURS)  # fmt: skip
                 steps = self._steps = steps + result[1]
             if result[0] != "done":
                 reason = result[2]
@@ -415,17 +423,21 @@ class Runner:
                        reason=reason)  # fmt: skip
         return Outcome(status, steps, reason, done)
 
-    def _assisted(self, task: Task, name: str, sg: Subgoal, t0: float, steps: int) -> int:
+    def _assisted(self, task: Task, name: str, sg: Subgoal, t0: float, steps: int, why: str) -> int:
         assert self.assist is not None
         v = view(self.observe(), task, sg, self.policy)
-        proposal = self.assist.next_subgoal(build_state(v, task, sg, [], "stuck: step budget used up"))
-        self.log.write(event="llm_subgoal", host_ms=_now(), task=task.template.task, subgoal=name, goal=proposal.goal)
-        helper = Subgoal(goal=proposal.goal, keys=sg.keys, launch=sg.launch, text=sg.text,
-                         search=sg.search, allow_destructive=sg.allow_destructive, steps=6)  # fmt: skip
+        why = why if why.startswith(STUCK) else f"{STUCK}: {why}"
+        proposal = self.assist.next_subgoal(build_state(v, task, sg, [], why))
+        self.log.write(event="llm_subgoal", host_ms=_now(), task=task.template.task, subgoal=name, goal=proposal.goal,
+                       why=why)  # fmt: skip
+        goal = proposal.goal.replace("{", "{{").replace("}", "}}")
+        helper = Subgoal(goal=goal, launch=sg.launch, steps=6, done=Done(ask=f"Is this done on the screen: {goal}"))
         budget = min(helper.steps, task.template.budget_steps - steps)
-        return self._subgoal(task, f"{name}/assist", helper, budget=budget, t0=t0)[1]
+        return self._subgoal(task, f"{name}/detour", helper, budget=budget, t0=t0)[1]
 
-    def _subgoal(self, task: Task, name: str, sg: Subgoal, budget: int, t0: float) -> tuple[str, int, str]:
+    def _subgoal(
+        self, task: Task, name: str, sg: Subgoal, budget: int, t0: float, may_detour: bool = False
+    ) -> tuple[str, int, str]:
         history: list[str] = []
         verifications = 0
         last_result = "start of subgoal"
@@ -438,7 +450,7 @@ class Runner:
         added_baseline(sg.done, snap, task)
         seen = {fingerprint(snap)}
         guarded = False
-        escs = 0
+        escs = ladders = 0
         sat: list[str] = []
         shot_why: str | None = None
         step = 0
@@ -508,6 +520,8 @@ class Runner:
                 sat = []
             else:
                 sat = [*sat, popup] if sat and sat[-1] == popup else [popup]
+                if len(sat) % 3 == 0 and may_detour:
+                    return "failed", step - 1, f"{STUCK}: '{popup}' is in front of the task window"
                 if len(sat) % 3 == 0 and escs < 2:
                     escs += 1
                     self.agent.chord(keys.chord("Esc"))
@@ -615,6 +629,9 @@ class Runner:
                 snap = self.observe(timeout_ms=10000)
                 self.log.write(event="ladder", step=1, action="rescan", host_ms=_now(), task=task.template.task)
             elif no_change >= 3:
+                ladders += 1
+                if may_detour and ladders >= 2:
+                    return "failed", step, f"{STUCK}: no progress, even after in-app recovery"
                 recovering = True
                 no_change = 0
                 self.log.write(

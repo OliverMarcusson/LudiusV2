@@ -293,3 +293,36 @@ def test_a_slow_dialog_from_the_subgoal_key_gets_a_second_look(tmp_path: Path, m
     task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
     status, steps, _ = runner._subgoal(task, "save_as", task.subgoal("save_as"), budget=4, t0=1e18)  # pyright: ignore[reportPrivateUsage]
     assert (status, steps) == ("done", 1)
+
+
+class Proposes:
+    narrative = Path("unused")
+
+    def __init__(self) -> None:
+        self.why: list[str] = []
+
+    def next_subgoal(self, state: dict[str, Any]) -> Any:
+        from ludius.assist import Proposal
+
+        self.why.append(state["last_result"])
+        return Proposal(goal="Close the {reminder} window")
+
+    def verify(self, state: dict[str, Any]) -> Any:
+        from ludius.assist import Verdict
+
+        return Verdict(done=False, reason="no")
+
+
+def test_a_stuck_step_takes_at_most_two_detours_without_template_powers(tmp_path: Path) -> None:
+    from ludius.loop import MAX_DETOURS, STUCK
+
+    log = tmp_path / "gt.jsonl"
+    assist = Proposes()
+    runner = Runner(StuckAgent(), PrefersStart(), Persona(name="t", user="t"), GroundTruth(log), seed=1,  # type: ignore[arg-type]
+                    assist=assist)  # type: ignore[arg-type]  # fmt: skip
+    out = runner.run(open_ended())
+    events = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert out.status == "abandoned" and len(assist.why) == MAX_DETOURS
+    assert assist.why[0].startswith(f"{STUCK}: no progress")
+    detour = [e for e in events if e.get("event") == "step" and e["subgoal"].endswith("/detour")]
+    assert detour and not any(e["action"] == "type" for e in detour)
