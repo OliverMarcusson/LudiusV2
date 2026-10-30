@@ -273,7 +273,7 @@ class Runner:
             if sg is not None and any(c.keys.lower() == o.keys.lower() for c in task.template.key_commits):
                 fresh = self.agent.observe(wait_settle=False).snapshot  # the focus may have moved since the choice
                 if commits_unguarded(o.keys, next((x for x in fresh.elements if x.focused), None), task, sg):
-                    return f"{o.keys} commits in the focused field: only the guarded send step may press it"
+                    return f"{o.keys} commits in the focused field: only the guarded send step may, in its field"
             self.agent.chord(keys.chord(o.keys))
         elif o.kind == "scroll":
             target = next((x for x in self.snap.elements if "list continues" in " ".join(x.hints)), None)

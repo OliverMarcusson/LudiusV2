@@ -18,7 +18,7 @@ variants:
   - [close_edge]
 weights: [1, 1, 0, 0, 0]
 # Enter in the message box sends (a leftover draft too): only the guarded send_message subgoal may press it there.
-key_commits: [{keys: Enter, focus: {name: "^Write to "}}]
+key_commits: [{keys: Enter, focus: {name: "^(Write to |Reply to this thread)"}}]
 budget_steps: 30
 budget_minutes: 6
 subgoals:

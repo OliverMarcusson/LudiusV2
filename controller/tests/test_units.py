@@ -328,7 +328,10 @@ def test_chat_enter_only_in_the_guarded_send() -> None:
     assert not enter("write_message", composer)
     assert not enter("write_message")  # focus unknown
     assert enter("open_channel", switcher)
-    assert enter("send_message", composer)  # its require checks guard the press
+    assert not enter("send_message", composer)  # not the planned line: its require checks refuse the press
+    ready = obs.Element(id=1, key="c", role="edit", name="Write to Coffee Corner", focused=True, bounds=box,
+                        value=task.values["message"], actions=["value"])  # fmt: skip
+    assert enter("send_message", ready)
 
 
 def test_chat_enter_rechecks_the_focus_at_the_press(tmp_path: Any) -> None:
@@ -363,3 +366,44 @@ def test_visual_words_are_click_targets() -> None:
     ])  # fmt: skip
     texts = [o.text for o in build_options(view(snap, task, sg, Policy()), task, sg, Policy()) if o.kind == "click"]
     assert any("'Save'" in x for x in texts) and not any("'Label'" in x for x in texts)
+
+
+def test_send_guard_needs_this_conversations_box() -> None:
+    """Live team4: after the channel click the old DM's box was still focused and got the channel's line; a
+    "^Write to " guard would have let Enter send it to that colleague. Only this channel's or person's box counts."""
+    from ludius.tasks import element_matches
+
+    for name, wrong in [("chat_post_message", "Write to Daan Koster"), ("chat_direct_message", "Write to Finance Ops")]:
+        t = load_template(DATA / "templates" / f"{name}.yaml")
+        task = Task(t, TaskInstance(template=t.task, params=t.example), random.Random(0))
+        right = f"Write to {task.values.get('channel') or task.values['to_name']}"
+        (guard,) = task.subgoal("send_message").require
+        msg = task.values["message"]
+        assert element_matches(obs.Element(role="edit", name=right, value=msg, focused=True), guard, task)
+        assert not element_matches(obs.Element(role="edit", name=wrong, value=msg, focused=True), guard, task)
+
+
+def test_send_key_is_checked_on_the_fresh_focus(tmp_path: Path) -> None:
+    """Sol: the guard held on the decided screen, then the focus moved to another conversation's box (or a thread
+    reply box): Enter is refused there, pressed only in this channel's box with the planned line."""
+    from ludius.loop import GroundTruth, Runner
+    from ludius.options import Option
+
+    t = load_template(DATA / "templates" / "chat_post_message.yaml")
+    task = Task(t, TaskInstance(template=t.task, params=t.example), random.Random(0))
+    w = obs.Window(kind=obs.Window.FOREGROUND, process_name="msedge.exe")
+    msg, channel = task.values["message"], task.values["channel"]
+    enter = Option("o1", "key", "press Enter", keys="Enter")
+    cases = [
+        ("Write to Daan Koster", "send_message", False),
+        (f"Write to {channel}", "send_message", True),
+        ("Reply to this thread...", "open_chat", False),
+    ]
+    for name, sg, sent in cases:
+        box = obs.Element(role="edit", name=name, value=msg, focused=True, actions=["value"])
+        chords: list[list[int]] = []
+        seen = type("R", (), {"snapshot": obs.Snapshot(windows=[w], elements=[box])})()
+        agent = type("A", (), {"vm": "t", "chord": lambda self, vks, c=chords: c.append(vks) or 0,
+                               "observe": lambda self, s=seen, **_: s})()  # fmt: skip
+        r = Runner(agent, None, Persona(name="t", user="t"), GroundTruth(tmp_path / f"{name[:5]}.jsonl"))  # type: ignore[arg-type]
+        assert (r.act(enter, task, task.subgoal(sg)) is None) == sent and bool(chords) == sent, name

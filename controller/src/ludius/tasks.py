@@ -781,7 +781,7 @@ def element_matches(e: obs.Element, c: ElementCheck, task: Task, flags: int = re
     )
 
 
-def _guard_matches(e: obs.Element, c: ElementCheck, task: Task) -> bool:
+def guard_matches(e: obs.Element, c: ElementCheck, task: Task) -> bool:
     """A require check reads the field itself: only an element exposing its value (UIA Value pattern) counts, since
     an unreadable field reads "" and would pass as empty; and only ASCII, case-folded as ASCII, so a lookalike such
     as mvellınga (dotless i, which Unicode re.I folds to i) is not the planned address."""
@@ -800,7 +800,7 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
     if sg.require and target is not None and target.window != fg:
         return "precondition: the target is not in the foreground window"
     for c in sg.require:
-        if not any(e.window == fg and _guard_matches(e, c, task) for e in snap.elements):
+        if not any(e.window == fg and guard_matches(e, c, task) for e in snap.elements):
             seen = [
                 e.value[:80]
                 for e in snap.elements

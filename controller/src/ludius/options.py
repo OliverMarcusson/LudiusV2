@@ -14,6 +14,7 @@ from ludius.tasks import (
     Task,
     declared_commits,
     element_matches,
+    guard_matches,
     pixels_region,
     pixels_window,
 )
@@ -181,10 +182,15 @@ def launch_target(e: obs.Element | None, snap: obs.Snapshot) -> bool:
 
 def commits_unguarded(k: str, focused: obs.Element | None, task: Task, sg: Subgoal) -> bool:
     """The key commits here (Enter sends a chat line: template key_commits) and the subgoal has no guard: only a
-    subgoal with `require` checks may press it, and never with the focus unknown."""
-    return not sg.require and any(
+    subgoal with `require` checks may press it, and never with the focus unknown. A guarded subgoal presses it only
+    in a focused field its checks still accept, read fresh: the focus can move after the checks held (live team4,
+    the old conversation's box)."""
+    commits = any(
         c.keys.lower() == k.lower() and (focused is None or element_matches(focused, c.focus, task))
         for c in task.template.key_commits
+    )
+    return commits and (
+        not sg.require or focused is None or not any(guard_matches(focused, c, task) for c in sg.require)
     )
 
 
