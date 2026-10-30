@@ -450,3 +450,33 @@ def test_add_rows_needs_the_old_cells_and_the_new_rows_below(monkeypatch: pytest
     assert guestfile.xlsx_cells(formula) is None
     disk["file"] = guestfile.GuestFile(True, 500, formula)
     assert file_baseline(tk, Policy()) == r"Documents\stock.xlsx: unreadable on the guest"
+
+
+def test_csv_import_needs_the_csv_cells_in_a_new_workbook(monkeypatch: pytest.MonkeyPatch) -> None:
+    templates = cli.plan_sources().templates
+    item = PlanItem.model_validate({"at": "11:00", "template": "excel_import_csv", "params": {"file_name": "rates"}})
+    csv = r"downloads\rates.csv"
+    assert validate([item], templates, [], Policy(), owned={csv: "2026-11-01"}, day="2026-11-02") == []
+    assert "own files" in validate([item], templates, [], Policy(), owned={}, day="2026-11-02")[0][1]
+    assert "already has" in validate([item], templates, [], Policy(), owned={csv: "2026-11-01", r"documents\rates.xlsx":
+                                     "2026-11-01"}, day="2026-11-02")[0][1]  # fmt: skip
+    disk: dict[str, Any] = {}
+    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+    t = templates["excel_import_csv"]
+    tk = Task(t, TaskInstance(template=t.task, params={"file_name": "rates"}), random.Random(0))
+    tk.owner, tk.started_ms = "aberg", 1_000_000
+    src, out = r"Downloads\rates.csv", r"Documents\rates.xlsx"
+    disk[src] = guestfile.GuestFile(True, 500, b"\xef\xbb\xbfItem,Due\npens,2026-11-02\n")
+    disk[out] = guestfile.GuestFile(True, 500, b"old")
+    assert "never overwritten" in (file_baseline(tk, Policy()) or "")
+    disk[out] = guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) is None
+    done, snap = t.subgoals["save_xlsx"].done, obs.Snapshot()
+    good = {"A1": ("s", "item"), "B1": ("s", "Due"), "A2": ("s", "pens"), "B2": ("n", "46328")}
+    disk[out] = guestfile.GuestFile(True, 2_000_000, xlsx(good))
+    assert check_done(done, snap, tk, False) is True
+    disk[out] = guestfile.GuestFile(True, 2_000_000, xlsx({**good, "B2": ("s", "2026-11-02")}))
+    assert check_done(done, snap, tk, False) is False
+    disk[out] = guestfile.GuestFile(True, 2_000_000, xlsx(good))
+    disk[src] = guestfile.GuestFile(True, 2_000_000, b"Item,Due\n")
+    assert check_done(done, snap, tk, False) is False

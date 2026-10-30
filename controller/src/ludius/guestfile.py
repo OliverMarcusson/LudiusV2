@@ -192,11 +192,11 @@ def grid_cells(rows: str) -> dict[str, str]:
     for r, line in enumerate(rows.strip("\n").split("\n"), start=1):
         for c, cell in enumerate(line.split("\t")):
             if cell != "":
-                out[f"{_column(c)}{r}"] = cell
+                out[f"{column(c)}{r}"] = cell
     return out
 
 
-def _column(i: int) -> str:
+def column(i: int) -> str:
     s = ""
     i += 1
     while i:

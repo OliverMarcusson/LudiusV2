@@ -1,0 +1,72 @@
+task: excel_import_csv
+app: excel
+capability: file.export
+processes: [excel.exe, explorer.exe]
+writes: ['Documents\{file_name}.xlsx']
+params: [file_name]
+about: "Open a CSV file the persona downloaded earlier (a .csv in Downloads under Own recent files, with no workbook of that name yet) in Excel and save it as an Excel workbook in Documents; the CSV stays as it was. file_name: the CSV's name exactly, without folder and extension."
+example: {file_name: Expense rates 2026}
+variants:
+  - [open_explorer_keys, go_downloads, open_file, save_as_keys, pick_xlsx, go_documents, name_file, save_xlsx, close_app, close_explorer]
+budget_steps: 55
+budget_minutes: 11
+on_abandon: close_without_saving
+key_commits: [{keys: Enter, focus: {}}]
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_downloads:
+    goal: "Go to the Downloads folder"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Downloads$"}}
+  open_file:
+    goal: "Open the CSV file {file_name} with a double-click"
+    steps: 14
+    in_window: {process: explorer.exe, class_name: CabinetWClass, title: "^Downloads$"}
+    avoid: [{role: edit}, {role: menu item}]
+    done: {foreground: {process: excel.exe, title: '^{file_name}(\.csv)? - Excel$'}}
+  save_as_keys:
+    goal: "Open Excel's Save As dialog with F12"
+    keys: [F12]
+    steps: 6
+    in_window: {process: excel.exe, title: '^{file_name}(\.csv)? - Excel$'}
+    done: {foreground: {process: excel.exe, title: '^Save As$'}}
+  pick_xlsx:
+    goal: "Set Save as type to Excel Workbook (*.xlsx): click the Save as type box, then press Home, its first entry"
+    keys: [Home]
+    steps: 8
+    avoid: [{name: '^(Save|Tools|Cancel)$'}, {role: edit}, {role: menu item}]
+    done: {element: {name: '^Save as type', value: '^Excel Workbook \(\*\.xlsx\)$'}}
+  go_documents:
+    goal: "Open the Documents folder in the Save As dialog (This PC > Documents in the left pane)"
+    steps: 8
+    in_window: &dialog {process: excel.exe, title: '^Save As$'}
+    avoid: [{name: '^(Save|Tools|New folder)$'}, {role: edit}]
+    done: {ask: "Does the Save As dialog show the user's own Documents folder (This PC > Documents) as the save location?"}
+  name_file:
+    goal: "Type the file name {file_name} into the File name field of the Save As dialog"
+    text: file_name
+    replace: true
+    field: "^File name"
+    steps: 6
+    in_window: *dialog
+    avoid: [{name: '^(Save|Tools)$'}]
+    done: {element: {name: '^File name', value: '^{file_name}$', focused: true}}
+  save_xlsx:
+    goal: "Save the workbook as {file_name}: press Enter"
+    keys: [Enter]
+    steps: 6
+    in_window: *dialog
+    require: [{name: "^File name", value: '^{file_name}(\.xlsx)?$'}, {name: '^Save as type', value: '^Excel Workbook \(\*\.xlsx\)$'}]
+    forbid: [{name: '(?i)already exists|replace it'}]
+    confirm: "Does Excel's Save As dialog show the user's own Documents folder (This PC > Documents) as the save location, with the file name {file_name} and the type Excel Workbook?"
+    done: {file: {path: 'Documents\{file_name}.xlsx', export_of: 'Downloads\{file_name}.csv'}}
+  close_app:
+    goal: "Close Excel"
+    done: {window: {process: excel.exe, absent: true}}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}

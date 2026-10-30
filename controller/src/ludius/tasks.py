@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import datetime as dt
 import functools
 import hashlib
@@ -120,9 +121,10 @@ class FileCheck(Strict):
             return self
         if self.export_of is not None:
             paths = (self.path, self.export_of)
-            kinds = (".pdf", ".zip")
-            if any(guestfile.profile_path("u", x) is None for x in paths) or not self.path.lower().endswith(kinds):
-                raise ValueError(f"file check {self.path!r}: an export goes from a noise file to a noise .pdf or .zip")
+            kinds, csv_in = (".pdf", ".zip", ".xlsx"), self.export_of.lower().endswith(".csv")
+            if any(guestfile.profile_path("u", x) is None for x in paths) or not self.path.lower().endswith(kinds) \
+                    or csv_in != self.path.lower().endswith(".xlsx"):
+                raise ValueError(f"file check {self.path!r}: an export goes to a noise .pdf, .zip or (from .csv) .xlsx")
             if self.recycled or any(getattr(self, k) is not None for k in (*need.values(), "download", "append",
                                                                             "share", "moved_from", "attachment_of")):
                 raise ValueError(f"file check {self.path!r}: an export check stands alone")
@@ -1060,6 +1062,9 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
         unchanged = s is not None and s.exists and s.data == task.sources_before.get(task.fmt(c.export_of))
         if rel.lower().endswith(".zip"):
             return unchanged and _zip_holds(f.data, _leaf(task.fmt(c.export_of)), s.data if s else b"")
+        if rel.lower().endswith(".xlsx"):
+            cells, want = guestfile.xlsx_cells(f.data), _csv_cells(s.data if s else b"")
+            return unchanged and bool(want) and cells is not None and _fold(cells) == _fold(want)
         return unchanged and f.data.startswith(b"%PDF-") and b"%%EOF" in f.data[-1024:]
     if c.cells is not None:
         cells = guestfile.xlsx_cells(f.data)
@@ -1076,6 +1081,21 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
 def _zip_holds(data: bytes, name: str, want: bytes) -> bool:
     m = _zip_single(data)
     return m is not None and m[0].casefold() == name.casefold() and m[1] == want
+
+
+def _csv_cells(data: bytes) -> dict[str, str]:
+    try:
+        rows = list(csv.reader(io.StringIO(data.decode("utf-8-sig"))))
+    except (UnicodeDecodeError, csv.Error):
+        return {}
+    cells = ((f"{guestfile.column(i)}{r}", c) for r, row in enumerate(rows, 1) for i, c in enumerate(row))
+    return {ref: _excel_value(c) for ref, c in cells if c}
+
+
+def _excel_value(cell: str) -> str:
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", cell):
+        return str((dt.date.fromisoformat(cell) - dt.date(1899, 12, 30)).days)
+    return cell
 
 
 def _zip_single(data: bytes) -> tuple[str, bytes] | None:
