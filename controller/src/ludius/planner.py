@@ -400,8 +400,8 @@ def validate(
 def _owned(it: PlanItem, t: Template, owned: dict[str, str], day: str, items: list[PlanItem]) -> str | None:
     recycle = t.capability == "file.recycle"
     shared = [sg.done.file.path for sg in t.subgoals.values() if sg.done and sg.done.file and sg.done.file.share]
-    sources = [sg.done.file.source or sg.done.file.pdf_of for sg in t.subgoals.values()
-               if sg.done and sg.done.file and (sg.done.file.source or sg.done.file.pdf_of)]  # fmt: skip
+    sources = [sg.done.file.source or sg.done.file.export_of for sg in t.subgoals.values()
+               if sg.done and sg.done.file and (sg.done.file.source or sg.done.file.export_of)]  # fmt: skip
     try:
         named = t.removes if recycle or t.capability == "file.organize" else shared or sources or t.attaches or t.writes
         paths = [w.format_map({**it.params, **it.content}) for w in named]
@@ -413,7 +413,7 @@ def _owned(it: PlanItem, t: Template, owned: dict[str, str], day: str, items: li
         return f"file_name: {verb} only one of this persona's own files (Own recent files), named exactly"
     if t.capability == "file.export" and any(w.format_map({**it.params, **it.content}).casefold() in owned
                                               for w in t.writes):  # fmt: skip
-        return "file_name: this document already has its PDF, export a different one"
+        return "file_name: this file already has that copy, choose a different one"
     if t.attaches and not all(p.lower().endswith(ATTACHABLE) for p in paths):
         return f"file_name: attach only {', '.join(ATTACHABLE)} files"
     if recycle:

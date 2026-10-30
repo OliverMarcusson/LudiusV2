@@ -1,0 +1,51 @@
+task: explorer_zip_file
+app: explorer
+capability: file.export
+processes: [explorer.exe]
+params: [file_name, file_ext]
+writes: ['Documents\{file_name}.zip']
+about: "Pack one of the persona's own files in Documents (under Own recent files) into a ZIP archive next to it, as people do before sending or archiving. file_name: the file's name exactly, without folder and extension; file_ext: its extension without the dot (docx, xlsx, pptx, txt or pdf)."
+example: {file_name: q4 accruals, file_ext: xlsx}
+variants:
+  - [open_explorer_keys, go_documents, show_extensions, select_file, menu_keys, compress, close_explorer]
+budget_steps: 40
+budget_minutes: 8
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_documents:
+    goal: "Go to the Documents folder"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
+  show_extensions:
+    goal: "Turn on File name extensions on File Explorer's View tab, so the file shows as {file_name}.{file_ext}"
+    steps: 8
+    avoid: [{role: edit}, {name: '(?i)^(hidden items|item check boxes|hide selected items|options)$'}]
+    done: {element: {role: check box, name: '^File name extensions$', value: '^on$'}}
+  select_file:
+    goal: "Click the file {file_name}.{file_ext} once to select it"
+    in_window: &documents {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+    avoid: [{role: edit}]
+    done: {element: {role: list item, name: '^{file_name}\.{file_ext}$', selected: true}}
+  menu_keys:
+    goal: "Press Shift+F10 to open the menu of the selected file {file_name}.{file_ext}"
+    keys: [Shift+F10]
+    steps: 3
+    in_window: *documents
+    require: [{role: list item, name: '^{file_name}\.{file_ext}$', selected: true}]
+    forbid: [{role: list item, name: '^(?!{file_name}\.{file_ext}$)', selected: true}]
+    avoid: [{role: edit}, {role: menu item}]
+    done: {element: {role: menu item, name: '^Send to$'}}
+  compress:
+    goal: "In the open menu choose Send to, then Compressed (zipped) folder; leave the new archive's name as Windows suggests"
+    steps: 6
+    allow_destructive: ["Send to"]
+    forbid: [{role: list item, name: '^(?!{file_name}\.{file_ext}$)', selected: true}]
+    avoid: [{role: edit}, {role: menu item, name: '^(?!(Send to|Compressed \(zipped\) folder)$)'}]
+    done: {file: {path: 'Documents\{file_name}.zip', export_of: 'Documents\{file_name}.{file_ext}'}}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}

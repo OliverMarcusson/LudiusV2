@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import random
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -222,7 +224,7 @@ def test_pdf_export_needs_a_new_pdf_and_the_document_unchanged(monkeypatch: pyte
     assert validate([item], templates, [], Policy(), owned=owned, day="2026-11-02") == []
     assert validate([item], templates, [], Policy(), owned={}, day="2026-11-02")
     again = {**owned, r"documents\close memo.pdf": "2026-11-01"}
-    assert "already has its PDF" in validate([item], templates, [], Policy(), owned=again, day="2026-11-02")[0][1]
+    assert "already has that copy" in validate([item], templates, [], Policy(), owned=again, day="2026-11-02")[0][1]
     disk: dict[str, Any] = {}
     monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
     t = templates["word_export_pdf"]
@@ -244,4 +246,32 @@ def test_pdf_export_needs_a_new_pdf_and_the_document_unchanged(monkeypatch: pyte
     disk[src] = guestfile.GuestFile(True, 500, old)
     for bad in (guestfile.GuestFile(True, 2_000_000, b"%PDF-1.7 cut"), guestfile.GuestFile(True, 999_999, b"%PDF- %%EOF")):
         disk[pdf] = bad
+        assert check_done(done, snap, tk, False) is False
+
+
+def test_zip_needs_exactly_the_file_inside(monkeypatch: pytest.MonkeyPatch) -> None:
+    def pack(**files: bytes) -> bytes:
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            for name, data in files.items():
+                z.writestr(name.replace("_", " ") + ".docx", data)
+        return out.getvalue()
+
+    templates = cli.plan_sources().templates
+    params = {"file_name": "close memo", "file_ext": "docx"}
+    assert validate([it("11:00", "explorer_zip_file", **params)], templates, [], Policy(),
+                    owned={r"documents\close memo.docx": "2026-11-01"}, day="2026-11-02") == []  # fmt: skip
+    disk: dict[str, Any] = {}
+    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+    t = templates["explorer_zip_file"]
+    tk = Task(t, TaskInstance(template=t.task, params=params), random.Random(0))
+    tk.owner, tk.started_ms = "aberg", 1_000_000
+    src, zp = r"Documents\close memo.docx", r"Documents\close memo.zip"
+    disk[src], disk[zp] = guestfile.GuestFile(True, 500, b"doc"), guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) is None
+    done, snap = t.subgoals["compress"].done, obs.Snapshot()
+    disk[zp] = guestfile.GuestFile(True, 2_000_000, pack(close_memo=b"doc"))
+    assert check_done(done, snap, tk, False) is True
+    for bad in (pack(close_memo=b"other"), pack(close_memo=b"doc", other=b"x"), b"PK not a zip"):
+        disk[zp] = guestfile.GuestFile(True, 2_000_000, bad)
         assert check_done(done, snap, tk, False) is False

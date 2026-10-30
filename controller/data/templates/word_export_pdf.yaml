@@ -59,7 +59,7 @@ subgoals:
     require: [{name: "^File name", value: '^{file_name}(\.pdf)?$'}, {name: '^Save as type', value: '^PDF \(\*\.pdf\)$'}]
     forbid: [{name: '(?i)already exists|replace it'}]
     confirm: "Does Word's Save As dialog show the user's own Documents folder (This PC > Documents) as the save location, with the file name {file_name} and the type PDF?"
-    done: {file: {path: 'Documents\{file_name}.pdf', pdf_of: 'Documents\{file_name}.docx'}}
+    done: {file: {path: 'Documents\{file_name}.pdf', export_of: 'Documents\{file_name}.docx'}}
   close_app:
     goal: "Close Word"
     done: {window: {process: winword.exe, absent: true}}
