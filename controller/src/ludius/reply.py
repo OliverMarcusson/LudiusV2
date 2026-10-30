@@ -100,6 +100,18 @@ def to_read(owner: str, sender: str, subject: str, people: dict[str, str], polic
     return "already read at task start: its read flag could not show this task's read" if read else m
 
 
+def to_file(owner: str, sender: str, subject: str, people: dict[str, str], policy: Policy) -> mail.Message | str:
+    if why := _colleague(sender, owner, people, policy):
+        return why
+    same = mail.matching(owner, "inbox", subject)
+    if same is None:
+        return "inbox unreadable on the server"
+    ours = [m for m in same if m.cls == "IPM.Note" and m.sender == sender.strip().lower() and m.msgid]
+    if len(same) != 1 or len(ours) != 1:
+        return f"{len(ours)} mail(s) from {sender}, {len(same)} in all, with subject {subject!r} in the Inbox"
+    return "scenario-reserved mail" if policy.mail_reserved(ours[0].sender, ours[0].subject, ours[0].body) else ours[0]
+
+
 def to_answer(owner: str, sender: str, subject: str, people: dict[str, str], policy: Policy) -> mail.Message | str:
     if why := _colleague(sender, owner, people, policy):
         return why
@@ -142,6 +154,21 @@ def prepare_read(task: Task, policy: Policy, narrative: Path) -> tuple[str | Non
     task.read_id = m.id
     task.values["sender_name"] = people[m.sender.partition("@")[0]]
     return None, {"mail_id": m.id, "sender": m.sender, "subject": m.subject, "msgid": m.msgid, "read_at_start": False}
+
+
+def prepare_file(task: Task, policy: Policy, narrative: Path) -> tuple[str | None, dict[str, Any]]:
+    people = _people(narrative)
+    if isinstance(people, str):
+        return people, {}
+    m = to_file(task.owner, task.values.get("sender", ""), task.values.get("subject", ""), people, policy)
+    if isinstance(m, str):
+        return m, {}
+    where = mail.placed(task.owner, m.msgid, task.values.get("folder", ""))
+    if where != (1, 0):
+        return f"the mail is not once in the Inbox and absent from {task.values.get('folder')!r}: {where}", {}
+    task.file_msgid = m.msgid
+    task.values["sender_name"] = people[m.sender.partition("@")[0]]
+    return None, {"mail_id": m.id, "sender": m.sender, "subject": m.subject, "msgid": m.msgid}
 
 
 def hints(

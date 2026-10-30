@@ -42,6 +42,24 @@ NEAR_DUPLICATE = 0.85
 MIN_COMPARE = 12
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _LOCATION = re.compile(r"[A-Za-z0-9][A-Za-z0-9 .-]{1,39}")
+_MAIL_FOLDER = re.compile(r"[A-Za-z][A-Za-z0-9 -]{1,29}")
+_DEFAULT_FOLDERS = {
+    "inbox",
+    "outbox",
+    "drafts",
+    "sent items",
+    "deleted items",
+    "junk email",
+    "archive",
+    "calendar",
+    "contacts",
+    "tasks",
+    "notes",
+    "journal",
+    "conversation history",
+    "rss feeds",
+    "sync issues",
+}
 _PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")
 VALUE_MAX = 300
 _NAME_KEYS = ("file_name", "folder_name", "new_name")
@@ -224,6 +242,7 @@ def plan_day(
     names = sorted({_leaf(e) for e in existing if _leaf(e)}, key=str.casefold)[:SHOWN_EXISTING]
     mail_tasks = ", ".join(sorted(k for k, t in templates.items() if t.capability in SENDS)) or "none"
     reads = sorted(k for k, t in templates.items() if t.capability == "mail.read")
+    files = sorted(k for k, t in templates.items() if t.capability == "mail.file")
     chats = {t.capability: k for k, t in templates.items() if t.capability in ("chat.post", "chat.dm", "chat.read")}
     user = (
         f"Company story:\n{narrative.model_dump_json(indent=1)}\n\n"
@@ -270,6 +289,13 @@ def plan_day(
                 f" Reading a mail ({', '.join(reads)}) opens one listed Inbox mail marked unread (sender is its "
                 "sender's address, subject exactly as listed), e.g. the morning look at new mail; at most once each."
                 if reads
+                else ""
+            )
+            + (
+                f" Filing a mail ({', '.join(files)}) moves one listed Inbox mail the persona is done with into an "
+                "Inbox subfolder named for its topic or project (reuse the same folder name for related mail); plan "
+                "it after any read or reply of that mail."
+                if files
                 else ""
             )  # fmt: skip
             if colleagues
@@ -372,7 +398,7 @@ def validate(
             why = _invite(it, invites or set[tuple[str, str]]())
         if not why and cap == "mail.save" and not it.params.get("file_name", "").lower().endswith(ATTACHABLE):
             why = f"file_name: the attachment's exact name, a {', '.join(ATTACHABLE)} file"
-        if not why and cap in ("mail.read", "mail.save"):
+        if not why and cap in ("mail.read", "mail.save", "mail.file"):
             why = _read_mail(it, colleagues or set[str](), inbox or set[tuple[str, str]](), items[:i])
         if not why and t and (cap in OWN_FILES or t.attaches):
             why = _owned(it, t, owned or {}, day, items)
@@ -406,8 +432,8 @@ def validate(
 def _owned(it: PlanItem, t: Template, owned: dict[str, str], day: str, items: list[PlanItem]) -> str | None:
     recycle = t.capability == "file.recycle"
     shared = [sg.done.file.path for sg in t.subgoals.values() if sg.done and sg.done.file and sg.done.file.share]
-    sources = [f.source or f.export_of or f.extract_of for sg in t.subgoals.values()
-               if sg.done and (f := sg.done.file) and (f.source or f.export_of or f.extract_of)]  # fmt: skip
+    sources = [source for sg in t.subgoals.values()
+               if sg.done and (f := sg.done.file) and (source := f.source or f.export_of or f.extract_of)]  # fmt: skip
     try:
         named = t.removes if recycle or t.capability == "file.organize" else shared or sources or t.attaches or t.writes
         paths = [w.format_map({**it.params, **it.content}) for w in named]
@@ -616,6 +642,9 @@ def item_problem(
     channel = task.values.get("channel")
     if t.capability == "chat.post" and channel not in [*CHAT_CHANNELS, *teams]:
         return f"channel {channel!r} is not one of {[*CHAT_CHANNELS, *teams]}"
+    folder = task.values.get("folder", "")
+    if t.capability == "mail.file" and (not _MAIL_FOLDER.fullmatch(folder) or folder.casefold() in _DEFAULT_FOLDERS):
+        return "folder: 2-30 letters, digits, spaces or '-', not one of Outlook's own folders"
     if t.capability == "file.share" and task.values.get("share") not in list(shares):
         return f"share {task.values.get('share')!r} is not one of this persona's team shares {sorted(shares)}"
     if t.capability in ("chat.post", "chat.dm") and not 2 <= len(task.values.get("message", "").strip()) <= 200:

@@ -99,6 +99,13 @@ def read_state(user: str, message_id: int, folder: str = "inbox") -> bool | None
     return {"0": False, "1": True}.get(out.stdout.decode("ascii", "replace").strip())
 
 
+def placed(user: str, msgid: str, folder: str) -> tuple[int, int] | None:
+    if not re.fullmatch(r"[a-z0-9]+", user) or not msgid or not _exchange():
+        return None
+    inbox, there = ews.msgids(f"{user}@{DOMAIN}", "inbox"), ews.msgids(f"{user}@{DOMAIN}", folder)
+    return None if inbox is None or there is None else (inbox.count(msgid), there.count(msgid))
+
+
 def messages(user: str, folder: str, subject: str, attachments: bool = False) -> list[Message]:
     return _query(user, folder, subject, attachments) or []
 

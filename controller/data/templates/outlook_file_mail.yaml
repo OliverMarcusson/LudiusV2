@@ -1,0 +1,51 @@
+task: outlook_file_mail
+app: outlook
+capability: mail.file
+params: [sender, subject, folder]
+defaults: {sender_name: ""}
+about: "File a colleague's mail the persona is done with: move it from the Outlook Inbox into an Inbox subfolder, creating the folder if it is not there yet. sender: the address of the colleague who sent it (<user>@ludius.internal); subject: that mail's exact subject, as listed in the inbox; folder: a short folder name for its topic or project (letters, digits, spaces)."
+example: {sender: mvellinga@ludius.internal, subject: "Points for tomorrow's ERP cost policy review", folder: ERP cost policy}
+variants:
+  - [open_outlook, select_mail, open_move, pick_folder, move, close_outlook]
+budget_steps: 40
+budget_minutes: 8
+on_abandon: close_without_saving
+subgoals:
+  open_outlook:
+    goal: "Open Outlook by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    steps: 8
+    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}
+  select_mail:
+    goal: "In the Inbox, click the mail from {sender_name} with the subject {subject} once to select it, even if it already looks selected (do not open it)"
+    steps: 10
+    done:
+      element: {name: 'From {sender_name}, Subject {subject}, ', selected: true}
+      clicked_on: {role: data item, name: 'From {sender_name}, Subject {subject}, '}
+  open_move:
+    goal: "Open the Move Items dialog for the selected mail with Ctrl+Shift+V"
+    keys: [Ctrl+Shift+V]
+    steps: 4
+    require: [{name: 'From {sender_name}, Subject {subject}, ', selected: true}]
+    forbid: [{role: data item, name: '^(?!.*From {sender_name}, Subject {subject}, )', selected: true}]
+    done: {foreground: {process: outlook.exe, title: "^Move Items$"}}
+  pick_folder:
+    goal: "In Move Items, select the folder {folder} under Inbox. If Inbox has no folder {folder}, select Inbox, click New..., type {folder} as the name and click OK in Create New Folder"
+    text: folder
+    steps: 12
+    in_window: {process: outlook.exe, title: "^(Move Items|Create New Folder)$"}
+    avoid: [{name: '^(Deleted Items|Junk Email|Archive)$'}]
+    done:
+      foreground: {process: outlook.exe, title: "^Move Items$"}
+      element: {role: tree item, name: '^{folder}(: \d+ unread messages?)?$', selected: true}
+  move:
+    goal: "Click OK in Move Items to move the mail into {folder}"
+    steps: 4
+    in_window: {process: outlook.exe, title: "^Move Items$"}
+    allow_destructive: ["OK"]
+    done: {filed: true}
+  close_outlook:
+    goal: "Close Outlook"
+    done: {window: {process: outlook.exe, absent: true}}

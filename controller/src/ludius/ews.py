@@ -86,7 +86,7 @@ def call(mailbox: str, body: str) -> ET.Element | None:
 
 
 def _find(
-    mailbox: str, folder: str, subject: str | None, fields: str = "", whole: bool = False
+    mailbox: str, folder: str, subject: str | None, fields: str = "", whole: bool = False, parent: str = ""
 ) -> list[ET.Element] | None:
     where = (
         ""
@@ -103,7 +103,7 @@ def _find(
         f'<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>{fields}</m:ItemShape>'
         f'<m:IndexedPageItemView MaxEntriesReturned="{size}" Offset="0" BasePoint="Beginning"/>{where}'
         '<m:SortOrder><t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder>'
-        f'</m:SortOrder><m:ParentFolderIds><t:DistinguishedFolderId Id="{FOLDER_IDS[folder]}"/></m:ParentFolderIds>'
+        f"</m:SortOrder><m:ParentFolderIds>{parent or _distinguished(folder)}</m:ParentFolderIds>"
         "</m:FindItem>"))  # fmt: skip
     root = None if msgs is None else msgs[0].find(f"{{{M}}}RootFolder")
     if root is None:
@@ -112,6 +112,10 @@ def _find(
         return None
     items = root.find(f"{{{T}}}Items")
     return [] if items is None else list(items)
+
+
+def _distinguished(folder: str) -> str:
+    return f'<t:DistinguishedFolderId Id="{FOLDER_IDS[folder]}"/>'
 
 
 def _key(item_id: str) -> int:
@@ -230,6 +234,28 @@ def query(mailbox: str, folder: str, subject: str | None, attachments: bool = Fa
             item["attachments"] = _attachments(mailbox, got[0])
         items.append(item)
     return [i for i in items if subject is None or i["subject"] == subject]
+
+
+def msgids(mailbox: str, folder: str) -> list[str] | None:
+    parent = ""
+    if folder != "inbox":
+        msgs = call(mailbox, (
+            '<m:FindFolder Traversal="Deep"><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape></m:FolderShape>'
+            '<m:Restriction><t:IsEqualTo><t:FieldURI FieldURI="folder:DisplayName"/><t:FieldURIOrConstant>'
+            f"<t:Constant Value={quoteattr(folder)}/></t:FieldURIOrConstant></t:IsEqualTo></m:Restriction>"
+            '<m:ParentFolderIds><t:DistinguishedFolderId Id="inbox"/></m:ParentFolderIds></m:FindFolder>'))  # fmt: skip
+        root = None if msgs is None else msgs[0].find(f"{{{M}}}RootFolder")
+        if root is None or root.get("IncludesLastItemInRange") != "true":
+            return None
+        ids = [f.get("Id", "") for f in root.iter(f"{{{T}}}FolderId")]
+        if not ids:
+            return []
+        if len(ids) != 1 or not ids[0]:
+            return None
+        parent = f"<t:FolderId Id={quoteattr(ids[0])}/>"
+    found = _find(mailbox, "inbox", None, '<t:AdditionalProperties><t:FieldURI FieldURI="message:InternetMessageId"/>'
+                  "</t:AdditionalProperties>", whole=True, parent=parent)  # fmt: skip
+    return None if found is None else [(el.findtext(f"{{{T}}}InternetMessageId", "") or "").strip() for el in found]
 
 
 def read_state(mailbox: str, key: int, folder: str) -> bool | None:

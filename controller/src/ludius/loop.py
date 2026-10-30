@@ -26,14 +26,13 @@ from ludius.options import (
     view,
 )
 from ludius.policy import OVERWRITE_REASON, Policy, alt_f4_safe, overwrite_prompt
-from ludius.reply import Composer, prepare_answer, prepare_read
+from ludius.reply import Composer, prepare_answer, prepare_file, prepare_read
 from ludius.tasks import (
     LAUNCH_TEXT,
     RESERVED_RECIPIENT,
     Persona,
     Subgoal,
     Task,
-    _window_matches,
     added_baseline,
     check_done,
     declared_commits,
@@ -43,6 +42,7 @@ from ludius.tasks import (
     preconditions,
     profile,
     recipient_reserved,
+    window_matches,
 )
 from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
@@ -333,6 +333,9 @@ class Runner:
         if task.template.capability == "mail.read":
             why, rec = prepare_read(task, self.policy, self.composer.narrative if self.composer else NARRATIVE)
             self.log.write(event="task_content", host_ms=_now(), task=task.template.task, reason=why, **rec)
+        if task.template.capability == "mail.file":
+            why, rec = prepare_file(task, self.policy, self.composer.narrative if self.composer else NARRATIVE)
+            self.log.write(event="task_content", host_ms=_now(), task=task.template.task, reason=why, **rec)
         if task.template.capability == "calendar.respond":
             why, rec = prepare_answer(task, self.policy, self.composer.narrative if self.composer else NARRATIVE)
             self.log.write(event="task_content", host_ms=_now(), task=task.template.task, reason=why, **rec)
@@ -399,6 +402,7 @@ class Runner:
         last_result = "start of subgoal"
         no_change = 0
         typed_ok = pressed_ok = clicked_ok = False
+        last_click: obs.Element | None = None
         recovering = False
         dead: dict[tuple[Any, ...], set[tuple[str, str]]] = {}
         snap = self.observe()
@@ -422,7 +426,9 @@ class Runner:
                 self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
                                reason="elevation required")  # fmt: skip
                 return "failed", step - 1, "blocked: elevation required"
-            code_done = check_done(sg.done, snap, task, typed_ok, pressed_ok=pressed_ok, clicked_ok=clicked_ok)
+            code_done = check_done(
+                sg.done, snap, task, typed_ok, pressed_ok=pressed_ok, clicked_ok=clicked_ok, last_click=last_click
+            )
             if code_done:
                 self.log.write(
                     event="subgoal_done",
@@ -434,8 +440,16 @@ class Runner:
                     steps=step - 1,
                 )
                 return "done", step - 1, ""
-            if code_done is False and check_done(sg.done, snap, task, typed_ok, outside=False, pressed_ok=pressed_ok,
-                                                       clicked_ok=clicked_ok):
+            if code_done is False and check_done(
+                sg.done,
+                snap,
+                task,
+                typed_ok,
+                outside=False,
+                pressed_ok=pressed_ok,
+                clicked_ok=clicked_ok,
+                last_click=last_click,
+            ):
                 self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
                                reason="done on screen, waiting for the outside check")  # fmt: skip
                 time.sleep(BLOCKED_WAIT_S)
@@ -537,6 +551,8 @@ class Runner:
                 typed_ok = not refused and _typed_landed(snap, chosen, sg)
             pressed_ok = pressed_ok or (guarded and chosen.kind == "key" and chosen.keys in sg.keys)
             clicked_ok = clicked_ok or (sg.in_window is not None and not refused and chosen.kind == "click")
+            if chosen.kind != "rescan":
+                last_click = chosen.element if chosen.kind == "click" and not refused else None
             outcome = "back to an earlier screen" if changed and revisit else "changed" if changed else "no change"
             last_result = "no visible change" if not changed else outcome
             if refused:
@@ -548,8 +564,6 @@ class Runner:
                            check=(sg, typed_ok), code_done=code_done, image=image)  # fmt: skip
             shot_why = "refused" if refused else "no_change" if not changed else None
             recovering = False
-            if chosen.kind == "rescan":
-                step -= 1
 
             progress = changed and not revisit
             no_change = 0 if progress else no_change + 1
@@ -599,7 +613,7 @@ class Runner:
     @staticmethod
     def _popup_over(sg: Subgoal, snap: obs.Snapshot, task: Task) -> str | None:
         fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
-        if sg.in_window is None or fg is None or _window_matches(fg, sg.in_window, task):
+        if sg.in_window is None or fg is None or window_matches(fg, sg.in_window, task):
             return None
         return fg.title if fg.process_name.lower() in {p.lower() for p in task.template.processes} else None
 

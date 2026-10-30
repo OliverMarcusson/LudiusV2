@@ -121,9 +121,19 @@ class FileCheck(Strict):
         if self.comment is not None:
             if guestfile.profile_path("u", self.path) is None or not self.path.lower().endswith(".docx"):
                 raise ValueError(f"file check {self.path!r}: a comment goes on a noise .docx")
-            if self.recycled or any(getattr(self, k) is not None for k in (*need.values(), "download", "append",
-                                                                            "share", "moved_from", "attachment_of",
-                                                                            "export_of", "extract_of")):
+            if self.recycled or any(
+                getattr(self, k) is not None
+                for k in (
+                    *need.values(),
+                    "download",
+                    "append",
+                    "share",
+                    "moved_from",
+                    "attachment_of",
+                    "export_of",
+                    "extract_of",
+                )
+            ):
                 raise ValueError(f"file check {self.path!r}: a comment check stands alone")
             return self
         if self.extract_of is not None:
@@ -138,11 +148,16 @@ class FileCheck(Strict):
         if self.export_of is not None:
             paths = (self.path, self.export_of)
             kinds, csv_in = (".pdf", ".zip", ".xlsx"), self.export_of.lower().endswith(".csv")
-            if any(guestfile.profile_path("u", x) is None for x in paths) or not self.path.lower().endswith(kinds) \
-                    or csv_in != self.path.lower().endswith(".xlsx"):
+            if (
+                any(guestfile.profile_path("u", x) is None for x in paths)
+                or not self.path.lower().endswith(kinds)
+                or csv_in != self.path.lower().endswith(".xlsx")
+            ):
                 raise ValueError(f"file check {self.path!r}: an export goes to a noise .pdf, .zip or (from .csv) .xlsx")
-            if self.recycled or any(getattr(self, k) is not None for k in (*need.values(), "download", "append",
-                                                                            "share", "moved_from", "attachment_of")):
+            if self.recycled or any(
+                getattr(self, k) is not None
+                for k in (*need.values(), "download", "append", "share", "moved_from", "attachment_of")
+            ):
                 raise ValueError(f"file check {self.path!r}: an export check stands alone")
             return self
         if self.attachment_of is not None:
@@ -192,12 +207,14 @@ class Done(Strict):
     typed: bool = False
     pressed: bool = False
     clicked: bool = False
+    clicked_on: ElementCheck | None = None
     pixels: PixelsCheck | None = None
     mail: MailCheck | None = None
     invite: InviteCheck | None = None
     response: ResponseCheck | None = None
     file: FileCheck | None = None
     read: bool = False
+    filed: bool = False
     ask: str | None = None
 
     @model_validator(mode="after")
@@ -243,6 +260,7 @@ Capability = Literal[
     "mail.reply",
     "mail.read",
     "mail.save",
+    "mail.file",
     "calendar.invite",
     "calendar.respond",
     "file.move",
@@ -265,6 +283,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "mail.reply": {"to", "to_name", "subject"},
     "mail.read": {"sender", "subject"},
     "mail.save": {"sender", "subject"},
+    "mail.file": {"sender", "subject"},
     "calendar.invite": {"to", "to_name"},
     "calendar.respond": {"to", "to_name", "subject", "response"},
     "file.move": {"file_name", "folder_name"},
@@ -449,6 +468,9 @@ class Template(Strict):
                     for sg in self.subgoals.values())  # fmt: skip
         if reads and (self.writes or typed):
             raise ValueError(f"{self.task}: mail.read types only the launch query, no writes or destructive clicks")
+        files = any(sg.done and sg.done.filed for sg in self.subgoals.values())
+        if files != (self.capability == "mail.file") or (files and set(self.params) != {"sender", "subject", "folder"}):
+            raise ValueError(f"{self.task}: mail.file needs a filed done check and params sender, subject, folder")
         return self
 
     @model_validator(mode="after")
@@ -587,6 +609,7 @@ class Task:
         self.saved_sha: dict[str, str] = {}
         self.files_present: frozenset[str] = frozenset()
         self.read_id = 0
+        self.file_msgid = ""
         self.added_base: int | None = None
         self.marks: dict[str, tuple[ElementCheck, int]] = {}
         idx = (
@@ -650,7 +673,7 @@ def load_yaml[M: BaseModel](cls: type[M], path: Path) -> M:
     return cls.model_validate(data)
 
 
-def _window_matches(w: obs.Window, c: WindowCheck, task: Task) -> bool:
+def window_matches(w: obs.Window, c: WindowCheck, task: Task) -> bool:
     if c.process and w.process_name.lower() != c.process.lower():
         return False
     if c.class_name and w.class_name != c.class_name:
@@ -694,13 +717,26 @@ def pixels_region(snap: obs.Snapshot, window: int, task: Task) -> list[obs.Eleme
 
 
 def check_done(
-    done: Done | None, snap: obs.Snapshot, task: Task, typed_ok: bool, outside: bool = True, pressed_ok: bool = False,
+    done: Done | None,
+    snap: obs.Snapshot,
+    task: Task,
+    typed_ok: bool,
+    outside: bool = True,
+    pressed_ok: bool = False,
     clicked_ok: bool = False,
+    last_click: obs.Element | None = None,
 ) -> bool | None:
     if done is None or done.ask:
         return None
-    if (done.mail or done.invite or done.response or done.file or done.read) and not (
-        done.window or done.foreground or done.element or done.added or done.typed or done.pressed or done.clicked
+    if (done.mail or done.invite or done.response or done.file or done.read or done.filed) and not (
+        done.window
+        or done.foreground
+        or done.element
+        or done.added
+        or done.typed
+        or done.pressed
+        or done.clicked
+        or done.clicked_on
         or done.pixels
     ):
         return _outside_ok(done, task) if outside else None
@@ -713,6 +749,8 @@ def check_done(
         return None
     if (done.typed and not typed_ok) or (done.pressed and not pressed_ok) or (done.clicked and not clicked_ok):
         return False
+    if done.clicked_on and not (last_click is not None and element_matches(last_click, done.clicked_on, task)):
+        return False
     if on_pixels and not done.pixels:
         return False
     if done.pixels and on_pixels:
@@ -723,12 +761,12 @@ def check_done(
     if (done.window or done.foreground) and any(pixels_window(w) for w in snap.windows):
         return False
     if done.window:
-        hit = any(_window_matches(w, done.window, task) for w in [*snap.windows, *snap.apps])
+        hit = any(window_matches(w, done.window, task) for w in [*snap.windows, *snap.apps])
         if hit == done.window.absent:
             return False
     if done.foreground:
         fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
-        hit = fg is not None and _window_matches(fg, done.foreground, task)
+        hit = fg is not None and window_matches(fg, done.foreground, task)
         if hit == done.foreground.absent:
             return False
     if done.element:
@@ -771,7 +809,12 @@ def _marked(mark: str, snap: obs.Snapshot, task: Task) -> list[obs.Element]:
 def _outside_ok(done: Done, task: Task) -> bool:
     return ((done.mail is None or _mail_ok(done.mail, task)) and (done.invite is None or _invite_ok(done.invite, task))
             and (done.response is None or _response_ok(done.response, task))
-            and (done.file is None or _file_ok(done.file, task)) and (not done.read or _read_ok(task)))  # fmt: skip
+            and (done.file is None or _file_ok(done.file, task)) and (not done.read or _read_ok(task))
+            and (not done.filed or _filed_ok(task)))  # fmt: skip
+
+
+def _filed_ok(task: Task) -> bool:
+    return bool(task.owner) and mail.placed(task.owner, task.file_msgid, task.values.get("folder", "")) == (0, 1)
 
 
 def _read_ok(task: Task) -> bool:
@@ -797,7 +840,7 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
     fg = next((i for i, w in enumerate(snap.windows) if w.kind == obs.Window.FOREGROUND), None)
     if (sg.require or sg.in_window) and target is not None and target.window != fg:
         return "precondition: the target is not in the foreground window"
-    if sg.in_window and (fg is None or not _window_matches(snap.windows[fg], sg.in_window, task)):
+    if sg.in_window and (fg is None or not window_matches(snap.windows[fg], sg.in_window, task)):
         want = sg.in_window.title or sg.in_window.process or ""
         return f"precondition: the foreground window is not {task.fmt(want)!r}"
     if sg.breadcrumb and (got := explorer_crumbs(snap, fg)) != sg.breadcrumb:
@@ -855,8 +898,14 @@ def local_ms(date: str, hhmm: str, tz: str) -> int:
 
 
 def _response_ok(c: ResponseCheck, task: Task) -> bool:
-    return bool(task.owner) and mail.responded(task.fmt(c.mailbox), task.fmt(c.subject), f"{task.owner}@{mail.DOMAIN}",
-                                               task.fmt(c.response), task.started_ms, task.mail_before)
+    return bool(task.owner) and mail.responded(
+        task.fmt(c.mailbox),
+        task.fmt(c.subject),
+        f"{task.owner}@{mail.DOMAIN}",
+        task.fmt(c.response),
+        task.started_ms,
+        task.mail_before,
+    )
 
 
 def _invite_ok(c: InviteCheck, task: Task) -> bool:
@@ -1017,8 +1066,9 @@ def file_baseline(task: Task, policy: Any) -> str | None:
         if paras is None or notes is None:
             return f"{rel}: unreadable on the guest"
         task.files_before[rel], task.comments_before[rel] = [x.casefold() for x in paras], notes
-    checked = [task.fmt(c.path) for c in files
-               if c.append is None and c.comment is None and not c.recycled and c.share is None]
+    checked = [
+        task.fmt(c.path) for c in files if c.append is None and c.comment is None and not c.recycled and c.share is None
+    ]
     if task.inst.request:
         checked += [w for w in write_paths(task) if not w.endswith(".*") and w not in edits]
     for rel in dict.fromkeys(r for r in checked if r not in absent):
