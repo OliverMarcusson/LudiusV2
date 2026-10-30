@@ -72,6 +72,14 @@ def test_clean_desktop_with_tray_worker_window_normalizes_with_no_input(tmp_path
     assert '"normalized"' in log.read_text() and "normalize_failed" not in log.read_text()
 
 
+def test_file_operation_window_left_in_front_is_never_closed(tmp_path: Path) -> None:
+    """Live 2026-10-30 (lnord): after a Delete, Explorer's invisible Progress window kept the foreground; Alt+F4 or
+    Esc on it only asks to cancel all transfers."""
+    ghost = clean_desktop()
+    ghost.windows[0].CopyFrom(_win(obs.Window.FOREGROUND, "OperationStatusWindow", 104, 104, 1440, 759, "Progress"))
+    assert Session(ObserveOnly([ghost]), GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize()  # pyright: ignore[reportArgumentType]
+
+
 def test_real_menu_over_the_desktop_still_gets_esc(tmp_path: Path) -> None:
     menu = clean_desktop()
     menu.windows.append(_win(obs.Window.POPUP, "#32768", 800, 400, 200, 300))

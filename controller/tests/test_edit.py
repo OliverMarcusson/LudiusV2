@@ -34,19 +34,19 @@ def test_owned_files_follow_done_writes_and_moves(tmp_path: Path) -> None:
         it("10:00", "explorer_rename_move", file_name="todo", new_name="todo old", folder_name="archive"),
     ], done=["09:00", "09:20", "10:00"])  # fmt: skip
     assert owned_files(tmp_path, "aberg", TUE.isoformat()) == {
-        "documents\\close memo.docx",
-        "documents\\archive\\todo old.txt",
+        "documents\\close memo.docx": MON.isoformat(),
+        "documents\\archive\\todo old.txt": MON.isoformat(),
     }  # moved: keeps .txt, source gone
-    assert owned_files(tmp_path, "aberg", MON.isoformat()) == set()  # only days before
-    assert owned_files(tmp_path, "lnord", TUE.isoformat()) == set()
+    assert owned_files(tmp_path, "aberg", MON.isoformat()) == {}  # only days before
+    assert owned_files(tmp_path, "lnord", TUE.isoformat()) == {}
 
 
 def test_an_edit_names_an_owned_file(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LUDIUS_APPS")
     templates = cli.plan_sources().templates
     edit = it("11:00", "word_edit_document", file_name="Close Memo", body="one more point")
-    assert validate([edit], templates, [], Policy(), owned={"documents\\close memo.docx"}) == []
-    for owned in ({"documents\\other.docx"}, None):
+    assert validate([edit], templates, [], Policy(), owned={"documents\\close memo.docx": "2026-11-01"}) == []
+    for owned in ({"documents\\other.docx": "2026-11-01"}, None):
         assert "own files" in validate([edit], templates, [], Policy(), owned=owned)[0][1]
 
 

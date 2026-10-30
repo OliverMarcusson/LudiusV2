@@ -50,6 +50,7 @@ _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")  # the virtual keyboard types ASCII only
 VALUE_MAX = 300  # guest observer Snapshotter.MaxValue: longest element value a snapshot carries
 _NAME_KEYS = ("file_name", "folder_name", "new_name")
+RECYCLE_AGE_DAYS = 3  # file.recycle: only a file no done item wrote for this many days
 _DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)  # Windows reserved, any extension
 # A meeting (date, start, end): a weekday inside the working day, of a sensible length, soon after the plan's day.
 WORK_DAY, MEETING_MINUTES, MEETING_DAYS_AHEAD = ("08:00", "17:00"), (15, 120), 14
@@ -217,7 +218,7 @@ def plan_day(
     existing: Iterable[str] = (),
     mail_threads: dict[str, tuple[str, str]] | None = None,
     inbox: set[tuple[str, str]] | None = None,
-    owned: set[str] | None = None,
+    owned: dict[str, str] | None = None,
 ) -> tuple[DayPlan, list[str]]:
     """Draft, validate, ask once to replace rejected items, drop what still fails. Returns the plan and rejects.
 
@@ -372,14 +373,15 @@ def validate(
     day: str = "",
     inbox: set[tuple[str, str]] | None = None,
     teams: Iterable[str] = (),
-    owned: set[str] | None = None,
+    owned: dict[str, str] | None = None,
 ) -> list[tuple[int, str]]:
     """Rejected items with the reason. A reply must answer a mail follow-up in `mail_threads` from its `to`
     colleague with its subject, or a mail in `inbox` (sender account, subject; an empty subject: any mail from that
     sender); otherwise no reply is valid. The reply's text is written at task time (ludius.reply). A mail's
     to_name must be exactly the
     narrative name (`people`, account -> name) of its `to` colleague. A meeting's date follows the plan's `day`.
-    An edit changes only one of `owned` (owned_files; None: none known)."""
+    An edit or recycle changes only one of `owned` (owned_files; None: none known); a recycle only one no item wrote for
+    RECYCLE_AGE_DAYS before `day` and no other item of the day names."""
     rejects: list[tuple[int, str]] = []
     seen = list(history)
     taken = taken_names(existing)  # grows with each accepted item: a second item with the same name would overwrite
@@ -394,8 +396,8 @@ def validate(
             why = _reply_thread(it, mail_threads or {}, inbox or set[tuple[str, str]]())
         if not why and cap == "mail.read":
             why = _read_mail(it, colleagues or set[str](), inbox or set[tuple[str, str]](), items[:i])
-        if not why and cap == "file.edit" and t:
-            why = _owned(it, t, owned or set[str]())
+        if not why and cap in ("file.edit", "file.recycle") and t:
+            why = _owned(it, t, owned or {}, day, items)
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
         if not why and it.followup and cap == "chat.read":
@@ -423,20 +425,30 @@ def validate(
     return rejects
 
 
-def _owned(it: PlanItem, t: Template, owned: set[str]) -> str | None:
+def _owned(it: PlanItem, t: Template, owned: dict[str, str], day: str, items: list[PlanItem]) -> str | None:
+    recycle = t.capability == "file.recycle"
     try:
-        paths = [w.format_map({**it.params, **it.content}) for w in t.writes]
+        paths = [w.format_map({**it.params, **it.content}) for w in (t.removes if recycle else t.writes)]
     except KeyError:
         return "missing parameters"
     if not paths or any(p.casefold() not in owned for p in paths):
-        return "file_name: edit only one of this persona's own files (Own recent files), named exactly"
+        verb = "recycle" if recycle else "edit"
+        return f"file_name: {verb} only one of this persona's own files (Own recent files), named exactly"
+    if recycle:
+        cutoff = (dt.date.fromisoformat(day) - dt.timedelta(days=RECYCLE_AGE_DAYS)).isoformat()
+        if any(owned[p.casefold()] > cutoff for p in paths):
+            return f"file_name: recycle only an own file untouched for {RECYCLE_AGE_DAYS} days or more"
+        name = it.params.get("file_name", "").casefold()
+        if any(x is not it and name in (v.casefold() for v in {**x.params, **x.content}.values()) for x in items):
+            return "file_name: another item today uses this file, recycle a different one"
     return None
 
 
-def owned_files(root: Path, user: str, before: str) -> set[str]:
-    """Profile-relative paths (casefolded) of the files `user`'s items logged done before `before` left: each one's
-    declared writes, less what a later one removed (`removes`; a ".*" write keeps the removed file's extension)."""
-    templates, world, owned = _templates(), World(root), set[str]()
+def owned_files(root: Path, user: str, before: str) -> dict[str, str]:
+    """Profile-relative paths (casefolded) of the files `user`'s items logged done before `before` left, each with the
+    date a done item last wrote it: each one's declared writes, less what a later one removed (`removes`; a ".*"
+    write keeps the removed file's extension)."""
+    templates, world, owned = _templates(), World(root), dict[str, str]()
     for path in sorted(root.glob("plans/*.yaml")):
         date = path.stem[:10]
         if path.stem[11:] != user or date >= before:
@@ -452,12 +464,13 @@ def owned_files(root: Path, user: str, before: str) -> set[str]:
                 continue
             removed = {p for p in owned for g in gone if p == g or (g.endswith(".*") and _stem(p) == g[:-2])}
             exts = {p[len(_stem(p)) :] for p in removed}
-            owned -= removed
+            for p in removed:
+                del owned[p]
             for w in made:
                 if not w.endswith(".*"):
-                    owned.add(w)
+                    owned[w] = date
                 elif len(exts) == 1:  # a moved file keeps its extension; unknown otherwise: not owned
-                    owned.add(w[:-2] + exts.pop())
+                    owned[w[:-2] + exts.pop()] = date
     return owned
 
 
@@ -961,10 +974,11 @@ def load_plan(path: Path, *, history: bool = False) -> DayPlan:
     narrative = path.parent.parent / "world" / "narrative.yaml"
     world = Narrative.model_validate(yaml.safe_load(narrative.read_text("utf-8"))) if narrative.exists() else None
     teams = [c for c, members in (world.channels if world else {}).items() if plan.persona in members]
-    edits = [it for it in plan.items if (t := templates.get(it.template)) and t.capability == "file.edit"]
-    owned = owned_files(path.parent.parent, plan.persona, plan.date) if edits and not history else set[str]()
+    edits = [it for it in plan.items
+             if (t := templates.get(it.template)) and t.capability in ("file.edit", "file.recycle")]  # fmt: skip
+    owned = owned_files(path.parent.parent, plan.persona, plan.date) if edits and not history else {}
     for it in [] if history else edits:
-        if why := _owned(it, templates[it.template], owned):
+        if why := _owned(it, templates[it.template], owned, plan.date, plan.items):
             raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
     for it in plan.items:
         if it.template in templates and (why := item_problem(it, templates, policy, plan.persona, teams)

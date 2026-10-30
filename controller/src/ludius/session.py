@@ -233,9 +233,14 @@ def _fg(snap: obs.Snapshot) -> obs.Window | None:
 
 
 def _is_shell_surface(w: obs.Window) -> bool:
-    return w.class_name in ("Progman", "WorkerW", "Shell_TrayWnd") or w.process_name.lower() in SHELL_PROCESSES - {
-        "explorer.exe"
-    }
+    """Also Explorer's file operation window: after a Delete it stays in front invisible until an app is clicked, and
+    Alt+F4 or Esc on it only asks to cancel all transfers (live, lnord). Never closed; a click elsewhere clears it."""
+    return w.class_name in (
+        "Progman",
+        "WorkerW",
+        "Shell_TrayWnd",
+        "OperationStatusWindow",
+    ) or w.process_name.lower() in SHELL_PROCESSES - {"explorer.exe"}
 
 
 def _inert_shell_popup(snap: obs.Snapshot, i: int) -> bool:

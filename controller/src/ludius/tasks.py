@@ -124,6 +124,8 @@ class FileCheck(Strict):
     holds exactly the bytes the range intranet serves for that download (ludius.intranet), any of its file types.
     `append` instead (file.edit): a .docx (or .txt) the persona owns, read at start; done needs it written after the
     task started, its non-empty paragraphs (lines) exactly the start's followed by the appended lines.
+    `recycled` instead (file.recycle): a file the persona owns, read present at start; done needs it definitely absent
+    (the Recycle Bin is the subgoals' own check: the guest read can't tell it from a permanent delete).
     """
 
     path: str
@@ -132,11 +134,18 @@ class FileCheck(Strict):
     slides: list[str] | None = None
     download: str | None = None
     append: str | None = None
+    recycled: bool = False
 
     @model_validator(mode="after")
     def _noise_folder(self) -> FileCheck:
         need = {".xlsx": "cells", ".docx": "paragraphs", ".pptx": "slides"}
         ext = self.path.lower()[-5:]
+        if self.recycled:
+            if guestfile.profile_path("u", self.path) is None:
+                raise ValueError(f"file check {self.path!r}: a recycled file is in a noise folder")
+            if self.append is not None or any(getattr(self, k) is not None for k in (*need.values(), "download")):
+                raise ValueError(f"file check {self.path!r}: a recycled check stands alone")
+            return self
         if self.append is not None:
             if guestfile.profile_path("u", self.path) is None or not self.path.lower().endswith((".docx", ".txt")):
                 raise ValueError(f"file check {self.path!r}: append edits a .docx or .txt in a noise folder")
@@ -247,6 +256,8 @@ RECIPIENT = "^({to}|{to_name}|{to_name} <{to}>);?$"
 # chat.post / chat.dm: one line posted in the range chat (Mattermost), irreversible for noise (never deleted);
 # chat.read / chat.read_channel: a direct message conversation or a channel opened, no effect beyond Mattermost's
 # read marker
+# file.recycle: a file the persona's own earlier work left, untouched for planner.RECYCLE_AGE_DAYS, sent to the Recycle
+# Bin (never deleted permanently, the Bin never emptied: spec section 5)
 Capability = Literal[
     "mail.send",
     "mail.reply",
@@ -255,6 +266,7 @@ Capability = Literal[
     "file.move",
     "file.write",
     "file.edit",
+    "file.recycle",
     "file.download",
     "chat.post",
     "chat.dm",
@@ -271,6 +283,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "calendar.invite": {"to", "to_name"},
     "file.move": {"file_name", "folder_name"},
     "file.edit": {"file_name"},
+    "file.recycle": {"file_name", "file_ext"},
     "chat.post": {"channel"},
     "chat.dm": {"to", "to_name"},
     "chat.read": {"to", "to_name"},
@@ -479,8 +492,11 @@ class Template(Strict):
     def _writes_declared(self) -> Template:
         """A template that names something it creates must declare where it lands; every write is in a noise folder,
         and every file done check reads a declared write."""
-        if set(self.params) & NAME_PARAMS and not self.writes:
+        if set(self.params) & NAME_PARAMS and not self.writes and self.capability != "file.recycle":
             raise ValueError(f"{self.task}: creates {sorted(set(self.params) & NAME_PARAMS)} but declares no writes")
+        for r in self.removes:
+            if guestfile.profile_path("u", r.removesuffix(".*")) is None:
+                raise ValueError(f"{self.task}: remove {r!r} is not in a noise folder {guestfile.NOISE_FOLDERS}")
         for w in self.writes:
             if guestfile.profile_path("u", w.removesuffix(".*")) is None:
                 raise ValueError(f"{self.task}: write {w!r} is not in a noise folder {guestfile.NOISE_FOLDERS}")
@@ -496,7 +512,10 @@ class Template(Strict):
                     f"{self.task}: {name} checks the item at {sg.done.element.at!r}, which no added check marks"
                 )
         for sg in self.subgoals.values():
-            if sg.done and sg.done.file and sg.done.file.path not in self.writes:
+            if sg.done and sg.done.file and sg.done.file.recycled:
+                if sg.done.file.path not in self.removes or self.capability != "file.recycle":
+                    raise ValueError(f"{self.task}: recycled check {sg.done.file.path!r} is not a file.recycle remove")
+            elif sg.done and sg.done.file and sg.done.file.path not in self.writes:
                 raise ValueError(f"{self.task}: file check {sg.done.file.path!r} is not a declared write")
         edits = any(sg.done and sg.done.file and sg.done.file.append is not None for sg in self.subgoals.values())
         if edits != (self.capability == "file.edit"):
@@ -587,6 +606,7 @@ class Task:
         self.mail_before: mail.Seen | None = None  # mail present at task start (mail_baseline), set by the runner
         self.files_absent: frozenset[str] | None = None  # file checks' paths proven absent at start (file_baseline)
         self.files_before: dict[str, list[str]] = {}  # append checks' files: their lines at start (file_baseline)
+        self.files_present: frozenset[str] = frozenset()  # recycled checks' files proven present at start
         self.read_id = 0  # mail.read: the Inbox message proven unread at start (reply.prepare_read); 0: none
         self.added_base: int | None = None  # items matching the current subgoal's added check at its start
         self.marks: dict[str, tuple[ElementCheck, int]] = {}  # AddedCheck.mark -> (its items, the new one's position)
@@ -838,14 +858,16 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
     if sg.breadcrumb and (got := explorer_crumbs(snap, fg)) != sg.breadcrumb:
         return f"precondition: the folder is {' > '.join(got or ['unknown'])!r}, not {' > '.join(sg.breadcrumb)!r}"
     for c in sg.require:
-        if not any(e.window == fg and guard_matches(e, c, task) for e in snap.elements):
+        # No value: a state check (a selected list item), nothing read from a field.
+        ok = guard_matches if c.value is not None else element_matches
+        if not any(e.window == fg and ok(e, c, task) for e in snap.elements):
             seen = [
                 e.value[:80]
                 for e in snap.elements
                 if e.window == fg and element_matches(e, c.model_copy(update={"value": None}), task)
             ]
-            return (f"precondition: no readable {c.name or c.role!r} field with value {task.fmt(c.value or '')!r}"
-                    f" (read: {seen!r})")  # fmt: skip
+            return (f"precondition: no readable {task.fmt(c.name or c.role or '')!r} field with value"
+                    f" {task.fmt(c.value or '')!r} (read: {seen!r})")  # fmt: skip
     for c in sg.forbid:
         if any(element_matches(e, c, task) for e in snap.elements):
             return f"precondition: {c.name or c.role!r} must not match {task.fmt(c.value or '')!r}"
@@ -958,11 +980,20 @@ def file_baseline(task: Task, policy: Any) -> str | None:
     """Why the task must not start (something it would create is reserved; a file it checks exists or can't be
     read), else None; sets Task.files_absent. The runner calls it before any input: a task never overwrites a file,
     and a reserved one is never even read."""
-    for rel in write_paths(task):
+    for rel in [*write_paths(task), *(task.fmt(r) for r in task.template.removes)]:
         if file_reserved(task.owner, rel, policy):
             return f"{rel}: scenario-reserved file"
     absent: set[str] = set()
     files = [sg.done.file for sg in task.template.subgoals.values() if sg.done and sg.done.file]
+    present: set[str] = set()
+    for rel in sorted({task.fmt(c.path) for c in files if c.recycled}):  # there now, or nothing to recycle
+        f = guestfile.read(task.owner, rel)
+        if f is None:
+            return f"{rel}: unreadable on the guest"
+        if not f.exists:
+            return f"{rel}: not there, nothing to recycle"
+        present.add(rel)
+    task.files_present = frozenset(present)
     edits = {task.fmt(c.path) for c in files if c.append is not None}
     for rel in sorted(edits):  # an edit needs its file there and readable: its lines at start are the baseline
         f = guestfile.read(task.owner, rel)
@@ -972,7 +1003,7 @@ def file_baseline(task: Task, policy: Any) -> str | None:
         if lines is None:
             return f"{rel}: unreadable on the guest"
         task.files_before[rel] = lines
-    checked = [task.fmt(c.path) for c in files if c.append is None]
+    checked = [task.fmt(c.path) for c in files if c.append is None and not c.recycled]
     if task.inst.request:  # the request check (ludius.requests) reads what the task writes: new, never pre-existing
         checked += [w for w in write_paths(task) if not w.endswith(".*") and w not in edits]
     for rel in dict.fromkeys(checked):
@@ -988,6 +1019,9 @@ def file_baseline(task: Task, policy: Any) -> str | None:
 
 def _file_ok(c: FileCheck, task: Task) -> bool:
     rel = task.fmt(c.path)
+    if c.recycled:  # present at start (file_baseline), definitely gone now: an unreadable file is never gone
+        f = guestfile.read(task.owner, rel)
+        return rel in task.files_present and f is not None and not f.exists
     if c.append is not None:  # read at start (file_baseline): only this task's lines are new, after the old ones
         f = guestfile.read(task.owner, rel)
         before = task.files_before.get(rel)
