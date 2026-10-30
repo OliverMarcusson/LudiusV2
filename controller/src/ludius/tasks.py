@@ -122,6 +122,8 @@ class FileCheck(Strict):
     `paragraphs` for .docx (planned lines: the document's non-empty paragraphs in order), `slides` for .pptx (one
     entry per slide, its lines the title then each bullet: the deck's slides in order). `download` instead: the file
     holds exactly the bytes the range intranet serves for that download (ludius.intranet), any of its file types.
+    `append` instead (file.edit): a .docx (or .txt) the persona owns, read at start; done needs it written after the
+    task started, its non-empty paragraphs (lines) exactly the start's followed by the appended lines.
     """
 
     path: str
@@ -129,11 +131,18 @@ class FileCheck(Strict):
     paragraphs: str | None = None
     slides: list[str] | None = None
     download: str | None = None
+    append: str | None = None
 
     @model_validator(mode="after")
     def _noise_folder(self) -> FileCheck:
         need = {".xlsx": "cells", ".docx": "paragraphs", ".pptx": "slides"}
         ext = self.path.lower()[-5:]
+        if self.append is not None:
+            if guestfile.profile_path("u", self.path) is None or not self.path.lower().endswith((".docx", ".txt")):
+                raise ValueError(f"file check {self.path!r}: append edits a .docx or .txt in a noise folder")
+            if any(getattr(self, k) is not None for k in (*need.values(), "download")):
+                raise ValueError(f"file check {self.path!r}: an append check stands alone")
+            return self
         if self.download is not None and guestfile.profile_path("u", self.path) is not None:
             if any(getattr(self, k) is not None for k in need.values()):
                 raise ValueError(f"file check {self.path!r}: a download check stands alone")
@@ -189,13 +198,20 @@ class Subgoal(Strict):
     # Preconditions for any input in this subgoal (rescans excepted): every `require` check matches an element on
     # screen and no `forbid` check does, e.g. the To field holds exactly the planned address and Cc is empty.
     require: list[ElementCheck] = Field(default_factory=list[ElementCheck])
+    # Input only while the foreground window matches, and only into it (rescans excepted): e.g. a file opened only from
+    # the Explorer window showing its noise folder, and edited and saved only in the window holding that file.
+    in_window: WindowCheck | None = None
+    # With in_window: File Explorer's address bar reads exactly these folders (explorer_crumbs), e.g. This PC >
+    # Documents; a library or another same-named folder has the same window title but other crumbs.
+    breadcrumb: list[str] = Field(default_factory=list[str])
     # The text target exposes no readable value (Outlook's Word body): typing there counts as landed and the
     # subgoal's own check decides. Off everywhere else, where an unchanged value means the text did not land.
     unreadable_ok: bool = False
     needs: str | None = None  # an optional parameter (one with a default): the subgoal is skipped when it is empty
     # Where a click in a document leaves the caret: at the end (writers append), or at the start (a reply goes
     # above the quoted mail).
-    caret: Literal["end", "start"] = "end"
+    # append: Ctrl+End before every typing, value or not (Word's document has none): text added to an opened file.
+    caret: Literal["end", "start", "append"] = "end"
     # The target holds a value the typed text replaces (Outlook's prefilled meeting date and times): select all
     # (Ctrl+A) in the focused field right before typing, or the text is inserted into the old value.
     replace: bool = False
@@ -225,7 +241,9 @@ class Subgoal(Strict):
 # Defense in depth: the done check requires the Sent Items copy to name {to} alone (ludius.mail), and srv01 refuses
 # non-local recipients.
 RECIPIENT = "^({to}|{to_name}|{to_name} <{to}>);?$"
-# file.write: a new file; mail.read: a colleague's Inbox mail opened, its only effect the read flag (never sends)
+# file.write: a new file; file.edit: a file the persona's own earlier work left (planner.owned_files), changed and
+# saved in place (its old content is gone: never Save As over it); mail.read: a colleague's Inbox mail opened, its
+# only effect the read flag (never sends)
 # chat.post / chat.dm: one line posted in the range chat (Mattermost), irreversible for noise (never deleted);
 # chat.read / chat.read_channel: a direct message conversation or a channel opened, no effect beyond Mattermost's
 # read marker
@@ -236,6 +254,7 @@ Capability = Literal[
     "calendar.invite",
     "file.move",
     "file.write",
+    "file.edit",
     "file.download",
     "chat.post",
     "chat.dm",
@@ -251,6 +270,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "mail.read": {"sender", "subject"},
     "calendar.invite": {"to", "to_name"},
     "file.move": {"file_name", "folder_name"},
+    "file.edit": {"file_name"},
     "chat.post": {"channel"},
     "chat.dm": {"to", "to_name"},
     "chat.read": {"to", "to_name"},
@@ -399,6 +419,11 @@ class Template(Strict):
     # What the task creates, profile-relative in a noise folder, as the app writes it (with the extension it adds;
     # ".*" for one it keeps, an Explorer rename). The shared reservation check (file_reserved) resolves these.
     writes: list[str] = Field(default_factory=list[str])
+    # What the task takes away from where it was, in the same form (".*": any extension, a move's source): the
+    # owned-file registry (planner.owned_files) drops it, and a ".*" write keeps the removed file's extension.
+    removes: list[str] = Field(default_factory=list[str])
+    # An app this template stands in for (Notepad for Word): planned only on a range without it (planner.installed).
+    fallback_for: str = ""
     # Keys that commit while a matching element has the focus (Enter in a chat composer sends): offered only in a
     # subgoal with `require` checks (its guarded send), never elsewhere and never with the focus unknown.
     key_commits: list[KeyCommit] = Field(default_factory=list[KeyCommit])
@@ -473,6 +498,9 @@ class Template(Strict):
         for sg in self.subgoals.values():
             if sg.done and sg.done.file and sg.done.file.path not in self.writes:
                 raise ValueError(f"{self.task}: file check {sg.done.file.path!r} is not a declared write")
+        edits = any(sg.done and sg.done.file and sg.done.file.append is not None for sg in self.subgoals.values())
+        if edits != (self.capability == "file.edit"):
+            raise ValueError(f"{self.task}: file.edit and an append file check go together")
         return self
 
     @model_validator(mode="after")
@@ -558,6 +586,7 @@ class Task:
         self.tz = "Europe/Stockholm"  # the persona's time zone (Persona.tz), set by the runner
         self.mail_before: mail.Seen | None = None  # mail present at task start (mail_baseline), set by the runner
         self.files_absent: frozenset[str] | None = None  # file checks' paths proven absent at start (file_baseline)
+        self.files_before: dict[str, list[str]] = {}  # append checks' files: their lines at start (file_baseline)
         self.read_id = 0  # mail.read: the Inbox message proven unread at start (reply.prepare_read); 0: none
         self.added_base: int | None = None  # items matching the current subgoal's added check at its start
         self.marks: dict[str, tuple[ElementCheck, int]] = {}  # AddedCheck.mark -> (its items, the new one's position)
@@ -578,6 +607,8 @@ class Task:
         self.values = have | {f"{k}_typo": v + _neighbour(v[-1]) for k, v in have.items() if v and "\n" not in v}
         # `{p}_enter`: the value ending in one Enter, so a spreadsheet's last cell is committed, not left in edit mode.
         self.values |= {f"{k}_enter": v.rstrip("\n") + "\n" for k, v in have.items() if v}
+        # `{p}_line`: the value starting on a new line, appended after a file's last line.
+        self.values |= {f"{k}_line": "\n" + v.lstrip("\n") for k, v in have.items() if v}
         # `{p}_ui`: an ISO date as the app's locale types and shows it (en-GB Outlook reads 2026-11-05 as 11 May).
         date = profile(template.app).locale["date"]
         self.values |= {f"{k}_ui": date.format(y=v[:4], m=v[5:7], d=v[8:]) for k, v in have.items()
@@ -799,8 +830,13 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
     same window: fields in an owned dialog or popup must not authorise the foreground window's Send.
     """
     fg = next((i for i, w in enumerate(snap.windows) if w.kind == obs.Window.FOREGROUND), None)
-    if sg.require and target is not None and target.window != fg:
+    if (sg.require or sg.in_window) and target is not None and target.window != fg:
         return "precondition: the target is not in the foreground window"
+    if sg.in_window and (fg is None or not _window_matches(snap.windows[fg], sg.in_window, task)):
+        want = sg.in_window.title or sg.in_window.process or ""
+        return f"precondition: the foreground window is not {task.fmt(want)!r}"
+    if sg.breadcrumb and (got := explorer_crumbs(snap, fg)) != sg.breadcrumb:
+        return f"precondition: the folder is {' > '.join(got or ['unknown'])!r}, not {' > '.join(sg.breadcrumb)!r}"
     for c in sg.require:
         if not any(e.window == fg and guard_matches(e, c, task) for e in snap.elements):
             seen = [
@@ -813,6 +849,27 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
     for c in sg.forbid:
         if any(element_matches(e, c, task) for e in snap.elements):
             return f"precondition: {c.name or c.role!r} must not match {task.fmt(c.value or '')!r}"
+    return None
+
+
+def explorer_crumbs(snap: obs.Snapshot, fg: int | None) -> list[str] | None:
+    """The foreground File Explorer window's address bar, folder by folder (Windows 10, live UIA): the split buttons
+    and the current folder's menu item between its 'All locations' button and its 'Refresh' button; the current folder
+    is a split button too when it has subfolders, and 'Previous Locations' follows once the window has a history.
+    None: not read."""
+    els = [e for e in snap.elements if e.window == fg]
+    start = next((i for i, e in enumerate(els) if e.role == "split button" and e.name == "All locations"), None)
+    if start is None:
+        return None
+    crumbs: list[str] = []
+    for e in els[start + 1 :]:
+        if e.role == "button" and e.name.startswith("Refresh"):
+            return crumbs
+        if e.role == "button" and e.name == "Previous Locations":
+            continue
+        if e.role not in ("split button", "menu item"):
+            return None
+        crumbs.append(e.name)
     return None
 
 
@@ -905,9 +962,19 @@ def file_baseline(task: Task, policy: Any) -> str | None:
         if file_reserved(task.owner, rel, policy):
             return f"{rel}: scenario-reserved file"
     absent: set[str] = set()
-    checked = [task.fmt(sg.done.file.path) for sg in task.template.subgoals.values() if sg.done and sg.done.file]
+    files = [sg.done.file for sg in task.template.subgoals.values() if sg.done and sg.done.file]
+    edits = {task.fmt(c.path) for c in files if c.append is not None}
+    for rel in sorted(edits):  # an edit needs its file there and readable: its lines at start are the baseline
+        f = guestfile.read(task.owner, rel)
+        lines = _doc_lines(rel, f.data) if f is not None and f.exists else None
+        if f is not None and not f.exists:
+            return f"{rel}: not there, nothing to edit"
+        if lines is None:
+            return f"{rel}: unreadable on the guest"
+        task.files_before[rel] = lines
+    checked = [task.fmt(c.path) for c in files if c.append is None]
     if task.inst.request:  # the request check (ludius.requests) reads what the task writes: new, never pre-existing
-        checked += [w for w in write_paths(task) if not w.endswith(".*")]
+        checked += [w for w in write_paths(task) if not w.endswith(".*") and w not in edits]
     for rel in dict.fromkeys(checked):
         f = guestfile.read(task.owner, rel)
         if f is None:
@@ -921,6 +988,13 @@ def file_baseline(task: Task, policy: Any) -> str | None:
 
 def _file_ok(c: FileCheck, task: Task) -> bool:
     rel = task.fmt(c.path)
+    if c.append is not None:  # read at start (file_baseline): only this task's lines are new, after the old ones
+        f = guestfile.read(task.owner, rel)
+        before = task.files_before.get(rel)
+        if before is None or f is None or not f.exists or f.written_ms < task.started_ms:
+            return False
+        add = _lines(task.fmt(c.append))
+        return bool(add) and _doc_lines(rel, f.data) == before + add
     if task.files_absent is None or rel not in task.files_absent:
         return False  # not proven absent (and not reserved) at start: pre-existing state, or never to be read
     f = guestfile.read(task.owner, rel)
@@ -938,6 +1012,17 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
     slides = guestfile.pptx_slides(f.data)
     want = [w for s in c.slides or [] if (w := _lines(task.fmt(s)))]  # a slide whose optional values are empty: none
     return slides is not None and bool(want) and [[x.casefold() for x in s] for s in slides] == want
+
+
+def _doc_lines(rel: str, data: bytes) -> list[str] | None:
+    """A .docx's non-empty paragraphs or a UTF-8 .txt's non-blank lines, casefolded; None: unreadable (unknown)."""
+    if rel.lower().endswith(".docx"):
+        got = guestfile.docx_paragraphs(data)
+        return None if got is None else [x.casefold() for x in got]
+    try:
+        return _lines(data.decode("utf-8-sig").replace("\r", ""))
+    except UnicodeDecodeError:
+        return None
 
 
 def _lines(text: str) -> list[str]:

@@ -39,6 +39,7 @@ from ludius.tasks import (
     Persona,
     Subgoal,
     Task,
+    _window_matches,
     added_baseline,
     check_done,
     declared_commits,
@@ -270,6 +271,8 @@ class Runner:
                 if e is None or not e.focused:
                     return "the focusing click did not put the keyboard focus in the target field"
                 self._caret_to_end(e, sg)
+            if sg.caret == "append" and e is not None and e.role == "document":  # after the file's last line
+                self.agent.chord(keys.chord("Ctrl+End"))
             if sg.replace and e is not None and _replace_field(e, task, sg):  # the text replaces its old value
                 self.agent.chord(keys.chord("Ctrl+A"))  # no element known (pixels only): typed as before
             elif sg.text == LAUNCH_TEXT:  # checked to be the Start search box: a retry never appends to an old query
@@ -313,6 +316,10 @@ class Runner:
             if sg.replace and focus is not None:  # its old value is selected first: only in the subgoal's own field
                 if self._focus_shared or not _replace_field(focus, task, sg):
                     return REPLACE_REASON, None  # (Ctrl+A in Notepad's document would select the note's body)
+                return None, focus
+            if sg.caret == "append":  # Ctrl+End first (act): only in the one focused document
+                if focus is None or focus.role != "document" or self._focus_shared:
+                    return "text is appended only at the end of the focused document", None
                 return None, focus
             return None, None
         target = allowed.get(o.element.key)
@@ -439,6 +446,8 @@ class Runner:
         added_baseline(sg.done, snap, task)  # an added check counts only items new since now
         seen = {fingerprint(snap)}
         guarded = False  # the last input passed this subgoal's require/forbid checks (send_confirmation)
+        escs = 0
+        sat: list[str] = []  # in_window waits on the same foreground window of the task's own app (a popup)
         shot_why: str | None = None  # why the next decision gets the screenshot (image_reason)
         step = 0
         while step < budget:
@@ -498,6 +507,19 @@ class Runner:
                                element=ok.name)  # fmt: skip
                 snap = self.observe(timeout_ms=10000)
                 continue
+            popup = self._popup_over(sg, snap, task) if blocked else None
+            if popup is None:
+                sat = []
+            else:
+                # A window of the task's own app sits in front of the one the subgoal may act in (live: Word's
+                # one-time "Check out our new look" over the opened document): after three waits on it, Esc, at most
+                # twice a subgoal (again after three more). A dismissal, never input into the guarded window.
+                sat = [*sat, popup] if sat and sat[-1] == popup else [popup]
+                if len(sat) % 3 == 0 and escs < 2:
+                    escs += 1
+                    self.agent.chord(keys.chord("Esc"))
+                    self.log.write(event="dismiss", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
+                                   window=popup)  # fmt: skip
             if blocked:
                 # No input is allowed (e.g. the mail is sent, its window closed, delivery still on its way): a Decisions
                 # call could only pick a blocked action. Wait and look again; the step budget still bounds it.
@@ -636,6 +658,14 @@ class Runner:
         if o.kind == "key":
             return self.policy.key_allowed(o.keys, self.snap, declared_commits(task, sg))
         return None
+
+    @staticmethod
+    def _popup_over(sg: Subgoal, snap: obs.Snapshot, task: Task) -> str | None:
+        """The foreground window's title when it belongs to the task's apps but is not the subgoal's in_window."""
+        fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
+        if sg.in_window is None or fg is None or _window_matches(fg, sg.in_window, task):
+            return None
+        return fg.title if fg.process_name.lower() in {p.lower() for p in task.template.processes} else None
 
     def _recovery_options(self, v: StepView) -> list[Option]:
         opts = [

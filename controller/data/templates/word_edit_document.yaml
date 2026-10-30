@@ -1,0 +1,69 @@
+# Add a few lines to the end of one of the persona's own Word documents and save it in place (Ctrl+S).
+# Edits one existing file, Documents\{file_name}.docx: at plan load it must be one the persona's own earlier work
+# left (planner.owned_files); at start it must be there and readable, and its paragraphs are kept as the baseline.
+# Irreversible: the saved file replaces the old version (only a noise file of the persona's own). On abandon Word is
+# closed with Don't Save, so the file keeps its old content. Done is read on the guest's disk, not in the UI: the
+# saved document's non-empty paragraphs are exactly the old ones followed by each line of {body}.
+# The file is opened in File Explorer's Documents with a double-click. Not with its context menu: the menu is a
+# popup whose owner window the observer can't prove. Never from Word's Recent list: it names a file by its name
+# alone, and a same-named one elsewhere could be overwritten. The opening click counts only in the Explorer window
+# showing This PC > Documents (in_window, breadcrumb), so a same-named file in another folder or the Documents
+# library is never opened; typing and saving only in the Word window titled with the file. Variants: Explorer
+# opened with Win+E or from its taskbar button.
+task: word_edit_document
+app: word
+capability: file.edit  # changes one of the persona's own files in place
+processes: [winword.exe, explorer.exe]
+writes: ['Documents\{file_name}.docx']
+params: [file_name, body]
+about: "Add 1-3 lines to the end of one of the persona's own Word documents (a .docx under Own recent files) and save it. file_name: that file's name exactly, without folder and extension; body: the added lines, each its own paragraph. Text: plain sentences of letters, digits, spaces and , . ; : ! ? & % # + / -, each line starting with a letter or digit; no quotes, no ' - ' or '--', no list markers."
+example: {file_name: admission test memo, body: "one more point for the memo"}
+variants:
+  - [open_explorer_keys, go_documents, open_file, append_body, save_keys, close_app, close_explorer]
+  - [open_explorer_taskbar, go_documents, open_file, append_body, save_keys, close_app, close_explorer]
+weights: [1, 1]
+budget_steps: 40
+budget_minutes: 8
+on_abandon: close_without_saving
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  open_explorer_taskbar:
+    goal: "Open File Explorer from its taskbar button"
+    launch: true
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_documents:
+    goal: "Go to the Documents folder"
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
+  open_file:
+    goal: "Open the document {file_name} with a double-click"
+    steps: 14  # Word takes a while to start
+    in_window: &documents {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}  # never elsewhere
+    breadcrumb: &crumbs ['This PC', Documents]  # the profile's own folder, not the Documents library
+    done: {foreground: {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}}
+  append_body:
+    goal: "Add the new lines at the end of the document, at the keyboard focus (each line is its own paragraph)"
+    text: body_line  # starts with Enter: a new paragraph after the last one
+    caret: append  # Ctrl+End before typing: the document opens with the caret at its start
+    unreadable_ok: true  # Word's document has no UIA value; the file check decides
+    in_window: &word {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}
+    avoid: [{role: edit}, {role: combo box}, {name: '^(File Tab|Save As)$'}]  # no other file opened from here
+    done: {typed: true}
+  save_keys:
+    goal: "Save the document with Ctrl+S"
+    keys: [Ctrl+S]
+    in_window: *word
+    # Save in place only: the File tab and Save As would offer another name or place.
+    avoid: [{name: '^(File Tab|Save As)$'}]
+    # The file check alone: an on-screen part (Word in front) holds before the save too, and the runner then waits
+    # for the disk instead of pressing Ctrl+S (live, dkoster). in_window keeps the keys in this document's window.
+    done: {file: {path: 'Documents\{file_name}.docx', append: "{body}"}}
+  close_app:
+    goal: "Close Word"
+    done: {window: {process: winword.exe, absent: true}}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}

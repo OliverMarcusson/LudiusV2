@@ -1,5 +1,6 @@
 task: wordpad_formatted_note
 app: wordpad
+fallback_for: word  # only on a range without Word (planner.installed), like Notepad
 capability: file.write  # creates one new file (writes); manager requests may ask for it
 processes:
 - wordpad.exe

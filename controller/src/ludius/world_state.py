@@ -24,17 +24,6 @@ import yaml
 from ludius.planner import Narrative, World, _templates, done_slots, load_plan, targets  # pyright: ignore[reportPrivateUsage]
 from ludius.tasks import Persona, Strict
 
-# Where each template's result lands, relative to the persona's profile. Templates without a lasting
-# file (web lookups, read-only checks) leave no document.
-ARTIFACTS = {
-    "notepad_write_note": "Documents\\{file_name}.txt",
-    "wordpad_formatted_note": "Documents\\{file_name}.rtf",
-    "excel_new_workbook": "Documents\\{file_name}.xlsx",
-    "paint_quick_sketch": "Pictures\\{file_name}.png",
-    "explorer_new_folder": "Documents\\{folder_name}",
-    "explorer_rename_move": "Documents\\{folder_name}\\{new_name}",
-}
-
 
 class Document(Strict):
     path: str
@@ -98,15 +87,15 @@ def build(world: World, narrative: Narrative, personas: list[Persona], before: d
             if (it.at, it.template) not in done:
                 continue
             doc = ""
-            if fmt := ARTIFACTS.get(it.template):
+            t = templates.get(it.template)
+            if t and t.writes:  # where its result lands, as the template declares it (".*": a kept extension)
                 try:
-                    doc = fmt.format_map(it.params)
+                    doc = t.writes[0].removesuffix(".*").format_map({**it.params, **it.content})
                     state.documents.append(Document(path=doc, owner=user, date=date, template=it.template))
                 except KeyError:
                     pass  # parameters the plan did not fill: no document recorded
             if it.followup:
                 finished.setdefault(it.followup, date)
-            t = templates.get(it.template)
             if it.handoff and not (t and t.capability == "chat.dm"):
                 fid = f"{date}-{user}-{it.at.replace(':', '')}"
                 about = it.context or it.template
@@ -167,7 +156,7 @@ def brief(state: State, user: str, day: dt.date) -> str:
         lines += ["Inbox:", *(f"- {m.date} from {m.sender}: {m.body}" for m in inbox)]
     if cal := [c for c in state.calendar if user in c.attendees and iso <= c.date <= soon]:
         lines += ["Calendar (next days):", *(f"- {c.date} {c.what}" for c in cal)]
-    if docs := [d for d in state.documents if d.owner == user][-8:]:
+    if docs := list({d.path.casefold(): d for d in state.documents if d.owner == user}.values())[-8:]:  # once each
         lines += ["Own recent files:", *(f"- {d.date} {d.path}" for d in docs)]
     if open_ := due(state, user, day):
         lines += ["Open follow-ups (must be scheduled today):",

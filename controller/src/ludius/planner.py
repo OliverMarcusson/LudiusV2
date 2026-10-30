@@ -217,6 +217,7 @@ def plan_day(
     existing: Iterable[str] = (),
     mail_threads: dict[str, tuple[str, str]] | None = None,
     inbox: set[tuple[str, str]] | None = None,
+    owned: set[str] | None = None,
 ) -> tuple[DayPlan, list[str]]:
     """Draft, validate, ask once to replace rejected items, drop what still fails. Returns the plan and rejects.
 
@@ -224,7 +225,8 @@ def plan_day(
     `mail_threads` (follow-up id -> sender, subject) are the mail ones; `inbox` (sender account, subject) the mails
     read in the persona's Inbox on the server (listed in `world`): the only mails a reply may answer.
     `existing` are files and folders already on the persona's profile (names or paths): no item may create or
-    rename to one of them, and an item that still does after the one repair is dropped, never run.
+    rename to one of them, and an item that still does after the one repair is dropped, never run. `owned`
+    (owned_files) are the files an edit may change.
     """
     policy = policy or Policy()
     followups = followups or {}
@@ -315,7 +317,7 @@ def plan_day(
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
     fill_recipient_names(draft.items, people)
     rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                       mail_threads, people, persona.user, date.isoformat(), inbox, teams)  # fmt: skip
+                       mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned)  # fmt: skip
     missing = sorted(set(followups) - {it.followup for it in draft.items})
     if rejects or missing:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
@@ -325,7 +327,7 @@ def plan_day(
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
         fill_recipient_names(draft.items, people)
         rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                           mail_threads, people, persona.user, date.isoformat(), inbox, teams)  # fmt: skip
+                           mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned)  # fmt: skip
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     missing = sorted(set(followups) - {it.followup for it in items})
@@ -341,10 +343,18 @@ def plan_day(
 REACTION_ONLY = {"chat.read_channel"}
 
 
+def installed(app: str) -> bool:
+    """LUDIUS_APPS: the app profiles the range's guests have (template `app` names, comma-separated); unset: all."""
+    apps = os.environ.get("LUDIUS_APPS")
+    return apps is None or app in {a.strip() for a in apps.split(",")}
+
+
 def role_templates(templates: dict[str, Template], persona: Persona) -> dict[str, Template]:
-    """Signal-like templates only for personas whose risk profile includes them; the rest are unknown to the plan."""
+    """Signal-like templates only for personas whose risk profile includes them; templates of apps the range lacks,
+    and stand-ins (fallback_for) for apps it has, never; the rest are unknown to the plan."""
     return {k: t for k, t in templates.items()
-            if (not t.resembles or k in persona.risk_profile) and t.capability not in REACTION_ONLY}  # fmt: skip
+            if (not t.resembles or k in persona.risk_profile) and t.capability not in REACTION_ONLY
+            and installed(t.app) and not (t.fallback_for and installed(t.fallback_for))}  # fmt: skip
 
 
 def validate(
@@ -362,12 +372,14 @@ def validate(
     day: str = "",
     inbox: set[tuple[str, str]] | None = None,
     teams: Iterable[str] = (),
+    owned: set[str] | None = None,
 ) -> list[tuple[int, str]]:
     """Rejected items with the reason. A reply must answer a mail follow-up in `mail_threads` from its `to`
     colleague with its subject, or a mail in `inbox` (sender account, subject; an empty subject: any mail from that
     sender); otherwise no reply is valid. The reply's text is written at task time (ludius.reply). A mail's
     to_name must be exactly the
-    narrative name (`people`, account -> name) of its `to` colleague. A meeting's date follows the plan's `day`."""
+    narrative name (`people`, account -> name) of its `to` colleague. A meeting's date follows the plan's `day`.
+    An edit changes only one of `owned` (owned_files; None: none known)."""
     rejects: list[tuple[int, str]] = []
     seen = list(history)
     taken = taken_names(existing)  # grows with each accepted item: a second item with the same name would overwrite
@@ -382,6 +394,8 @@ def validate(
             why = _reply_thread(it, mail_threads or {}, inbox or set[tuple[str, str]]())
         if not why and cap == "mail.read":
             why = _read_mail(it, colleagues or set[str](), inbox or set[tuple[str, str]](), items[:i])
+        if not why and cap == "file.edit" and t:
+            why = _owned(it, t, owned or set[str]())
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
         if not why and it.followup and cap == "chat.read":
@@ -407,6 +421,48 @@ def validate(
             for key, value in targets(it, templates):
                 taken |= taken_names([value], stem=key != "folder_name")
     return rejects
+
+
+def _owned(it: PlanItem, t: Template, owned: set[str]) -> str | None:
+    try:
+        paths = [w.format_map({**it.params, **it.content}) for w in t.writes]
+    except KeyError:
+        return "missing parameters"
+    if not paths or any(p.casefold() not in owned for p in paths):
+        return "file_name: edit only one of this persona's own files (Own recent files), named exactly"
+    return None
+
+
+def owned_files(root: Path, user: str, before: str) -> set[str]:
+    """Profile-relative paths (casefolded) of the files `user`'s items logged done before `before` left: each one's
+    declared writes, less what a later one removed (`removes`; a ".*" write keeps the removed file's extension)."""
+    templates, world, owned = _templates(), World(root), set[str]()
+    for path in sorted(root.glob("plans/*.yaml")):
+        date = path.stem[:10]
+        if path.stem[11:] != user or date >= before:
+            continue
+        done = done_slots(world.day_log(user, date))
+        for it in sorted(load_plan(path, history=True).items, key=lambda x: x.at):
+            if (it.at, it.template) not in done or (t := templates.get(it.template)) is None:
+                continue
+            try:
+                gone = [r.format_map({**it.params, **it.content}).casefold() for r in t.removes]
+                made = [w.format_map({**it.params, **it.content}).casefold() for w in t.writes]
+            except KeyError:
+                continue
+            removed = {p for p in owned for g in gone if p == g or (g.endswith(".*") and _stem(p) == g[:-2])}
+            exts = {p[len(_stem(p)) :] for p in removed}
+            owned -= removed
+            for w in made:
+                if not w.endswith(".*"):
+                    owned.add(w)
+                elif len(exts) == 1:  # a moved file keeps its extension; unknown otherwise: not owned
+                    owned.add(w[:-2] + exts.pop())
+    return owned
+
+
+def _stem(path: str) -> str:
+    return re.sub(r"\.[^.\\/]*$", "", path)
 
 
 def fill_recipient_names(items: Iterable[PlanItem], people: dict[str, str]) -> None:
@@ -648,6 +704,7 @@ def _office_keys(t: Template) -> set[str]:
     """Parameters a Word or PowerPoint file check reads back."""
     checks = [sg.done.file for sg in t.subgoals.values() if sg.done and sg.done.file]
     text = " ".join([c.paragraphs or "" for c in checks] + [s for c in checks for s in c.slides or []])
+    text += " " + " ".join(c.append or "" for c in checks if c.path.lower().endswith(".docx"))
     return set(re.findall(r"\{(\w+)\}", text))
 
 
@@ -904,6 +961,11 @@ def load_plan(path: Path, *, history: bool = False) -> DayPlan:
     narrative = path.parent.parent / "world" / "narrative.yaml"
     world = Narrative.model_validate(yaml.safe_load(narrative.read_text("utf-8"))) if narrative.exists() else None
     teams = [c for c, members in (world.channels if world else {}).items() if plan.persona in members]
+    edits = [it for it in plan.items if (t := templates.get(it.template)) and t.capability == "file.edit"]
+    owned = owned_files(path.parent.parent, plan.persona, plan.date) if edits and not history else set[str]()
+    for it in [] if history else edits:
+        if why := _owned(it, templates[it.template], owned):
+            raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
     for it in plan.items:
         if it.template in templates and (why := item_problem(it, templates, policy, plan.persona, teams)
                                          or _meeting_day(it, plan.date)):  # fmt: skip

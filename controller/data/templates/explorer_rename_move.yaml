@@ -6,6 +6,7 @@ app: explorer
 capability: file.move  # names an existing file and folder (planner: not new content)
 processes: [explorer.exe]
 writes: ['Documents\{folder_name}\{new_name}.*']  # the renamed file keeps the extension Explorer hides
+removes: ['Documents\{file_name}.*']  # the source leaves Documents (planner.owned_files)
 params: [file_name, new_name, folder_name]
 about: "Rename an existing file in Documents and move it into an existing folder there with Cut and Paste. file_name: the file's current name as Explorer shows it (no extension); new_name: its new name without extension; folder_name: an existing folder in Documents."
 example: {file_name: admission test note, new_name: admission test note old, folder_name: admission test folder}

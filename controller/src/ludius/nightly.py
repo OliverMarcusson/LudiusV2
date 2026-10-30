@@ -199,10 +199,11 @@ def generate_day(
     followups = {f.id: f.about for f in world_state.due(state, persona.user, date)}
     threads = world_state.mail_threads(state, persona.user)
     existing = world_state.existing_files(world, persona.user)
+    owned = planner.owned_files(world.root, persona.user, date.isoformat())
     plan, rejects = planner.plan_day(
         llm, auto.narrative, persona, date, src.templates, context, world.history(persona.user),
         policy=src.policy, scenario=scenario, existing=existing, followups=followups,
-        mail_threads=threads, inbox=set(inbox),
+        mail_threads=threads, inbox=set(inbox), owned=owned,
     )  # fmt: skip
     colleagues = {p.user for p in auto.narrative.people if p.user and p.user != persona.user}
     role = planner.role_templates(src.templates, persona)
@@ -224,7 +225,7 @@ def generate_day(
         why = dict(planner.validate(
             [*rest, it], planner.role_templates(src.templates, persona), world.history(persona.user),
             src.policy, colleagues, None, set(followups), existing, threads, people, persona.user, date.isoformat(),
-            set(inbox),
+            set(inbox), owned=owned,
         )).get(len(rest)) or requests.planned(it, src.templates, world.root)  # fmt: skip
         if why:
             requests.remember(world.root, persona.user, it.request, f"rejected: {why}")

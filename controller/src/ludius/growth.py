@@ -86,7 +86,7 @@ def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Templa
     if bad := [p for p in t.processes if p.lower() not in allowed]:
         problems.append(f"processes outside the catalog: {bad}")
     keys = set(t.params) | set(t.defaults)
-    keys |= {f"{k}_{d}" for k in keys for d in ("typo", "enter", "ui")}  # variants derived in Task
+    keys |= {f"{k}_{d}" for k in keys for d in ("typo", "enter", "ui", "line")}  # variants derived in Task
     if t.task_content:  # content written at task time (an LLM call per task): hand-written templates only
         problems.append("task_content not permitted for proposals")
         keys |= TASK_CONTENT_KEYS
