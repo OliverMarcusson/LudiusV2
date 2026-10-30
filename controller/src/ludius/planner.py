@@ -938,6 +938,8 @@ def load_plan(path: Path, *, history: bool = False) -> DayPlan:
         if not history:
             raise ValueError(f"{path}: items share a time and template: {sorted(dup)}")
         plan = plan.model_copy(update={"items": [it for it in plan.items if (it.at, it.template) not in dup]})
+    if history:
+        return plan
     policy, templates = Policy.from_env(), _templates()
     narrative = path.parent.parent / "world" / "narrative.yaml"
     world = Narrative.model_validate(yaml.safe_load(narrative.read_text("utf-8"))) if narrative.exists() else None

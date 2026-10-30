@@ -12,8 +12,9 @@ import yaml
 from ludius import react
 from ludius.cli import load_templates
 from ludius.day import BreakUnlockFailed, DayRunner, slots
+from ludius.decisions import Answers, DecisionError
 from ludius.loop import GroundTruth, Outcome
-from ludius.planner import DayPlan, PlanItem
+from ludius.planner import DayPlan, PlanItem, day_records
 from ludius.policy import Policy
 from ludius.react import Post, Reactor
 from ludius.tasks import Persona, Task
@@ -364,3 +365,57 @@ def test_team_channel_cap_quoting_and_handles(tmp_path: Path, monkeypatch: pytes
 
     item = PlanItem(at="10:00", template="chat_read_channel", params={"channel": "Ops Team"})
     assert "reactions only" in str(item_problem(item, load_templates(), Policy(), "aberg", ["Ops Team"]))
+
+
+class GossipDecider:
+    def __init__(self, yes: float | None) -> None:
+        self.yes, self.asked = yes, list[str]()
+
+    def ask(self, state: dict[str, str], questions: dict[str, Any]) -> Answers:
+        self.asked.append(state["messages"])
+        if self.yes is None:
+            raise DecisionError("down")
+        return Answers({"gossip": {"type": "noul", "noul": self.yes}})
+
+
+@pytest.mark.parametrize("yes", [0.95, 0.3, None])
+def test_gossip_gate_lets_one_dm_pass_news_on_to_a_third_colleague(tmp_path: Path, yes: float | None) -> None:
+    narrative = tmp_path / "narrative.yaml"
+    people = {"dkoster": "Daan Koster", "aberg": "Anna Berg", "lnord": "Lars Nord"}
+    news = Post("p1", "aberg", "the coffee machine on 3 finally works", 100)
+    dm = {"template": "chat_direct_message"}
+    llm = ReactionLlm([{**dm, "params": {"to": "aberg@ludius.internal", "message": "nice"}},
+                       {**dm, "params": {"to": "lnord@ludius.internal", "message": "coffee works on 3"}}])  # fmt: skip
+    decider = GossipDecider(yes)
+    log = GroundTruth(tmp_path / "day.jsonl")
+    reactor = Reactor(Persona(name="Daan Koster", user="dkoster"), load_templates(), Policy(), llm, narrative, log,  # type: ignore[arg-type]
+                      decider=decider)  # type: ignore[arg-type]
+    items = reactor.plan("aberg", people, [news], "10:00", "2026-11-02")
+    assert decider.asked == ["Anna Berg: the coffee machine on 3 finally works"]
+    assert len(items) == (2 if yes == 0.95 else 0)
+    assert ("Lars Nord (lnord@ludius.internal)" in llm.prompts[0]) == (yes == 0.95)
+    llm.items = [*llm.items, {**dm, "params": {"to": "lnord@ludius.internal", "message": "and again"}}]
+    assert reactor.plan("aberg", people, [news], "10:01", "2026-11-02") == []
+    assert len(decider.asked) == (1 if yes == 0.95 else 2)
+    log.close()
+
+
+def test_received_gossip_skips_the_gate_so_news_never_chains(tmp_path: Path) -> None:
+    narrative = tmp_path / "narrative.yaml"
+    (tmp_path / "gossip.jsonl").write_text(
+        json.dumps({"from": "aberg", "to": "dkoster", "message": "the coffee machine  on 3 finally works"}) + "\n",
+        encoding="utf-8")  # fmt: skip
+    people = {"dkoster": "Daan Koster", "aberg": "Anna Berg", "lnord": "Lars Nord"}
+    news = Post("p1", "aberg", "the coffee machine on 3 finally works", 100)
+    llm = ReactionLlm([{"template": "chat_direct_message",
+                        "params": {"to": "lnord@ludius.internal", "message": "coffee works on 3"}}])  # fmt: skip
+    decider = GossipDecider(0.99)
+    log = GroundTruth(tmp_path / "day.jsonl")
+    reactor = Reactor(Persona(name="Daan Koster", user="dkoster"), load_templates(), Policy(), llm, narrative, log,  # type: ignore[arg-type]
+                      decider=decider)  # type: ignore[arg-type]
+    assert reactor.plan("aberg", people, [news], "10:00", "2026-11-02") == []
+    assert decider.asked == [] and "lnord@ludius.internal" not in llm.prompts[0]
+    log.close()
+    assert any(r.get("skipped") == "received gossip" for r in day_records(tmp_path / "day.jsonl"))
+    (tmp_path / "gossip.jsonl").write_text(json.dumps({"from": None, "to": "dkoster", "message": "x"}) + "\n")
+    assert reactor._heard_gossip([news])  # pyright: ignore[reportPrivateUsage]

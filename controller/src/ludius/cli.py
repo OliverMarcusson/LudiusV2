@@ -994,7 +994,8 @@ def make_reactor(persona: Persona, templates: dict[str, Template], policy: Polic
 
     llm = LlmClient(key, model=os.environ.get("LUDIUS_REACT_MODEL", react.MODEL))
     return Reactor(persona, templates, policy, llm, RUNS / "world" / "narrative.yaml", log,
-                   existing=lambda: world_state.existing_files(planner.World(RUNS), persona.user))  # fmt: skip
+                   existing=lambda: world_state.existing_files(planner.World(RUNS), persona.user),
+                   decider=DecisionsClient(key))  # fmt: skip
 
 
 def make_session(agent: HostAgent, log: GroundTruth) -> Session:

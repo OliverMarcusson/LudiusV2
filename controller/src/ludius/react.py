@@ -16,9 +16,13 @@ from typing import Any, cast
 import yaml
 
 from ludius import mail
+from ludius.calls import CapReached
+from ludius.decisions import DecisionsClient
 from ludius.llm import DEFAULT_MODEL, LlmClient, LlmError
 from ludius.loop import GroundTruth
 from ludius.planner import (
+    GOSSIP,
+    GOSSIP_LEVEL,
     Narrative,
     PlanItem,
     catalog,
@@ -44,6 +48,17 @@ READ_CLOSE = ["close_edge"]
 DM_OPEN = ["open_edge_taskbar", *_CHAT, "write_message", "send_message"]
 POST_OPEN = ["open_edge_taskbar", "open_chat", "open_channel", "write_message", "send_message"]
 SHOWN = 2500
+GOSSIP_GATE = 0.85
+GOSSIP_QUESTION = {
+    "type": "noul",
+    "instructions": "Do these new team chat messages carry harmless office news (someone back from holiday, the "
+    "coffee machine, a project running late, the office move) the reader could pass on to another colleague?",
+    "criteria": {
+        "true": "Harmless office news worth passing on.",
+        "false": "Only work requests or questions, small talk, nothing new, news the sender heard from someone else, "
+        "or anything about someone's misconduct, health, pay, relationships or job.",
+    },
+}
 _USER = re.compile(r"[a-z0-9._-]+|[A-Za-z0-9][A-Za-z0-9 ._-]{0,40}")
 UNREAD_SQL = """select coalesce(json_agg(row_to_json(t)), '[]') from (
   select p.id, s.username as sender, p.createat, p.message,
@@ -219,6 +234,7 @@ class Reactor:
     existing: Callable[[], list[str]] = list
     poll: Callable[[str], list[Post] | None] = unread
     talk: Callable[[str, str], tuple[list[Post], int] | None] = conversation
+    decider: DecisionsClient | None = None
     busy: bool = False
     taken: list[str] = field(default_factory=list[str])
 
@@ -239,6 +255,41 @@ class Reactor:
                 reacted[str(key)] += 1
                 tries.update(str(x) for x in r.get("posts", []))
         return reacted, tries
+
+    def _heard_gossip(self, posts: list[Post]) -> bool:
+        ledger = self.narrative.parent / "gossip.jsonl"
+        try:
+            told = [json.loads(line) for line in ledger.read_text("utf-8").splitlines()] if ledger.exists() else []
+            told = {(r["from"], r["to"], " ".join(r["message"].split())) for r in told}
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            return True
+        if not all(isinstance(v, str) for t in told for v in t):
+            return True
+        return any((p.sender, self.persona.user, " ".join(p.message.split())) in told for p in posts)
+
+    def _told(self, to: str, message: str) -> None:
+        with (self.narrative.parent / "gossip.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"from": self.persona.user, "to": to, "message": message}) + "\n")
+
+    def _gossip(self, text: str, posts: list[Post]) -> bool:
+        if self.decider is None or any(
+            r.get("event") == "reaction_plan" and r.get("gossip_to")
+            for r in (day_records(self.log.path) if self.log.path.exists() else ())
+        ):
+            return False
+        if self._heard_gossip(posts):
+            self._log(event="gossip_gate", skipped="received gossip")
+            return False
+        try:
+            answers = self.decider.ask({"messages": text}, {"gossip": GOSSIP_QUESTION})
+            yes = answers.noul("gossip")
+        except CapReached:
+            raise
+        except Exception as e:  # noqa: BLE001  fail closed: no answer is no
+            self._log(event="gossip_gate", error=str(e)[:300])
+            return False
+        self._log(event="gossip_gate", yes=round(yes, 3), cost=answers.cost)
+        return yes >= GOSSIP_GATE
 
     def react(self, day: str, at: str, run: Callable[[PlanItem], str]) -> None:
         if self.busy:
@@ -328,7 +379,11 @@ class Reactor:
                         it = it.model_copy(update={"variant": self._variant(it.template, opened)})
                     self.taken += [v for _, v in targets(it, self.templates)]
                     failed = run(it) != "done"
-                    what = json.dumps({**it.params, **it.content})
+                    values = {**it.params, **it.content}
+                    to = str(values.get("to", "")).strip().split("@")[0].lower()
+                    if not failed and it.template == "chat_direct_message" and to not in {key, *members}:
+                        self._told(to, str(values.get("message", "")))
+                    what = json.dumps(values)
                     outcome += f"{'FAILED' if failed else 'done'}: {it.template} {what}\n"
                     if failed:
                         break
@@ -349,6 +404,21 @@ class Reactor:
         text = "\n".join(f"{'(new) ' if p.id in new else ''}{name.get(p.sender, p.sender)}: {p.message}"
                          for p in talk or posts)[-SHOWN:]  # fmt: skip
         tasks = "\n".join(catalog(allowed).splitlines()[:-1])
+        heard = "\n".join(f"{people.get(p.sender, p.sender)}: {p.message}" for p in posts)[-SHOWN:]
+        friends = (
+            [u for u in people if u not in {persona.user, *others} and not self.policy.reserved(f"{u}@{mail.DOMAIN}")]
+            if "chat_direct_message" in allowed and self._gossip(heard, posts)
+            else []
+        )
+        gossip_to = [f"{u}@{mail.DOMAIN}" for u in friends]
+        gossip = (
+            " Optionally also one chat_direct_message passing the news on to one other colleague you are friendly "
+            f"with ({', '.join(f'{people[u]} ({a})' for u, a in zip(friends, gossip_to, strict=True))}): "
+            f"{GOSSIP[GOSSIP_LEVEL]}, in your own words, never a request, figure, file or anything private from the "
+            "messages."
+            if friends
+            else ""
+        )
         retry = (f"You already tried, in order:\n{outcome}Return only what is still needed after the FAILED step: it "
                  "again another way (another name), or a chat line telling them you could not.\n\n"
                  if outcome else "")  # fmt: skip
@@ -378,7 +448,7 @@ class Reactor:
             f"work, the done line asks them to send it), and what you asked of {who} that is still open ('' for "
             f"none); then 0-{ITEMS_MAX} items in the order {persona.name} does them now, never for what you asked of "
             f"{who}. Each item: template (a catalog name), params (object with every listed parameter as a string), "
-            f"context (one sentence: why). {answer}"
+            f"context (one sentence: why). {answer}{gossip}"
         )
         try:
             reaction = self.llm.json(_Reaction, SYSTEM, user, temperature=0.7, attempts=1)
@@ -389,18 +459,26 @@ class Reactor:
         items = [PlanItem(at=at, template=d.template, params=d.params, content=d.content, context=d.context)
                  for d in drafts]  # fmt: skip
         fill_recipient_names(items, people)
+        h, m = divmod(int(at[:2]) * 60 + int(at[3:]) + 1, 60)
+        for it in items:
+            if it.template == "chat_direct_message" and str(it.params.get("to", "")).strip().lower() in gossip_to:
+                it.at = f"{h % 24:02d}:{m:02d}"
         colleagues = set(people) - {persona.user}
         rejects = validate(items, allowed, [], self.policy, colleagues, existing=[*self.existing(), *self.taken],
                            people=people, user=persona.user, day=day, teams=[channel] if channel else [])  # fmt: skip
+        passed: list[str] = []
         for i, it in enumerate(items):
             values = {**it.params, **it.content}
-            if (to := values.get("to")) is not None and to.strip().lower() not in addresses:
+            to = (values.get("to") or "").strip().lower()
+            if to in gossip_to and it.template == "chat_direct_message" and not passed:
+                passed.append(to)
+            elif "to" in values and to not in addresses:
                 rejects.append((i, f"to must be {' or '.join(addresses)}"))
             if it.template == POST and values.get("channel") != channel:
                 rejects.append((i, f"channel must be {channel}"))
         self._log(event="reaction_plan", sender=sender, posts=sorted(new), they_ask_me=reaction.they_ask_me,
                   they_ask_question=reaction.they_ask_question,
                   they_offer=reaction.they_offer, i_wait_for=reaction.i_wait_for,
-                  items=[it.model_dump() for it in items],
+                  items=[it.model_dump() for it in items], gossip_to=[] if rejects else passed,
                   rejects=[f"{items[i].template}: {why}" for i, why in rejects], llm_cost=self.llm.cost)  # fmt: skip
         return [] if rejects else items

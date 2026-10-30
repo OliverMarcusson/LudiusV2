@@ -6,8 +6,9 @@ import math
 import os
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 
@@ -17,6 +18,7 @@ ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 RATE_LIMIT_WAITS = (1, 2, 4)
 DEFAULT_MODEL = os.environ.get("LUDIUS_DECISION_MODEL", "liquid/d1.1")
 MAX_OPTIONS = 255
+T = TypeVar("T")
 
 _KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -138,6 +140,35 @@ def parse_response(data: dict[str, Any], model: str, options: dict[str, str], *,
     )
 
 
+@dataclass
+class Answers:
+    answers: dict[str, dict[str, Any]]
+    cost: float | None = None
+
+    def noul(self, name: str) -> float:
+        return _prob(self.answers[name]["noul"])
+
+
+def parse_answers(data: dict[str, Any], model: str, questions: dict[str, dict[str, Any]]) -> Answers:
+    got_model = str(data.get("model", ""))
+    if not got_model.startswith(model):
+        raise DecisionError(f"model drift: asked {model}, got {got_model}")
+    answers: dict[str, Any] = data.get("answers") or {}
+    for name, q in questions.items():
+        a: dict[str, Any] = answers.get(name) or {}
+        if a.get("type") != q["type"]:
+            raise DecisionError(f"{name} answer missing")
+        if q["type"] == "noul":
+            _prob(a.get("noul"))
+        elif q["type"] == "choice" and a.get("choice") not in q["criteria"]:
+            raise DecisionError(f"{name} choice is not one of the criteria")
+        elif q["type"] == "score":
+            _prob(a.get("score"))
+    usage: dict[str, Any] = data.get("usage") or {}
+    cost = usage.get("cost")
+    return Answers(answers, float(cost) if isinstance(cost, int | float) else None)
+
+
 class DecisionsClient:
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL, endpoint: str = ENDPOINT, timeout: float = 30) -> None:
         if not api_key.strip():
@@ -152,6 +183,21 @@ class DecisionsClient:
         self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
     ) -> Decision:
         body = build_request(self.model, state, options, ask_progress=ask_progress, image=image)
+        decision, latency, throttled = self._send(
+            body, lambda data: parse_response(data, self.model, options, ask_progress=ask_progress)
+        )
+        decision.request = body
+        decision.latency_ms = latency
+        decision.image = image is not None
+        decision.retries_429 = throttled
+        return decision
+
+    def ask(self, state: Any, questions: dict[str, dict[str, Any]]) -> Answers:
+        body = {"model": self.model, "state": state, "questions": questions}
+        answers, _, _ = self._send(body, lambda data: parse_answers(data, self.model, questions))
+        return answers
+
+    def _send(self, body: dict[str, Any], parse: Callable[[dict[str, Any]], T]) -> tuple[T, int, int]:
         last: Exception | None = None
         t0 = time.monotonic()
         throttled = 0
@@ -168,15 +214,11 @@ class DecisionsClient:
             if res.status_code != 200:
                 raise DecisionError(f"HTTP {res.status_code}: {res.text[:300]}")
             try:
-                decision = parse_response(json.loads(res.content), self.model, options, ask_progress=ask_progress)
+                result = parse(json.loads(res.content))
             except (DecisionError, ValueError) as e:
                 last = e
                 continue
-            decision.request = body
-            decision.latency_ms = round((time.monotonic() - t0) * 1000)
-            decision.image = image is not None
-            decision.retries_429 = throttled
-            return decision
+            return result, round((time.monotonic() - t0) * 1000), throttled
         raise DecisionError(f"Decisions failed twice: {last}")
 
     def _post(self, body: dict[str, Any]) -> tuple[httpx.Response, int]:
