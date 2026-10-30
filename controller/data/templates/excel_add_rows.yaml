@@ -39,13 +39,13 @@ subgoals:
     keys: [Ctrl+Home, Ctrl+Down, Down, Up]
     steps: 8
     in_window: &excel {process: excel.exe, title: '^{file_name}(\.xlsx)? - Excel$'}
-    avoid: [{role: edit}, {role: combo box}, {role: data item}, {name: '^(File Tab|Save As)$'}]
+    avoid: [{role: edit}, {role: combo box}, {role: data item}, {name: '^(File Tab|Save As|Add Sheet|New sheet)$'}]
     done: {ask: "In Excel, is the selected cell in column A, in the first empty row directly below the last filled row of the table, with no cell being edited?"}
   write_rows:
     goal: "Type the new rows at the keyboard focus (the text moves to the next cell on Tab and to the next row on Enter)"
     text: rows_enter
     in_window: *excel
-    avoid: [{role: edit}, {role: combo box}, {role: data item}, {name: '^(File Tab|Save As)$'}]
+    avoid: [{role: edit}, {role: combo box}, {role: data item}, {name: '^(File Tab|Save As|Add Sheet|New sheet)$'}]
     done: {typed: true}
   save_keys:
     goal: "Save the workbook with Ctrl+S"

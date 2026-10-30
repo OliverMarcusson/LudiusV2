@@ -34,12 +34,13 @@ subgoals:
     goal: "Open a new blank workbook with a click on Blank workbook on Excel's start screen"
     done: {foreground: {process: excel.exe, title: '^Book\d+ - Excel$'}}
   write_rows:
-    goal: "Cell A1 of the new sheet is selected: type the rows at the keyboard focus (the text moves to the next cell on Tab and to the next row on Enter)"
+    goal: "Cell A1 of the blank workbook's only sheet is selected: type the rows at the keyboard focus (the text moves to the next cell on Tab and to the next row on Enter)"
     text: rows_enter
     avoid:
       - {role: edit}
       - {role: combo box}
       - {role: data item, name: '^(?!A1$)'}
+      - {name: '^(Add Sheet|New sheet)$'}
     done: {typed: true}
   save_as:
     goal: "Open the Save As dialog with F12"
