@@ -207,6 +207,28 @@ def test_code_builds_the_day_skeleton() -> None:
         assert all(it.params["subject"] == "Freight" for it in work if it.template == "outlook_read_mail")
 
 
+def test_social_runs_plan_more_chat_and_gossip_every_day(monkeypatch: pytest.MonkeyPatch) -> None:
+    src = cli.plan_sources()
+    anna = next(p for p in src.personas if p.user == "aberg")
+    templates = planner.role_templates(src.templates, anna)
+
+    def chat(social: float) -> tuple[int, int]:
+        monkeypatch.setattr(planner, "SOCIAL", social)
+        n = gossip = 0
+        for day in range(20):
+            items = planner.day_slots(
+                anna, DAY + dt.timedelta(days=day), templates, {"lnord": "Lars Nord"}, {"lnord"}, ["general"], {},
+                {}, set(), set(), {}, [], None, [], {}, {}, set(), [], {},
+            )  # fmt: skip
+            caps = [templates[it.template].capability or "" for it in items if it.template in templates]
+            n += sum(c.startswith("chat.") for c in caps)
+            gossip += any("gossip" in it.context for it in items)
+        return n, gossip
+
+    calm, busy = chat(1.0), chat(6.0)
+    assert busy[0] > 2 * calm[0] and busy[1] == 20
+
+
 def test_follow_ups_stay_within_the_budget_and_threads_need_a_reply() -> None:
     src = cli.plan_sources()
     anna = next(p for p in src.personas if p.user == "aberg")

@@ -190,6 +190,7 @@ PLAN_SYSTEM = (
 )
 WORK_ITEMS = (5, 8)
 GOSSIP_DAYS = 0.7
+SOCIAL = float(os.environ.get("LUDIUS_SOCIAL", "1"))
 INTERRUPT = 0.4
 SLOT_GAP = 15
 SETTLES = (None, "file.write", "mail.send", "chat.dm", "calendar.invite")
@@ -372,7 +373,7 @@ def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], p
             it = to(PlanItem(at="00:00", template=answers[0], context=f"answers the invitation {subject!r}"), u)
             it.params["subject"] = subject
             first.append(it)
-    if colleagues and (dms := of("chat.dm")) and rng.random() < GOSSIP_DAYS:
+    if colleagues and (dms := of("chat.dm")) and rng.random() < GOSSIP_DAYS * SOCIAL:
         first.append(slot(dms[0], f"gossip with a colleague the persona is friendly with: {GOSSIP[GOSSIP_LEVEL]}"))
 
     h0, h1 = _minutes(persona.hours[0]) + 10, _minutes(persona.hours[1]) - 30
@@ -397,7 +398,8 @@ def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], p
 
     want = rng.randint(*WORK_ITEMS)
     first = first[: max(0, want - len(late))]
-    pool = {k: weights.get(k, 1.0) * t.plan_weight for k, t in templates.items() if eligible(k, t)}
+    pool = {k: weights.get(k, 1.0) * t.plan_weight * (SOCIAL if (t.capability or "").startswith("chat.") else 1.0)
+            for k, t in templates.items() if eligible(k, t)}  # fmt: skip
     rest: list[PlanItem] = []
     while pool and len(first) + len(rest) + len(late) < want:
         k = rng.choices(list(pool), weights=list(pool.values()))[0]
