@@ -1,0 +1,68 @@
+task: word_export_pdf
+app: word
+capability: file.export
+processes: [winword.exe, explorer.exe]
+writes: ['Documents\{file_name}.pdf']
+params: [file_name]
+about: "Save a PDF copy of one of the persona's own Word documents (a .docx under Own recent files, with no PDF yet) next to it in Documents, with Word's Save As and the type PDF; the document stays as it was. file_name: the document's name exactly, without folder and extension."
+example: {file_name: admission test memo}
+variants:
+  - [open_explorer_keys, go_documents, open_file, save_as_keys, pick_pdf, no_open_after, focus_name, save_pdf, close_app, close_explorer]
+budget_steps: 50
+budget_minutes: 10
+on_abandon: close_without_saving
+key_commits: [{keys: Enter, focus: {}}]
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_documents:
+    goal: "Go to the Documents folder"
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
+  open_file:
+    goal: "Open the document {file_name} with a double-click"
+    steps: 14
+    in_window: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+    breadcrumb: ['This PC', Documents]
+    done: {foreground: {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}}
+  save_as_keys:
+    goal: "Open Word's Save As dialog with F12"
+    keys: [F12]
+    steps: 6
+    in_window: {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}
+    done: {foreground: {process: winword.exe, title: '^Save As$'}}
+  pick_pdf:
+    goal: "Set Save as type to PDF (*.pdf) in the Save As dialog"
+    steps: 8
+    in_window: &dialog {process: winword.exe, title: '^Save As$'}
+    avoid: [{name: '^Save$'}, {role: edit}]
+    done: {element: {name: '^Save as type', value: '^PDF \(\*\.pdf\)$'}}
+  no_open_after:
+    goal: "Clear the Open file after publishing check box"
+    steps: 4
+    in_window: *dialog
+    avoid: [{name: '^(Save|Options\.*)$'}, {role: edit}]
+    done: {element: {role: check box, name: '^Open file after publishing$', value: '^off$'}}
+  focus_name:
+    goal: "Click into the File name field of the Save As dialog"
+    steps: 4
+    in_window: *dialog
+    avoid: [{name: '^(Save|Options\.*)$'}]
+    done: {element: {name: '^File name', focused: true}}
+  save_pdf:
+    goal: "Save the PDF as {file_name}: press Enter"
+    keys: [Enter]
+    steps: 6
+    in_window: *dialog
+    require: [{name: "^File name", value: '^{file_name}(\.pdf)?$'}, {name: '^Save as type', value: '^PDF \(\*\.pdf\)$'}]
+    forbid: [{name: '(?i)already exists|replace it'}]
+    confirm: "Does Word's Save As dialog show the user's own Documents folder (This PC > Documents) as the save location, with the file name {file_name} and the type PDF?"
+    done: {file: {path: 'Documents\{file_name}.pdf', pdf_of: 'Documents\{file_name}.docx'}}
+  close_app:
+    goal: "Close Word"
+    done: {window: {process: winword.exe, absent: true}}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}

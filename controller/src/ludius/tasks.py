@@ -97,6 +97,7 @@ class FileCheck(Strict):
     share: str | None = None
     moved_from: str | None = None
     attachment_of: list[str] | None = None
+    pdf_of: str | None = None
 
     @model_validator(mode="after")
     def _noise_folder(self) -> FileCheck:
@@ -105,6 +106,14 @@ class FileCheck(Strict):
         if self.source is not None and (self.append is None or guestfile.profile_path("u", self.source) is None
                                         or self.source.lower()[-5:] != ext or self.source == self.path):  # fmt: skip
             raise ValueError(f"file check {self.path!r}: a source goes with append, another noise file, same type")
+        if self.pdf_of is not None:
+            paths = (self.path, self.pdf_of)
+            if any(guestfile.profile_path("u", x) is None for x in paths) or not self.path.lower().endswith(".pdf"):
+                raise ValueError(f"file check {self.path!r}: a PDF export goes from a noise file to a noise .pdf")
+            if self.recycled or any(getattr(self, k) is not None for k in (*need.values(), "download", "append",
+                                                                            "share", "moved_from", "attachment_of")):
+                raise ValueError(f"file check {self.path!r}: a PDF export check stands alone")
+            return self
         if self.attachment_of is not None:
             if len(self.attachment_of) != 2 or guestfile.profile_path("u", self.path) is None:
                 raise ValueError(f"file check {self.path!r}: an attachment ([sender, subject]) saves to a noise folder")
@@ -206,6 +215,7 @@ Capability = Literal[
     "file.write",
     "file.edit",
     "file.reuse",
+    "file.export",
     "file.recycle",
     "file.share",
     "file.organize",
@@ -225,6 +235,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "file.move": {"file_name", "folder_name"},
     "file.edit": {"file_name"},
     "file.reuse": {"file_name"},
+    "file.export": {"file_name"},
     "file.recycle": {"file_name", "file_ext"},
     "file.share": {"file_name", "file_ext", "share"},
     "file.organize": {"file_name"},
@@ -423,7 +434,7 @@ class Template(Strict):
             if guestfile.profile_path("u", w.removesuffix(".*")) is None:
                 raise ValueError(f"{self.task}: write {w!r} is not in a noise folder {guestfile.NOISE_FOLDERS}")
             ext = SAVE_EXTENSIONS.get(self.app)
-            if ext and "{file_name}" in w and not w.lower().endswith(ext):
+            if ext and "{file_name}" in w and not w.lower().endswith((ext, ".pdf") if self.app == "word" else ext):
                 raise ValueError(f"{self.task}: {self.app} saves {ext}, so write {w!r} must end with it")
         marks = {sg.done.added.mark for sg in self.subgoals.values() if sg.done and sg.done.added}
         for name, sg in self.subgoals.items():
@@ -871,7 +882,7 @@ def file_reserved(user: str, rel: str, policy: Any) -> bool:
 
 def file_baseline(task: Task, policy: Any) -> str | None:
     files = [sg.done.file for sg in task.template.subgoals.values() if sg.done and sg.done.file]
-    sources = [task.fmt(c.source) for c in files if c.source]
+    sources = [task.fmt(c.source or c.pdf_of or "") for c in files if c.source or c.pdf_of]
     attached = [task.fmt(a) for a in task.template.attaches]
     for rel in [*write_paths(task), *(task.fmt(r) for r in task.template.removes), *sources, *attached]:
         if file_reserved(task.owner, rel, policy):
@@ -913,6 +924,13 @@ def file_baseline(task: Task, policy: Any) -> str | None:
         if not f.exists or len(f.data) > ATTACH_MAX_BYTES:
             return f"{rel}: not there or over {ATTACH_MAX_BYTES} bytes, nothing to attach"
         task.sources_before[rel] = f.data
+    for src in sorted({task.fmt(c.pdf_of) for c in files if c.pdf_of is not None}):
+        f = guestfile.read(task.owner, src)
+        if f is None:
+            return f"{src}: unreadable on the guest"
+        if not f.exists:
+            return f"{src}: not there, nothing to export"
+        task.sources_before[src] = f.data
     for c in (c for c in files if c.attachment_of):
         rel, (sender, subject) = task.fmt(c.path), (task.fmt(x) for x in c.attachment_of or [])
         got = mail.matching(task.owner, "inbox", subject, True)
@@ -1006,6 +1024,10 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
         return f is not None and f.exists and hashlib.sha256(f.data).hexdigest() == task.saved_sha.get(rel)
     if f is None or not f.exists or f.written_ms < task.started_ms:
         return False
+    if c.pdf_of is not None:
+        s = guestfile.read(task.owner, task.fmt(c.pdf_of))
+        unchanged = s is not None and s.exists and s.data == task.sources_before.get(task.fmt(c.pdf_of))
+        return unchanged and f.data.startswith(b"%PDF-") and b"%%EOF" in f.data[-1024:]
     if c.cells is not None:
         cells = guestfile.xlsx_cells(f.data)
         want = guestfile.grid_cells(task.fmt(c.cells))

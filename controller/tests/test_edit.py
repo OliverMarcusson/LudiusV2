@@ -213,3 +213,35 @@ def test_save_as_commits_only_from_the_checked_step() -> None:
     field.value = "close memo"
     assert commits_unguarded("Enter", field, tk, save)
     assert any(c.name == "^Save$" for c in name.avoid)
+
+
+def test_pdf_export_needs_a_new_pdf_and_the_document_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    templates = cli.plan_sources().templates
+    owned = {r"documents\close memo.docx": "2026-11-01"}
+    item = it("11:00", "word_export_pdf", file_name="close memo")
+    assert validate([item], templates, [], Policy(), owned=owned, day="2026-11-02") == []
+    assert validate([item], templates, [], Policy(), owned={}, day="2026-11-02")
+    again = {**owned, r"documents\close memo.pdf": "2026-11-01"}
+    assert "already has its PDF" in validate([item], templates, [], Policy(), owned=again, day="2026-11-02")[0][1]
+    disk: dict[str, Any] = {}
+    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+    t = templates["word_export_pdf"]
+    tk = Task(t, TaskInstance(template=t.task, params={"file_name": "close memo"}), random.Random(0))
+    tk.owner, tk.started_ms = "aberg", 1_000_000
+    src, pdf, old = r"Documents\close memo.docx", r"Documents\close memo.pdf", docx("Close memo")
+    disk[src] = guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) == f"{src}: not there, nothing to export"
+    assert file_baseline(tk, Policy(reserved_names=[r"close memo\.docx"])) == f"{src}: scenario-reserved file"
+    disk[src], disk[pdf] = guestfile.GuestFile(True, 500, old), guestfile.GuestFile(True, 500, b"%PDF-1.7 %%EOF")
+    assert file_baseline(tk, Policy()) == f"{pdf}: already exists, never overwritten"
+    disk[pdf] = guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) is None
+    done, snap = t.subgoals["save_pdf"].done, obs.Snapshot()
+    disk[pdf] = guestfile.GuestFile(True, 2_000_000, b"%PDF-1.7\n...\n%%EOF\n")
+    assert check_done(done, snap, tk, False) is True
+    disk[src] = guestfile.GuestFile(True, 2_000_000, docx("Close memo", "changed"))
+    assert check_done(done, snap, tk, False) is False
+    disk[src] = guestfile.GuestFile(True, 500, old)
+    for bad in (guestfile.GuestFile(True, 2_000_000, b"%PDF-1.7 cut"), guestfile.GuestFile(True, 999_999, b"%PDF- %%EOF")):
+        disk[pdf] = bad
+        assert check_done(done, snap, tk, False) is False
