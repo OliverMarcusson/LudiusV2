@@ -376,7 +376,10 @@ class GossipDecider:
         self.asked.append((state["conversation"], list(questions)))
         if self.yes is None:
             raise DecisionError("down")
-        return Answers({k: {"type": "noul", "noul": self.yes if k == "gossip" else 0.1} for k in questions})
+        work = {"type": "choice", "choice": "chat", "probabilities": {"chat": 1.0}}
+        noul = {"type": "noul", "noul": 0.1}
+        return Answers({k: work if k == "work" else {**noul, "noul": self.yes} if k == "gossip" else noul
+                        for k in questions})  # fmt: skip
 
 
 @pytest.mark.parametrize("yes", [0.95, 0.3, None])
@@ -389,17 +392,25 @@ def test_gossip_gate_lets_one_dm_pass_news_on_to_a_third_colleague(tmp_path: Pat
                        {**dm, "params": {"to": "lnord@ludius.internal", "message": "coffee works on 3"}}])  # fmt: skip
     decider = GossipDecider(yes)
     log = GroundTruth(tmp_path / "day.jsonl")
-    reactor = Reactor(Persona(name="Daan Koster", user="dkoster"), load_templates(), Policy(), llm, narrative, log,  # type: ignore[arg-type]
-                      decider=decider)  # type: ignore[arg-type]
+    reactor = Reactor(
+        Persona(name="Daan Koster", user="dkoster"),
+        load_templates(),
+        Policy(),
+        llm,
+        narrative,
+        log,  # type: ignore[arg-type]
+        decider=decider,
+    )  # type: ignore[arg-type]
     items = reactor.plan("aberg", people, [news], "10:00", "2026-11-02")
-    rules = ["request", "question", "offer", "small_talk"]
+    rules = ["request", "question", "offer", "small_talk", "work"]
     assert decider.asked == [("(new) Anna Berg: the coffee machine on 3 finally works", [*rules, "gossip"])]
     assert (react.RULES["request"] in llm.systems[0]) == (yes is None)
+    assert ("- notepad_write_note:" in llm.prompts[0]) == (yes is None)
     assert len(items) == (2 if yes == 0.95 else 0)
     assert ("Lars Nord (lnord@ludius.internal)" in llm.prompts[0]) == (yes == 0.95)
     llm.items = [*llm.items, {**dm, "params": {"to": "lnord@ludius.internal", "message": "and again"}}]
     assert reactor.plan("aberg", people, [news], "10:01", "2026-11-02") == []
-    assert [q[-1] for _, q in decider.asked] == ["gossip", "small_talk" if yes == 0.95 else "gossip"]
+    assert [q[-1] for _, q in decider.asked] == ["gossip", "work" if yes == 0.95 else "gossip"]
     log.close()
 
 
@@ -414,10 +425,17 @@ def test_received_gossip_skips_the_gate_so_news_never_chains(tmp_path: Path) -> 
                         "params": {"to": "lnord@ludius.internal", "message": "coffee works on 3"}}])  # fmt: skip
     decider = GossipDecider(0.99)
     log = GroundTruth(tmp_path / "day.jsonl")
-    reactor = Reactor(Persona(name="Daan Koster", user="dkoster"), load_templates(), Policy(), llm, narrative, log,  # type: ignore[arg-type]
-                      decider=decider)  # type: ignore[arg-type]
+    reactor = Reactor(
+        Persona(name="Daan Koster", user="dkoster"),
+        load_templates(),
+        Policy(),
+        llm,
+        narrative,
+        log,  # type: ignore[arg-type]
+        decider=decider,
+    )  # type: ignore[arg-type]
     assert reactor.plan("aberg", people, [news], "10:00", "2026-11-02") == []
-    assert decider.asked[0][1][-1] == "small_talk" and "lnord@ludius.internal" not in llm.prompts[0]
+    assert decider.asked[0][1][-1] == "work" and "lnord@ludius.internal" not in llm.prompts[0]
     log.close()
     assert any(r.get("skipped") == "received gossip" for r in day_records(tmp_path / "day.jsonl"))
     (tmp_path / "gossip.jsonl").write_text(json.dumps({"from": None, "to": "dkoster", "message": "x"}) + "\n")

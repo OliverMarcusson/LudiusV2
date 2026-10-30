@@ -148,6 +148,9 @@ class Answers:
     def noul(self, name: str) -> float:
         return _prob(self.answers[name]["noul"])
 
+    def probabilities(self, name: str) -> dict[str, float]:
+        return {k: _prob(v) for k, v in (self.answers[name].get("probabilities") or {}).items()}
+
 
 def parse_answers(data: dict[str, Any], model: str, questions: dict[str, dict[str, Any]]) -> Answers:
     got_model = str(data.get("model", ""))

@@ -50,6 +50,8 @@ POST_OPEN = ["open_edge_taskbar", "open_chat", "open_channel", "write_message", 
 SHOWN = 2500
 GOSSIP_GATE = 0.85
 RULE_GATE = 0.2
+WORK_GATE = 0.1
+ANSWERS = ("chat.dm", "chat.post")
 GOSSIP_QUESTION = {
     "type": "noul",
     "instructions": "Do the (new) messages in this team chat carry harmless office news (someone back from holiday, "
@@ -324,20 +326,35 @@ class Reactor:
             return False
         return True
 
-    def _triage(self, text: str, posts: list[Post], dm: bool) -> tuple[list[str], bool]:
+    def _triage(self, text: str, posts: list[Post], allowed: dict[str, Template]) -> tuple[list[str], bool, set[str]]:
         if self.decider is None:
-            return list(RULES), False
-        questions = {**RULE_QUESTIONS, **({"gossip": GOSSIP_QUESTION} if dm and self._may_gossip(posts) else {})}
+            return list(RULES), False, set(allowed)
+        chat = {k for k, t in allowed.items() if t.capability in ANSWERS}
+        work = {k: t.about for k, t in allowed.items() if k not in chat} | {"chat": "No work task: chat lines only."}
+        gossip = "chat_direct_message" in allowed and self._may_gossip(posts)
+        questions = {
+            **RULE_QUESTIONS,
+            "work": {
+                "type": "choice",
+                "instructions": "Which task would the reader (You) use to do what the (new) messages ask of them?",
+                "criteria": work,
+            },
+            **({"gossip": GOSSIP_QUESTION} if gossip else {}),
+        }
         try:
             answers = self.decider.ask({"conversation": text}, questions)
-            yes = {k: answers.noul(k) for k in questions}
+            yes = {k: answers.noul(k) for k in questions if k != "work"}
+            probs = answers.probabilities("work")
         except CapReached:
             raise
-        except Exception as e:  # noqa: BLE001  no answer: every rule, no gossip
+        except Exception as e:  # noqa: BLE001  no answer: every rule and task, no gossip
             self._log(event="chat_triage", error=str(e)[:300])
-            return list(RULES), False
-        self._log(event="chat_triage", **{k: round(v, 3) for k, v in yes.items()}, cost=answers.cost)
-        return [k for k in RULES if yes[k] >= RULE_GATE], yes.get("gossip", 0.0) >= GOSSIP_GATE
+            return list(RULES), False, set(allowed)
+        tasks = {k for k, v in probs.items() if v >= WORK_GATE} | {answers.answers["work"]["choice"]}
+        keep = chat | (tasks & set(work) if yes["request"] >= RULE_GATE else set())
+        self._log(event="chat_triage", **{k: round(v, 3) for k, v in yes.items()}, tasks=sorted(keep - chat),
+                  cost=answers.cost)  # fmt: skip
+        return [k for k in RULES if yes[k] >= RULE_GATE], yes.get("gossip", 0.0) >= GOSSIP_GATE, keep
 
     def react(self, day: str, at: str, run: Callable[[PlanItem], str]) -> None:
         if self.busy:
@@ -451,8 +468,9 @@ class Reactor:
         name = {**people, persona.user: "You"}
         text = "\n".join(f"{'(new) ' if p.id in new else ''}{name.get(p.sender, p.sender)}: {p.message}"
                          for p in talk or posts)[-SHOWN:]  # fmt: skip
+        rules, news, keep = self._triage(text, posts, allowed)
+        allowed = {k: t for k, t in allowed.items() if k in keep}
         tasks = "\n".join(catalog(allowed).splitlines()[:-1])
-        rules, news = self._triage(text, posts, "chat_direct_message" in allowed)
         system = " ".join([SYSTEM, *(RULES[k] for k in rules), *([CHANNEL_RULES] if channel else [])])
         friends = (
             [u for u in people if u not in {persona.user, *others} and not self.policy.reserved(f"{u}@{mail.DOMAIN}")]
