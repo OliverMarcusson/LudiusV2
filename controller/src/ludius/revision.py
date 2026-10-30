@@ -34,7 +34,7 @@ def with_personas(n: Narrative, personas: list[Persona]) -> Narrative:
     have = {p.user for p in n.people if p.user}
     extra = [Person(name=p.name, role=p.role, department=p.department, user=p.user)
              for p in personas if p.user not in have]  # fmt: skip
-    return n.model_copy(update={"people": [*n.people, *extra]}) if extra else n
+    return n.model_copy(update={"people": [*n.people, *extra], "accounts": [p.user for p in personas]})
 
 
 def check(r: Revision, n: Narrative, day: dt.date) -> list[str]:
@@ -164,7 +164,7 @@ def revision_lock(world: World) -> Generator[None]:
 
 def revise_if_due(llm: LlmClient, world: World, personas: list[Persona], day: dt.date) -> AutoRevision:
     with revision_lock(world):
-        n = world.narrative()
+        n = with_personas(world.narrative(), personas)
         if not due(n, day):
             when = "after" if n.revised > day.isoformat() else "this week, on"
             return AutoRevision(n, False, f"not due: narrative last revised {when} {n.revised}", [])

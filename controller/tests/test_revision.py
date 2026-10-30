@@ -184,3 +184,24 @@ def test_plan_day_revises_first_and_plans_with_the_revised_narrative(
     assert planned[0].history[-1].what == "Auto revised." and planned[0] == planned[1]
     out = capsys.readouterr().out
     assert "narrative: revised 2026-11-02" in out and "not due: narrative last revised this week" in out
+
+
+def test_only_persona_accounts_are_colleagues() -> None:
+    n = _narrative().model_copy(
+        update={
+            "people": [
+                *_narrative().people,
+                Person(name="Rogier Jansen", role="Operations director", department="Operations", user="rjansen"),
+                Person(name="Lars Nord", role="IT administrator", department="IT", user="lnord"),
+            ]
+        }
+    )
+    assert n.colleagues("aberg") == {"rjansen", "lnord"}
+    n = revision.with_personas(n, PERSONAS)
+    assert n.accounts == ["aberg", "lnord"] and n.colleagues("aberg") == {"lnord"}
+    item = planner.PlanItem(
+        template="outlook_send_mail",
+        at="10:00",
+        params={"to": f"rjansen@{planner.MAIL_DOMAIN}", "to_name": "Rogier Jansen"},
+    )
+    assert planner._recipient(item, n.colleagues("aberg"), {"rjansen": "Rogier Jansen"})

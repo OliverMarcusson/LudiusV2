@@ -26,7 +26,7 @@ subgoals:
   fill_to:
     goal: "Type {to} into the Required field of the new meeting"
     text: to
-    done: {element: {role: edit, name: "^Required$", value: '^({to}|{to_name}|{to_name} <{to}>);?$'}}
+    done: {element: {role: edit, name: "^Required$", value: '^({to}|{to_name}|{to_name} <{to}>);?\s*$'}}
   fill_subject:
     goal: "Type the meeting title into the Title field: {subject}"
     text: subject

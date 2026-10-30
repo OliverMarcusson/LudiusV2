@@ -506,7 +506,7 @@ def test_mail_templates_get_the_shared_send_contract() -> None:
     from ludius.tasks import Dialogs, ElementCheck, Form, Template
 
     require = [
-        ElementCheck(role="edit", name="^To$", value="^({to}|{to_name}|{to_name} <{to}>);?$"),
+        ElementCheck(role="edit", name="^To$", value=r"^({to}|{to_name}|{to_name} <{to}>);?\s*$"),
         ElementCheck(role="edit", name="^Cc$", value="^$"),
     ]
     forbid = [ElementCheck(name="^Cc$", value=r"\S"), ElementCheck(name="^Bcc$", value=r"\S")]

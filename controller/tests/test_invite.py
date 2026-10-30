@@ -39,7 +39,7 @@ def task(**params: str) -> Task:
 def test_template_gets_the_meeting_send_contract() -> None:
     t = cli.load_templates()["outlook_send_invite"]
     send = t.subgoals["send_shortcut"]
-    required = "^({to}|{to_name}|{to_name} <{to}>);?$"
+    required = r"^({to}|{to_name}|{to_name} <{to}>);?\s*$"
     meeting_require = [ElementCheck(role="edit", name="^Required$", value=required),
                        ElementCheck(role="edit", name="^Optional$", value="^$")]  # fmt: skip
     meeting_forbid = [ElementCheck(name=f"^{n}$", value=r"\S") for n in ("Optional", "Resources")]

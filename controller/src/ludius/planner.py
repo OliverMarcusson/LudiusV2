@@ -104,6 +104,7 @@ class Narrative(Strict):
     projects: list[str]
     events: list[Event]
     revised: str = ""
+    accounts: list[str] = Field(default_factory=list[str])
 
     history: list[Event] = Field(default_factory=list[Event])
 
@@ -122,6 +123,10 @@ class Narrative(Strict):
             if not members or not set(members) <= users:
                 raise ValueError(f"team share {name!r}: every member a narrative person's account")
         return self
+
+    def colleagues(self, user: str) -> set[str]:
+        return {p.user for p in self.people
+                if p.user and p.user != user and (not self.accounts or p.user in self.accounts)}  # fmt: skip
 
 
 class PlanItem(TaskInstance):
@@ -228,7 +233,8 @@ def make_narrative(llm: LlmClient, personas: list[Persona], start: dt.date) -> N
         "date YYYY-MM-DD within four weeks of the start, what). Include the routine (month-end close, team "
         "meetings) and a few one-offs (an office move, a supplier change, a system migration)."
     )
-    return llm.json(Narrative, NARRATIVE_SYSTEM, user)
+    n = llm.json(Narrative, NARRATIVE_SYSTEM, user)
+    return n.model_copy(update={"accounts": [p.user for p in personas]})
 
 
 def _minutes(at: str) -> int:
@@ -465,7 +471,7 @@ def plan_day(
     templates = role_templates(templates, persona)
     window = scenario if scenario and scenario.date == date.isoformat() else None
     lookalikes = sorted(k for k, t in templates.items() if window and t.resembles == window.signal)
-    colleagues = {p.user for p in narrative.people if p.user and p.user != persona.user}
+    colleagues = narrative.colleagues(persona.user)
     people = {p.user: p.name for p in narrative.people if p.user}
     teams = [c for c, members in narrative.channels.items() if persona.user in members]
     shares = [c for c, members in narrative.shares.items() if persona.user in members]
@@ -1173,7 +1179,8 @@ def load_plan(path: Path, *, history: bool = False) -> DayPlan:
     if mail:
         people = {p.user: p.name for p in world.people if p.user} if world else {}
         for it in mail:
-            if why := _recipient(it, set(people) - {plan.persona}, people) or _sender(it, set(people) - {plan.persona}):
+            mates = world.colleagues(plan.persona) if world else set[str]()
+            if why := _recipient(it, mates, people) or _sender(it, set(people) - {plan.persona}):
                 raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
     return plan
 

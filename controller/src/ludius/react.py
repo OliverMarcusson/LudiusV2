@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -254,6 +255,21 @@ def shared(user: str, other: str, name: str, since_ms: int, posted: bool = True)
         return None
     sums = [line.split(" ", 1)[0] for line in p.stdout.decode("utf-8", "replace").splitlines()]
     return sums if len(sums) == len(ok) and all(_SHA.fullmatch(x) for x in sums) else None
+
+
+POSTED_SQL = """select count(*) from posts p join channels c on c.id = p.channelid join users u on u.id = p.userid
+where u.username = :'u' and p.deleteat = 0 and p.createat >= :s and md5(btrim(p.message)) = :'h'
+  and case when :'k' = 'D' then c.type = 'D' and exists (select 1 from channelmembers m join users o on o.id = m.userid
+      where m.channelid = c.id and o.username = :'c' and o.id <> u.id)
+    else c.type in ('O', 'P') and c.displayname = :'c' and c.deleteat = 0 end;
+"""
+
+
+def posted(user: str, where: str, message: str, since_ms: int) -> int | None:
+    channel = where.startswith("~")
+    h = hashlib.md5(message.strip().encode(), usedforsecurity=False).hexdigest()
+    n = _query(POSTED_SQL, u=user, c=where[1:] if channel else where, s=str(since_ms), k="C" if channel else "D", h=h)
+    return n if isinstance(n, int) and not isinstance(n, bool) else None
 
 
 def reset(user: str, other: str) -> int | None:

@@ -189,7 +189,7 @@ def generate_day(
         )  # fmt: skip
     finally:
         getattr(decider, "close", lambda: None)()
-    colleagues = {p.user for p in auto.narrative.people if p.user and p.user != persona.user}
+    colleagues = auto.narrative.colleagues(persona.user)
     teams = [c for c, members in auto.narrative.channels.items() if persona.user in members]
     shares = [c for c, members in auto.narrative.shares.items() if persona.user in members]
     role = planner.role_templates(src.templates, persona)

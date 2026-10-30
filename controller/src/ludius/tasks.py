@@ -87,6 +87,11 @@ class ChatFileCheck(Strict):
         return self
 
 
+class ChatPostCheck(Strict):
+    to: str
+    message: str = "{message}"
+
+
 class InviteCheck(Strict):
     mailbox: str = "{to}"
     subject: str = "{subject}"
@@ -228,6 +233,7 @@ class Done(Strict):
     read: bool = False
     filed: bool = False
     chat_file: ChatFileCheck | None = None
+    chat_post: ChatPostCheck | None = None
     ask: str | None = None
 
     @model_validator(mode="after")
@@ -267,7 +273,7 @@ class Subgoal(Strict):
         return self
 
 
-RECIPIENT = "^({to}|{to_name}|{to_name} <{to}>);?$"
+RECIPIENT = r"^({to}|{to_name}|{to_name} <{to}>);?\s*$"
 Capability = Literal[
     "mail.send",
     "mail.reply",
@@ -747,7 +753,16 @@ def check_done(
 ) -> bool | None:
     if done is None or done.ask:
         return None
-    if (done.mail or done.invite or done.response or done.file or done.read or done.filed or done.chat_file) and not (
+    if (
+        done.mail
+        or done.invite
+        or done.response
+        or done.file
+        or done.read
+        or done.filed
+        or done.chat_file
+        or done.chat_post
+    ) and not (
         done.window
         or done.foreground
         or done.element
@@ -830,7 +845,8 @@ def _outside_ok(done: Done, task: Task) -> bool:
             and (done.response is None or _response_ok(done.response, task))
             and (done.file is None or _file_ok(done.file, task)) and (not done.read or _read_ok(task))
             and (not done.filed or _filed_ok(task))
-            and (done.chat_file is None or _chat_file_ok(done.chat_file, task)))  # fmt: skip
+            and (done.chat_file is None or _chat_file_ok(done.chat_file, task))
+            and (done.chat_post is None or _chat_post_ok(done.chat_post, task)))  # fmt: skip
 
 
 def _chat_file_ok(c: ChatFileCheck, task: Task) -> bool:
@@ -841,6 +857,17 @@ def _chat_file_ok(c: ChatFileCheck, task: Task) -> bool:
     if (data := task.sources_before.get(rel)) is None or not task.owner or domain != mail.DOMAIN:
         return False
     return react.shared(task.owner, user, _leaf(rel), task.started_ms, c.posted) == [hashlib.sha256(data).hexdigest()]
+
+
+def _chat_post_ok(c: ChatPostCheck, task: Task) -> bool:
+    from ludius import react
+
+    to = task.fmt(c.to)
+    if not to.startswith("~"):
+        to, _, domain = to.lower().partition("@")
+        if domain != mail.DOMAIN:
+            return False
+    return bool(task.owner) and (react.posted(task.owner, to, task.fmt(c.message), task.started_ms) or 0) > 0
 
 
 def _filed_ok(task: Task) -> bool:

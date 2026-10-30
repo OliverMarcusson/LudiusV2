@@ -9,8 +9,7 @@ about: "Rename an existing file in Documents and move it into an existing folder
 example: {file_name: admission test note, new_name: admission test note old, folder_name: admission test folder}
 variants:
   - [open_explorer_keys, go_documents, rename_keys, move_keys, close_explorer]
-  - [open_explorer_taskbar, go_documents, rename_menu, move_menu, close_explorer]
-  - [open_explorer_keys, go_documents, rename_menu, move_keys, close_explorer]
+  - [open_explorer_taskbar, go_documents, rename_keys, move_menu, close_explorer]
 budget_steps: 40
 budget_minutes: 7
 subgoals:

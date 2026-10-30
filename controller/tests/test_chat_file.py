@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from ludius import cli, react
-from ludius.tasks import Task, TaskInstance, _chat_file_ok  # pyright: ignore[reportPrivateUsage]
+from ludius.tasks import Task, TaskInstance, _chat_file_ok, _chat_post_ok  # pyright: ignore[reportPrivateUsage]
 
 DATA = b"accruals"
 SHA = hashlib.sha256(DATA).hexdigest()
@@ -73,3 +73,21 @@ def test_shared_hashes_the_stored_uploads_and_refuses_odd_paths(monkeypatch: pyt
     assert react.shared("aberg", "mvellinga", "q4 accruals.xlsx", 1) == []
     monkeypatch.setattr(react, "_query", lambda *_, **__: None)
     assert react.shared("aberg", "mvellinga", "q4 accruals.xlsx", 1) is None
+
+
+def test_chat_post_needs_the_message_posted_since_the_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[Any, ...]] = []
+    for got, ok in [(1, True), (2, True), (0, False), (None, False)]:
+        monkeypatch.setattr(react, "posted", lambda *a, got=got: calls.append(a) or got)
+        for name, to in [("chat_post_message", "~Coffee Corner"), ("chat_direct_message", "mvellinga")]:
+            t = cli.load_templates()[name]
+            params = {"channel": "Coffee Corner", "to": "mvellinga@ludius.internal", "to_name": "Marcus Vellinga",
+                      "message": " soup day "}  # fmt: skip
+            task = Task(t, TaskInstance(template=name, params=params, variant=0), random.Random(0))
+            task.owner, task.started_ms = "aberg", 1000
+            assert _chat_post_ok(t.subgoals["send_message"].done.chat_post, task) is ok  # type: ignore[union-attr, arg-type]
+            assert calls[-1] == ("aberg", to, " soup day ", 1000)
+    task = Task(t, TaskInstance(template=t.task, params={**params, "to": "mvellinga@example.com"}, variant=0),
+                random.Random(0))  # fmt: skip
+    task.owner = "aberg"
+    assert not _chat_post_ok(t.subgoals["send_message"].done.chat_post, task)  # type: ignore[union-attr, arg-type]

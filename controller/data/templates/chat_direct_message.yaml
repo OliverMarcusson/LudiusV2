@@ -46,7 +46,7 @@ subgoals:
     goal: "Send the message with Enter"
     keys: [Enter]
     require: [{name: "^Write to {to_name}$", focused: true, value: "^{message}$"}]
-    done: {ask: "Has the message \"{message}\" been sent: shown as the newest post in the conversation with {to_name}, with the message box at the bottom now empty?"}
+    done: {chat_post: {to: "{to}"}}
   close_edge:
     goal: "Close Microsoft Edge"
     done: {window: {process: msedge.exe, absent: true}}

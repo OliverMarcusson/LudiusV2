@@ -255,7 +255,8 @@ def _plan(
         for p in reports
         if p.user in left
     )
-    colleagues = ", ".join(f"{p.user} ({p.name}, {p.role})" for p in n.people if p.user and p.user != boss.user)
+    mates = n.colleagues(boss.user)
+    colleagues = ", ".join(f"{p.user} ({p.name}, {p.role})" for p in n.people if p.user in mates)
     user = (
         f"Company story:\n{n.model_dump_json(exclude={'history'})}\n\n"
         f"You are {boss.name}, {boss.role} ({boss.department}). Today is {date.strftime('%A')} {date.isoformat()}.\n\n"
