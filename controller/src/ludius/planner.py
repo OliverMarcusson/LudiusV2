@@ -655,8 +655,8 @@ def _grid(rows: str) -> str | None:
     return None
 
 
-MULTILINE = ("body", "rows", "bullets", "bullets2")
-OFFICE_LINES = {"body": 10, "bullets": 6, "bullets2": 6}
+MULTILINE = ("body", "notes", "rows", "bullets", "bullets2")
+OFFICE_LINES = {"body": 10, "notes": 10, "bullets": 6, "bullets2": 6}
 OFFICE_LINE_MAX = 120
 _OFFICE_LINE = re.compile(rf"[A-Za-z0-9][A-Za-z0-9 ,.;:!?&%#+/-]{{0,{OFFICE_LINE_MAX - 1}}}")
 _AUTOFORMAT = re.compile(r"--| -|- |\b[13]/[24]\b|^\w{1,3}[.)] ")

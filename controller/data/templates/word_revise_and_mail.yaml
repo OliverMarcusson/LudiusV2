@@ -1,0 +1,110 @@
+task: word_revise_and_mail
+app: outlook
+capability: mail.send
+processes: [outlook.exe, winword.exe, explorer.exe]
+writes: ['Documents\{file_name}.docx']
+params: [file_name, notes, to, to_name, subject, body]
+about: "Add 1-3 lines to the end of one of the persona's own Word documents (a .docx under Own recent files), save it, then mail the revised file to one colleague as an attachment in Outlook. file_name: that file's name exactly, without folder and extension; notes: the added lines, each its own paragraph (plain sentences of letters, digits, spaces and , . ; : ! ? & % # + / -, each line starting with a letter or digit; no quotes, no ' - ' or '--', no list markers); to: the colleague's address <user>@ludius.internal; subject: one line; body: the mail text (ASCII, a few short lines)."
+example: {file_name: q4 accruals memo, notes: "updated the totals for november", to: mvellinga@ludius.internal, to_name: Marcus Vellinga, subject: revised accruals memo, body: "hi marcus\nthe revised memo is attached\n- anna"}
+variants:
+  - [open_explorer_keys, go_documents, open_file, append_notes, save_keys, close_word, show_extensions, select_file, copy_keys, close_explorer, open_outlook, new_message_shortcut, fill_to, fill_subject, write_body, paste_file, send_shortcut, close_outlook]
+budget_steps: 90
+budget_minutes: 18
+on_abandon: close_without_saving
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_documents:
+    goal: "Go to the Documents folder"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
+  open_file:
+    goal: "Open the document {file_name} with a double-click"
+    steps: 14
+    in_window: &documents {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+    breadcrumb: ['This PC', Documents]
+    done: {foreground: {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}}
+  append_notes:
+    goal: "Add the new lines at the end of the document, at the keyboard focus (each line is its own paragraph)"
+    text: notes_line
+    caret: append
+    unreadable_ok: true
+    in_window: &word {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}
+    avoid: [{role: edit}, {role: combo box}, {name: '^(File Tab|Save As)$'}]
+    done: {typed: true}
+  save_keys:
+    goal: "Save the document with Ctrl+S"
+    keys: [Ctrl+S]
+    in_window: *word
+    avoid: [{name: '^(File Tab|Save As)$'}]
+    done: {file: {path: 'Documents\{file_name}.docx', append: "{notes}"}}
+  close_word:
+    goal: "Close Word"
+    done: {window: {process: winword.exe, absent: true}}
+  show_extensions:
+    goal: "In File Explorer, turn on File name extensions on the View tab, so the file shows as {file_name}.docx"
+    steps: 8
+    avoid: [{role: edit}, {name: '(?i)^(hidden items|item check boxes|hide selected items|options)$'}]
+    done: {element: {role: check box, name: '^File name extensions$', value: '^on$'}}
+  select_file:
+    goal: "Click the file {file_name}.docx once to select it"
+    in_window: *documents
+    avoid: [{role: edit}]
+    done: {element: {role: list item, name: '^{file_name}\.docx$', selected: true}}
+  copy_keys:
+    goal: "Press Ctrl+C to copy the selected file {file_name}.docx"
+    keys: [Ctrl+C]
+    steps: 3
+    in_window: *documents
+    require: [{role: list item, name: '^{file_name}\.docx$', selected: true}]
+    forbid: [{role: list item, name: '^(?!{file_name}\.docx$)', selected: true}]
+    confirm: "Does File Explorer show the user's own Documents folder with only {file_name}.docx selected?"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {pressed: true}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}
+  open_outlook:
+    goal: "Open Outlook by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    steps: 8
+    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}
+  new_message_shortcut:
+    goal: "Start a new mail with Ctrl+N"
+    keys: [Ctrl+N]
+    done: {window: {process: outlook.exe, title: "^Untitled - Message"}}
+  fill_to:
+    goal: "Type {to} into the To field of the new mail"
+    text: to
+    done: {typed: true}
+  fill_subject:
+    goal: "Type the subject into the Subject field: {subject}"
+    text: subject
+    done: {typed: true}
+  write_body:
+    goal: "Type the mail text into the message body (below the Subject field)"
+    text: body
+    unreadable_ok: true
+    done: {typed: true}
+  paste_file:
+    goal: "Press Ctrl+V in the message body to attach the copied file {file_name}.docx"
+    keys: [Ctrl+V]
+    steps: 4
+    in_window: {process: outlook.exe, title: " - Message"}
+    require: [{role: document, focused: true}]
+    confirm: "Is the text cursor in the body of the new mail to {to_name}, with no attachment yet?"
+    done: {ask: "Does the new mail show exactly one attachment, {file_name}.docx, and no other?"}
+  send_shortcut:
+    goal: "Send the mail with Alt+S"
+    keys: [send]
+    allow_destructive: ["Send"]
+    confirm: "Does the new mail to {to_name} show exactly one attachment, {file_name}.docx, and no other?"
+    done: {mail: {mailbox: "{to}", attachment: 'Documents\{file_name}.docx'}}
+  close_outlook:
+    goal: "Close Outlook"
+    done: {window: {process: outlook.exe, absent: true}}

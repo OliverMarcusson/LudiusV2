@@ -125,3 +125,28 @@ def test_saved_attachment_done_needs_the_mail_attachment_bytes(monkeypatch: pyte
     assert check_done(done, ET.Element("x"), tk, False) is False  # type: ignore[arg-type]
     disk[rel] = GuestFile(True, 500, b"a,b")
     assert check_done(done, ET.Element("x"), tk, False) is True  # type: ignore[arg-type]
+
+
+REVISE = {**TO, "file_name": "Rates", "notes": "One more point"}
+
+
+def test_revise_and_mail_attaches_the_saved_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    from test_word import docx
+
+    templates = cli.plan_sources().templates
+    item = it("11:00", "word_revise_and_mail", **REVISE)
+    assert validate([item], templates, [], Policy(), colleagues={"mvellinga"}, people={"mvellinga": "Marcus Vellinga"},
+                    owned={r"documents\rates.docx": "2026-11-01"}, day="2026-11-02") == []  # fmt: skip
+    rel, old, new = r"Documents\Rates.docx", docx("Rates"), docx("Rates", "One more point")
+    disk = {rel: GuestFile(True, 500, old)}
+    monkeypatch.setattr(tasks.guestfile, "read", lambda user, r: disk.get(r))
+    got: list[Any] = []
+    monkeypatch.setattr(mail, "delivered", lambda *a: got.append(a[-1]) or True)
+    t = templates["word_revise_and_mail"]
+    tk = Task(t, TaskInstance(template=t.task, params=REVISE), random.Random(0))
+    tk.owner, tk.started_ms, tk.mail_before = "aberg", 1_000_000, frozenset()
+    assert file_baseline(tk, Policy()) is None
+    disk[rel] = GuestFile(True, 2_000_000, new)
+    assert check_done(t.subgoals["save_keys"].done, ET.Element("x"), tk, False) is True  # type: ignore[arg-type]
+    assert check_done(t.subgoals["send_shortcut"].done, ET.Element("x"), tk, False) is True  # type: ignore[arg-type]
+    assert got == [("rates.docx", hashlib.sha256(new).hexdigest())]

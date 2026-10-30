@@ -449,7 +449,10 @@ class Template(Strict):
                 raise ValueError(f"{self.task}: file check {sg.done.file.path!r} is not a declared write")
         appends = [sg.done.file for sg in self.subgoals.values() if sg.done and sg.done.file and sg.done.file.append]
         kinds = {"file.reuse" if c.source else "file.edit" for c in appends}
-        if kinds != ({self.capability} & {"file.edit", "file.reuse"}):
+        revise = self.capability == "mail.send" and kinds == {"file.edit"}
+        if revise and not {c.path for c in appends} <= set(self.attaches):
+            raise ValueError(f"{self.task}: a mail.send edits only the file it attaches")
+        if not revise and kinds != ({self.capability} & {"file.edit", "file.reuse"}):
             raise ValueError(f"{self.task}: file.edit takes an append check, file.reuse one with a source")
         if any(c.source in self.writes for c in appends):
             raise ValueError(f"{self.task}: a reused source is read, never a write")
@@ -763,8 +766,10 @@ def preconditions(sg: Subgoal, snap: obs.Snapshot, task: Task, target: obs.Eleme
                 for e in snap.elements
                 if e.window == fg and element_matches(e, c.model_copy(update={"value": None}), task)
             ]
+            w = snap.windows[fg] if fg is not None else None
+            where = f"{w.title!r} {w.class_name} no_tree={w.no_tree}" if w else "none"
             return (f"precondition: no readable {task.fmt(c.name or c.role or '')!r} field with value"
-                    f" {task.fmt(c.value or '')!r} (read: {seen!r})")  # fmt: skip
+                    f" {task.fmt(c.value or '')!r} (read: {seen!r}; foreground: {where})")  # fmt: skip
     for c in sg.forbid:
         if any(element_matches(e, c, task) for e in snap.elements):
             return f"precondition: {c.name or c.role!r} must not match {task.fmt(c.value or '')!r}"
@@ -984,7 +989,10 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
             new = sorted(_fold_value(x) for x in set(got or []) - set(before))
             return got is not None and bool(want) and set(before) <= set(got) and new == sorted(want)
         add = _lines(task.fmt(c.append))
-        return bool(add) and _doc_lines(rel, f.data) == before + add
+        ok = bool(add) and _doc_lines(rel, f.data) == before + add
+        if ok and rel in task.sources_before and rel in map(task.fmt, task.template.attaches):
+            task.sources_before[rel] = f.data
+        return ok
     if task.files_absent is None or rel not in task.files_absent:
         return False
     f = guestfile.read(task.owner, rel)
