@@ -96,6 +96,7 @@ class FileCheck(Strict):
     recycled: bool = False
     share: str | None = None
     moved_from: str | None = None
+    attachment_of: list[str] | None = None
 
     @model_validator(mode="after")
     def _noise_folder(self) -> FileCheck:
@@ -104,6 +105,13 @@ class FileCheck(Strict):
         if self.source is not None and (self.append is None or guestfile.profile_path("u", self.source) is None
                                         or self.source.lower()[-5:] != ext or self.source == self.path):  # fmt: skip
             raise ValueError(f"file check {self.path!r}: a source goes with append, another noise file, same type")
+        if self.attachment_of is not None:
+            if len(self.attachment_of) != 2 or guestfile.profile_path("u", self.path) is None:
+                raise ValueError(f"file check {self.path!r}: an attachment ([sender, subject]) saves to a noise folder")
+            others = (*need.values(), "download", "append", "share", "moved_from")
+            if self.recycled or any(getattr(self, k) is not None for k in others):
+                raise ValueError(f"file check {self.path!r}: a saved attachment check stands alone")
+            return self
         if self.recycled or self.share is not None:
             kind = "recycled" if self.recycled else "share"
             if guestfile.profile_path("u", self.path) is None:
@@ -192,6 +200,7 @@ Capability = Literal[
     "mail.send",
     "mail.reply",
     "mail.read",
+    "mail.save",
     "calendar.invite",
     "file.move",
     "file.write",
@@ -211,6 +220,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "mail.send": {"to", "to_name", "file_name"},
     "mail.reply": {"to", "to_name", "subject"},
     "mail.read": {"sender", "subject"},
+    "mail.save": {"sender", "subject"},
     "calendar.invite": {"to", "to_name"},
     "file.move": {"file_name", "folder_name"},
     "file.edit": {"file_name"},
@@ -530,6 +540,7 @@ class Task:
         self.files_absent: frozenset[str] | None = None
         self.files_before: dict[str, list[str]] = {}
         self.sources_before: dict[str, bytes] = {}
+        self.saved_sha: dict[str, str] = {}
         self.files_present: frozenset[str] = frozenset()
         self.read_id = 0
         self.added_base: int | None = None
@@ -897,6 +908,21 @@ def file_baseline(task: Task, policy: Any) -> str | None:
         if not f.exists or len(f.data) > ATTACH_MAX_BYTES:
             return f"{rel}: not there or over {ATTACH_MAX_BYTES} bytes, nothing to attach"
         task.sources_before[rel] = f.data
+    for c in (c for c in files if c.attachment_of):
+        rel, (sender, subject) = task.fmt(c.path), (task.fmt(x) for x in c.attachment_of or [])
+        got = mail.matching(task.owner, "inbox", subject, True)
+        if got is None:
+            return f"{subject!r}: inbox unreadable"
+        address = f"{sender.strip().lower().partition('@')[0]}@{mail.DOMAIN}"
+        hits = [m for m in got if m.sender.strip().lower() == address]
+        if len(hits) != 1 or hits[0].attachments is None:
+            return f"{subject!r} from {address}: not exactly one mail with readable attachments"
+        if policy.mail_reserved(hits[0].sender, hits[0].subject, hits[0].body):
+            return f"{subject!r} from {address}: scenario-reserved mail"
+        sha = [h for n, h in hits[0].attachments if n == _leaf(rel).casefold()]
+        if len(sha) != 1:
+            return f"{subject!r}: no single attachment named {_leaf(rel)!r}"
+        task.saved_sha[rel] = sha[0]
     edits = {task.fmt(c.path): task.fmt(c.source or c.path) for c in files if c.append is not None}
     appends = {task.fmt(c.path): c.append or "" for c in files if c.append is not None}
     for rel, src in sorted(edits.items()):
@@ -968,6 +994,8 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
         return moved and s is not None and not s.exists
     if c.download is not None:
         return f is not None and f.exists and f.data == intranet.download_bytes(task.fmt(c.download))
+    if c.attachment_of is not None:
+        return f is not None and f.exists and hashlib.sha256(f.data).hexdigest() == task.saved_sha.get(rel)
     if f is None or not f.exists or f.written_ms < task.started_ms:
         return False
     if c.cells is not None:

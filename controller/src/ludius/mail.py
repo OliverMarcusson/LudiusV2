@@ -51,6 +51,7 @@ class Message:
     in_reply_to: str = ""
     read: bool = False
     attachments: tuple[tuple[str, str], ...] | None = None
+    files: tuple[str, ...] = ()
 
 
 def _exchange() -> bool:
@@ -101,8 +102,8 @@ def messages(user: str, folder: str, subject: str, attachments: bool = False) ->
     return _query(user, folder, subject, attachments) or []
 
 
-def matching(user: str, folder: str, subject: str) -> list[Message] | None:
-    return _query(user, folder, subject)
+def matching(user: str, folder: str, subject: str, attachments: bool = False) -> list[Message] | None:
+    return _query(user, folder, subject, attachments)
 
 
 def newest(user: str, folder: str) -> list[Message] | None:

@@ -1,0 +1,49 @@
+task: outlook_save_attachment
+app: outlook
+capability: mail.save
+processes: [outlook.exe]
+writes: ['Documents\{file_name}']
+params: [sender, subject, file_name]
+about: "Save a file a colleague sent as an attachment into Documents: open the mail in Outlook, save the attachment with Save As and close the mail. sender: the colleague's address (<user>@ludius.internal); subject: that mail's exact subject, as listed in the inbox; file_name: the attachment's exact name with extension, as listed after 'attached:', not in Documents yet."
+example: {sender: mvellinga@ludius.internal, subject: "Q3 figures", file_name: "Q3 figures.xlsx"}
+variants:
+  - [open_outlook, open_message_click, save_as_menu, save_attachment, close_message, close_outlook]
+budget_steps: 50
+budget_minutes: 10
+on_abandon: close_without_saving
+key_commits: [{keys: Enter, focus: {}}]
+subgoals:
+  open_outlook:
+    goal: "Open Outlook by searching for it in the Start menu"
+    launch: true
+    keys: [Win]
+    text: launch_query
+    steps: 8
+    done: {foreground: {process: outlook.exe, title: " - Outlook$"}}
+  open_message_click:
+    goal: "In the Inbox, double-click the mail with the subject {subject} to open it in its own window"
+    steps: 20
+    done: {foreground: &message {process: outlook.exe, title: '^{subject}\s*-\s*Message'}}
+  save_as_menu:
+    goal: "Right-click the attachment {file_name} at the top of the mail and choose Save As"
+    steps: 10
+    in_window: *message
+    avoid: [{name: '(?i)^(remove attachment|save all attachments|forward|reply|save)$'}]
+    done: {foreground: &dialog {process: outlook.exe, title: '^Save Attachment$'}}
+  save_attachment:
+    goal: "Save the attachment into Documents as {file_name}: press Enter"
+    keys: [Enter]
+    steps: 8
+    in_window: *dialog
+    require: [{name: "^File name", focused: true}]
+    forbid: [{name: '(?i)already exists|replace it'}]
+    avoid: [{name: '^Save$'}]
+    confirm: "Does the Save Attachment dialog show the user's own Documents folder (This PC > Documents) as the save location, with the file name {file_name} (the extension may be hidden), and is the keyboard focus in the File name field?"
+    done: {file: {path: 'Documents\{file_name}', attachment_of: ["{sender}", "{subject}"]}}
+  close_message:
+    goal: "Close the mail's window"
+    keys: [close_item]
+    done: {window: {process: outlook.exe, title: '^{subject}\s*-\s*Message', absent: true}}
+  close_outlook:
+    goal: "Close Outlook"
+    done: {window: {process: outlook.exe, absent: true}}

@@ -71,3 +71,57 @@ def test_ews_attachments_are_names_and_hashes_and_item_attachments_unknown(monke
     other = ET.fromstring(f'<t:Message {t}><t:Attachments><t:ItemAttachment><t:AttachmentId Id="A2"/>'
                           "</t:ItemAttachment></t:Attachments></t:Message>")  # fmt: skip
     assert ews._attachments("a", other) is None  # pyright: ignore[reportPrivateUsage]
+
+
+SAVE = {"sender": "mvellinga@ludius.internal", "subject": "rates", "file_name": "Rates.xlsx"}
+
+
+def test_save_an_attachment_only_from_a_listed_mail_of_an_allowed_type() -> None:
+    templates = cli.plan_sources().templates
+
+    def why(**kw: str) -> str:
+        item = it("11:00", "outlook_save_attachment", **{**SAVE, **kw})
+        r = validate([item], templates, [], Policy(), colleagues={"mvellinga"},
+                     people={"mvellinga": "Marcus Vellinga"}, inbox={("mvellinga", "rates")},
+                     day="2026-11-02")  # fmt: skip
+        return r[0][1] if r else ""
+
+    assert why() == ""
+    assert "listed under Inbox" in why(subject="other")
+    assert "exact name" in why(file_name="rates.csv")
+
+
+def test_saved_attachment_done_needs_the_mail_attachment_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    disk: dict[str, Any] = {}
+    inbox: list[mail.Message] | None = None
+    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+    monkeypatch.setattr(mail, "matching", lambda *a: inbox)
+    t = cli.plan_sources().templates["outlook_save_attachment"]
+    tk = Task(t, TaskInstance(template=t.task, params=SAVE), random.Random(0))
+    tk.owner, tk.started_ms = "aberg", 1_000_000
+    rel, sha = r"Documents\Rates.xlsx", hashlib.sha256(b"a,b").hexdigest()
+
+    def msg(sender: str, files: Any) -> mail.Message:
+        return mail.Message(sender, 0, 0, "", subject="rates", attachments=files)
+
+    disk[rel] = GuestFile(False)
+    assert "inbox unreadable" in (file_baseline(tk, Policy()) or "")
+    inbox = [msg("mvellinga@ludius.internal", None)]
+    assert "not exactly one" in (file_baseline(tk, Policy()) or "")
+    inbox = [
+        msg("mvellinga@ludius.internal", (("other.xlsx", sha),)),
+        msg("dkoster@ludius.internal", (("rates.xlsx", sha),)),
+    ]
+    assert "no single attachment" in (file_baseline(tk, Policy()) or "")
+    inbox = [msg("mvellinga@ludius.internal", (("rates.xlsx", sha),))]
+    assert "scenario-reserved mail" in (file_baseline(tk, Policy(reserved_subjects=["rates"])) or "")
+    inbox = [msg("mvellinga@ludius.internal", (("rates.xlsx", sha),))]
+    disk[rel] = GuestFile(True, 500, b"old")
+    assert "never overwritten" in (file_baseline(tk, Policy()) or "")
+    disk[rel] = GuestFile(False)
+    assert file_baseline(tk, Policy()) is None
+    done = t.subgoals["save_attachment"].done
+    disk[rel] = GuestFile(True, 2_000_000, b"a,c")
+    assert check_done(done, ET.Element("x"), tk, False) is False  # type: ignore[arg-type]
+    disk[rel] = GuestFile(True, 500, b"a,b")
+    assert check_done(done, ET.Element("x"), tk, False) is True  # type: ignore[arg-type]

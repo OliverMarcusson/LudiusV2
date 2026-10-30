@@ -364,7 +364,9 @@ def validate(
         cap = (t.capability if (t := templates.get(it.template)) else None) or ""
         if not why and cap == "mail.reply":
             why = _reply_thread(it, mail_threads or {}, inbox or set[tuple[str, str]]())
-        if not why and cap == "mail.read":
+        if not why and cap == "mail.save" and not it.params.get("file_name", "").lower().endswith(ATTACHABLE):
+            why = f"file_name: the attachment's exact name, a {', '.join(ATTACHABLE)} file"
+        if not why and cap in ("mail.read", "mail.save"):
             why = _read_mail(it, colleagues or set[str](), inbox or set[tuple[str, str]](), items[:i])
         if not why and t and (cap in OWN_FILES or t.attaches):
             why = _owned(it, t, owned or {}, day, items)

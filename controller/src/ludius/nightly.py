@@ -165,7 +165,9 @@ def generate_day(
     asked = {m.subject for m in inbox_mails or [] if m.msgid in {it.request for it in mapped}}
     inbox = reply.hints(inbox_mails, persona.user, people, src.policy)
     unread = {(m.sender.partition("@")[0], m.subject) for m in inbox_mails or [] if not m.read}
+    files = {(m.sender.partition("@")[0], m.subject): m.files for m in inbox_mails or [] if m.files}
     listed = "\n".join(f"- from {u}@{mail.DOMAIN}: {s}" + (" (unread)" if (u, s) in unread else "")
+                       + (f" (attached: {', '.join(files[u, s])})" if (u, s) in files else "")
                        for u, s in inbox if s not in asked)  # fmt: skip
     listed = f"Inbox on the mail server (newest first; a reply answers one of these):\n{listed}" if listed else ""
     planned = "\n".join(f"- {it.at} {it.template}: {it.context}" for it in mapped)

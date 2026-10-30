@@ -24,7 +24,7 @@ FIELDS = ("item:ItemClass", "item:Subject", "item:DateTimeReceived", "item:DateT
           "item:TextBody", "item:InReplyTo", "message:Sender", "message:ToRecipients", "message:CcRecipients",
           "message:BccRecipients", "message:InternetMessageId", "message:IsRead", "calendar:Start", "calendar:End",
           "calendar:Organizer", "calendar:RequiredAttendees", "calendar:OptionalAttendees",
-          "calendar:Resources")  # fmt: skip
+          "calendar:Resources", "item:Attachments")  # fmt: skip
 
 
 class Item(TypedDict):
@@ -45,6 +45,7 @@ class Item(TypedDict):
     in_reply_to: str
     read: bool
     attachments: tuple[tuple[str, str], ...] | None
+    files: tuple[str, ...]
 
 
 def _settings() -> tuple[str, str, str, str] | None:
@@ -168,6 +169,7 @@ def parse(el: ET.Element) -> Item:
         "in_reply_to": text(f"{{{T}}}InReplyTo").strip(),
         "read": text(f"{{{T}}}IsRead") == "true",
         "attachments": None,
+        "files": tuple(a.findtext(f"{{{T}}}Name", "").strip() for a in el.findall(f"{{{T}}}Attachments/*")),
     }
 
 
@@ -209,8 +211,7 @@ def query(mailbox: str, folder: str, subject: str | None, attachments: bool = Fa
         return None
     if not ids:
         return []
-    fields = (*FIELDS, "item:Attachments") if attachments else FIELDS
-    props = "".join(f'<t:FieldURI FieldURI="{f}"/>' for f in fields) + "".join(
+    props = "".join(f'<t:FieldURI FieldURI="{f}"/>' for f in FIELDS) + "".join(
         f'<t:ExtendedFieldURI PropertyTag="{tag}" PropertyType="String"/>' for tag in EXTENDED
     )
     msgs = call(mailbox, (

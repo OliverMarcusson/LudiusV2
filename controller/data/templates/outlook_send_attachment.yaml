@@ -20,7 +20,7 @@ subgoals:
   go_documents:
     goal: "Go to the Documents folder"
     avoid: [{role: edit}, {role: menu item}]
-    done: {ask: "Does File Explorer show the user's own Documents folder (This PC > Documents or the pinned Documents), not a library, Public Documents or another folder?"}
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
   show_extensions:
     goal: "Turn on File name extensions on File Explorer's View tab, so the file shows as {file_name}"
     steps: 8
