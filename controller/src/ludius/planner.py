@@ -4,6 +4,7 @@ import datetime as dt
 import errno
 import functools
 import json
+import math
 import os
 import random
 import re
@@ -190,7 +191,6 @@ PLAN_SYSTEM = (
 )
 WORK_ITEMS = (5, 8)
 GOSSIP_DAYS = 0.7
-SOCIAL = float(os.environ.get("LUDIUS_SOCIAL", "1"))
 INTERRUPT = 0.4
 SLOT_GAP = 15
 SETTLES = (None, "file.write", "mail.send", "chat.dm", "calendar.invite")
@@ -266,6 +266,17 @@ def _fit(decider: Any, persona: Persona, date: dt.date, world: str, eligible: di
     answers = decider.ask({"persona": who, "what happened so far": world[-6000:]}, questions)
     weights = {k: max(answers.noul(f"t:{k}"), 0.02) for k in eligible}
     return weights, {f: answers.answers[f"f:{f}"]["choice"] for f in followups if open_}
+
+
+def _social() -> float:
+    raw = os.environ.get("LUDIUS_SOCIAL", "1")
+    try:
+        v = float(raw)
+    except ValueError:
+        v = math.nan
+    if not math.isfinite(v) or v <= 0:
+        raise ValueError(f"LUDIUS_SOCIAL must be a positive number, got {raw!r}")
+    return v
 
 
 def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], people: dict[str, str],
@@ -351,6 +362,7 @@ def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], p
             )
         )
 
+    social = _social()
     first: list[PlanItem] = []
     if fresh and (reads := of("mail.read")):
         first.append(slot(reads[0], "the morning look at new mail"))
@@ -373,7 +385,7 @@ def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], p
             it = to(PlanItem(at="00:00", template=answers[0], context=f"answers the invitation {subject!r}"), u)
             it.params["subject"] = subject
             first.append(it)
-    if colleagues and (dms := of("chat.dm")) and rng.random() < GOSSIP_DAYS * SOCIAL:
+    if colleagues and (dms := of("chat.dm")) and rng.random() < GOSSIP_DAYS * social:
         first.append(slot(dms[0], f"gossip with a colleague the persona is friendly with: {GOSSIP[GOSSIP_LEVEL]}"))
 
     h0, h1 = _minutes(persona.hours[0]) + 10, _minutes(persona.hours[1]) - 30
@@ -398,7 +410,7 @@ def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], p
 
     want = rng.randint(*WORK_ITEMS)
     first = first[: max(0, want - len(late))]
-    pool = {k: weights.get(k, 1.0) * t.plan_weight * (SOCIAL if (t.capability or "").startswith("chat.") else 1.0)
+    pool = {k: weights.get(k, 1.0) * t.plan_weight * (social if (t.capability or "").startswith("chat.") else 1.0)
             for k, t in templates.items() if eligible(k, t)}  # fmt: skip
     rest: list[PlanItem] = []
     while pool and len(first) + len(rest) + len(late) < want:

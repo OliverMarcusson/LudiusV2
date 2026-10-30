@@ -213,7 +213,7 @@ def test_social_runs_plan_more_chat_and_gossip_every_day(monkeypatch: pytest.Mon
     templates = planner.role_templates(src.templates, anna)
 
     def chat(social: float) -> tuple[int, int]:
-        monkeypatch.setattr(planner, "SOCIAL", social)
+        monkeypatch.setenv("LUDIUS_SOCIAL", str(social))
         n = gossip = 0
         for day in range(20):
             items = planner.day_slots(
@@ -227,6 +227,11 @@ def test_social_runs_plan_more_chat_and_gossip_every_day(monkeypatch: pytest.Mon
 
     calm, busy = chat(1.0), chat(6.0)
     assert busy[0] > 2 * calm[0] and busy[1] == 20
+    for bad in ("0", "-1", "nan", "inf", "lots"):
+        monkeypatch.setenv("LUDIUS_SOCIAL", bad)
+        with pytest.raises(ValueError, match="LUDIUS_SOCIAL"):
+            planner.day_slots(anna, DAY, templates, {}, set(), [], {}, {}, set(), set(), {}, [], None, [], {}, {},
+                              set(), [], {})  # fmt: skip
 
 
 def test_follow_ups_stay_within_the_budget_and_threads_need_a_reply() -> None:
