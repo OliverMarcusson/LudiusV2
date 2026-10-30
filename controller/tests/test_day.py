@@ -71,6 +71,13 @@ class FakeSession:
         return self.unlock_ok
 
 
+def _person(user: str, name: str) -> dict[str, str]:
+    return {"user": user, "name": name, "role": "Clerk", "department": "Ops"}
+
+
+WORLD: dict[str, Any] = {"company": "Acme", "city": "Delft", "summary": "s", "projects": [], "events": []}
+
+
 def test_time_jump_day_keeps_order_breaks_and_interrupts(tmp_path: Path) -> None:
     calls: list[str] = []
     log = GroundTruth(tmp_path / "day.jsonl")
@@ -202,8 +209,8 @@ def test_chat_notification_reads_then_reacts_outside_the_plan(tmp_path: Path, fa
     stopping at the first failure; none of it is a plan result or an item_end. The server decides whether the read
     happened: a read task abandoned after the conversation opened still reacts."""
     narrative = tmp_path / "narrative.yaml"
-    narrative.write_text(yaml.safe_dump({"people": [{"user": "aberg", "name": "Anna Berg"},
-                                                    {"user": "lnord", "name": "Lars Nord"}]}))  # fmt: skip
+    narrative.write_text(yaml.safe_dump({**WORLD, "people": [_person("aberg", "Anna Berg"),
+                                                    _person("lnord", "Lars Nord")]}))  # fmt: skip
     post = Post("p1", "lnord", "could you put the erp roles in a note and ping me", 100)
     # The conversation: aberg's earlier line is context; p2 came in while it was open (seen, never notified).
     talk = [Post("p0", "aberg", "morning lars", 50), post, Post("p2", "lnord", "the dock list too", 150)]
@@ -258,8 +265,8 @@ def test_messages_sent_while_reading_or_answering_are_answered_too(tmp_path: Pat
     """Live: aberg's request came in while dkoster read her small talk; only the small talk was answered, and that
     answer marked the request read. Now it is read and answered together; one seen while answering gets its own."""
     narrative = tmp_path / "narrative.yaml"
-    narrative.write_text(yaml.safe_dump({"people": [{"user": "dkoster", "name": "Daan Koster"},
-                                                    {"user": "aberg", "name": "Anna Berg"}]}))  # fmt: skip
+    narrative.write_text(yaml.safe_dump({**WORLD, "people": [_person("dkoster", "Daan Koster"),
+                                                    _person("aberg", "Anna Berg")]}))  # fmt: skip
     hi, ask = Post("p1", "aberg", "morning daan", 100), Post("p2", "aberg", "could you note the deliveries", 150)
     more = Post("p3", "aberg", "and the carriers", 300)
     polls = [[hi], [ask], []]
@@ -309,3 +316,69 @@ def test_plan_item_text_has_plain_newlines() -> None:
     it = PlanItem(at="09:20", template="notepad_write_note", params={"body": "a\r\nb\rc", "file_name": "a\rb"},
                   content={"body": "x\r\ny"})  # fmt: skip
     assert it.params == {"body": "a\nb\nc", "file_name": "a\rb"} and it.content == {"body": "x\ny"}
+
+
+def test_team_channel_posts_are_read_and_answered_in_the_channel(tmp_path: Path) -> None:
+    """A private team channel of the persona's (the narrative's, never a fixed list) is read in the channel and
+    answered there; one the persona is not in is ignored, and an answer may go only to this channel or its members."""
+    narrative = tmp_path / "narrative.yaml"
+    people = [_person("aberg", "Anna Berg"), _person("lnord", "Lars Nord"), _person("nokafor", "Nia Okafor")]
+    narrative.write_text(yaml.safe_dump({**WORLD, "people": people,
+                                         "channels": {"Ops Team": ["aberg", "lnord", "nokafor"],
+                                                      "Board": ["lnord", "nokafor"]}}))  # fmt: skip
+    post = Post("p1", "lnord", "anna, could you send the dock list here", 100, "Ops Team")
+    other = Post("p2", "nokafor", "board only", 120, "Board")
+    polls = [[post, other], [other]]
+    llm = ReactionLlm([{"template": "chat_post_message", "params": {"channel": "Ops Team", "message": "on it"}}])
+    calls: list[str] = []
+    log = GroundTruth(tmp_path / "day.jsonl")
+    seen: list[str] = []
+    reactor = Reactor(Persona(name="Anna Berg", user="aberg"), load_templates(), Policy(), llm, narrative, log,  # type: ignore[arg-type]
+                      poll=lambda user: polls.pop(0) if polls else [other],
+                      talk=lambda user, key: (seen.append(key), ([post], 200))[1])  # fmt: skip
+    day = DayRunner(FakeRunner(log, calls), FakeSession(calls), load_templates(), log, "compressed", 0, reactor=reactor)  # type: ignore[arg-type]
+    day.slot(dt.date(2026, 11, 2), note("10:00"), [])
+    R = "run chat_read_channel"
+    assert [c for c in calls if c.startswith("run")] == [R, "run chat_post_message", R, "run note 1000"]
+    assert set(seen) == {"~Ops Team"} and len(llm.prompts) == 1  # again: what came in while answering
+    assert "Your team channel Ops Team (the others in it: Lars Nord (lnord@" in llm.prompts[0]
+    assert "board only" not in llm.prompts[0]
+    world = {"aberg": "Anna Berg", "lnord": "Lars Nord", "nokafor": "Nia Okafor", "mvellinga": "Marcus Vellinga"}
+    for bad, why in [({"channel": "Town Square", "message": "hi"}, "channel must be Ops Team"),
+                     ({"channel": "Board", "message": "hi"}, "channel must be Ops Team")]:  # fmt: skip
+        llm.items = [{"template": "chat_post_message", "params": bad}]
+        assert reactor.plan("~Ops Team", world, [post], "10:05", "2026-11-02", members=["lnord", "nokafor"]) == []
+        assert any(why in r for r in json.loads((tmp_path / "day.jsonl").read_text().splitlines()[-1])["rejects"])
+    llm.items = [{"template": "chat_direct_message", "params": {"to": "mvellinga@ludius.internal", "message": "hi"}}]
+    assert reactor.plan("~Ops Team", world, [post], "10:05", "2026-11-02", members=["lnord", "nokafor"]) == []
+    log.close()
+
+
+def test_team_channel_cap_quoting_and_handles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sol: a channel's reactions were counted under its name but capped under ~name (never capped); a spaced name
+    split into two shell words on the chat host; two channels on one handle (or a public one's) would share members."""
+    import ludius.react as react
+    from ludius.planner import Narrative
+
+    log = GroundTruth(tmp_path / "day.jsonl")
+    for _ in range(2):
+        log.write(event="chat_notification", channel="Ops Team", posts=["p1"])
+    reactor = Reactor(Persona(name="Anna Berg", user="aberg"), load_templates(), Policy(), None, tmp_path, log)  # type: ignore[arg-type]
+    assert reactor._counts()[0]["~Ops Team"] == 2  # pyright: ignore[reportPrivateUsage]
+    sent: list[str] = []
+    def ssh(remote: str, stdin: str, timeout: int = 60) -> None:
+        sent.append(remote)
+
+    monkeypatch.setattr(react, "_ssh", ssh)
+    react._query("select 1", c="Ops Team")  # pyright: ignore[reportPrivateUsage]
+    assert sent[0].endswith("-v 'c=Ops Team'")
+    world = {**WORLD, "people": [_person("aberg", "Anna Berg"), _person("lnord", "Lars Nord")]}
+    for bad in ({"Ops Team": ["aberg"], "ops-team": ["lnord"]}, {"Town Square": ["aberg"]}):
+        with pytest.raises(ValueError, match="handle"):
+            Narrative.model_validate({**world, "channels": bad})
+    log.close()
+    # A planned channel read has no outcome check of its own: reactions only.
+    from ludius.planner import PlanItem, item_problem
+
+    item = PlanItem(at="10:00", template="chat_read_channel", params={"channel": "Ops Team"})
+    assert "reactions only" in str(item_problem(item, load_templates(), Policy(), "aberg", ["Ops Team"]))

@@ -225,7 +225,8 @@ class Subgoal(Strict):
 RECIPIENT = "^({to}|{to_name}|{to_name} <{to}>);?$"
 # file.write: a new file; mail.read: a colleague's Inbox mail opened, its only effect the read flag (never sends)
 # chat.post / chat.dm: one line posted in the range chat (Mattermost), irreversible for noise (never deleted);
-# chat.read: a direct message conversation opened, no effect beyond Mattermost's read marker
+# chat.read / chat.read_channel: a direct message conversation or a channel opened, no effect beyond Mattermost's
+# read marker
 Capability = Literal[
     "mail.send",
     "mail.reply",
@@ -237,6 +238,7 @@ Capability = Literal[
     "chat.post",
     "chat.dm",
     "chat.read",
+    "chat.read_channel",
 ]
 SENDS: dict[str, Literal["mail", "meeting"]] = {"mail.send": "mail", "mail.reply": "mail", "calendar.invite": "meeting"}
 # Values a capability's parameters name rather than create (a recipient, the subject a reply answers, a rename's
@@ -250,6 +252,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "chat.post": {"channel"},
     "chat.dm": {"to", "to_name"},
     "chat.read": {"to", "to_name"},
+    "chat.read_channel": {"channel"},
 }
 APPS = Path(__file__).resolve().parents[2] / "data" / "apps"
 # Buttons that commit something: no discard or leave word in a profile may name one (abandon clicks those).

@@ -1,6 +1,7 @@
 #!/bin/bash
-# roles/chat01: the team, its channels (controller/data/chat.yaml) and one user per narrative person, signed in only
-# through the SSO shim (auth service gitlab, auth data = the shim's id). Idempotent; prints "changed" for a change.
+# roles/chat01: the team, its channels (controller/data/chat.yaml), the narrative's private team channels (only their
+# members) and one user per narrative person, signed in only through the SSO shim (auth service gitlab, auth data =
+# the shim's id). Idempotent; prints "changed" for a change.
 set -euo pipefail
 cd /
 mm() { /opt/mattermost/bin/mmctl --local "$@" >/dev/null; }
@@ -13,6 +14,10 @@ restart=
 {% for c in chat.channels %}
 [ -n "$(sql "select 1 from channels c join teams t on t.id = c.teamid where t.name = '$team' and c.name = '{{ c | lower | replace(' ', '-') }}'")" ] ||
   { mm channel create --team "$team" --name {{ c | lower | replace(' ', '-') | quote }} --display-name {{ c | quote }}; echo changed; }
+{% endfor %}
+{% for c in team_channels %}
+[ -n "$(sql "select 1 from channels c join teams t on t.id = c.teamid where t.name = '$team' and c.name = '{{ c | lower | replace(' ', '-') }}'")" ] ||
+  { mm channel create --team "$team" --name {{ c | lower | replace(' ', '-') | quote }} --display-name {{ c | quote }} --private; echo changed; }
 {% endfor %}
 
 {% for p in people %}
@@ -27,6 +32,10 @@ esac
 [ -n "$(sql "select 1 from teammembers m join users u on u.id = m.userid join teams t on t.id = m.teamid where u.username = '$u' and t.name = '$team' and m.deleteat = 0")" ] ||
   { mm team users add "$team" "$u"; echo changed; }
 {% for c in chat.channels %}
+[ -n "$(sql "select 1 from channelmembers m join users u on u.id = m.userid join channels c on c.id = m.channelid join teams t on t.id = c.teamid where u.username = '$u' and t.name = '$team' and c.name = '{{ c | lower | replace(' ', '-') }}'")" ] ||
+  { mm channel users add "$team:{{ c | lower | replace(' ', '-') }}" "$u"; echo changed; }
+{% endfor %}
+{% for c, members in team_channels.items() if p.user in members %}
 [ -n "$(sql "select 1 from channelmembers m join users u on u.id = m.userid join channels c on c.id = m.channelid join teams t on t.id = c.teamid where u.username = '$u' and t.name = '$team' and c.name = '{{ c | lower | replace(' ', '-') }}'")" ] ||
   { mm channel users add "$team:{{ c | lower | replace(' ', '-') }}" "$u"; echo changed; }
 {% endfor %}

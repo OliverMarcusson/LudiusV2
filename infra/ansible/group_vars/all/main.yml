@@ -50,6 +50,7 @@ observer_check_cmd: uv run --project {{ playbook_dir }}/../../controller ludius 
 narrative_file: "{{ playbook_dir }}/../../runs/world/narrative.yaml" # the planner's company narrative
 intranet_dir: "{{ playbook_dir }}/../../controller/data/intranet" # the scenario's intranet pages (Markdown)
 people: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).people }}" # name, user: AD users, mailboxes
+team_channels: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).channels | default({}) }}" # private, these members
 range_tls_ca: "{{ playbook_dir }}/build/range-ca.crt" # grommunio's CA or Exchange's self-signed cert, fetched by its role
 grommunio_login_mailboxes: 5 # community licence cap on log-in mailboxes; raise only with a grommunio licence installed
 # Range mail server. exchange: Windows Server 2025 evaluation DC (dc01, VM srv01_vmid at srv01_ip: AD, DNS, time) plus

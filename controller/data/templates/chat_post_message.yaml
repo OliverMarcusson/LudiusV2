@@ -14,6 +14,9 @@ example: {channel: Coffee Corner, message: anyone else think the canteen soup is
 variants:
   - [open_edge_start, open_chat, open_channel, write_message, send_message, close_edge]
   - [open_edge_taskbar, open_chat, open_channel, write_message, send_message, close_edge]
+  # Reactions only (ludius.react): an answer in the channel left open by the read; closed after.
+  - [open_edge_taskbar, open_chat, open_channel, write_message, send_message]
+weights: [1, 1, 0]
 # Enter in the message box sends (a leftover draft too): only the guarded send_message subgoal may press it there.
 key_commits: [{keys: Enter, focus: {name: "^Write to "}}]
 budget_steps: 40

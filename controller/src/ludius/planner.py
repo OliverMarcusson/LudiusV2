@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import yaml
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from ludius import intranet
 from ludius.llm import LlmClient
@@ -78,10 +78,26 @@ class Narrative(Strict):
     city: str
     summary: str
     people: list[Person]
+    # Private team channels in the team chat (display name -> member accounts), nobody else in them: the range's
+    # provisioning creates them; their posts are notified like direct messages (ludius.react).
+    channels: dict[str, list[str]] = Field(default_factory=dict[str, list[str]])
     projects: list[str]
     events: list[Event]
     revised: str = ""  # YYYY-MM-DD of the last weekly revision (spec section 6); "" until the first
+
     history: list[Event] = Field(default_factory=list[Event])  # dated world-state updates, one per revision
+
+    @model_validator(mode="after")
+    def _members(self) -> Narrative:
+        users = {p.user for p in self.people if p.user}
+        # The chat's channel handle is the lowercased, dashed name: two channels on one handle would share members.
+        handles = [c.lower().replace(" ", "-") for c in [*CHAT_CHANNELS, *self.channels]]
+        for name, members in self.channels.items():
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,40}", name) or not set(members) <= users:
+                raise ValueError(f"team channel {name!r}: a plain name, every member a narrative person's account")
+            if handles.count(name.lower().replace(" ", "-")) > 1:
+                raise ValueError(f"team channel {name!r}: its handle is another channel's")
+        return self
 
 
 class PlanItem(TaskInstance):
@@ -217,6 +233,7 @@ def plan_day(
     lookalikes = sorted(k for k, t in templates.items() if window and t.resembles == window.signal)
     colleagues = {p.user for p in narrative.people if p.user and p.user != persona.user}
     people = {p.user: p.name for p in narrative.people if p.user}
+    teams = [c for c, members in narrative.channels.items() if persona.user in members]
     existing = list(existing)
     names = sorted({_leaf(e) for e in existing if _leaf(e)}, key=str.casefold)[:SHOWN_EXISTING]
     mail_tasks = ", ".join(sorted(k for k, t in templates.items() if t.capability in SENDS)) or "none"
@@ -298,7 +315,7 @@ def plan_day(
     draft = llm.json(_Draft, PLAN_SYSTEM, user)
     fill_recipient_names(draft.items, people)
     rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                       mail_threads, people, persona.user, date.isoformat(), inbox)  # fmt: skip
+                       mail_threads, people, persona.user, date.isoformat(), inbox, teams)  # fmt: skip
     missing = sorted(set(followups) - {it.followup for it in draft.items})
     if rejects or missing:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
@@ -308,7 +325,7 @@ def plan_day(
         draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
         fill_recipient_names(draft.items, people)
         rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                           mail_threads, people, persona.user, date.isoformat(), inbox)  # fmt: skip
+                           mail_threads, people, persona.user, date.isoformat(), inbox, teams)  # fmt: skip
     bad = {i for i, _ in rejects}
     items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
     missing = sorted(set(followups) - {it.followup for it in items})
@@ -320,9 +337,14 @@ def plan_day(
 # Validation ---------------------------------------------------------------------------
 
 
+# A team channel is read only by a chat reaction (ludius.react), which checks the server read marker after.
+REACTION_ONLY = {"chat.read_channel"}
+
+
 def role_templates(templates: dict[str, Template], persona: Persona) -> dict[str, Template]:
     """Signal-like templates only for personas whose risk profile includes them; the rest are unknown to the plan."""
-    return {k: t for k, t in templates.items() if not t.resembles or k in persona.risk_profile}
+    return {k: t for k, t in templates.items()
+            if (not t.resembles or k in persona.risk_profile) and t.capability not in REACTION_ONLY}  # fmt: skip
 
 
 def validate(
@@ -339,6 +361,7 @@ def validate(
     user: str = "",
     day: str = "",
     inbox: set[tuple[str, str]] | None = None,
+    teams: Iterable[str] = (),
 ) -> list[tuple[int, str]]:
     """Rejected items with the reason. A reply must answer a mail follow-up in `mail_threads` from its `to`
     colleague with its subject, or a mail in `inbox` (sender account, subject; an empty subject: any mail from that
@@ -349,7 +372,7 @@ def validate(
     seen = list(history)
     taken = taken_names(existing)  # grows with each accepted item: a second item with the same name would overwrite
     for i, it in enumerate(items):
-        why = _check_item(it, templates, seen, policy, user)
+        why = _check_item(it, templates, seen, policy, user, teams)
         if not why:
             why = _recipient(it, colleagues or set[str](), people or {})
         if not why:
@@ -503,9 +526,14 @@ def taken_names(paths: Iterable[str], stem: bool = True) -> set[str]:
 
 
 def _check_item(
-    it: PlanItem, templates: dict[str, Template], seen: list[str], policy: Policy, user: str = ""
+    it: PlanItem,
+    templates: dict[str, Template],
+    seen: list[str],
+    policy: Policy,
+    user: str = "",
+    teams: Iterable[str] = (),
 ) -> str | None:
-    if why := item_problem(it, templates, policy, user):
+    if why := item_problem(it, templates, policy, user, teams):
         return why
     for value in content_values(it, templates):
         if dup := near_duplicate(value, seen):
@@ -513,10 +541,13 @@ def _check_item(
     return None
 
 
-def item_problem(it: PlanItem, templates: dict[str, Template], policy: Policy, user: str = "") -> str | None:
+def item_problem(
+    it: PlanItem, templates: dict[str, Template], policy: Policy, user: str = "", teams: Iterable[str] = ()
+) -> str | None:
     """What makes one item unplayable on its own, checked at generation and again at every plan load: the template
     and its parameters, typeable values, spreadsheet rows, and files it would create that the scenario reserves
-    (their final path, with the extension the app adds, in `user`'s profile)."""
+    (their final path, with the extension the app adds, in `user`'s profile). `teams`: the narrative's team channels
+    `user` is a member of, besides the range's channels."""
     if it.template == BREAK:
         return None if 1 <= it.minutes <= 120 else "break needs 1-120 minutes"
     t = templates.get(it.template)
@@ -528,8 +559,11 @@ def item_problem(it: PlanItem, templates: dict[str, Template], policy: Policy, u
         task = Task(t, it, random.Random(0))
     except ValueError as e:
         return str(e)
-    if t.capability == "chat.post" and task.values.get("channel") not in CHAT_CHANNELS:
-        return f"channel {task.values.get('channel')!r} is not one of {CHAT_CHANNELS}"
+    if t.capability in REACTION_ONLY:
+        return f"{it.template} is read by chat reactions only (their outcome check is the server's read marker)"
+    channel = task.values.get("channel")
+    if t.capability == "chat.post" and channel not in [*CHAT_CHANNELS, *teams]:
+        return f"channel {channel!r} is not one of {[*CHAT_CHANNELS, *teams]}"
     if t.capability in ("chat.post", "chat.dm") and not 2 <= len(task.values.get("message", "").strip()) <= 200:
         return "message: one line of 2-200 characters"
     if t.capability == "file.download":
@@ -867,24 +901,18 @@ def load_plan(path: Path, *, history: bool = False) -> DayPlan:
     # The plan as written may never have passed generation (hand-edited, older code): the item checks run again.
     # An unknown template can't be played at all; validate() reports it with the role's template set.
     policy, templates = Policy.from_env(), _templates()
+    narrative = path.parent.parent / "world" / "narrative.yaml"
+    world = Narrative.model_validate(yaml.safe_load(narrative.read_text("utf-8"))) if narrative.exists() else None
+    teams = [c for c, members in (world.channels if world else {}).items() if plan.persona in members]
     for it in plan.items:
-        if it.template in templates and (why := item_problem(it, templates, policy, plan.persona)
+        if it.template in templates and (why := item_problem(it, templates, policy, plan.persona, teams)
                                          or _meeting_day(it, plan.date)):  # fmt: skip
             raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
         if it.request and not MESSAGE_ID.fullmatch(it.request):
             raise ValueError(f"{path}: {it.template} at {it.at}: request {it.request!r} is not a message id")
     mail = [it for it in plan.items if {"to", "sender"} & {**it.params, **it.content}.keys()]
     if mail:
-        narrative = path.parent.parent / "world" / "narrative.yaml"
-        people = (
-            {
-                p.user: p.name
-                for p in Narrative.model_validate(yaml.safe_load(narrative.read_text("utf-8"))).people
-                if p.user
-            }  # fmt: skip
-            if narrative.exists()
-            else {}
-        )
+        people = {p.user: p.name for p in world.people if p.user} if world else {}
         for it in mail:
             if why := _recipient(it, set(people) - {plan.persona}, people) or _sender(it, set(people) - {plan.persona}):
                 raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
