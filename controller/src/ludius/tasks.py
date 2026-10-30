@@ -72,6 +72,9 @@ class InviteCheck(Strict):
     end: str = "{end}"
 
 
+EDITABLE = (".docx", ".txt", ".xlsx")
+
+
 class FileCheck(Strict):
     path: str
     cells: str | None = None
@@ -99,8 +102,8 @@ class FileCheck(Strict):
                 raise ValueError(f"file check {self.path!r}: a {kind} check stands alone")
             return self
         if self.append is not None:
-            if guestfile.profile_path("u", self.path) is None or not self.path.lower().endswith((".docx", ".txt")):
-                raise ValueError(f"file check {self.path!r}: append edits a .docx or .txt in a noise folder")
+            if guestfile.profile_path("u", self.path) is None or not self.path.lower().endswith(EDITABLE):
+                raise ValueError(f"file check {self.path!r}: append edits a .docx, .txt or .xlsx in a noise folder")
             if any(getattr(self, k) is not None for k in (*need.values(), "download")):
                 raise ValueError(f"file check {self.path!r}: an append check stands alone")
             return self
@@ -840,6 +843,7 @@ def file_baseline(task: Task, policy: Any) -> str | None:
             return f"{copy}: already exists, never overwritten"
         absent.add(copy)
     edits = {task.fmt(c.path): task.fmt(c.source or c.path) for c in files if c.append is not None}
+    appends = {task.fmt(c.path): c.append or "" for c in files if c.append is not None}
     for rel, src in sorted(edits.items()):
         f = guestfile.read(task.owner, src)
         lines = _doc_lines(src, f.data) if f is not None and f.exists else None
@@ -847,6 +851,8 @@ def file_baseline(task: Task, policy: Any) -> str | None:
             return f"{src}: not there, nothing to edit"
         if lines is None or f is None:
             return f"{src}: unreadable on the guest"
+        if rel.lower().endswith(".xlsx") and (why := _completes(lines, task.fmt(appends[rel]))):
+            return f"{rel}: {why}"
         task.files_before[rel] = lines
         if src != rel:
             task.sources_before[src] = f.data
@@ -892,6 +898,10 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
         before = task.files_before.get(rel)
         if before is None or f is None or not f.exists or f.written_ms < task.started_ms:
             return False
+        if rel.lower().endswith(".xlsx"):
+            got, want = _doc_lines(rel, f.data), _below(before, task.fmt(c.append))
+            new = sorted(_fold_value(x) for x in set(got or []) - set(before))
+            return got is not None and bool(want) and set(before) <= set(got) and new == sorted(want)
         add = _lines(task.fmt(c.append))
         return bool(add) and _doc_lines(rel, f.data) == before + add
     if task.files_absent is None or rel not in task.files_absent:
@@ -918,6 +928,9 @@ def _leaf(rel: str) -> str:
 
 
 def _doc_lines(rel: str, data: bytes) -> list[str] | None:
+    if rel.lower().endswith(".xlsx"):
+        cells = guestfile.xlsx_cells(data)
+        return None if cells is None else sorted(f"{k}	{v}" for k, v in cells.items())
     if rel.lower().endswith(".docx"):
         got = guestfile.docx_paragraphs(data)
         return None if got is None else [x.casefold() for x in got]
@@ -925,6 +938,33 @@ def _doc_lines(rel: str, data: bytes) -> list[str] | None:
         return _lines(data.decode("utf-8-sig").replace("\r", ""))
     except UnicodeDecodeError:
         return None
+
+
+def _row(ref: str) -> int:
+    return int(re.sub(r"^[A-Z]+", "", ref))
+
+
+def _fold_value(cell: str) -> str:
+    ref, v = cell.split("	", 1)
+    return f"{ref}	{v.casefold()}"
+
+
+def _below(before: list[str], rows: str) -> list[str]:
+    last = max((_row(x.split("	")[0]) for x in before), default=0)
+    cells = guestfile.grid_cells(rows)
+    return [f"{re.sub(r'[0-9]+$', '', k)}{_row(k) + last}	{v.casefold()}" for k, v in cells.items()]
+
+
+def _completes(before: list[str], rows: str) -> str | None:
+    col: dict[str, set[str]] = {}
+    for x in before:
+        ref, v = x.split("	", 1)
+        col.setdefault(re.sub(r"[0-9]+$", "", ref), set()).add(v.casefold())
+    for ref, v in guestfile.grid_cells(rows).items():
+        v = v.casefold()
+        if v[:1].isalpha() and any(a != v and a.startswith(v) for a in col.get(re.sub(r"[0-9]+$", "", ref), ())):
+            return f"Excel would complete {v!r} to a longer cell above it"
+    return None
 
 
 def _lines(text: str) -> list[str]:

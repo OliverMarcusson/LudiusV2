@@ -114,10 +114,14 @@ def xlsx_cells(data: bytes) -> dict[str, str] | None:
             cells: dict[str, str] = {}
             for c in ET.fromstring(z.read(sheets[0])).iterfind(".//m:sheetData/m:row/m:c", _NS):
                 kind, v = c.get("t"), c.find("m:v", _NS)
+                if c.find("m:f", _NS) is not None:
+                    return None
                 if kind == "inlineStr":
                     text = "".join(t.text or "" for t in c.iter(f"{{{_NS['m']}}}t"))
                 elif v is None:
                     continue
+                elif kind == "b":
+                    text = {"1": "TRUE", "0": "FALSE"}[v.text or ""]
                 else:
                     text = shared[int(v.text or "")] if kind == "s" else v.text or ""
                 if text != "":

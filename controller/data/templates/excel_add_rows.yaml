@@ -1,0 +1,61 @@
+task: excel_add_rows
+app: excel
+capability: file.edit
+processes: [excel.exe, explorer.exe]
+writes: ['Documents\{file_name}.xlsx']
+params: [file_name, rows]
+about: "Add 1-3 rows below the last row of one of the persona's own Excel workbooks (an .xlsx under Own recent files) and save it. file_name: that file's name exactly, without folder and extension; rows: 1-3 lines of 1-5 cells separated by a tab character, matching the sheet's columns, each cell a short ASCII text starting with a letter or a whole number, no empty cells, no dates, times, decimals or percentages."
+example: {file_name: admission test sheet, rows: "folders\t4"}
+variants:
+  - [open_explorer_keys, go_documents, open_file, go_next_row, write_rows, save_keys, close_app, close_explorer]
+  - [open_explorer_taskbar, go_documents, open_file, go_next_row, write_rows, save_keys, close_app, close_explorer]
+weights: [1, 1]
+budget_steps: 44
+budget_minutes: 9
+on_abandon: close_without_saving
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  open_explorer_taskbar:
+    goal: "Open File Explorer from its taskbar button"
+    launch: true
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_documents:
+    goal: "Go to the Documents folder under This PC"
+    done:
+      foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+      element: {role: split button, name: '^This PC$'}
+  open_file:
+    goal: "Open the workbook {file_name} with a double-click"
+    steps: 14
+    in_window: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+    breadcrumb: ['This PC', Documents]
+    done: {foreground: {process: excel.exe, title: '^{file_name}(\.xlsx)? - Excel$'}}
+  go_next_row:
+    goal: "Select the cell in column A of the first empty row below the table: Ctrl+Home, then Ctrl+Down to the last filled row, then Down"
+    keys: [Ctrl+Home, Ctrl+Down, Down, Up]
+    steps: 8
+    in_window: &excel {process: excel.exe, title: '^{file_name}(\.xlsx)? - Excel$'}
+    avoid: [{role: edit}, {role: combo box}, {role: data item}, {name: '^(File Tab|Save As)$'}]
+    done: {ask: "In Excel, is the selected cell in column A, in the first empty row directly below the last filled row of the table, with no cell being edited?"}
+  write_rows:
+    goal: "Type the new rows at the keyboard focus (the text moves to the next cell on Tab and to the next row on Enter)"
+    text: rows_enter
+    in_window: *excel
+    avoid: [{role: edit}, {role: combo box}, {role: data item}, {name: '^(File Tab|Save As)$'}]
+    done: {typed: true}
+  save_keys:
+    goal: "Save the workbook with Ctrl+S"
+    keys: [Ctrl+S]
+    in_window: *excel
+    avoid: [{name: '^(File Tab|Save As)$'}]
+    done: {file: {path: 'Documents\{file_name}.xlsx', append: "{rows}"}}
+  close_app:
+    goal: "Close Excel"
+    done: {window: {process: excel.exe, absent: true}}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}

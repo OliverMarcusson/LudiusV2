@@ -26,6 +26,10 @@ def xlsx(cells: dict[str, tuple[str, str]], sheets: int = 1) -> bytes:
         if kind == "s":
             shared.append(v)
             xml += f'<row><c r="{ref}" t="s"><v>{len(shared) - 1}</v></c></row>'
+        elif kind == "f":
+            xml += f'<row><c r="{ref}"><f>{v}</f><v>0</v></c></row>'
+        elif kind == "b":
+            xml += f'<row><c r="{ref}" t="b"><v>{v}</v></c></row>'
         else:
             xml += f'<row><c r="{ref}"><v>{v}</v></c></row>'
     buf = io.BytesIO()
@@ -407,3 +411,42 @@ def test_typing_rechecks_its_target_on_a_fresh_snapshot(
         r.act(Option("o1", "type", "t", element=r.snap.elements[0], content=content, literal=literal), tk, sg) is None
     )
     assert clicks == [1] and len(agent.typed) == 1
+
+
+def test_add_rows_needs_the_old_cells_and_the_new_rows_below(monkeypatch: pytest.MonkeyPatch) -> None:
+    disk: dict[str, Any] = {}
+    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get("file"))
+    t = cli.plan_sources().templates["excel_add_rows"]
+    tk = Task(t, TaskInstance(template=t.task, params={"file_name": "stock", "rows": "folders\t4"}), random.Random(0))
+    tk.owner, tk.started_ms = "aberg", 1_000_000
+    done, snap = t.subgoals["save_keys"].done, obs.Snapshot()
+    disk["file"] = guestfile.GuestFile(True, 500, xlsx(SAVED))
+    assert file_baseline(tk, Policy()) is None
+    grown = {**SAVED, "A4": ("s", "Folders"), "B4": ("n", "4")}
+    disk["file"] = guestfile.GuestFile(True, 2_000_000, xlsx(grown))
+    assert check_done(done, snap, tk, False) is True
+    for wrong in ({**SAVED, "A5": ("s", "folders"), "B5": ("n", "4")},
+                  {**SAVED, "A3": ("s", "folders"), "B3": ("n", "4")},
+                  {**grown, "C4": ("n", "1")}, {**grown, "A1": ("s", "ITEM")}, SAVED):  # fmt: skip
+        disk["file"] = guestfile.GuestFile(True, 2_000_000, xlsx(wrong))
+        assert check_done(done, snap, tk, False) is False
+    disk["file"] = guestfile.GuestFile(True, 999_999, xlsx(grown))
+    assert check_done(done, snap, tk, False) is False
+    tk = Task(t, TaskInstance(template=t.task, params={"file_name": "stock", "rows": "pen\t4"}), random.Random(0))
+    tk.owner = "aberg"
+    disk["file"] = guestfile.GuestFile(True, 500, xlsx(SAVED))
+    assert "would complete" in (file_baseline(tk, Policy()) or "")
+    flag = {**SAVED, "C2": ("b", "1")}
+    assert guestfile.xlsx_cells(xlsx(flag)) == {**{k: v for k, (_, v) in SAVED.items()}, "C2": "TRUE"}
+    disk["file"] = guestfile.GuestFile(True, 500, xlsx(flag))
+    tk = Task(t, TaskInstance(template=t.task, params={"file_name": "stock", "rows": "folders	4"}), random.Random(0))
+    tk.owner, tk.started_ms = "aberg", 1_000_000
+    assert file_baseline(tk, Policy()) is None
+    disk["file"] = guestfile.GuestFile(True, 2_000_000, xlsx({**grown, "C2": ("n", "1")}))
+    assert check_done(done, snap, tk, False) is False
+    disk["file"] = guestfile.GuestFile(True, 2_000_000, xlsx({**grown, "C2": ("b", "1")}))
+    assert check_done(done, snap, tk, False) is True
+    formula = xlsx({**SAVED, "B2": ("f", "6+6")})
+    assert guestfile.xlsx_cells(formula) is None
+    disk["file"] = guestfile.GuestFile(True, 500, formula)
+    assert file_baseline(tk, Policy()) == r"Documents\stock.xlsx: unreadable on the guest"
