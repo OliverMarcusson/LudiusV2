@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 from dataclasses import dataclass
@@ -172,12 +173,19 @@ def prepare_file(task: Task, policy: Policy, narrative: Path) -> tuple[str | Non
 
 
 def hints(
-    inbox: list[mail.Message] | None, owner: str, people: dict[str, str], policy: Policy, cls: str = "IPM.Note"
+    inbox: list[mail.Message] | None,
+    owner: str,
+    people: dict[str, str],
+    policy: Policy,
+    cls: str = "IPM.Note",
+    day: dt.date | None = None,
 ) -> list[tuple[str, str]]:
+    since = 0 if day is None else dt.datetime.combine(day - dt.timedelta(days=RECENT_DAYS - 1), dt.time(), dt.UTC)
     return [
         (m.sender.partition("@")[0], m.subject)
         for m in inbox or []
         if m.cls == cls and m.subject and not _colleague(m.sender, owner, people, policy)
+        and (not since or m.delivery_ms >= since.timestamp() * 1000)
         and not policy.mail_reserved(m.sender, m.subject, m.body)
     ]  # fmt: skip
 

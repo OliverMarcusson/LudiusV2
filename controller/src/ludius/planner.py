@@ -272,9 +272,14 @@ def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], p
               mail_threads: dict[str, tuple[str, str]], inbox: set[tuple[str, str]],
               invites: set[tuple[str, str]], owned: dict[str, str], shares: list[str], window: Scenario | None,
               lookalikes: list[str], weights: dict[str, float], settle: dict[str, str],
-              unread: set[tuple[str, str]], taken: list[str]) -> list[PlanItem]:  # fmt: skip
+              unread: set[tuple[str, str]], taken: list[str],
+              attached: dict[tuple[str, str], tuple[str, ...]]) -> list[PlanItem]:  # fmt: skip
     rng = random.Random(f"{persona.user}:{date}")
     mails = sorted(inbox)
+    saved = {p.rsplit("\\", 1)[-1].casefold() for p in owned if p.casefold().rpartition("\\")[0].endswith("documents")}
+    saves = [(k, n) for k in mails for n in attached.get(k, ())
+             if [x.casefold() for x in attached[k]].count(n.casefold()) == 1
+             and n.lower().endswith(ATTACHABLE) and n.casefold() not in saved]  # fmt: skip
     fresh = rng.sample(sorted(unread & inbox), len(unread & inbox))
 
     def to(it: PlanItem, user: str = "") -> PlanItem:
@@ -316,6 +321,9 @@ def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], p
         elif cap == "mail.read":
             u, subject = fresh.pop()
             it.params |= {"sender": f"{u}@{MAIL_DOMAIN}", "subject": subject}
+        elif cap == "mail.save":
+            (u, subject), name = rng.choice(saves)
+            it.params |= {"sender": f"{u}@{MAIL_DOMAIN}", "subject": subject, "file_name": name}
         elif cap == "mail.file":
             u, subject = rng.choice(mails)
             it.params |= {"sender": f"{u}@{MAIL_DOMAIN}", "subject": subject}
@@ -334,6 +342,7 @@ def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], p
                 (cap not in TO_SOMEONE or bool(colleagues))
                 and (cap not in NEEDS_INBOX or bool(mails))
                 and (cap != "mail.read" or bool(fresh))
+                and (cap != "mail.save" or bool(saves))
                 and (cap != "chat.post" or bool(channels))
                 and (cap != "file.share" or bool(shares))
                 and (cap != "file.download" or bool(intranet.downloads()))
@@ -347,7 +356,7 @@ def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], p
     open_ = [k for k, t in templates.items() if t.capability in SETTLES and eligible(k, t)]
     for f, about in followups.items():
         if f in mail_threads:
-            if not (replies := of("mail.reply")):
+            if not (replies := of("mail.reply")) or mail_threads[f] not in inbox:
                 continue
             u, subject = mail_threads[f]
             it = to(PlanItem(at="00:00", template=replies[0], context=about), u)
@@ -435,6 +444,7 @@ def plan_day(
     decider: Any = None,
     unread: set[tuple[str, str]] | None = None,
     taken: Iterable[str] = (),
+    attached: dict[tuple[str, str], tuple[str, ...]] | None = None,
 ) -> tuple[DayPlan, list[str]]:
     policy = policy or Policy()
     followups = followups or {}
@@ -457,7 +467,7 @@ def plan_day(
         weights, settle = {}, {}
     slots = day_slots(persona, date, templates, people, colleagues, [*CHAT_CHANNELS, *teams], followups,
                       mail_threads or {}, inbox or set(), invites or set(), owned or {}, shares, window, lookalikes,
-                      weights, settle, unread or set(), list(taken))  # fmt: skip
+                      weights, settle, unread or set(), list(taken), attached or {})  # fmt: skip
     work = [it for it in slots if it.template != BREAK]
     user = (
         f"Company story:\n{narrative.model_dump_json(indent=1)}\n\n"

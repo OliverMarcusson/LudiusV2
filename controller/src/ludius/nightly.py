@@ -160,7 +160,7 @@ def generate_day(
         mapped, more = requests.candidates(llm, decider, world, persona, boss, mails, role, date, people)
         notes += more
     asked = {m.subject for m in inbox_mails or [] if m.msgid in {it.request for it in mapped}}
-    inbox = reply.hints(inbox_mails, persona.user, people, src.policy)
+    inbox = reply.hints(inbox_mails, persona.user, people, src.policy, day=date)
     unread = {(m.sender.partition("@")[0], m.subject) for m in inbox_mails or [] if not m.read}
     files = {(m.sender.partition("@")[0], m.subject): m.files for m in inbox_mails or [] if m.files}
     listed = "\n".join(f"- from {u}@{mail.DOMAIN}: {s}" + (" (unread)" if (u, s) in unread else "")
@@ -184,7 +184,7 @@ def generate_day(
             llm, auto.narrative, persona, date, src.templates, context, world.history(persona.user),
             policy=src.policy, scenario=scenario, existing=existing, followups=followups,
             mail_threads=threads, inbox=set(inbox), owned=owned, invites=set(invites), decider=decider,
-            unread=unread, taken=[it.at for it in mapped],
+            unread=unread, taken=[it.at for it in mapped], attached=files,
         )  # fmt: skip
     finally:
         getattr(decider, "close", lambda: None)()
@@ -249,8 +249,9 @@ def check_existing(world: World, persona: Persona, date: dt.date, src: Sources) 
     threads = world_state.mail_threads(world_state.build(world, narrative, src.personas, date), persona.user)
     people = {p.user: p.name for p in narrative.people if p.user}
     inbox_mails = src.inbox(persona.user)
-    inbox = set(reply.hints(inbox_mails, persona.user, people, src.policy))
+    inbox = set(reply.hints(inbox_mails, persona.user, people, src.policy, day=date))
     invites = set(reply.hints(inbox_mails, persona.user, people, src.policy, mail.MEETING_REQUEST))
+    threads = {f: t for f, t in threads.items() if inbox_mails is None or t in inbox}
     rejects = planner.validate(
         plan.items, planner.role_templates(src.templates, persona), [], src.policy, colleagues,
         followups={i.followup for i in plan.items if i.followup}, mail_threads=threads, inbox=inbox, invites=invites,
@@ -289,6 +290,31 @@ def ensure_day(
     )  # fmt: skip
 
 
+def shared_lock(world: World) -> Callable[[], AbstractContextManager[None]]:
+    lock = threading.Lock()
+
+    @contextmanager
+    def shared() -> Generator[None]:
+        with lock, durable.desk_lock(world.root / "locks" / "nightly.lock"):
+            yield
+
+    return shared
+
+
+def ensure_days(
+    llm: Callable[[], LlmClient], world: World, personas: list[Persona], src: Sources, date: dt.date
+) -> dict[str, Planned | Exception]:
+    shared = shared_lock(world)
+
+    def one(persona: Persona) -> Planned:
+        with calls.for_persona(persona.user):
+            return ensure_day(llm, world, persona, src, date, shared=shared)
+
+    with ThreadPoolExecutor(max_workers=PARALLEL) as pool:
+        futures = {p.user: pool.submit(one, p) for p in personas}
+    return {u: e if isinstance(e := f.exception(), Exception) else f.result() for u, f in futures.items()}
+
+
 @workflow.defn(name=NIGHTLY_PLAN)
 class NightlyPlan:
     @workflow.run
@@ -309,7 +335,7 @@ class NightlyPlan:
 class PlanActivities:
     def __init__(self, runs: Path, load: Callable[[], Sources], llm: Callable[[], LlmClient]) -> None:
         self.world, self.load, self.llm = World(runs), load, llm
-        self._lock = threading.Lock()
+        self._shared = shared_lock(self.world)
 
     @activity.defn(name="nightly_plan")
     def plan(self, fire: PlanFire) -> Planned:
@@ -329,11 +355,6 @@ class PlanActivities:
             raise RuntimeError("another nightly planner is running; retrying") from e
         except (PlanConflict, calls.CapReached) as e:
             raise ApplicationError(str(e), non_retryable=True) from e
-
-    @contextmanager
-    def _shared(self) -> Generator[None]:
-        with self._lock, durable.desk_lock(self.world.root / "locks" / "nightly.lock"):
-            yield
 
 
 async def serve(client: Client, runs: Path, load: Callable[[], Sources], llm: Callable[[], LlmClient]) -> None:

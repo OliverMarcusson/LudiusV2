@@ -168,3 +168,28 @@ def test_a_kept_app_may_stay_in_front(tmp_path: Path) -> None:
     chat.windows[0].CopyFrom(edge)
     chat.apps.append(edge)
     assert Session(ObserveOnly([chat]), GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize({"msedge.exe"})  # pyright: ignore[reportArgumentType]
+
+
+def test_a_popup_that_survives_two_tries_no_longer_blocks_closing_its_app(tmp_path: Path) -> None:
+    class Recorder(ObserveOnly):
+        def move(self, x: int, y: int, ms: int) -> int:
+            self.chords.append([x, y])
+            return 0
+
+        def click(self) -> int:
+            return 0
+
+        def chord(self, vks: list[int]) -> int:
+            self.chords.append(vks)
+            self.snaps = [clean_desktop()] if vks == keys.chord("Alt+F4") else self.snaps
+            return 0
+
+    stuck = clean_desktop()
+    stuck.windows[0].CopyFrom(_win(obs.Window.FOREGROUND, "rctrl_renwnd32", -8, -8, 1936, 1056, "Inbox - Outlook"))
+    stuck.windows[0].process_name = "OUTLOOK.EXE"
+    stuck.windows[1].CopyFrom(_win(obs.Window.POPUP, "#32770", 536, 276, 472, 332, "1 Reminder(s)"))
+    stuck.elements.append(obs.Element(id=2, role="button", name="Dismiss", window=1,
+                                      bounds=obs.Rect(x=932, y=529, width=64, height=23)))  # fmt: skip
+    agent = Recorder([stuck])
+    assert Session(agent, GroundTruth(tmp_path / "gt.jsonl"), "pw").normalize()  # pyright: ignore[reportArgumentType]
+    assert agent.chords == [[964, 540], [964, 540], keys.chord("Alt+F4")]

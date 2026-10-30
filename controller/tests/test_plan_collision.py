@@ -187,7 +187,7 @@ def test_code_builds_the_day_skeleton() -> None:
             anna, date, templates, {"lnord": "Lars Nord"}, {"lnord", "sdekker"}, ["general"],
             {"f1": "Lars waits", "f2": "Send Lars the list"}, {"f1": ("lnord", "ERP roles")}, inbox,
             {("sdekker", "Close sync")}, {}, [], window, ["powershell_admin_check"], {}, {"f2": "word_revise_and_mail"},
-            {("sdekker", "Freight")}, ["10:00"],
+            {("sdekker", "Freight")}, ["10:00"], {},
         )  # fmt: skip
         times = [planner._minutes(it.at) for it in items]  # pyright: ignore[reportPrivateUsage]
         assert times == sorted(times) and all(m % 5 == 0 for m in times) and "10:00" not in [it.at for it in items]
@@ -216,7 +216,7 @@ def test_follow_ups_stay_within_the_budget_and_threads_need_a_reply() -> None:
         items = planner.day_slots(
             anna, DAY + dt.timedelta(days=day), templates, {"lnord": "Lars Nord"}, {"lnord"}, ["general"],
             followups, {"f0": ("lnord", "ERP roles")}, {("lnord", "ERP roles")}, set(), {}, [], None, [], {}, {},
-            set(), [],
+            set(), [], {},
         )  # fmt: skip
         work = [it for it in items if it.template != planner.BREAK]
         assert 5 <= len(work) <= 8 and "f0" not in {it.followup for it in work}
@@ -231,7 +231,7 @@ def test_code_picks_an_own_file_that_fits_the_template() -> None:
                         ({"documents\\notes.txt": "2026-01-01"}, {"explorer_zip_file"}),
                         ({"documents\\notes.zip": "2026-01-01"}, {"explorer_extract_zip"})):  # fmt: skip
         items = planner.day_slots(
-            anna, DAY, templates, {}, set(), [], {}, {}, set(), set(), owned, [], None, [], {}, {}, set(), [],
+            anna, DAY, templates, {}, set(), [], {}, {}, set(), set(), owned, [], None, [], {}, {}, set(), [], {},
         )  # fmt: skip
         work = [it for it in items if it.template != planner.BREAK]
         assert {it.template for it in work} == want
@@ -244,6 +244,29 @@ def test_code_picks_an_own_file_that_fits_the_template() -> None:
                 "explorer_extract_zip": {"file_name": "notes"},
             }[it.template]
         )
+
+
+def test_code_picks_a_real_attachment_and_skips_threads_outside_the_inbox() -> None:
+    src = cli.plan_sources()
+    anna = next(p for p in src.personas if p.user == "aberg")
+    templates = {k: src.templates[k] for k in ("outlook_save_attachment", "outlook_reply_mail")}
+    inbox = {("lnord", "Q3"), ("sdekker", "Old")}
+    attached = {("lnord", "Q3"): ("a.xlsx", "A.xlsx", "plan.docx", "x.exe"), ("sdekker", "Old"): ("b.docx",),
+                ("eyilmaz", "Gone"): ("c.docx",)}  # fmt: skip
+    for owned, want in (({}, {"plan.docx", "b.docx"}), ({"documents\\b.docx": "2026-01-01"}, {"plan.docx"})):
+        items = planner.day_slots(
+            anna, DAY, templates, {}, set(), [], {"f0": "Lars waits"}, {"f0": ("eyilmaz", "Gone")}, inbox, set(),
+            owned, [], None, [], {}, {}, set(), [], attached,
+        )  # fmt: skip
+        work = [it for it in items if it.template != planner.BREAK]
+        saves = [it for it in work if it.template == "outlook_save_attachment"]
+        assert saves and not any(it.followup for it in work)
+        for it in saves:
+            assert it.params["file_name"] in want
+            assert (it.params["sender"].partition("@")[0], it.params["subject"]) in inbox
+    items = planner.day_slots(anna, DAY, templates, {}, set(), [], {}, {}, inbox, set(), {}, [], None, [], {}, {},
+                              set(), [], {})  # fmt: skip
+    assert not [it for it in items if it.template == "outlook_save_attachment"]
 
 
 def test_the_writer_cannot_change_fixed_values(monkeypatch: pytest.MonkeyPatch) -> None:

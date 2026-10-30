@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import random
 from pathlib import Path
 from typing import Any
@@ -236,6 +237,10 @@ def test_template_and_plan_time_inbox_hints() -> None:
                         "aberg", PEOPLE, Policy(reserved_paths=[r"lnord@ludius.internal"]))  # fmt: skip
     assert hints == [("mvellinga", "lund q4")]
     assert reply.hints(None, "aberg", PEOPLE, Policy()) == []
+    day = dt.datetime.fromtimestamp(NOW / 1000, dt.UTC).date()
+    old = [msg(1), msg(4, "old q3", age_days=reply.RECENT_DAYS)]
+    assert reply.hints(old, "aberg", PEOPLE, Policy(), day=day) == [("mvellinga", "lund q4")]
+    assert len(reply.hints(old, "aberg", PEOPLE, Policy())) == 2
 
     def check(params: dict[str, str], followup: str = "") -> list[str]:
         it = PlanItem(at="09:00", template=t.task, params={"to": TO, "to_name": "Marcus Vellinga", **params},

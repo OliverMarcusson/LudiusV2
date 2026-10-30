@@ -563,7 +563,7 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
     import signal
     from zoneinfo import ZoneInfo
 
-    from ludius import calls, durable, nightly, rangerun
+    from ludius import durable, nightly, rangerun
 
     if not args.start or not 1 <= args.days <= 7:
         print("warp needs --start YYYY-MM-DD (a future date) and --days 1-7", file=sys.stderr)
@@ -610,16 +610,13 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
         for d in days:
             jump(dt.datetime.combine(d - dt.timedelta(days=1), dt.time.fromisoformat(args.plan_at), tz))
             plans: dict[str, planner.DayPlan] = {}
-            for u in users:
-                persona = next(p for p in src.personas if p.user == u)
-                calls.persona = u
+            for u, got in nightly.ensure_days(llm, world, [p for p in src.personas if p.user in users], src, d).items():
                 try:
-                    with durable.desk_lock(world.root / "locks" / "nightly.lock"):
-                        plans[u] = planner.load_plan(Path(nightly.ensure_day(llm, world, persona, src, d).path))
+                    if isinstance(got, Exception):
+                        raise got
+                    plans[u] = planner.load_plan(Path(got.path))
                 except Exception as e:  # noqa: BLE001  one persona without a plan leaves the others' days to run
                     note(event="no_plan", persona=u, date=d, error=str(e)[:300])
-                finally:
-                    calls.persona = None
             note(event="planned", date=d, items={u: len(p.items) for u, p in plans.items()})
             failed += len(users) - len(plans)
             plans = {u: p for u, p in plans.items() if p.items}
@@ -731,7 +728,7 @@ async def _stop_days(temporal: str, wids: list[str]) -> list[str]:
 async def _range_schedules(args: argparse.Namespace, users: list[str], today: dt.date) -> None:
     from temporalio.client import ScheduleAlreadyRunningError
 
-    from ludius import calls, durable, nightly
+    from ludius import durable, nightly
 
     client = await durable.connect(durable.Target(args.temporal))
     for u in users:
@@ -750,17 +747,11 @@ async def _range_schedules(args: argparse.Namespace, users: list[str], today: dt
     llm = functools.partial(
         LlmClient, os.environ.get("OPENROUTER_API_KEY", ""), model=os.environ.get("LUDIUS_PLANNER_MODEL", PLANNER_MODEL)
     )
-    for u in users:
-        persona = next(p for p in src.personas if p.user == u)
-        calls.persona = u
-        try:
-            with durable.desk_lock(world.root / "locks" / "nightly.lock"):
-                print(f"{u}: plan {nightly.ensure_day(llm, world, persona, src, today).path}")
-        except Exception as e:  # noqa: BLE001  one persona's plan failing leaves the others' days to run
-            print(f"{u}: no plan for {today}, its day will fail to load: {e}", file=sys.stderr)
+    for u, got in nightly.ensure_days(llm, world, [p for p in src.personas if p.user in users], src, today).items():
+        if isinstance(got, Exception):
+            print(f"{u}: no plan for {today}, its day will fail to load: {got}", file=sys.stderr)
             continue
-        finally:
-            calls.persona = None
+        print(f"{u}: plan {got.path}")
         await client.get_schedule_handle(durable.schedule_id(u)).trigger()
         print(f"{u}: today's day started")
 

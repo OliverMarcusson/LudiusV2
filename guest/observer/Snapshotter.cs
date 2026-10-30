@@ -140,9 +140,11 @@ sealed partial class Snapshotter
         var owned = new List<(IntPtr, Window.Types.Kind)>();
         var popups = new List<(IntPtr, Window.Types.Kind)>();
         var shell = new List<(IntPtr, Window.Types.Kind)>();
+        var below = false;
         Native.EnumWindows((h, _) =>
         {
-            if (h == fg || !Native.IsWindowVisible(h) || Native.Cloaked(h)) return true;
+            if (h == fg) { below = true; return true; }
+            if (!Native.IsWindowVisible(h) || Native.Cloaked(h)) return true;
             var cls = Native.ClassName(h);
             if (cls == "MSO_BORDEREFFECT_WINDOW_CLASS") return true;
             for (var o = Native.Owner(h); o != 0; o = Native.Owner(o))
@@ -155,7 +157,7 @@ sealed partial class Snapshotter
                 if (cls is not ("Progman" or "WorkerW") || Native.ClassName(fg) is "Shell_TrayWnd" or "Progman" or "WorkerW" || fg == 0)
                     shell.Add((h, Window.Types.Kind.Shell));
             }
-            else if (cls == "#32768" || (pid == fgPid && fg != 0 && popup && Overlaps(h, fgRect)))
+            else if (cls == "#32768" || (!below && pid == fgPid && fg != 0 && popup && Overlaps(h, fgRect)))
                 popups.Add((h, Window.Types.Kind.Popup));
             return true;
         }, 0);

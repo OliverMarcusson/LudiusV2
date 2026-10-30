@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from collections import Counter
 from collections.abc import Callable
 
 from ludius import keys
@@ -78,6 +79,7 @@ class Session:
     def normalize(self, keep: set[str] | None = None, rounds: int = 12) -> bool:
         keep = {k.lower() for k in keep or set()}
         closed: list[str] = []
+        tried: Counter[tuple[str, str]] = Counter()
         for _ in range(rounds):
             if not self.unlock():
                 return False
@@ -101,7 +103,9 @@ class Session:
                 (
                     w
                     for i, w in enumerate(snap.windows)
-                    if w.kind in (obs.Window.POPUP, obs.Window.OWNED) and not _inert_shell_popup(snap, i)
+                    if w.kind in (obs.Window.POPUP, obs.Window.OWNED)
+                    and not _inert_shell_popup(snap, i)
+                    and tried[(w.title, w.class_name)] < 2
                 ),
                 None,
             )
@@ -120,6 +124,8 @@ class Session:
                 self.log.write(event="normalized", host_ms=_now(), closed=closed)
                 return True
             if popup is not None or (fg is not None and fg.class_name == "#32770"):
+                if popup is not None:
+                    tried[(popup.title, popup.class_name)] += 1
                 target = None if shell_dialog(fg) else _button(snap, DISCARD) or _button(snap, DISMISS)
                 if target is not None:
                     self._click(target)

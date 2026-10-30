@@ -16,7 +16,7 @@ from temporalio.common import SearchAttributeKey, SearchAttributePair, TypedSear
 from temporalio.exceptions import ApplicationError
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
-from ludius import calls, cli, durable, nightly, planner
+from ludius import calls, cli, durable, mail, nightly, planner
 from ludius.planner import DayPlan, Narrative, Person, PlanItem, World
 
 DAY = dt.date(2026, 10, 28)
@@ -283,3 +283,39 @@ def test_workflow_uses_the_intended_occurrence_and_passes_the_sandbox(monkeypatc
         SandboxedWorkflowRunner().prepare_workflow(defn)
 
     asyncio.run(sandbox())
+
+
+def test_ensure_days_plans_at_once_and_returns_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    world, _, src = _setup(tmp_path)
+    both = threading.Barrier(2, timeout=5)
+
+    def plan(llm: Any, world: World, persona: Any, src: Any, date: dt.date, shared: Any) -> nightly.Planned:
+        both.wait()
+        with shared():
+            if persona.user == "lnord":
+                raise ValueError("no plan")
+        return nightly.Planned(persona=persona.user, date=date.isoformat(), path="p", generated=True, items=1)
+
+    monkeypatch.setattr(nightly, "ensure_day", plan)
+    two = [p for p in src.personas if p.user in ("aberg", "lnord")]
+    got = nightly.ensure_days(lambda: None, world, two, src, dt.date(2026, 1, 20))  # type: ignore[arg-type,return-value]
+    assert isinstance(got["aberg"], nightly.Planned) and isinstance(got["lnord"], ValueError)
+
+
+def test_check_existing_keeps_only_threads_in_the_recent_inbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    world, anna, src = _setup(tmp_path)
+    _slots(monkeypatch, ITEM)
+    nightly.ensure_day(lambda: ScriptedLlm({"items": [ITEM]}), world, anna, src, DAY)  # type: ignore[arg-type, return-value]
+    monkeypatch.setattr(nightly.world_state, "mail_threads", lambda *_: {"f1": ("lnord", "Budget"), "f2": ("x", "Old")})
+    seen: list[object] = []
+    monkeypatch.setattr(planner, "validate", lambda *_, **kw: seen.append(kw["mail_threads"]) or [])
+    n = world.narrative()
+    world.save_narrative(
+        n.model_copy(update={"people": [*n.people, Person(name="L Nord", role="r", department="d", user="lnord")]})
+    )
+    ms = int(dt.datetime.combine(DAY, dt.time(9), dt.UTC).timestamp() * 1000)
+    recent = [mail.Message(f"lnord@{mail.DOMAIN}", ms, ms, "hi", cls="IPM.Note", subject="Budget")]
+    for inbox, want in (([], {}), (recent, {"f1": ("lnord", "Budget")}),
+                        (None, {"f1": ("lnord", "Budget"), "f2": ("x", "Old")})):  # fmt: skip
+        nightly.check_existing(world, anna, DAY, src._replace(inbox=lambda _, i=inbox: i))
+        assert seen.pop() == want
