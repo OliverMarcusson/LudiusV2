@@ -20,6 +20,7 @@ import yaml
 from pydantic import Field, field_validator, model_validator
 
 from ludius import intranet
+from ludius.calls import CapReached
 from ludius.llm import LlmClient
 from ludius.mail import DOMAIN as MAIL_DOMAIN
 from ludius.policy import Policy
@@ -181,11 +182,22 @@ NARRATIVE_SYSTEM = (
 )
 
 PLAN_SYSTEM = (
-    "You plan one ordinary working day for one employee of a fictional company in a training range. "
-    "Every item is a task from the catalog, done for a concrete reason that follows from the company story, "
-    "the persona's role and what really happened before. Write all content (file names, note text, search "
-    "queries) in the persona's own style. Use plain ASCII only. Never mention the range, training, Ludius, "
-    "security tools or anything outside the fiction."
+    "You write the content of one ordinary working day for one employee of a fictional company in a training range. "
+    "The day's tasks, times and recipients are fixed; you give each one a concrete reason that follows from the "
+    "company story, the persona's role and what really happened before, and write all content (file names, note "
+    "text, search queries, messages) in the persona's own style. Use plain ASCII only. Never mention the range, "
+    "training, Ludius, security tools or anything outside the fiction."
+)
+WORK_ITEMS = (5, 8)
+GOSSIP_DAYS = 0.7
+INTERRUPT = 0.4
+SLOT_GAP = 15
+SETTLES = (None, "file.write", "mail.send", "chat.dm", "calendar.invite")
+TO_SOMEONE = ("mail.send", "chat.dm", "chat.file", "chat.read", "calendar.invite")
+NEEDS_INBOX = ("mail.read", "mail.file", "mail.save", "mail.reply")
+DM_PURPOSES = (
+    "one line of small talk",
+    "ask the colleague for something concrete the persona needs (a note, a file, a mail with a figure), saying what",
 )
 
 
@@ -218,6 +230,174 @@ def make_narrative(llm: LlmClient, personas: list[Persona], start: dt.date) -> N
     return llm.json(Narrative, NARRATIVE_SYSTEM, user)
 
 
+def _minutes(at: str) -> int:
+    return int(at[:2]) * 60 + int(at[3:])
+
+
+def _hhmm(m: int) -> str:
+    return f"{m // 60 % 24:02d}:{m % 60:02d}"
+
+
+def _fit(decider: Any, persona: Persona, date: dt.date, world: str, eligible: dict[str, Template],
+         followups: dict[str, str], open_: list[str]) -> tuple[dict[str, float], dict[str, str]]:  # fmt: skip
+    weights = {k: 1.0 for k in eligible}
+    if decider is None:
+        return weights, {}
+    who = f"{persona.name}, {persona.role} ({persona.department}). Style: {persona.style or 'ordinary'}"
+    questions: dict[str, Any] = {
+        f"t:{k}": {
+            "type": "noul",
+            "instructions": f"Would {persona.name} plausibly do this kind of task on {date.strftime('%A')} as part "
+            f"of their work, given their role and what is going on? Task: {t.about}",
+            "criteria": {"true": "A plausible task for this person today.", "false": "Out of character or role."},
+        }
+        for k, t in eligible.items()
+    }
+    questions |= {
+        f"f:{f}": {
+            "type": "choice",
+            "instructions": f"Which task settles this follow-up best? {followups[f]}",
+            "criteria": {k: eligible[k].about for k in open_},
+        }
+        for f in followups
+        if open_
+    }
+    answers = decider.ask({"persona": who, "what happened so far": world[-6000:]}, questions)
+    weights = {k: max(answers.noul(f"t:{k}"), 0.02) for k in eligible}
+    return weights, {f: answers.answers[f"f:{f}"]["choice"] for f in followups if open_}
+
+
+def day_slots(persona: Persona, date: dt.date, templates: dict[str, Template], people: dict[str, str],
+              colleagues: set[str], channels: list[str], followups: dict[str, str],
+              mail_threads: dict[str, tuple[str, str]], inbox: set[tuple[str, str]],
+              invites: set[tuple[str, str]], owned: dict[str, str], shares: list[str], window: Scenario | None,
+              lookalikes: list[str], weights: dict[str, float], settle: dict[str, str],
+              unread: set[tuple[str, str]], taken: list[str]) -> list[PlanItem]:  # fmt: skip
+    rng = random.Random(f"{persona.user}:{date}")
+    mails = sorted(inbox)
+    fresh = rng.sample(sorted(unread & inbox), len(unread & inbox))
+
+    def to(it: PlanItem, user: str = "") -> PlanItem:
+        user = user or rng.choice(sorted(colleagues))
+        it.params |= {"to": f"{user}@{MAIL_DOMAIN}", "to_name": people.get(user, user)}
+        if templates[it.template].capability in SENDS:
+            it.handoff = user
+        return it
+
+    def of(cap: str) -> list[str]:
+        return [k for k, t in templates.items() if t.capability == cap and not t.resembles]
+
+    def slot(k: str, why: str = "") -> PlanItem:
+        it = PlanItem(at="00:00", template=k, context=why)
+        cap = templates[k].capability or ""
+        if cap in TO_SOMEONE:
+            to(it)
+        elif cap == "mail.reply":
+            u, subject = rng.choice(mails)
+            to(it, u).params["subject"] = subject
+        elif cap == "mail.read":
+            u, subject = fresh.pop()
+            it.params |= {"sender": f"{u}@{MAIL_DOMAIN}", "subject": subject}
+        elif cap == "mail.file":
+            u, subject = rng.choice(mails)
+            it.params |= {"sender": f"{u}@{MAIL_DOMAIN}", "subject": subject}
+        elif cap == "chat.post":
+            it.params["channel"] = rng.choice(channels)
+        elif cap == "file.share":
+            it.params["share"] = rng.choice(shares)
+        return it
+
+    def eligible(k: str, t: Template) -> bool:
+        cap = t.capability or ""
+        return (
+            not t.resembles
+            and cap != "calendar.respond"
+            and (
+                (cap not in TO_SOMEONE or bool(colleagues))
+                and (cap not in NEEDS_INBOX or bool(mails))
+                and (cap != "mail.read" or bool(fresh))
+                and (cap != "chat.post" or bool(channels))
+                and (cap != "file.share" or bool(shares))
+                and (cap != "file.download" or bool(intranet.downloads()))
+                and (not (cap in OWN_FILES or t.attaches) or bool(owned))
+            )
+        )
+
+    first: list[PlanItem] = []
+    if fresh and (reads := of("mail.read")):
+        first.append(slot(reads[0], "the morning look at new mail"))
+    open_ = [k for k, t in templates.items() if t.capability in SETTLES and eligible(k, t)]
+    for f, about in followups.items():
+        if f in mail_threads:
+            if not (replies := of("mail.reply")):
+                continue
+            u, subject = mail_threads[f]
+            it = to(PlanItem(at="00:00", template=replies[0], context=about), u)
+            it.params["subject"] = subject
+        elif open_:
+            it = slot(k if (k := settle.get(f, "")) in open_ else rng.choice(open_), about)
+        else:
+            continue
+        it.followup = f
+        first.append(it)
+    for u, subject in sorted(invites)[:2]:
+        if answers := of("calendar.respond"):
+            it = to(PlanItem(at="00:00", template=answers[0], context=f"answers the invitation {subject!r}"), u)
+            it.params["subject"] = subject
+            first.append(it)
+    if colleagues and (dms := of("chat.dm")) and rng.random() < GOSSIP_DAYS:
+        first.append(slot(dms[0], f"gossip with a colleague the persona is friendly with: {GOSSIP[GOSSIP_LEVEL]}"))
+
+    h0, h1 = _minutes(persona.hours[0]) + 10, _minutes(persona.hours[1]) - 30
+    lunch = rng.randrange(11 * 60 + 45, 12 * 60 + 31, 5)
+    lunch_end = lunch + rng.choice((30, 40, 45))
+    busy = [
+        (lunch - SLOT_GAP, lunch_end + SLOT_GAP),
+        *((_minutes(t) - SLOT_GAP, _minutes(t) + SLOT_GAP) for t in taken),
+    ]
+    free = [m for m in range(h0 - h0 % 5, h1, 5) if not any(x <= m <= y for x, y in busy)]
+    late: list[PlanItem] = []
+    pinned: list[int] = []
+    if window and lookalikes:
+        a, b = _minutes(window.start), _minutes(window.end)
+        for k, aim in zip(rng.sample(lookalikes, min(2, len(lookalikes))), (a - 60, b + 20), strict=False):
+            near = [m for m in free if all(abs(m - t) >= SLOT_GAP for t in pinned) and not a - 15 <= m <= b + 15]
+            if near:
+                pinned.append(min(near, key=lambda m: abs(m - aim)))
+                late.append(PlanItem(at=_hhmm(pinned[-1]), template=k, context="part of the normal job, due today"))
+        busy.append((a - 90, b + 90))
+    grid = [m for m in free if not any(x <= m <= y for x, y in busy)]
+
+    want = rng.randint(*WORK_ITEMS)
+    first = first[: max(0, want - len(late))]
+    pool = {k: weights.get(k, 1.0) * t.plan_weight for k, t in templates.items() if eligible(k, t)}
+    rest: list[PlanItem] = []
+    while pool and len(first) + len(rest) + len(late) < want:
+        k = rng.choices(list(pool), weights=list(pool.values()))[0]
+        del pool[k]
+        cap = templates[k].capability
+        why = rng.choice(DM_PURPOSES) if cap == "chat.dm" else "small talk" if cap == "chat.post" else ""
+        rest.append(slot(k, why))
+
+    times: list[int] = []
+    for m in rng.sample(grid, len(grid)):
+        if len(times) == len(first) + len(rest):
+            break
+        if all(abs(m - t) >= SLOT_GAP for t in times + pinned):
+            times.append(m)
+    times.sort()
+    items = first + rng.sample(rest, len(rest))
+    for it, m in zip(items, times, strict=False):
+        it.at = _hhmm(m)
+    items = items[: len(times)] + late
+    for i, it in enumerate(items):
+        if it.template == "edge_web_lookup" and i and rng.random() < INTERRUPT:
+            it.interrupt = True
+            break
+    items.append(PlanItem(at=_hhmm(lunch), template=BREAK, minutes=lunch_end - lunch, context="Lunch."))
+    return sorted(items, key=lambda it: it.at)
+
+
 def plan_day(
     llm: LlmClient,
     narrative: Narrative,
@@ -234,6 +414,9 @@ def plan_day(
     inbox: set[tuple[str, str]] | None = None,
     owned: dict[str, str] | None = None,
     invites: set[tuple[str, str]] | None = None,
+    decider: Any = None,
+    unread: set[tuple[str, str]] | None = None,
+    taken: Iterable[str] = (),
 ) -> tuple[DayPlan, list[str]]:
     policy = policy or Policy()
     followups = followups or {}
@@ -246,17 +429,25 @@ def plan_day(
     shares = [c for c, members in narrative.shares.items() if persona.user in members]
     existing = list(existing)
     names = sorted({_leaf(e) for e in existing if _leaf(e)}, key=str.casefold)[:SHOWN_EXISTING]
-    mail_tasks = ", ".join(sorted(k for k, t in templates.items() if t.capability in SENDS)) or "none"
-    reads = sorted(k for k, t in templates.items() if t.capability == "mail.read")
-    files = sorted(k for k, t in templates.items() if t.capability == "mail.file")
-    chats = {t.capability: k for k, t in templates.items() if t.capability in ("chat.post", "chat.dm", "chat.read")}
+    open_ = [k for k, t in templates.items() if not t.resembles and t.capability in SETTLES]
+    choose = {f: a for f, a in followups.items() if f not in (mail_threads or {})}
+    try:
+        weights, settle = _fit(decider, persona, date, world, templates, choose, open_)
+    except CapReached:
+        raise
+    except Exception:  # noqa: BLE001  no answer: even weights, follow-ups by a fixed pick
+        weights, settle = {}, {}
+    slots = day_slots(persona, date, templates, people, colleagues, [*CHAT_CHANNELS, *teams], followups,
+                      mail_threads or {}, inbox or set(), invites or set(), owned or {}, shares, window, lookalikes,
+                      weights, settle, unread or set(), list(taken))  # fmt: skip
+    work = [it for it in slots if it.template != BREAK]
     user = (
         f"Company story:\n{narrative.model_dump_json(indent=1)}\n\n"
         f"Persona: {persona.name}, {persona.role} ({persona.department}). Usual hours {persona.hours[0]}-"
         f"{persona.hours[1]}.\nStyle and habits: {persona.style or 'ordinary'}\n\n"
         f"Day to plan: {date.strftime('%A')} {date.isoformat()}.\n\n"
         f"What happened so far:\n{world or '- nothing yet'}\n\n"
-        f"Task catalog (in no particular order):\n{catalog(templates, f'{persona.user}:{date}')}\n\n"
+        f"Task catalog:\n{catalog({k: templates[k] for k in dict.fromkeys(it.template for it in work)})}\n\n"
         + (
             "Intranet pages (a lookup's search_query should find one of them):\n"
             + intranet.index(skip=policy.page_reserved)
@@ -280,78 +471,57 @@ def plan_day(
             if names
             else ""
         )
-        + '\n\nReturn JSON {"items": [...]} with 5-10 items inside the usual hours, sorted by time. Each item: '
-        "at (HH:MM), template (a catalog name), params (object with every listed parameter as a string), "
-        "context (one sentence: why the persona does this now), and for breaks minutes instead of params. "
-        "Include a lunch break. Mark at most one short item interrupt: true when it plausibly cuts into the "
-        "task before it (a quick lookup prompted by that work)."
+        + '\n\nReturn JSON {"items": [...]} with exactly these items, one each, same at and template: '
+        "params (object with every listed parameter as a string; keep every given value exactly) and context (one "
+        "sentence: why the persona does this now, following the given purpose).\n"
+        + "\n".join(
+            f"- {it.at} {it.template}"
+            + (f": {it.context}" if it.context else "")
+            + (f"; given {json.dumps(it.params)}" if it.params else "")
+            for it in work
+        )
         + (
-            f" Colleagues with accounts: {', '.join(sorted(colleagues))}. When an item produces something one of "
-            "them should act on (a note or folder for them, a lookup they asked for), set handoff to their account. "
-            f"Pick up threads colleagues handed to this persona. Mail ({mail_tasks}) goes to one colleague: to is "
-            f"<account>@{MAIL_DOMAIN} and handoff is that account; reply only to a due follow-up's mail or a mail "
-            "listed under Inbox on the mail server (to its sender, with its subject exactly)."
-            + (
-                f" Reading a mail ({', '.join(reads)}) opens one listed Inbox mail marked unread (sender is its "
-                "sender's address, subject exactly as listed), e.g. the morning look at new mail; at most once each."
-                if reads
-                else ""
-            )
-            + (
-                f" Filing a mail ({', '.join(files)}) moves one listed Inbox mail the persona is done with into an "
-                "Inbox subfolder named for its topic or project (reuse the same folder name for related mail); plan "
-                "it after any read or reply of that mail."
-                if files
-                else ""
-            )  # fmt: skip
+            f"\nMail: reply only with the given subject; a read or filed mail is one listed under Inbox on the mail "
+            f"server (sender is its sender's address, subject exactly as listed). "
+            f"Recipients are <account>@{MAIL_DOMAIN}."
             if colleagues
             else ""
         )
-        + (
-            f" Team chat: now and then one line of small talk ({chats['chat.post']} in Coffee Corner or Off-Topic, "
-            f"or {chats['chat.dm']} to a colleague). Most days one {chats['chat.dm']} to a colleague the persona "
-            f"is friendly with, with {GOSSIP[GOSSIP_LEVEL]}. To ask a colleague for something concrete the persona "
-            f"needs (a note, a file, a mail with a figure), {chats['chat.dm']} saying what, no handoff: they see it "
-            f"in the chat and answer there the same day. Chat messages to this persona are answered as they come in, "
-            f"not planned; {chats['chat.read']} only to look up an older conversation."
-            if colleagues and len(chats) == 3
-            else ""
-        )
-        + (
-            f" Part of this persona's normal job ({', '.join(lookalikes)}) is due today: plan one or two such "
-            f"items within 90 minutes before {window.start} or after {window.end}, never between them, each with "
-            "a concrete work reason from the company story."
-            if window and lookalikes
-            else ""
-        )
-        + (
-            " These follow-ups from colleagues are due: schedule each as one item (a fitting catalog task, often "
-            "early in the day) with followup set to its id:\n" + "\n".join(f"- {k}: {v}" for k, v in followups.items())
-            if followups
-            else ""
-        )
     )
-    draft = llm.json(_Draft, PLAN_SYSTEM, user)
-    fill_recipient_names(draft.items, people)
-    rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                       mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned, shares,
-                       invites)  # fmt: skip
-    missing = sorted(set(followups) - {it.followup for it in draft.items})
-    if rejects or missing:
+    planned = {(it.at, it.template): it for it in work}
+
+    def merge(draft: _Draft) -> list[PlanItem]:
+        got = {(d.at, d.template): d for d in draft.items}
+        out: list[PlanItem] = []
+        for key, it in planned.items():
+            if (d := got.get(key)) is not None:
+                content = {k: v for k, v in d.content.items() if k not in it.params}
+                out.append(it.model_copy(update={"params": {**d.params, **it.params}, "content": content,
+                                                 "context": d.context or it.context}))  # fmt: skip
+        fill_recipient_names(out, people)
+        return out
+
+    def check(items: list[PlanItem]) -> list[tuple[int, str]]:
+        return validate(items, templates, history, policy, colleagues, window, set(followups), existing,
+                        mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned, shares,
+                        invites)  # fmt: skip
+
+    items = merge(llm.json(_Draft, PLAN_SYSTEM, user))
+    rejects = check(items)
+    unwritten = [k for k in planned if k not in {(it.at, it.template) for it in items}]
+    if rejects or unwritten:
         fix = "These items were rejected; return the full corrected item list:\n" + "\n".join(
-            [f"- item {i} ({draft.items[i].template} at {draft.items[i].at}): {why}" for i, why in rejects]
-            + [f"- follow-up {k} is not scheduled" for k in missing]
+            [f"- item {i} ({items[i].template} at {items[i].at}): {why}" for i, why in rejects]
+            + [f"- {at} {k} is missing" for at, k in unwritten]
         )
-        draft = llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix)
-        fill_recipient_names(draft.items, people)
-        rejects = validate(draft.items, templates, history, policy, colleagues, window, set(followups), existing,
-                           mail_threads, people, persona.user, date.isoformat(), inbox, teams, owned,
-                           shares, invites)  # fmt: skip
+        items = merge(llm.json(_Draft, PLAN_SYSTEM, user + "\n\n" + fix))
+        rejects = check(items)
     bad = {i for i, _ in rejects}
-    items = sorted((it for i, it in enumerate(draft.items) if i not in bad), key=lambda it: it.at)
-    missing = sorted(set(followups) - {it.followup for it in items})
-    return DayPlan(persona=persona.user, date=date.isoformat(), items=items), [
-        f"{draft.items[i].template} at {draft.items[i].at}: {why}" for i, why in rejects
+    kept = [it for i, it in enumerate(items) if i not in bad]
+    missing = sorted(set(followups) - {it.followup for it in kept})
+    breaks = [it for it in slots if it.template == BREAK]
+    return DayPlan(persona=persona.user, date=date.isoformat(), items=sorted(kept + breaks, key=lambda it: it.at)), [
+        f"{items[i].template} at {items[i].at}: {why}" for i, why in rejects
     ] + [f"follow-up {k}: not scheduled, stays open" for k in missing]
 
 

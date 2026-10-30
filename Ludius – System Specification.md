@@ -21,7 +21,7 @@ Ludius generates realistic, coherent background user activity (noise) on Windows
 
 ## 2. Architecture
 
-Four layers with one owner each. Code in the guest observes the screen and acts through the hypervisor; the host agent hides the hypervisor; the controller runs the step loop and calls Decisions for one action at a time; the planner (LLM) decides what each persona does. Decisions never plans, writes or sees pixels.
+Four layers with one owner each. Code in the guest observes the screen and acts through the hypervisor; the host agent hides the hypervisor; the controller runs the step loop and calls Decisions for one action at a time; the planner decides what each persona does. Decisions never writes text or sees pixels; in planning it only classifies and selects among options code built.
 
 &#91;embedded content: architecture · guest, host, decision and planning layers\]
 
@@ -205,13 +205,15 @@ The range keeps a realistic inactivity lock. The observer reports lock state via
 
 The planner decides what each persona does, why and with what content, so noise is coherent (full tasks a person would do) and varied (hard to filter). An LLM is used here, per range, per day and per task, never per action.
 
+Ownership is split three ways. **Code owns structure**: the day's slots and times, breaks, which tasks are eligible (installed apps, open threads, inbox, invites, files the persona owns), recipients, dependencies, budgets and verified completion. **Decisions owns interpretation and selection**: which eligible task fits a slot, and what an incoming message asks for (request, question, offer, small talk, news). **The LLM is a constrained writer**: mail bodies, documents, chat lines, file names and novel company events, for slots code fixed; it never assigns work, schedules or claims an outcome.
+
 ### Hierarchy and owners
 
 | Level | Owner | Cadence | Example |
 | --- | --- | --- | --- |
 | Company narrative | LLM | Per range, revised weekly | Departments, projects, Q3 close, office move, IT outage |
-| Day plan | LLM | Nightly per persona | Mail in the morning, budget sheet, lunch, meeting prep |
-| Task instance | LLM | At plan time | Reply to Anna about the Q3 draft, with attachment |
+| Day plan | Code (slots, eligibility), Decisions (task choice), LLM (content) | Nightly per persona | Mail in the morning, budget sheet, lunch, meeting prep |
+| Task instance | LLM writer, within the slot code fixed | At plan time | Reply to Anna about the Q3 draft, with attachment |
 | Subgoals | Template, or LLM-decomposed and validated | Per task | select mail → open reply → write body → send |
 | Action | Decisions | Per step | `click:[14]` |
 | Verification | Code; LLM only for open-ended tasks | Per subgoal / task end | Sent count +1 |

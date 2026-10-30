@@ -152,16 +152,13 @@ def generate_day(
             notes += [f"requests by {boss.user}: {r}" for r in day.rejects]
             notes += [f"requests by {boss.user}: {r.status} to {r.to} {r.subject!r}" for r in day.requests]
     inbox_mails = src.inbox(persona.user)
-    if not isinstance(boss, str) and src.decider is not None:
-        decider = src.decider()
-        try:
-            with shared():
-                mails = requests.pending(world, persona.user, boss, inbox_mails, src.policy, date)
-            role = planner.role_templates(src.templates, persona)
-            mapped, more = requests.candidates(llm, decider, world, persona, boss, mails, role, date, people)
-            notes += more
-        finally:
-            getattr(decider, "close", lambda: None)()
+    decider = src.decider() if src.decider is not None else None
+    if not isinstance(boss, str) and decider is not None:
+        with shared():
+            mails = requests.pending(world, persona.user, boss, inbox_mails, src.policy, date)
+        role = planner.role_templates(src.templates, persona)
+        mapped, more = requests.candidates(llm, decider, world, persona, boss, mails, role, date, people)
+        notes += more
     asked = {m.subject for m in inbox_mails or [] if m.msgid in {it.request for it in mapped}}
     inbox = reply.hints(inbox_mails, persona.user, people, src.policy)
     unread = {(m.sender.partition("@")[0], m.subject) for m in inbox_mails or [] if not m.read}
@@ -182,11 +179,15 @@ def generate_day(
     threads = world_state.mail_threads(state, persona.user)
     existing = world_state.existing_files(world, persona.user)
     owned = planner.owned_files(world.root, persona.user, date.isoformat())
-    plan, rejects = planner.plan_day(
-        llm, auto.narrative, persona, date, src.templates, context, world.history(persona.user),
-        policy=src.policy, scenario=scenario, existing=existing, followups=followups,
-        mail_threads=threads, inbox=set(inbox), owned=owned, invites=set(invites),
-    )  # fmt: skip
+    try:
+        plan, rejects = planner.plan_day(
+            llm, auto.narrative, persona, date, src.templates, context, world.history(persona.user),
+            policy=src.policy, scenario=scenario, existing=existing, followups=followups,
+            mail_threads=threads, inbox=set(inbox), owned=owned, invites=set(invites), decider=decider,
+            unread=unread, taken=[it.at for it in mapped],
+        )  # fmt: skip
+    finally:
+        getattr(decider, "close", lambda: None)()
     colleagues = {p.user for p in auto.narrative.people if p.user and p.user != persona.user}
     teams = [c for c, members in auto.narrative.channels.items() if persona.user in members]
     shares = [c for c, members in auto.narrative.shares.items() if persona.user in members]

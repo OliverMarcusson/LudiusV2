@@ -5,7 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ludius import world_state
+import pytest
+
+from ludius import planner, world_state
 from ludius.cli import load_templates
 from ludius.planner import DayPlan, Event, Narrative, Person, PlanItem, World, plan_day
 from ludius.tasks import Persona
@@ -24,6 +26,11 @@ class ScriptedLlm:
         return cls.model_validate(self.answers.pop(0))
 
 
+def _slots(m: pytest.MonkeyPatch, *items: dict[str, Any]) -> None:
+    m.setattr(planner, "day_slots", lambda *_a, **_k: [  # pyright: ignore[reportUnknownLambdaType]
+        PlanItem(at=i["at"], template=i["template"], followup=i.get("followup", "")) for i in items])  # fmt: skip
+
+
 NARRATIVE = Narrative(
     company="Harbourline", city="Rotterdam", summary="Packaging maker.",
     people=[Person(name=p.name, role=p.role, department="", user=p.user) for p in (ANNA, LARS)],
@@ -40,7 +47,7 @@ def _day(world: World, user: str, date: dt.date, items: list[PlanItem], done: li
     log.write_text("\n".join(map(json.dumps, ends)), encoding="utf-8")
 
 
-def test_handoff_becomes_a_scheduled_followup_until_done(tmp_path: Path) -> None:
+def test_handoff_becomes_a_scheduled_followup_until_done(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     world = World(tmp_path)
     note = PlanItem(at="09:00", template="notepad_write_note", handoff="lnord",
                     params={"file_name": "erp access list", "body": "finance users\nroles"},
@@ -60,10 +67,10 @@ def test_handoff_becomes_a_scheduled_followup_until_done(tmp_path: Path) -> None
 
     item = {"at": "08:30", "template": "edge_web_lookup", "params": {"search_query": "erp role based access finance"},
             "context": "Checks role options for Anna's list."}  # fmt: skip
-    llm = ScriptedLlm({"items": [item]}, {"items": [item | {"followup": f.id}]})
+    _slots(monkeypatch, item | {"followup": f.id})
+    llm = ScriptedLlm({"items": [item]})
     plan, rejects = plan_day(llm, NARRATIVE, LARS, TUE, load_templates(), text, [],  # type: ignore[arg-type]
                              followups={f.id: f.about})  # fmt: skip
-    assert f"follow-up {f.id} is not scheduled" in llm.prompts[1]
     assert rejects == [] and plan.items[0].followup == f.id
 
     _day(world, "lnord", TUE, plan.items, done=["08:30"])
@@ -71,11 +78,11 @@ def test_handoff_becomes_a_scheduled_followup_until_done(tmp_path: Path) -> None
     assert later.followups[0].done_on == "2026-11-03" and world_state.due(later, "lnord", WED) == []
 
 
-def test_unknown_followup_id_is_rejected() -> None:
+def test_the_writer_cannot_set_a_followup(monkeypatch: pytest.MonkeyPatch) -> None:
     bad = {"at": "08:30", "template": "edge_web_lookup", "params": {"search_query": "erp access"}, "followup": "x"}
-    llm = ScriptedLlm({"items": [bad]}, {"items": [bad]})
-    plan, rejects = plan_day(llm, NARRATIVE, LARS, TUE, load_templates(), "", [])  # type: ignore[arg-type]
-    assert plan.items == [] and "not an open follow-up" in rejects[0]
+    _slots(monkeypatch, {**bad, "followup": ""})
+    plan, rejects = plan_day(ScriptedLlm({"items": [bad]}), NARRATIVE, LARS, TUE, load_templates(), "", [])  # type: ignore[arg-type]
+    assert [it.followup for it in plan.items] == [""] and rejects == []
 
 
 def test_chat_request_is_no_followup(tmp_path: Path) -> None:

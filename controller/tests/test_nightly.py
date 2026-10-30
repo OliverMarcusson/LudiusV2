@@ -16,8 +16,8 @@ from temporalio.common import SearchAttributeKey, SearchAttributePair, TypedSear
 from temporalio.exceptions import ApplicationError
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
-from ludius import calls, cli, durable, nightly
-from ludius.planner import DayPlan, Narrative, Person, World
+from ludius import calls, cli, durable, nightly, planner
+from ludius.planner import DayPlan, Narrative, Person, PlanItem, World
 
 DAY = dt.date(2026, 10, 28)
 ITEM = {"at": "09:00", "template": "edge_web_lookup", "params": {"search_query": "ifrs 16 lease accounting"},
@@ -34,6 +34,11 @@ class ScriptedLlm:
 
     def close(self) -> None:
         pass
+
+
+def _slots(m: pytest.MonkeyPatch, *items: dict[str, Any]) -> None:
+    m.setattr(planner, "day_slots", lambda *_a, **_k: [  # pyright: ignore[reportUnknownLambdaType]
+        PlanItem(at=i["at"], template=i["template"], followup=i.get("followup", "")) for i in items])  # fmt: skip
 
 
 def no_llm() -> Any:
@@ -88,8 +93,9 @@ def test_nightly_schedule_is_separate_paused_and_never_overlaps() -> None:
         cli.cmd_schedule(args)
 
 
-def test_generated_plan_is_kept_on_retry_and_never_overwritten(tmp_path: Path) -> None:
+def test_generated_plan_is_kept_on_retry_and_never_overwritten(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     world, anna, src = _setup(tmp_path)
+    _slots(monkeypatch, ITEM)
     llm = ScriptedLlm({"items": [ITEM]})
     first = nightly.ensure_day(lambda: llm, world, anna, src, DAY)  # type: ignore[arg-type, return-value]
     assert first.generated and first.items == 1 and first.date == "2026-10-28" and len(llm.prompts) == 1
@@ -114,6 +120,7 @@ def test_personas_plan_in_parallel_and_each_pays_for_its_own_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world, _, src = _setup(tmp_path)
+    _slots(monkeypatch, *ITEMS)
     monkeypatch.setattr(calls, "PATH", tmp_path / "openrouter-calls.json")
     both = threading.Barrier(2, timeout=10)
 
@@ -142,6 +149,7 @@ def test_crash_after_publish_before_history_append_is_repaired_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world, _, src = _setup(tmp_path)
+    _slots(monkeypatch, *ITEMS)
 
     def crash(*_: Any) -> None:
         raise RuntimeError("crash after publish")
@@ -232,6 +240,7 @@ def test_activity_rejects_unknown_persona_and_waits_on_a_busy_planner(tmp_path: 
 
 def test_cli_plan_day_and_nightly_share_one_generation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     llm = ScriptedLlm({"items": [ITEM]})
+    _slots(monkeypatch, ITEM)
     monkeypatch.setattr(cli, "RUNS", tmp_path / "cli")
     monkeypatch.setattr(cli, "LlmClient", lambda *_a, **_k: llm)  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
     monkeypatch.delenv("LUDIUS_SCENARIO", raising=False)

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from ludius import cli, nightly, world_state
+from ludius import cli, nightly, planner, world_state
 from ludius.planner import DayPlan, Narrative, Person, PlanItem, World, plan_day, validate
 from ludius.policy import Policy
 
@@ -42,6 +42,11 @@ def check(*items: dict[str, Any], existing: list[str] = EXISTING) -> list[str]:
     templates = cli.plan_sources().templates
     its = [PlanItem.model_validate(i) for i in items]
     return [why for _, why in validate(its, templates, [], Policy(), existing=existing)]
+
+
+def _slots(m: pytest.MonkeyPatch, *items: dict[str, Any]) -> None:
+    m.setattr(planner, "day_slots", lambda *_a, **_k: [  # pyright: ignore[reportUnknownLambdaType]
+        PlanItem(at=i["at"], template=i["template"], followup=i.get("followup", "")) for i in items])  # fmt: skip
 
 
 @pytest.mark.parametrize(
@@ -93,18 +98,20 @@ def test_intentional_existing_file_workflow_stays_valid() -> None:
     assert check(fresh, move) == []
 
 
-def test_collision_is_repaired_once_then_dropped_if_unresolved() -> None:
+def test_collision_is_repaired_once_then_dropped_if_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
     people = [Person(name="Anna Berg", role="r", department="d", user="aberg")]
     narrative = Narrative(company="H", city="R", summary="s", people=people, projects=[], events=[])
     anna = next(p for p in cli.plan_sources().personas if p.user == "aberg")
     templates = cli.plan_sources().templates
     bad, good = note("close checklist q4"), note("close checklist q4 v2")
+    _slots(monkeypatch, bad)
     llm = ScriptedLlm({"items": [bad]}, {"items": [good]})
     plan, rejects = plan_day(llm, narrative, anna, DAY, templates, "", [], existing=EXISTING)  # type: ignore[arg-type]
     assert "- Close Checklist Q4.txt".casefold() in llm.prompts[0].casefold() and "- oct close q4" in llm.prompts[0]
     assert "already exists" in llm.prompts[1] and "item 0 (notepad_write_note at 09:00)" in llm.prompts[1]
     assert [it.params["file_name"] for it in plan.items] == ["close checklist q4 v2"] and rejects == []
 
+    _slots(monkeypatch, bad, note("fresh topic notes", "10:00"))
     llm = ScriptedLlm({"items": [bad]}, {"items": [bad, note("fresh topic notes", "10:00")]})
     plan, rejects = plan_day(llm, narrative, anna, DAY, templates, "", [], existing=EXISTING)  # type: ignore[arg-type]
     assert [it.params["file_name"] for it in plan.items] == ["fresh topic notes"]
@@ -133,12 +140,13 @@ def test_existing_files_come_from_all_plans_and_the_guest_inventory(tmp_path: Pa
     assert world_state.existing_files(world, "lnord") == ["old plan note"]
 
 
-def test_generate_day_feeds_the_inventory_to_the_planner(tmp_path: Path) -> None:
+def test_generate_day_feeds_the_inventory_to_the_planner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     world = World(tmp_path)
     world.save_narrative(Narrative(company="H", city="R", summary="s", people=[], projects=[], events=[]))
     (tmp_path / "world" / "guest-files-aberg.txt").write_text("Documents\\admission test note.txt\n", encoding="utf-8")
     src = cli.plan_sources()
     anna = next(p for p in src.personas if p.user == "aberg")
+    _slots(monkeypatch, note("admission test note"))
     llm = ScriptedLlm({"items": [note("admission test note")]}, {"items": [note("admission note oct")]})
     g = nightly.generate_day(llm, world, anna, src, DAY)  # type: ignore[arg-type]
     assert "- admission test note.txt" in llm.prompts[0]
@@ -165,3 +173,66 @@ def test_dotted_folder_names_stay_distinct() -> None:
     folder = note("finance.payables", template="explorer_new_folder")
     assert check(folder, existing=["finance.receivables"]) == []
     assert check(note("finance.receivables", at="09:30", template="explorer_new_folder"), folder, existing=[]) == []
+
+
+def test_code_builds_the_day_skeleton() -> None:
+    src = cli.plan_sources()
+    anna = next(p for p in src.personas if p.user == "aberg")
+    templates = planner.role_templates(src.templates, anna)
+    inbox = {("lnord", "ERP roles"), ("sdekker", "Freight")}
+    for day in range(10):
+        date = DAY + dt.timedelta(days=day)
+        window = planner.Scenario(date=date.isoformat(), start="08:00", end="09:00", signal="powershell")
+        items = planner.day_slots(
+            anna, date, templates, {"lnord": "Lars Nord"}, {"lnord", "sdekker"}, ["general"],
+            {"f1": "Lars waits", "f2": "Send Lars the list"}, {"f1": ("lnord", "ERP roles")}, inbox,
+            {("sdekker", "Close sync")}, {}, [], window, ["powershell_admin_check"], {}, {"f2": "word_revise_and_mail"},
+            {("sdekker", "Freight")}, ["10:00"],
+        )  # fmt: skip
+        times = [planner._minutes(it.at) for it in items]  # pyright: ignore[reportPrivateUsage]
+        assert times == sorted(times) and all(m % 5 == 0 for m in times) and "10:00" not in [it.at for it in items]
+        assert min(times) >= planner._minutes("08:10")  # pyright: ignore[reportPrivateUsage]
+        work = [it for it in items if it.template != planner.BREAK]
+        assert 5 <= len(work) <= 8 and len(items) == len(work) + 1
+        [look] = [it for it in work if it.template == "powershell_admin_check"]
+        assert look.at >= "09:15"
+        [f2] = [it for it in work if it.followup == "f2"]
+        assert f2.template != "word_revise_and_mail"
+        [read] = [it for it in work if it.template == "outlook_read_mail"]
+        assert all(b - a >= planner.SLOT_GAP for a, b in zip(times, times[1:], strict=False))
+        [reply] = [it for it in work if it.followup == "f1"]
+        assert reply.params["to"] == "lnord@ludius.internal" and reply.params["subject"] == "ERP roles"
+        [answer] = [it for it in work if it.template == "outlook_answer_invite"]
+        assert answer.params["subject"] == "Close sync" and answer.handoff == ""
+        assert all(it.params["subject"] == "Freight" for it in work if it.template == "outlook_read_mail")
+
+
+def test_follow_ups_stay_within_the_budget_and_threads_need_a_reply() -> None:
+    src = cli.plan_sources()
+    anna = next(p for p in src.personas if p.user == "aberg")
+    templates = {k: t for k, t in planner.role_templates(src.templates, anna).items() if t.capability != "mail.reply"}
+    followups = {f"f{i}": "Lars waits" for i in range(9)}
+    for day in range(10):
+        items = planner.day_slots(
+            anna, DAY + dt.timedelta(days=day), templates, {"lnord": "Lars Nord"}, {"lnord"}, ["general"],
+            followups, {"f0": ("lnord", "ERP roles")}, {("lnord", "ERP roles")}, set(), {}, [], None, [], {}, {},
+            set(), [],
+        )  # fmt: skip
+        work = [it for it in items if it.template != planner.BREAK]
+        assert 5 <= len(work) <= 8 and "f0" not in {it.followup for it in work}
+
+
+def test_the_writer_cannot_change_fixed_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    people = [
+        Person(name=n, role="r", department="d", user=u) for n, u in (("Anna Berg", "aberg"), ("Lars Nord", "lnord"))
+    ]
+    narrative = Narrative(company="H", city="R", summary="s", people=people, projects=[], events=[])
+    anna = next(p for p in cli.plan_sources().personas if p.user == "aberg")
+    fixed = {"to": "lnord@ludius.internal", "to_name": "Lars Nord", "subject": "ERP roles"}
+    monkeypatch.setattr(planner, "day_slots", lambda *_a, **_k: [  # pyright: ignore[reportUnknownLambdaType]
+        PlanItem(at="09:00", template="outlook_send_mail", params=dict(fixed), handoff="lnord")])  # fmt: skip
+    mail = {"at": "09:00", "template": "outlook_send_mail", "params": {"subject": "Freight", "body": "Hi Lars"},
+            "content": {"subject": "Freight", "to": "aberg@ludius.internal"}, "context": "Sends it."}  # fmt: skip
+    plan, _ = plan_day(ScriptedLlm({"items": [mail]}), narrative, anna, DAY, cli.plan_sources().templates, "", [])  # type: ignore[arg-type]
+    [it] = plan.items
+    assert {**it.params, **it.content}["subject"] == "ERP roles" and {**it.params, **it.content}["to"] == fixed["to"]
