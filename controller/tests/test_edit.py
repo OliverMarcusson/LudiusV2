@@ -11,6 +11,7 @@ from test_world_state import _day
 
 from ludius import cli, guestfile, planner, tasks
 from ludius.loop import Runner
+from ludius.options import commits_unguarded
 from ludius.planner import PlanItem, World, owned_files, role_templates, validate
 from ludius.policy import Policy
 from ludius.tasks import Persona, Task, TaskInstance, check_done, file_baseline, preconditions
@@ -149,3 +150,66 @@ def test_the_file_is_opened_only_from_documents(task: tuple[Task, dict[str, Any]
     assert Runner._popup_over(open_file, snap("WINWORD.EXE", "Check out our new look"), tk) == "Check out our new look"
     assert Runner._popup_over(open_file, snap("explorer.exe", "Documents", "This PC", "Documents"), tk) is None
     assert Runner._popup_over(open_file, snap("msedge.exe", "Intranet"), tk) is None
+
+
+def test_save_as_copy_needs_the_source_unchanged_and_a_new_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    disk: dict[str, Any] = {}
+    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+    t = cli.plan_sources().templates["word_save_as_copy"]
+    params = {"file_name": "close memo", "new_name": "close memo v2", "body": "one more point"}
+    tk = Task(t, TaskInstance(template=t.task, params=params), random.Random(0))
+    tk.owner, tk.started_ms = "aberg", 1_000_000
+    src, new = "Documents\\close memo.docx", "Documents\\close memo v2.docx"
+    old = docx("Close memo", "Accruals by friday")
+    disk[src] = guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) == f"{src}: not there, nothing to edit"
+    disk[src] = guestfile.GuestFile(True, 500, old)
+    assert file_baseline(tk, Policy()) == f"{new}: unreadable on the guest"
+    disk[new] = guestfile.GuestFile(True, 500, old)
+    assert file_baseline(tk, Policy()) == f"{new}: already exists, never overwritten"
+    disk[new] = guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) is None and tk.files_absent == frozenset({new})
+    done, snap = tk.template.subgoals["save_keys"].done, obs.Snapshot()
+    disk[new] = guestfile.GuestFile(True, 2_000_000, docx("Close memo", "Accruals by friday", "One more point"))
+    assert check_done(done, snap, tk, False) is True
+    disk[src] = guestfile.GuestFile(True, 2_000_000, docx("Close memo", "Accruals by friday", "One more point"))
+    assert check_done(done, snap, tk, False) is False
+    for gone in (None, guestfile.GuestFile(False)):
+        disk[src] = gone
+        assert check_done(done, snap, tk, False) is False
+    disk[src] = guestfile.GuestFile(True, 500, old)
+    disk[new] = guestfile.GuestFile(True, 999_999, docx("Close memo", "Accruals by friday", "One more point"))
+    assert check_done(done, snap, tk, False) is False
+
+
+def test_plan_load_reuses_only_an_owned_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LUDIUS_APPS")
+    _day(World(tmp_path), "aberg", MON, [it("09:00", "word_short_document", file_name="close memo", title="Close memo",
+                                            body="accruals by friday")], done=["09:00"])  # fmt: skip
+    for name, ok in (("close memo", True), ("someone elses", False)):
+        path = tmp_path / "plans" / f"{TUE}-aberg.yaml"
+        path.write_text(f"persona: aberg\ndate: '{TUE}'\nitems:\n- at: '10:00'\n  template: word_save_as_copy\n"
+                        f"  params: {{file_name: {name}, new_name: close memo v2, body: one more point}}\n",
+                        encoding="utf-8")  # fmt: skip
+        if ok:
+            planner.load_plan(path)
+        else:
+            with pytest.raises(ValueError, match="reuse only one of this persona's own files"):
+                planner.load_plan(path)
+
+
+def test_save_as_commits_only_from_the_checked_step() -> None:
+    t = cli.plan_sources().templates["word_save_as_copy"]
+    params = {"file_name": "close memo", "new_name": "close memo v2", "body": "one more point"}
+    tk = Task(t, TaskInstance(template=t.task, params=params), random.Random(0))
+    name, save = t.subgoals["name_copy"], t.subgoals["save_copy"]
+    field = obs.Element(name="File name:", role="edit", value="close memo v2", focused=True, actions=["value"])
+    button = obs.Element(name="Save", role="button", focused=True)
+    thumb = obs.Element(name="Save Thumbnail", role="check box", focused=True)
+    assert commits_unguarded("Enter", thumb, tk, name) and commits_unguarded("Enter", thumb, tk, save)
+    assert commits_unguarded("Enter", field, tk, name) and commits_unguarded("Enter", button, tk, name)
+    assert commits_unguarded("Enter", None, tk, name) and commits_unguarded("Enter", button, tk, save)
+    assert not commits_unguarded("Enter", field, tk, save)
+    field.value = "close memo"
+    assert commits_unguarded("Enter", field, tk, save)
+    assert any(c.name == "^Save$" for c in name.avoid)

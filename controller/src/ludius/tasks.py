@@ -79,6 +79,7 @@ class FileCheck(Strict):
     slides: list[str] | None = None
     download: str | None = None
     append: str | None = None
+    source: str | None = None
     recycled: bool = False
     share: str | None = None
 
@@ -86,6 +87,9 @@ class FileCheck(Strict):
     def _noise_folder(self) -> FileCheck:
         need = {".xlsx": "cells", ".docx": "paragraphs", ".pptx": "slides"}
         ext = self.path.lower()[-5:]
+        if self.source is not None and (self.append is None or guestfile.profile_path("u", self.source) is None
+                                        or self.source.lower()[-5:] != ext or self.source == self.path):  # fmt: skip
+            raise ValueError(f"file check {self.path!r}: a source goes with append, another noise file, same type")
         if self.recycled or self.share is not None:
             kind = "recycled" if self.recycled else "share"
             if guestfile.profile_path("u", self.path) is None:
@@ -171,6 +175,7 @@ Capability = Literal[
     "file.move",
     "file.write",
     "file.edit",
+    "file.reuse",
     "file.recycle",
     "file.share",
     "file.download",
@@ -187,6 +192,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "calendar.invite": {"to", "to_name"},
     "file.move": {"file_name", "folder_name"},
     "file.edit": {"file_name"},
+    "file.reuse": {"file_name"},
     "file.recycle": {"file_name", "file_ext"},
     "file.share": {"file_name", "file_ext", "share"},
     "chat.post": {"channel"},
@@ -395,9 +401,12 @@ class Template(Strict):
                     raise ValueError(f"{self.task}: share check {sg.done.file.path!r} needs capability file.share")
             elif sg.done and sg.done.file and sg.done.file.path not in self.writes:
                 raise ValueError(f"{self.task}: file check {sg.done.file.path!r} is not a declared write")
-        edits = any(sg.done and sg.done.file and sg.done.file.append is not None for sg in self.subgoals.values())
-        if edits != (self.capability == "file.edit"):
-            raise ValueError(f"{self.task}: file.edit and an append file check go together")
+        appends = [sg.done.file for sg in self.subgoals.values() if sg.done and sg.done.file and sg.done.file.append]
+        kinds = {"file.reuse" if c.source else "file.edit" for c in appends}
+        if kinds != ({self.capability} & {"file.edit", "file.reuse"}):
+            raise ValueError(f"{self.task}: file.edit takes an append check, file.reuse one with a source")
+        if any(c.source in self.writes for c in appends):
+            raise ValueError(f"{self.task}: a reused source is read, never a write")
         return self
 
     @model_validator(mode="after")
@@ -484,6 +493,7 @@ class Task:
         self.mail_before: mail.Seen | None = None
         self.files_absent: frozenset[str] | None = None
         self.files_before: dict[str, list[str]] = {}
+        self.sources_before: dict[str, bytes] = {}
         self.files_present: frozenset[str] = frozenset()
         self.read_id = 0
         self.added_base: int | None = None
@@ -801,11 +811,12 @@ def file_reserved(user: str, rel: str, policy: Any) -> bool:
 
 
 def file_baseline(task: Task, policy: Any) -> str | None:
-    for rel in [*write_paths(task), *(task.fmt(r) for r in task.template.removes)]:
+    files = [sg.done.file for sg in task.template.subgoals.values() if sg.done and sg.done.file]
+    sources = [task.fmt(c.source) for c in files if c.source]
+    for rel in [*write_paths(task), *(task.fmt(r) for r in task.template.removes), *sources]:
         if file_reserved(task.owner, rel, policy):
             return f"{rel}: scenario-reserved file"
     absent: set[str] = set()
-    files = [sg.done.file for sg in task.template.subgoals.values() if sg.done and sg.done.file]
     present: set[str] = set()
     for rel in sorted({task.fmt(c.path) for c in files if c.recycled}):
         f = guestfile.read(task.owner, rel)
@@ -828,15 +839,23 @@ def file_baseline(task: Task, policy: Any) -> str | None:
         if s.exists:
             return f"{copy}: already exists, never overwritten"
         absent.add(copy)
-    edits = {task.fmt(c.path) for c in files if c.append is not None}
-    for rel in sorted(edits):
-        f = guestfile.read(task.owner, rel)
-        lines = _doc_lines(rel, f.data) if f is not None and f.exists else None
+    edits = {task.fmt(c.path): task.fmt(c.source or c.path) for c in files if c.append is not None}
+    for rel, src in sorted(edits.items()):
+        f = guestfile.read(task.owner, src)
+        lines = _doc_lines(src, f.data) if f is not None and f.exists else None
         if f is not None and not f.exists:
-            return f"{rel}: not there, nothing to edit"
-        if lines is None:
-            return f"{rel}: unreadable on the guest"
+            return f"{src}: not there, nothing to edit"
+        if lines is None or f is None:
+            return f"{src}: unreadable on the guest"
         task.files_before[rel] = lines
+        if src != rel:
+            task.sources_before[src] = f.data
+            n = guestfile.read(task.owner, rel)
+            if n is None:
+                return f"{rel}: unreadable on the guest"
+            if n.exists:
+                return f"{rel}: already exists, never overwritten"
+            absent.add(rel)
     checked = [task.fmt(c.path) for c in files if c.append is None and not c.recycled and c.share is None]
     if task.inst.request:
         checked += [w for w in write_paths(task) if not w.endswith(".*") and w not in edits]
@@ -863,6 +882,12 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
         f = guestfile.read(task.owner, rel)
         return rel in task.files_present and f is not None and not f.exists
     if c.append is not None:
+        if c.source is not None:
+            src = task.fmt(c.source)
+            s = guestfile.read(task.owner, src)
+            unchanged = s is not None and s.exists and s.data == task.sources_before.get(src)
+            if rel not in (task.files_absent or ()) or not unchanged:
+                return False
         f = guestfile.read(task.owner, rel)
         before = task.files_before.get(rel)
         if before is None or f is None or not f.exists or f.written_ms < task.started_ms:

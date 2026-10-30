@@ -1,0 +1,78 @@
+task: word_save_as_copy
+app: word
+capability: file.reuse
+processes: [winword.exe, explorer.exe]
+writes: ['Documents\{new_name}.docx']
+params: [file_name, new_name, body]
+about: "Start a new Word document from one of the persona's own: open it, save it under a new name with Save As, add 1-3 lines at the end and save the new one; the old file stays as it was. file_name: the existing file's name exactly (a .docx under Own recent files), without folder and extension; new_name: the new document's name, not used yet (for example the old name plus a version or month); body: the added lines, each its own paragraph. Text: plain sentences of letters, digits, spaces and , . ; : ! ? & % # + / -, each line starting with a letter or digit; no quotes, no ' - ' or '--', no list markers."
+example: {file_name: admission test memo, new_name: admission test memo v2, body: "one more point for the memo"}
+variants:
+  - [open_explorer_keys, go_documents, open_file, save_as_keys, name_copy, save_copy, append_body, save_keys, close_app, close_explorer]
+  - [open_explorer_taskbar, go_documents, open_file, save_as_keys, name_copy, save_copy, append_body, save_keys, close_app, close_explorer]
+weights: [1, 1]
+budget_steps: 56
+budget_minutes: 10
+on_abandon: close_without_saving
+key_commits: [{keys: Enter, focus: {}}]
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  open_explorer_taskbar:
+    goal: "Open File Explorer from its taskbar button"
+    launch: true
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_documents:
+    goal: "Go to the Documents folder"
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
+  open_file:
+    goal: "Open the document {file_name} with a double-click"
+    steps: 14
+    in_window: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+    breadcrumb: ['This PC', Documents]
+    done: {foreground: {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}}
+  save_as_keys:
+    goal: "Open Word's Save As dialog with F12"
+    keys: [F12]
+    steps: 6
+    in_window: {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}
+    done: {foreground: {process: winword.exe, title: '^Save As$'}}
+  name_copy:
+    goal: "Enter {new_name} as the file name in the Save As dialog"
+    text: new_name
+    replace: true
+    field: '^File name'
+    in_window: &dialog {process: winword.exe, title: '^Save As$'}
+    avoid: [{name: '^Save$'}]
+    done: {typed: true, element: {name: "^File name", value: '^{new_name}(\.docx)?$'}}
+  save_copy:
+    goal: "Save the copy as {new_name}: press Enter"
+    keys: [Enter]
+    steps: 6
+    in_window: *dialog
+    require: [{name: "^File name", value: '^{new_name}(\.docx)?$'}]
+    forbid: [{name: '(?i)already exists|replace it'}]
+    confirm: "Does Word's Save As dialog show the user's own Documents folder (This PC > Documents) as the save location, with the file name {new_name} and the type Word Document?"
+    done: {foreground: {process: winword.exe, title: '^{new_name}(\.docx)? - Word$'}}
+  append_body:
+    goal: "Add the new lines at the end of the document, at the keyboard focus (each line is its own paragraph)"
+    text: body_line
+    caret: append
+    unreadable_ok: true
+    in_window: &copy {process: winword.exe, title: '^{new_name}(\.docx)? - Word$'}
+    avoid: [{role: edit}, {role: combo box}, {name: '^(File Tab|Save As)$'}]
+    done: {typed: true}
+  save_keys:
+    goal: "Save the document with Ctrl+S"
+    keys: [Ctrl+S]
+    in_window: *copy
+    avoid: [{name: '^(File Tab|Save As)$'}]
+    done: {file: {path: 'Documents\{new_name}.docx', source: 'Documents\{file_name}.docx', append: "{body}"}}
+  close_app:
+    goal: "Close Word"
+    done: {window: {process: winword.exe, absent: true}}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}
