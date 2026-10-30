@@ -1,0 +1,65 @@
+task: explorer_file_download
+app: explorer
+capability: file.organize
+processes: [explorer.exe]
+writes: ['Documents\{file_name}']
+removes: ['Downloads\{file_name}']
+params: [file_name]
+about: "Tidy up Downloads: move a file the persona downloaded on an earlier day (a Downloads file under Own recent files) into Documents with Cut and Paste. file_name: the file's name exactly, with its extension, without folder."
+example: {file_name: admission test rates.csv}
+variants:
+  - [open_explorer_keys, go_downloads, show_extensions, select_file, cut_keys, go_documents, paste_keys, close_explorer]
+  - [open_explorer_taskbar, go_downloads, show_extensions, select_file, cut_keys, go_documents, paste_keys, close_explorer]
+weights: [1, 1]
+budget_steps: 50
+budget_minutes: 8
+subgoals:
+  open_explorer_keys:
+    goal: "Open File Explorer with Win+E"
+    launch: true
+    keys: [Win+E]
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  open_explorer_taskbar:
+    goal: "Open File Explorer from its taskbar button"
+    launch: true
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
+  go_downloads:
+    goal: "Go to the Downloads folder"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {ask: "Does File Explorer show the user's own Downloads folder (This PC > Downloads or the pinned Downloads), not another folder?"}
+  show_extensions:
+    goal: "Turn on File name extensions on File Explorer's View tab, so the file shows as {file_name}"
+    steps: 8
+    avoid: [{role: edit}, {name: '(?i)^(hidden items|item check boxes|hide selected items|options)$'}]
+    done: {element: {role: check box, name: '^File name extensions$', value: '^on$'}}
+  select_file:
+    goal: "Click the file {file_name} once to select it"
+    in_window: &downloads {process: explorer.exe, class_name: CabinetWClass, title: "^Downloads$"}
+    avoid: [{role: edit}]
+    done: {element: {role: list item, name: '^{file_name}$', selected: true}}
+  cut_keys:
+    goal: "Press Ctrl+X to cut the selected file {file_name}"
+    keys: [Ctrl+X]
+    steps: 3
+    in_window: *downloads
+    require: [{role: list item, name: '^{file_name}$', selected: true}]
+    forbid: [{role: list item, name: '^(?!{file_name}$)', selected: true}]
+    confirm: "Does File Explorer show the user's own Downloads folder with only {file_name} selected?"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {pressed: true}
+  go_documents:
+    goal: "Go to the Documents folder"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {ask: "Does File Explorer show the user's own Documents folder (This PC > Documents or the pinned Documents), not a library, Public Documents or another folder?"}
+  paste_keys:
+    goal: "Press Ctrl+V to paste the cut file {file_name} into Documents"
+    keys: [Ctrl+V]
+    steps: 6
+    in_window: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}
+    forbid: [{name: '(?i)(replace the file|skip this file|replace or skip)'}]
+    confirm: "Does File Explorer show the user's own Documents folder (This PC > Documents), not Downloads or another folder?"
+    avoid: [{role: edit}, {role: menu item}]
+    done: {file: {path: 'Documents\{file_name}', moved_from: 'Downloads\{file_name}'}}
+  close_explorer:
+    goal: "Close File Explorer"
+    done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}

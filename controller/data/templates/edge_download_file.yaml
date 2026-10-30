@@ -3,7 +3,7 @@ app: edge
 capability: file.download
 processes: [msedge.exe]
 params: [page, file_name]
-writes: ["Downloads/{file_name}"]
+writes: ['Downloads\{file_name}']
 about: "Download a file from a company intranet page in Edge. page: the page's exact title; file_name: the exact name of a file in that page's Downloads list."
 defaults: {app_query: edge}
 example: {page: Month-end close checklist and timetable, file_name: Close timetable October 2026.csv}
@@ -37,7 +37,7 @@ subgoals:
   download:
     goal: "Download {file_name} from the page's Downloads list"
     steps: 8
-    done: {file: {path: "Downloads/{file_name}", download: "{file_name}"}}
+    done: {file: {path: 'Downloads\{file_name}', download: "{file_name}"}}
   close_edge:
     goal: "Close Microsoft Edge"
     done: {window: {process: msedge.exe, absent: true}}

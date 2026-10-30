@@ -108,3 +108,35 @@ def test_extensions_count_as_shown_only_by_the_view_setting(task: tuple[Task, di
     assert check_done(done, snap(None), tk, False) is False
     assert check_done(done, snap("off"), tk, False) is False
     assert check_done(done, snap("on"), tk, False) is True
+
+
+def test_move_download_only_an_own_file_then_same_bytes_in_documents_and_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    templates = cli.plan_sources().templates
+    move = it("11:00", "explorer_file_download", file_name="Rates.csv")
+    owned = {r"downloads\rates.csv": "2026-11-01"}
+    assert validate([move], templates, [], Policy(), owned=owned, day="2026-11-02") == []
+    assert "move only" in validate([move], templates, [], Policy(), owned={}, day="2026-11-02")[0][1]
+    disk: dict[str, Any] = {}
+    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+    t = templates["explorer_file_download"]
+    tk = Task(t, TaskInstance(template=t.task, params={"file_name": "rates.csv"}), random.Random(0))
+    tk.owner, tk.started_ms = "aberg", 1_000_000
+    src, dst = r"Downloads\rates.csv", r"Documents\rates.csv"
+    done, snap = t.subgoals["paste_keys"].done, obs.Snapshot()
+    disk[dst] = guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) == f"{src}: unreadable on the guest"
+    disk[src] = guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) == f"{src}: not there, nothing to move"
+    disk[src], disk[dst] = guestfile.GuestFile(True, 500, b"a,b"), guestfile.GuestFile(True, 500, b"a,b")
+    assert file_baseline(tk, Policy()) == f"{dst}: already exists, never overwritten"
+    disk[dst] = guestfile.GuestFile(False)
+    assert file_baseline(tk, Policy()) is None
+    for s, d in ((guestfile.GuestFile(True, 500, b"a,b"), guestfile.GuestFile(True, 500, b"a,b")),
+                 (guestfile.GuestFile(False), guestfile.GuestFile(True, 500, b"a,c")),
+                 (None, guestfile.GuestFile(True, 500, b"a,b")), (guestfile.GuestFile(False), None)):  # fmt: skip
+        disk[src], disk[dst] = s, d
+        assert check_done(done, snap, tk, False) is False
+    disk[src], disk[dst] = guestfile.GuestFile(False), guestfile.GuestFile(True, 500, b"a,b")
+    assert check_done(done, snap, tk, False) is True

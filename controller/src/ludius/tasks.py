@@ -85,6 +85,7 @@ class FileCheck(Strict):
     source: str | None = None
     recycled: bool = False
     share: str | None = None
+    moved_from: str | None = None
 
     @model_validator(mode="after")
     def _noise_folder(self) -> FileCheck:
@@ -97,9 +98,16 @@ class FileCheck(Strict):
             kind = "recycled" if self.recycled else "share"
             if guestfile.profile_path("u", self.path) is None:
                 raise ValueError(f"file check {self.path!r}: a {kind} file is in a noise folder")
-            others = (*need.values(), "download", "append", *(("share",) if self.recycled else ()))
+            others = (*need.values(), "download", "append", "moved_from", *(("share",) if self.recycled else ()))
             if any(getattr(self, k) is not None for k in others):
                 raise ValueError(f"file check {self.path!r}: a {kind} check stands alone")
+            return self
+        if self.moved_from is not None:
+            if guestfile.profile_path("u", self.moved_from) is None or guestfile.profile_path("u", self.path) is None:
+                raise ValueError(f"file check {self.path!r}: a move goes from one noise folder to another")
+            others = (*need.values(), "download", "append")
+            if self.moved_from == self.path or any(getattr(self, k) is not None for k in others):
+                raise ValueError(f"file check {self.path!r}: a move check stands alone")
             return self
         if self.append is not None:
             if guestfile.profile_path("u", self.path) is None or not self.path.lower().endswith(EDITABLE):
@@ -181,6 +189,7 @@ Capability = Literal[
     "file.reuse",
     "file.recycle",
     "file.share",
+    "file.organize",
     "file.download",
     "chat.post",
     "chat.dm",
@@ -198,6 +207,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "file.reuse": {"file_name"},
     "file.recycle": {"file_name", "file_ext"},
     "file.share": {"file_name", "file_ext", "share"},
+    "file.organize": {"file_name"},
     "chat.post": {"channel"},
     "chat.dm": {"to", "to_name"},
     "chat.read": {"to", "to_name"},
@@ -402,6 +412,13 @@ class Template(Strict):
             elif sg.done and sg.done.file and sg.done.file.share is not None:
                 if self.capability != "file.share":
                     raise ValueError(f"{self.task}: share check {sg.done.file.path!r} needs capability file.share")
+            elif (
+                sg.done
+                and sg.done.file
+                and sg.done.file.moved_from is not None
+                and (sg.done.file.moved_from not in self.removes or self.capability != "file.organize")
+            ):
+                raise ValueError(f"{self.task}: move check {sg.done.file.path!r} needs file.organize removing it")
             elif sg.done and sg.done.file and sg.done.file.path not in self.writes:
                 raise ValueError(f"{self.task}: file check {sg.done.file.path!r} is not a declared write")
         appends = [sg.done.file for sg in self.subgoals.values() if sg.done and sg.done.file and sg.done.file.append]
@@ -842,6 +859,13 @@ def file_baseline(task: Task, policy: Any) -> str | None:
         if s.exists:
             return f"{copy}: already exists, never overwritten"
         absent.add(copy)
+    for src in sorted({task.fmt(c.moved_from) for c in files if c.moved_from is not None}):
+        f = guestfile.read(task.owner, src)
+        if f is None:
+            return f"{src}: unreadable on the guest"
+        if not f.exists:
+            return f"{src}: not there, nothing to move"
+        task.sources_before[src] = f.data
     edits = {task.fmt(c.path): task.fmt(c.source or c.path) for c in files if c.append is not None}
     appends = {task.fmt(c.path): c.append or "" for c in files if c.append is not None}
     for rel, src in sorted(edits.items()):
@@ -907,6 +931,10 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
     if task.files_absent is None or rel not in task.files_absent:
         return False
     f = guestfile.read(task.owner, rel)
+    if c.moved_from is not None:
+        s = guestfile.read(task.owner, task.fmt(c.moved_from))
+        moved = f is not None and f.exists and f.data == task.sources_before.get(task.fmt(c.moved_from))
+        return moved and s is not None and not s.exists
     if c.download is not None:
         return f is not None and f.exists and f.data == intranet.download_bytes(task.fmt(c.download))
     if f is None or not f.exists or f.written_ms < task.started_ms:

@@ -44,7 +44,7 @@ _PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")
 VALUE_MAX = 300
 _NAME_KEYS = ("file_name", "folder_name", "new_name")
 RECYCLE_AGE_DAYS = 3
-OWN_FILES = ("file.edit", "file.reuse", "file.recycle", "file.share")
+OWN_FILES = ("file.edit", "file.reuse", "file.recycle", "file.share", "file.organize")
 _DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)
 WORK_DAY, MEETING_MINUTES, MEETING_DAYS_AHEAD = ("08:00", "17:00"), (15, 120), 14
 CHAT_CHANNELS: list[str] = yaml.safe_load(
@@ -399,12 +399,12 @@ def _owned(it: PlanItem, t: Template, owned: dict[str, str], day: str, items: li
     shared = [sg.done.file.path for sg in t.subgoals.values() if sg.done and sg.done.file and sg.done.file.share]
     sources = [sg.done.file.source for sg in t.subgoals.values() if sg.done and sg.done.file and sg.done.file.source]
     try:
-        named = t.removes if recycle else shared or sources or t.writes
+        named = t.removes if recycle or t.capability == "file.organize" else shared or sources or t.writes
         paths = [w.format_map({**it.params, **it.content}) for w in named]
     except KeyError:
         return "missing parameters"
     if not paths or any(p.casefold() not in owned for p in paths):
-        verb = "recycle" if recycle else "copy" if shared else "reuse" if sources else "edit"
+        verb = "recycle" if recycle else "move" if t.removes else "copy" if shared else "reuse" if sources else "edit"
         return f"file_name: {verb} only one of this persona's own files (Own recent files), named exactly"
     if recycle:
         cutoff = (dt.date.fromisoformat(day) - dt.timedelta(days=RECYCLE_AGE_DAYS)).isoformat()
