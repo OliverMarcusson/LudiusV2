@@ -106,7 +106,7 @@
 <body>
 <main>
   <h1>Ludius V2: progress against the spec</h1>
-  <p class="meta"><span>Updated 30 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/666a3c4"><code>666a3c4</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
+  <p class="meta"><span>Updated 30 Oct 2026</span><span>Code baseline <a href="https://github.com/OliverMarcusson/LudiusV2/commit/5149590"><code>5149590</code></a></span><span><a href="https://github.com/OliverMarcusson/LudiusV2">github.com/OliverMarcusson/LudiusV2</a></span></p>
 
   <div class="summary" id="summary"></div>
   <p class="meta">The percentage gives every partial requirement half credit. Improvements within a partial row do not move the score. Current priority: finish end-to-end acceptance cases and close requirements; deferred infrastructure remains in the total.</p>
@@ -130,6 +130,7 @@
   <section>
     <header><h2>Change log</h2></header>
     <ul class="log">
+      <li><time datetime="2026-10-30">30 Oct 2026</time><span>Passing news on (5149590). When a persona reads chat messages, the Decider answers one yes/no question: is there harmless office news here worth passing on? Only on a yes may the persona tell one other colleague, at most once a day. News a persona heard as gossip is never passed on again. Live: Lars heard about the coffee machine and the March floor move from Daan, replied, and told Anna.</span></li>
       <li><time datetime="2026-10-30">30 Oct 2026</time><span>Office gossip (666a3c4). Most days the day plan now includes one direct message with harmless office gossip to a colleague the persona gets on with: who is back from holiday, the coffee machine, the office move. A hidden level fixed in code keeps it at the mildest setting, never about misconduct, health, pay, relationships or jobs. It uses the existing direct-message task and its checks. Live: lnord asked Daan whether he had moved to the consolidated floor yet (14 Jan, 13 steps).</span></li>
       <li><time datetime="2026-10-30">30 Oct 2026</time><span>Sharing files in chat (731ad73). chat_share_file sends a colleague one of the persona's own Documents files in a team-chat direct message, with one line about it. The file is picked in the Open dialog only after the dialog shows the persona's Documents folder, and Open is clicked rather than pressing Enter. Done is checked on the chat server: the upload must be staged before the message is written and posted afterwards, and its stored bytes must equal the persona's file. The Decider alone could not tell: the same file shared on an earlier day was visible higher in the conversation. Live: lnord shared patch notes with dkoster (13 Jan, 16 steps).</span></li>
       <li><time datetime="2026-10-30">30 Oct 2026</time><span>Mail filing (c412a2d). outlook_file_mail moves a colleague's mail the persona is done with from the Inbox into a topic folder under it, creating the folder when needed. The mail only counts as selected after a click on its own row, and Move Items opens only with that one row selected. Done needs the mail gone from the Inbox and present once in the folder, checked on the mail server. Live: lnord filed into a new Sprint reviews folder (4 Jan, 12 steps) and again on 6 and 8 Jan.</span></li>
