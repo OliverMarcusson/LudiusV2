@@ -1,6 +1,7 @@
 pub mod admission;
 pub mod assist;
 pub mod calls;
+pub mod canary;
 pub use ludius_chat as chat;
 pub mod day;
 pub mod decisions;
