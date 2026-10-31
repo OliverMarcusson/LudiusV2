@@ -209,9 +209,11 @@ class FileCheck(Strict):
             if any(getattr(self, k) is not None for k in need.values()):
                 raise ValueError(f"file check {self.path!r}: a download check stands alone")
             return self
+        ext = ".txt" if self.path.lower().endswith(".txt") else ext
+        need = {**need, ".txt": "paragraphs"}
         if guestfile.profile_path("u", self.path) is None or ext not in need:
             raise ValueError(f"file check {self.path!r}: an {'/'.join(need)} in a noise folder")
-        if [k for k in need.values() if getattr(self, k) is not None] != [need[ext]]:
+        if [k for k in dict.fromkeys(need.values()) if getattr(self, k) is not None] != [need[ext]]:
             raise ValueError(f"file check {self.path!r}: needs {need[ext]} and no other content check")
         return self
 
@@ -298,6 +300,7 @@ Capability = Literal[
     "chat.file",
 ]
 SENDS: dict[str, Literal["mail", "meeting"]] = {"mail.send": "mail", "mail.reply": "mail", "calendar.invite": "meeting"}
+IRREVERSIBLE = {*SENDS, "calendar.respond", "chat.post", "chat.dm", "chat.file"}
 REFERS_TO_EXISTING: dict[str, set[str]] = {
     "mail.send": {"to", "to_name", "file_name"},
     "mail.reply": {"to", "to_name", "subject"},
@@ -453,6 +456,10 @@ class Template(Strict):
     @property
     def sends_mail(self) -> bool:
         return self.capability in SENDS
+
+    @property
+    def irreversible(self) -> bool:
+        return self.capability in IRREVERSIBLE
 
     @property
     def send_form(self) -> Literal["mail", "meeting"]:
@@ -1214,8 +1221,8 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
         want = guestfile.grid_cells(task.fmt(c.cells))
         return cells is not None and bool(want) and _fold(cells) == _fold(want)
     if c.paragraphs is not None:
-        got, lines = guestfile.docx_paragraphs(f.data), _lines(task.fmt(c.paragraphs))
-        return got is not None and bool(lines) and [x.casefold() for x in got] == lines
+        got, lines = _doc_lines(rel, f.data), _lines(task.fmt(c.paragraphs))
+        return got is not None and bool(lines) and got == lines
     slides = guestfile.pptx_slides(f.data)
     want = [w for s in c.slides or [] if (w := _lines(task.fmt(s)))]
     return slides is not None and bool(want) and [[x.casefold() for x in s] for s in slides] == want

@@ -173,7 +173,18 @@ class Row:
     llm: int
 
 
-def row(world: World, user: str, day: dt.date, workers: dict[str, Any]) -> Row:
+def tracebacks(log: Path) -> str:
+    """A live pid is not health: a worker that keeps failing activities stays up and only logs tracebacks."""
+    try:
+        n = log.read_text(encoding="utf-8", errors="replace").count("Traceback (most recent call last)")
+    except FileNotFoundError:
+        return ""
+    except OSError:
+        return ", log unreadable"
+    return f", {n} tracebacks" if n else ""
+
+
+def row(world: World, user: str, day: dt.date, workers: dict[str, Any], state_dir: Path) -> Row:
     current, done, abandoned = "-", 0, 0
     log = world.day_log(user, day.isoformat())
     lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
@@ -194,6 +205,7 @@ def row(world: World, user: str, day: dt.date, workers: dict[str, Any]) -> Row:
     w: dict[str, Any] = workers.get(user) or {}
     worker = f"pid {w['pid']}" if w.get("pid") else "down" if w else "-"
     worker += f", {w['starts']} starts" if w.get("starts", 0) > 1 else ""
+    worker += tracebacks(state_dir / f"{user}.log")
     used = calls.persona_day(user, day)
     return Row(user, worker, current, done, abandoned, used["decision"], used["llm"])
 
@@ -208,10 +220,10 @@ def summary(world: World, users: list[str], day: dt.date, state_dir: Path, env: 
     plan: dict[str, Any] = workers.get("plan") or {}
     head = f"range {day.isoformat()}  supervisor state {state.get('updated', 'none')}  plan worker " + (
         f"pid {plan['pid']}" if plan.get("pid") else "down"
-    )
-    cols = f"{'persona':10} {'worker':18} {'current task':34} {'done':>4} {'aband':>5} {'decis/llm':>12}"
+    ) + tracebacks(state_dir / "plan.log")
+    cols = f"{'persona':10} {'worker':30} {'current task':34} {'done':>4} {'aband':>5} {'decis/llm':>12}"
     lines = [head, f"{cols} (cap {caps})"]
-    for r in (row(world, u, day, workers) for u in users):
-        lines.append(f"{r.persona:10} {r.worker:18} {r.current[:34]:34} {r.done:>4} {r.abandoned:>5} "
+    for r in (row(world, u, day, workers, state_dir) for u in users):
+        lines.append(f"{r.persona:10} {r.worker:30} {r.current[:34]:34} {r.done:>4} {r.abandoned:>5} "
                      f"{f'{r.decision}/{r.llm}':>12}")  # fmt: skip
     return "\n".join(lines)

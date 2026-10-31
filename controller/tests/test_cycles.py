@@ -170,6 +170,9 @@ def open_ended(template: str = "notepad_write_note") -> Task:
     tpl = load_templates()[template].model_copy(deep=True)
     task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
     tpl.subgoals[task.subgoal_names[0]].done = None
+    for sg in tpl.subgoals.values():  # the fake guest has no files to check
+        if sg.done and sg.done.file:
+            sg.done.file = None
     return task
 
 

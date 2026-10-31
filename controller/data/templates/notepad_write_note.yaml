@@ -57,7 +57,9 @@ subgoals:
     done: {element: {name: "^File name", value: '^{file_name}(\.txt)?$'}}
   confirm_save:
     goal: "Save the file as {file_name}"
-    done: {window: {process: notepad.exe, title: '^{file_name}(\.txt)? - Notepad$'}}
+    done:
+      window: {process: notepad.exe, title: '^{file_name}(\.txt)? - Notepad$'}
+      file: {path: 'Documents\{file_name}.txt', paragraphs: "{body}"}
   close_app:
     goal: "Close Notepad"
     done: {window: {process: notepad.exe, absent: true}}

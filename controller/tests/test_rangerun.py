@@ -183,9 +183,11 @@ def test_status_reads_current_task_counts_and_budget(tmp_path: Path, monkeypatch
     (tmp_path / "range" / "state.json").write_text(
         json.dumps({"updated": "t", "workers": {"aberg": {"pid": 5, "starts": 2}, "lnord": {"pid": None, "starts": 1}}})
     )
-    r = rangerun.row(world, "aberg", day, {"aberg": {"pid": 5, "starts": 2}})
+    r = rangerun.row(world, "aberg", day, {"aberg": {"pid": 5, "starts": 2}}, tmp_path / "range")
     assert (r.current, r.done, r.abandoned, r.decision, r.llm) == ("10:00 outlook", 1, 1, 7, 1)
     assert r.worker == "pid 5, 2 starts"
+    (tmp_path / "range" / "aberg.log").write_text("ok\nTraceback (most recent call last):\n  boom\n")
+    assert rangerun.row(world, "aberg", day, {"aberg": {"pid": 5}}, tmp_path / "range").worker == "pid 5, 1 tracebacks"
     text = rangerun.summary(world, ["aberg", "lnord"], day, tmp_path / "range", {})
     assert "10:00 outlook" in text and "down" in text and "plan worker down" in text
 

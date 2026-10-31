@@ -4,8 +4,9 @@ iface {{ range_bridge }} inet static
     bridge-ports none
     bridge-stp off
     bridge-fd 0
-    post-up iptables -I FORWARD -i {{ range_bridge }} -j DROP; iptables -I FORWARD -o {{ range_bridge }} -j DROP
-    pre-down iptables -D FORWARD -i {{ range_bridge }} -j DROP; iptables -D FORWARD -o {{ range_bridge }} -j DROP
+    # mangle runs before filter, where Tailscale puts its own accepts first (tasks/range-bridge-isolated.yml)
+    post-up for t in iptables ip6tables; do for d in -i -o; do $t -t mangle -C FORWARD $d {{ range_bridge }} -j DROP 2>/dev/null || $t -t mangle -I FORWARD $d {{ range_bridge }} -j DROP; done; done
+    pre-down for t in iptables ip6tables; do for d in -i -o; do $t -t mangle -D FORWARD $d {{ range_bridge }} -j DROP 2>/dev/null || true; done; done
 
 auto {{ build_bridge }}
 iface {{ build_bridge }} inet static

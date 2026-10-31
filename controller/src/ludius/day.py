@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from ludius import calls, keys
 from ludius.loop import Clock, GroundTruth, Outcome, Runner
-from ludius.planner import BREAK, DayPlan, PlanItem
+from ludius.planner import BREAK, DayPlan, PlanItem, started_slots
 from ludius.session import EscalationDenied, Session
 from ludius.tasks import Task, Template, write_paths
 
@@ -143,6 +143,11 @@ class DayRunner:
             self.sleep(self.away_s(item))
             if self.end_break(day, item).status != "done":
                 raise BreakUnlockFailed(f"break at {item.at}: unlock failed, day stopped")
+            return
+        if self.templates[item.template].irreversible and (item.at, item.template) in started_slots(self.log.path):
+            self.log.write(event="item_skipped", host_ms=_now(), logical=f"{day.isoformat()}T{item.at}",
+                           template=item.template, reason="already attempted: its effects are never repeated")  # fmt: skip
+            self._ended(day, item, "skipped")
             return
         self._started(day, item)
         task = Task(self.templates[item.template], item, self.rng)

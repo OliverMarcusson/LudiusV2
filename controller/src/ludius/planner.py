@@ -1157,6 +1157,12 @@ def done_slots(log: Path) -> set[tuple[str, str]]:
             if r.get("event") == "item_end" and r.get("status") == "done"}  # fmt: skip
 
 
+def started_slots(log: Path) -> set[tuple[str, str]]:
+    if not log.exists():
+        return set()
+    return {(str(r["at"]), str(r["template"])) for r in day_records(log) if r.get("event") == "item_start"}
+
+
 def asked_files(it: PlanItem, items: list[PlanItem], templates: dict[str, Template], day: str) -> dict[str, str]:
     """Files an earlier item of the same request writes today: its delivery may attach them."""
     out: dict[str, str] = {}

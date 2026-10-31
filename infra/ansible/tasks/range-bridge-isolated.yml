@@ -1,0 +1,24 @@
+---
+# Nothing routes into or out of the range bridge, IPv4 or IPv6. The drops live in mangle FORWARD, which runs
+# before filter: Tailscale inserts `-j ts-forward` (accepting -o tailscale0) at the top of filter FORWARD, so
+# filter-table drops can be overtaken. Same-bridge traffic is not routed (bridge-nf-call-iptables is 0).
+- name: Range bridge drops are the first rules of mangle FORWARD, IPv4 and IPv6, read back
+  ansible.builtin.shell: |
+    set -euo pipefail
+    want="-A FORWARD -i {{ range_bridge }} -j DROP
+    -A FORWARD -o {{ range_bridge }} -j DROP"
+    for t in iptables ip6tables; do
+      if [ "$($t -t mangle -S FORWARD | sed -n 2,3p | sort)" != "$want" ]; then
+        for d in -i -o; do while $t -t mangle -D FORWARD $d {{ range_bridge }} -j DROP 2>/dev/null; do :; done; done
+        $t -t mangle -I FORWARD 1 -o {{ range_bridge }} -j DROP
+        $t -t mangle -I FORWARD 1 -i {{ range_bridge }} -j DROP
+        echo changed
+      fi
+      if [ "$($t -t mangle -S FORWARD | sed -n 2,3p | sort)" != "$want" ]; then
+        echo "$t mangle FORWARD does not start with the {{ range_bridge }} drops" >&2; exit 1
+      fi
+    done
+  args:
+    executable: /bin/bash
+  register: bridge_iso
+  changed_when: "'changed' in bridge_iso.stdout"

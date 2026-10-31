@@ -114,7 +114,7 @@ def test_title_check_tolerates_hidden_extension() -> None:
     done = task.template.subgoals["confirm_save"].done
     for title, ok in [("q3 notes - Notepad", True), ("q3 notes.txt - Notepad", True), ("*q3 notes - Notepad", False)]:
         snap = obs.Snapshot(windows=[obs.Window(kind=obs.Window.FOREGROUND, process_name="notepad.exe", title=title)])
-        assert check_done(done, snap, task, typed_ok=False) is ok, title
+        assert check_done(done, snap, task, typed_ok=False, outside=False) is ok, title
 
 
 def test_absent_window_check() -> None:

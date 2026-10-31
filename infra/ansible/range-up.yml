@@ -102,6 +102,9 @@
 
     - name: Clone, isolate, start and bootstrap each persona VM
       block:
+        - name: Range bridge routes nowhere
+          ansible.builtin.include_tasks: tasks/range-bridge-isolated.yml
+
         - name: Gateway does not forward
           ansible.builtin.include_tasks: tasks/gateway-no-forwarding.yml
 

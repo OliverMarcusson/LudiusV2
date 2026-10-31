@@ -10,7 +10,7 @@ COLUMNS = ["time_utc", "clock", "source", "persona", "vm", "task", "subgoal", "e
            "process", "result"]  # fmt: skip
 EVENTS = {"day_start", "day_end", "item_start", "item_end", "task_start", "task_end", "subgoal_done", "step",
           "ladder", "interrupt", "resume", "break", "unlock", "unlocked", "normalized", "normalize_failed",
-          "side_effects", "blocked"}  # fmt: skip
+          "side_effects", "blocked", "item_skipped"}  # fmt: skip
 
 
 def rows(paths: list[Path]) -> list[dict[str, str]]:

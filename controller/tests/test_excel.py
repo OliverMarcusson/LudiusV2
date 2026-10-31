@@ -220,7 +220,7 @@ def test_declared_writes_cover_templates_without_a_file_check(tmp_path: Any, mon
     tk = Task(templates["notepad_write_note"], PlanItem.model_validate(note), random.Random(0))
     tk.owner = "aberg"
     assert file_baseline(tk, p) == r"Documents\x.txt: scenario-reserved file" and reads == []
-    assert file_baseline(tk, Policy()) is None and reads == []
+    assert file_baseline(tk, Policy()) == r"Documents\x.txt: unreadable on the guest" and reads == [r"Documents\x.txt"]
 
 
 def test_template_load_refuses_undeclared_writes() -> None:

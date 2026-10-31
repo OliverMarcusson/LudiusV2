@@ -169,7 +169,7 @@ static class ConsoleData
         _ => throw new InvalidDataException(),
     };
 
-    static object Run(string runs, long now)
+    internal static object Run(string runs, long now)
     {
         var journal = Lines(Path.Combine(runs, "range", "warp.jsonl"));
         if (journal is null || journal.Count == 0) return new { phase = "none" };
@@ -178,7 +178,7 @@ static class ConsoleData
         long setAt = 0, last = 0;
         var (day, planned) = (0, false);
         List<string> users = [], unplanned = [];
-        var results = new Dictionary<string, string>();
+        var results = new Dictionary<string, (string Status, long At)>();
         static long HostMs(JsonObject e) => DateTime.TryParse(Text(e, "at"), CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var t)
             ? new DateTimeOffset(t).ToUnixTimeMilliseconds() : 0;
         foreach (var e in journal)
@@ -199,7 +199,7 @@ static class ConsoleData
                         .Select(p => p.Key).ToList() ?? [];
                     planned = users.Count > 0;
                     break;
-                case "day" when User.IsMatch(Text(e, "persona")): results[Text(e, "persona")] = e["result"] is JsonArray ? "done" : "failed"; break;
+                case "day" when User.IsMatch(Text(e, "persona")): results[Text(e, "persona")] = (e["result"] is JsonArray ? "done" : "failed", last); break;
                 case "interrupted": phase = "stopped"; break;
                 case "warp_failed" or "clock_reset_failed": phase = "failed"; error = Text(e, "error"); break;
                 case "clock_reset": if (phase is not ("stopped" or "failed")) phase = "finished"; logical = null; break;
@@ -209,8 +209,9 @@ static class ConsoleData
         {
             var log = date == "" || phase == "planning" ? null : Lines(Path.Combine(runs, "days", $"{date}-{user}.jsonl"));
             var run = log?.Skip(log.FindLastIndex(x => Text(x, "event") == "day_start") is var i and >= 0 ? i : log.Count).ToList() ?? [];
-            var status = results.GetValueOrDefault(user)
-                ?? (run.Any(x => Text(x, "event") == "day_aborted") ? "failed" : run.Any(x => Text(x, "event") == "day_end") ? "done" : run.Count > 0 ? "running" : "waiting");
+            var started = run.Count > 0 && run[0]["host_ms"] is JsonValue sv && sv.TryGetValue<long>(out var ms) ? ms : 0;
+            var status = results.TryGetValue(user, out var r) && started <= r.At ? r.Status
+                : (run.Any(x => Text(x, "event") == "day_aborted") ? "failed" : run.Any(x => Text(x, "event") == "day_end") ? "done" : run.Count > 0 ? "running" : "waiting");
             var items = run.Count > 0 && run[0]["items"] is JsonValue v && v.TryGetValue<int>(out var n) ? n : 0;
             return new { user, status, items, done = run.Count(x => Text(x, "event") == "item_end") };
         }).ToList();
