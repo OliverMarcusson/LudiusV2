@@ -1,0 +1,33 @@
+[package]
+name = "ludius"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = "1"
+base64 = "0.23.1"
+chrono = "0.4"
+chrono-tz = "0.10"
+csv = "1"
+fancy-regex = "0.14"
+fs2 = "0.4"
+indexmap = { version = "2", features = ["serde"] }
+ludius-proto = { version = "0.1.0", path = "../ludius-proto" }
+ludius-intranet = { path = "../ludius-intranet", optional = true }
+rand = "0.10.3"
+regex = "1.13.1"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "blocking", "rustls"] }
+roxmltree = "0.20"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+serde_yaml = "0.9.34"
+sha2 = "0.10"
+tokio = { version = "1.54.1", features = ["rt", "time"] }
+tonic = "0.14.9"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[features]
+default = ["intranet"]
+# Intranet pages and downloads (outcome check for file.download, planner index). Without it, download checks read as unknown.
+intranet = ["dep:ludius-intranet"]

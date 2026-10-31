@@ -1,0 +1,10 @@
+[package]
+name = "ludius-intranet"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+regex = "1.13.1"
