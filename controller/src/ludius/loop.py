@@ -543,6 +543,16 @@ class Runner:
                 snap = self.observe(timeout_ms=10000)
                 step, waited, wait_why = step - 1, waited + time.monotonic() - w0, "the outside check"
                 continue
+            fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
+            if fg is not None and fg.unresponsive:
+                # A hung app buffers keys and replays them later; wait for it like a person would.
+                # The task's time budget bounds the wait, not WAIT_CAP_S: a busy Outlook can take minutes.
+                self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
+                               reason=f"'{fg.title}' is not responding")  # fmt: skip
+                time.sleep(HUNG_WAIT_S)
+                snap = self.observe(timeout_ms=10000)
+                step -= 1
+                continue
             ask = sg.done.ask if sg.done else None
             if ask and self._decider_says_done(task, name, ask, snap):
                 self.log.write(event="subgoal_done", host_ms=_now(), guest_ms=snap.guest_time_ms,
@@ -556,16 +566,6 @@ class Runner:
                 self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
                                reason=OVERWRITE_REASON)  # fmt: skip
                 return "failed", step - 1, OVERWRITE_REASON
-            fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
-            if fg is not None and fg.unresponsive:
-                # A hung app buffers keys and replays them later; wait for it like a person would.
-                # The task's time budget bounds the wait, not WAIT_CAP_S: a busy Outlook can take minutes.
-                self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
-                               reason=f"'{fg.title}' is not responding")  # fmt: skip
-                time.sleep(HUNG_WAIT_S)
-                snap = self.observe(timeout_ms=10000)
-                step -= 1
-                continue
             blocked = preconditions(sg, snap, task)
             popup = self._popup_over(sg, snap, task) if blocked else None
             if popup is None:
