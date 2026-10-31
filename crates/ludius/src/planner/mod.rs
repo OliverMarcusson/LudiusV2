@@ -1,5 +1,5 @@
 //! Day plans (port of planner.py): the plan and story types, plan-load validation, the world's history and
-//! day logs. Writing plans (slots, LLM content, validation retries) is in `make`.
+//! day logs. Writing plans (slots, LLM content) is in `make`, their checks in `validate`.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
@@ -12,10 +12,14 @@ use crate::tasks::{Template, TaskInstance, load_template};
 
 mod check;
 mod load;
+pub(crate) mod make;
+pub(crate) mod validate;
 mod world;
 
 pub use check::{asked_files, content_values, item_problem, owned_problem, taken_names, targets};
 pub use load::load_plan;
+pub use make::{Day, catalog, fill_recipient_names, installed, make_narrative, plan_day, role_templates};
+pub use validate::{Context, near_duplicate, validate};
 pub use world::{World, day_records, done_slots, dump, owned_files, started_slots};
 
 pub const BREAK: &str = "break";
@@ -199,7 +203,7 @@ impl PlanItem {
     }
 
     /// PlanItem validators: HH:MM time, multi-line values with \n line ends.
-    fn normalize(&mut self) -> Result<()> {
+    pub(crate) fn normalize(&mut self) -> Result<()> {
         if !fullmatch(r"([01]\d|2[0-3]):[0-5]\d", &self.at) {
             bail!("at must be HH:MM");
         }
@@ -248,6 +252,27 @@ pub fn templates() -> Result<BTreeMap<String, Template>> {
         .collect();
     paths.sort();
     paths.iter().map(|p| load_template(p).map(|t| (t.task.clone(), t))).collect()
+}
+
+/// The intranet downloads (file, page title) a plan may name; none without the intranet add-on or when unreadable.
+pub(crate) fn downloads(policy: &crate::policy::Policy) -> Vec<(String, String)> {
+    #[cfg(feature = "intranet")]
+    return crate::intranet::downloads(&crate::intranet::dir(), |t| policy.page_reserved(t)).unwrap_or_default();
+    #[cfg(not(feature = "intranet"))]
+    {
+        let _ = policy;
+        vec![]
+    }
+}
+
+pub(crate) fn intranet_index(policy: &crate::policy::Policy) -> String {
+    #[cfg(feature = "intranet")]
+    return crate::intranet::index(&crate::intranet::dir(), |t| policy.page_reserved(t)).unwrap_or_default();
+    #[cfg(not(feature = "intranet"))]
+    {
+        let _ = policy;
+        String::new()
+    }
 }
 
 pub(crate) fn leaf(path: &str) -> String {

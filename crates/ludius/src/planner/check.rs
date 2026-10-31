@@ -152,14 +152,8 @@ pub fn item_problem(it: &PlanItem, templates: &BTreeMap<String, Template>, polic
     Ok(None)
 }
 
-#[cfg(feature = "intranet")]
 fn download_listed(file: &str, page: &str, policy: &Policy) -> bool {
-    crate::intranet::downloads(&crate::intranet::dir(), |t| policy.page_reserved(t)).is_ok_and(|d| d.iter().any(|(f, p)| f == file && p == page))
-}
-
-#[cfg(not(feature = "intranet"))]
-fn download_listed(_file: &str, _page: &str, _policy: &Policy) -> bool {
-    false
+    super::downloads(policy).iter().any(|(f, p)| f == file && p == page)
 }
 
 /// A meeting's location, weekday date and work-hours time span (planner._meeting).
