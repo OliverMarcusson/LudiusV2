@@ -81,7 +81,7 @@ services:
     environment:
       PVE_NODE: ${PVE_NODE:?set PVE_NODE in .env}
       PVE_POOL: ${PVE_POOL:?set PVE_POOL in .env}
-      PVE_CAP_EXEMPT: ${PVE_CAP_EXEMPT:-}
+      PVE_CAP_EXEMPT: ${PVE_CAP_EXEMPT:?set PVE_CAP_EXEMPT in .env (VMID:name of every range server, comma-separated; they are never capped nor on the monitor)}
       AGENT_MAX_RUNNING: ${AGENT_MAX_RUNNING:-1}
       AGENT_LISTEN: ${AGENT_LISTEN:-127.0.0.1:7451}
       PVE_TOKEN_FILE: /run/secrets/pve_token

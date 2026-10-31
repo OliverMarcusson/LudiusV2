@@ -73,9 +73,8 @@ Running a multi-day warp on the live range (sync, snapshot, launch, watch, roll 
 
 ## 7. Multi-persona run (8 personas, `ludius range`)
 
-- [ ] VM cap: `Agent:MaxRunningVms=8` and `Proxmox:CapExempt=110:ludius-srv01,110:ludius-dc01,111:ludius-ex01`
-      (set in `infra/box/ludius-agent.service`)
-      in the box's agent config. The default is 1 on both backends (the owner's desktop limit). Check: a 9th persona
+- [ ] VM cap: `AGENT_MAX_RUNNING=8` and `PVE_CAP_EXEMPT=110:ludius-srv01,110:ludius-dc01,111:ludius-ex01,112:ludius-chat01`
+      in `/etc/ludius/compose.env` (required: compose refuses to start the host agent without `PVE_CAP_EXEMPT`). The default is 1 on both backends (the owner's desktop limit). Check: a 9th persona
       start is refused with "VM cap 8"; srv01 starts beside 8 personas.
 - [x] Temporal server up: on the box `infra/box/compose-install.sh` (the `infra/compose` stack under `podman compose`
       with the docker-compose CLI and aardvark-dns, started at boot by `ludius-compose.service`; ports on 127.0.0.1

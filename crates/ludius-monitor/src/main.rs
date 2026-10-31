@@ -134,12 +134,17 @@ async fn calls(State(app): State<App>) -> Response {
 }
 
 async fn interactions(State(app): State<App>) -> Response {
-    let lines = console::last_lines(&app.cfg.runs.join("monitor-interactions.jsonl"), 20);
-    axum::Json(json!({ "interactions": lines })).into_response()
+    match console::last_lines(&app.cfg.runs.join("monitor-interactions.jsonl"), 20) {
+        Ok(lines) => axum::Json(json!({ "interactions": lines })).into_response(),
+        Err(_) => problem(StatusCode::SERVICE_UNAVAILABLE, "Interactions log unreadable"),
+    }
 }
 
 async fn admission(State(app): State<App>) -> Response {
-    axum::Json(console::admission(&app.cfg.runs.join("admission"), now_ms())).into_response()
+    match console::admission(&app.cfg.runs.join("admission"), now_ms()) {
+        Ok(v) => axum::Json(v).into_response(),
+        Err(_) => problem(StatusCode::SERVICE_UNAVAILABLE, "Admission log unreadable"),
+    }
 }
 
 // --- console stream ---------------------------------------------------------------------------

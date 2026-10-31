@@ -25,6 +25,15 @@ pub struct Bad;
 
 pub type Rd<T> = Result<T, Bad>;
 
+/// `Ok(None)` for a missing file or folder, `Bad` for any other error: unreadable is unknown, never empty.
+fn missing<T>(r: std::io::Result<T>) -> Rd<Option<T>> {
+    match r {
+        Ok(v) => Ok(Some(v)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(Bad),
+    }
+}
+
 pub static USER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_-]{0,63}$").unwrap());
 static DAY_FILE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d{4}-\d{2}-\d{2})-([a-z][a-z0-9_-]{0,63})$").unwrap());
 
@@ -145,14 +154,13 @@ fn lines(path: &FsPath) -> Rd<Option<Vec<Obj>>> {
 }
 
 /// The last `count` parseable records of a JSON-lines file (from its last 64 KB).
-pub fn last_lines(path: &FsPath, count: usize) -> Vec<Value> {
-    let Ok(mut f) = std::fs::File::open(path) else { return vec![] };
-    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+pub fn last_lines(path: &FsPath, count: usize) -> Rd<Vec<Value>> {
+    let Some(mut f) = missing(std::fs::File::open(path))? else { return Ok(vec![]) };
+    let len = f.metadata().map_err(|_| Bad)?.len();
     let start = len.saturating_sub(64 << 10);
     let mut buf = Vec::new();
-    if f.seek(SeekFrom::Start(start)).is_err() || f.read_to_end(&mut buf).is_err() {
-        return vec![];
-    }
+    f.seek(SeekFrom::Start(start)).map_err(|_| Bad)?;
+    f.read_to_end(&mut buf).map_err(|_| Bad)?;
     let text = String::from_utf8_lossy(&buf);
     let mut parts: Vec<&str> = text.split('\n').collect();
     if start > 0 && !parts.is_empty() {
@@ -162,7 +170,7 @@ pub fn last_lines(path: &FsPath, count: usize) -> Vec<Value> {
         parts.pop();
     }
     let records: Vec<Value> = parts.iter().filter_map(|l| serde_json::from_str::<Value>(l).ok().filter(Value::is_object)).collect();
-    records[records.len().saturating_sub(count)..].to_vec()
+    Ok(records[records.len().saturating_sub(count)..].to_vec())
 }
 
 fn yaml_files(dir: &FsPath) -> Rd<Vec<PathBuf>> {
@@ -248,9 +256,10 @@ pub fn catalog(runs: &FsPath, persona_dir: &FsPath) -> Rd<Value> {
     };
     let mut index: Vec<(String, String, &str)> = vec![];
     for folder in ["plans", "days"] {
-        let Ok(dir) = std::fs::read_dir(runs.join(folder)) else { continue };
+        let Some(dir) = missing(std::fs::read_dir(runs.join(folder)))? else { continue };
         let ext = if folder == "plans" { "yaml" } else { "jsonl" };
-        for p in dir.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == ext)) {
+        let dir = dir.map(|e| e.map(|e| e.path())).collect::<std::io::Result<Vec<_>>>().map_err(|_| Bad)?;
+        for p in dir.into_iter().filter(|p| p.extension().is_some_and(|x| x == ext)) {
             let stem = p.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             if let Some(m) = DAY_FILE.captures(&stem)
                 && valid_date(&m[1])
@@ -458,20 +467,20 @@ fn tok(e: &Obj, k: &str) -> Option<String> {
 }
 
 /// The newest admission log, summarised for the console.
-pub fn admission(dir: &FsPath, now: i64) -> Value {
-    let newest = std::fs::read_dir(dir).ok().and_then(|d| {
-        d.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned())).filter(|n| ADMISSION_LOG.is_match(n)).max()
-    });
-    let Some(name) = newest else { return json!({ "state": "none" }) };
+pub fn admission(dir: &FsPath, now: i64) -> Rd<Value> {
+    let none = || Ok(json!({ "state": "none" }));
+    let Some(entries) = missing(std::fs::read_dir(dir))? else { return none() };
+    let names = entries.map(|e| e.map(|e| e.file_name().to_string_lossy().into_owned())).collect::<std::io::Result<Vec<_>>>().map_err(|_| Bad)?;
+    let Some(name) = names.into_iter().filter(|n| ADMISSION_LOG.is_match(n)).max() else { return none() };
     let path = dir.join(&name);
-    let Ok(mut f) = std::fs::File::open(&path) else { return json!({ "state": "none" }) };
-    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut f = std::fs::File::open(&path).map_err(|_| Bad)?;
+    let len = f.metadata().map_err(|_| Bad)?.len();
     let truncated = len > MAX_ADMISSION_READ;
-    if truncated && f.seek(SeekFrom::End(-(MAX_ADMISSION_READ as i64))).is_err() {
-        return json!({ "state": "none" });
+    if truncated {
+        f.seek(SeekFrom::End(-(MAX_ADMISSION_READ as i64))).map_err(|_| Bad)?;
     }
     let mut buf = Vec::new();
-    let _ = f.read_to_end(&mut buf);
+    f.read_to_end(&mut buf).map_err(|_| Bad)?;
     let text = String::from_utf8_lossy(&buf);
 
     let mut last: Option<i64> = None;
@@ -540,11 +549,11 @@ pub fn admission(dir: &FsPath, now: i64) -> Value {
         "idle"
     };
     let task = ADMISSION_LOG.captures(&name).map(|m| m[1].to_string()).unwrap_or_default();
-    json!({
+    Ok(json!({
         "state": state, "task": task, "variant": variant, "run": run, "inRun": in_run, "step": step, "subgoal": subgoal,
         "action": action, "result": result, "status": status, "done": done, "failed": failed, "admitted": admitted,
         "stopped": stopped, "ageMs": age.max(0), "truncated": truncated,
-    })
+    }))
 }
 
 #[cfg(test)]
