@@ -123,7 +123,7 @@ fn parse(url: &str) -> Result<Bucket> {
         name: name.to_string(),
         key: dec(u.username())?,
         secret: dec(u.password().unwrap_or_default())?,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build()?,
+        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).no_proxy().redirect(reqwest::redirect::Policy::none()).build()?,
     })
 }
 
