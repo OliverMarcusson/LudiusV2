@@ -83,10 +83,10 @@ fix a profile before the warp rather than lose its items.
 
 ```bash
 cd /root/src/LudiusV2.new/controller && set -a && . ../.env && set +a
-for u in aberg lnord dkoster pvanloon nokafor lsmit eyilmaz sdekker; do .venv/bin/python -m ludius.cli --vm ludius-$u canary outlook word excel; done
+for u in aberg lnord dkoster pvanloon nokafor lsmit eyilmaz sdekker; do .venv/bin/python -m ludius.cli --vm ludius-$u canary --persona data/personas/$u.yaml outlook word excel; done
 ```
 
-Every app must print `ok`; rebuild the profile or fix the app on a VM that prints `drift`.
+Without `--persona` the canary signs in as aberg and every other VM stays locked. Every app must print `ok`; rebuild the profile or fix the app on a VM that prints `drift`.
 
 **Evaluation time left.** `range-exchange.yml` fails when dc01 or ex01 has under `winsrv_eval_min_days` (14) days
 of evaluation left. Fix with `slmgr /rearm` and a reboot; at 0 rearms left the VM has to be rebuilt.
