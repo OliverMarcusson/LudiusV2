@@ -114,6 +114,31 @@ class FailsOnShot(ToggleAgent):
         raise TimeoutError("deadline exceeded")
 
 
+class HungAgent(ToggleAgent):
+    def __init__(self, hung: int) -> None:
+        super().__init__(grows=True)
+        self.hung = hung
+
+    def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
+        res = super().observe(wait_settle, quiet_ms, timeout_ms)
+        if self.hung > 0:
+            self.hung -= 1
+            res.snapshot.windows[0].unresponsive = True
+            del res.snapshot.elements[:]
+        return res
+
+
+def test_a_hung_window_is_waited_out_without_steps_or_decisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loop, "HUNG_WAIT_S", 0)
+    agent = HungAgent(hung=3)
+    events = _run(tmp_path, agent)
+    waits = [e for e in events if e.get("event") == "wait"]
+    assert [w["reason"] for w in waits] == ["'File Explorer' is not responding"] * 3
+    assert sum(e.get("event") == "step" for e in events) == 12 == agent.clicks
+
+
 def test_screenshot_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def reasons(name: str, agent: ToggleAgent) -> list[str | None]:
         decider = SeesImages()

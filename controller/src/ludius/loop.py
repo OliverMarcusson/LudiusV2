@@ -64,6 +64,7 @@ NEAR_TIE = 0.05
 BLOCKED_WAIT_S = 1.5
 SLOW_KEY_WAIT_S = 4.0
 WAIT_CAP_S = 90.0
+HUNG_WAIT_S = 5.0
 LAUNCH_REASON = "the launch query goes into the Start search box only"
 REPLACE_REASON = "replacing text needs a target field that holds the keyboard focus"
 NARRATIVE = requests.ROOT / "world" / "narrative.yaml"
@@ -555,6 +556,16 @@ class Runner:
                 self.log.write(event="blocked", host_ms=_now(), task=task.template.task, subgoal=name,
                                reason=OVERWRITE_REASON)  # fmt: skip
                 return "failed", step - 1, OVERWRITE_REASON
+            fg = next((w for w in snap.windows if w.kind == obs.Window.FOREGROUND), None)
+            if fg is not None and fg.unresponsive:
+                # A hung app buffers keys and replays them later; wait for it like a person would.
+                # The task's time budget bounds the wait, not WAIT_CAP_S: a busy Outlook can take minutes.
+                self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
+                               reason=f"'{fg.title}' is not responding")  # fmt: skip
+                time.sleep(HUNG_WAIT_S)
+                snap = self.observe(timeout_ms=10000)
+                step -= 1
+                continue
             blocked = preconditions(sg, snap, task)
             popup = self._popup_over(sg, snap, task) if blocked else None
             if popup is None:
