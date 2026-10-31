@@ -228,12 +228,20 @@ pub fn survival(after: &[Row], manifest: &[Value], before: Option<&[Row]>) -> Re
         let crit = e["match"].as_object().cloned().unwrap_or_default();
         let mut bad: Vec<&String> = crit.keys().filter(|k| !MATCH_FIELDS.contains(&k.as_str())).collect();
         bad.sort();
-        if crit.is_empty() || !bad.is_empty() {
-            let why = if bad.is_empty() { "no match criteria".to_string() } else { format!("unknown match fields {}", crate::metrics::py_list(bad)) };
+        let mut odd: Vec<&String> = crit.iter().filter(|(_, v)| !v.is_string()).map(|(k, _)| k).collect();
+        odd.sort();
+        if crit.is_empty() || !bad.is_empty() || !odd.is_empty() {
+            let why = if !bad.is_empty() {
+                format!("unknown match fields {}", crate::metrics::py_list(bad))
+            } else if !odd.is_empty() {
+                format!("match fields are not strings {}", crate::metrics::py_list(odd))
+            } else {
+                "no match criteria".to_string()
+            };
             out.push(json!({"id": id, "status": "unknown", "reason": why}));
             continue;
         }
-        let m = crit.iter().map(|(f, r)| Ok((f.clone(), Regex::new(&format!("(?i){}", r.as_str().unwrap_or("")))?))).collect::<Result<Vec<_>>>()?;
+        let m = crit.iter().map(|(f, r)| Ok((f.clone(), Regex::new(&format!("(?i){}", r.as_str().unwrap_or_default()))?))).collect::<Result<Vec<_>>>()?;
         let now = after.iter().filter(|r| matches(r, &m)).count();
         let (status, reason) = match before {
             None => (if now > 0 { "present" } else { "missing" }, String::new()),
@@ -336,10 +344,11 @@ mod tests {
             {"id": "dropper", "match": {"display_name": "dropper\\.ps1"}},
             {"id": "vague"},
             {"id": "typo", "match": {"path": "x"}},
+            {"id": "null", "match": {"message": null}},
         ]).to_string());
         let status = |s: &Value| s["artifacts"].as_array().unwrap().iter().map(|a| (a["id"].as_str().unwrap().to_string(), a["status"].as_str().unwrap().to_string())).collect::<BTreeMap<_, _>>();
         let s = &report(&after, &["aberg".into()], &[], Some(&manifest), Some(&before)).unwrap()["survival"];
-        let want = [("run-key", "lost"), ("prefetch", "survived"), ("dropper", "unknown"), ("vague", "unknown"), ("typo", "unknown")];
+        let want = [("run-key", "lost"), ("prefetch", "survived"), ("dropper", "unknown"), ("vague", "unknown"), ("typo", "unknown"), ("null", "unknown")];
         assert_eq!(status(s), want.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect());
         assert_eq!(s["pass"], false);
         let alone = &report(&after, &["aberg".into()], &[], Some(&manifest), None).unwrap()["survival"];
