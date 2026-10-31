@@ -798,9 +798,10 @@ def check_done(
         return False
     if done.pixels and on_pixels:
         rows = [e for e in snap.elements if e.window < len(snap.windows) and pixels_window(snap.windows[e.window])]
-        return all(visible(p, rows, task) for p in done.pixels.present) and not any(
+        seen = all(visible(p, rows, task) for p in done.pixels.present) and not any(
             visible(p, rows, task) for p in done.pixels.absent
         )
+        return seen and (_outside_ok(done, task) if outside else True)
     if (done.window or done.foreground) and any(pixels_window(w) for w in snap.windows):
         return False
     if done.window:

@@ -78,7 +78,7 @@ def test_completion_is_visible_text_and_fails_closed() -> None:
     t = task(file_name="meeting notes", body="x")
 
     def done(sg: str, rows: list[str]) -> bool | None:
-        return check_done(t.subgoal(sg).done, screen(rows), t, typed_ok=True)
+        return check_done(t.subgoal(sg).done, screen(rows), t, typed_ok=True, outside=False)
 
     assert done("save_shortcut", SAVE_AS) is True
     assert done("save_shortcut", NOTEPAD_EMPTY) is False
@@ -116,9 +116,10 @@ def test_schema_enforces_title_anchors_and_present() -> None:
 def test_confirm_save_matches_the_real_saved_title_reading() -> None:
     real = ["I pixels-title-20261026-223919 - Notepad", "File   Edit  Format   View  Help", "Type here to search"]
     done = task(file_name="pixels-title-20261026-223919", body="x").subgoal("confirm_save").done
-    assert check_done(done, screen(real), task(file_name="pixels-title-20261026-223919", body="x"), True) is True
+    assert check_done(done, screen(real), task(file_name="pixels-title-20261026-223919", body="x"), True,
+                      outside=False) is True
     other = task(file_name="pixels-title-20261026-223919-other", body="x")
-    assert check_done(other.subgoal("confirm_save").done, screen(real), other, True) is False
+    assert check_done(other.subgoal("confirm_save").done, screen(real), other, True, outside=False) is False
 
 
 def test_unsaved_prompt_stays_in_scope_when_the_detector_merges_its_title_into_the_question() -> None:
