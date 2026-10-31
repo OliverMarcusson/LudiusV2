@@ -1,13 +1,18 @@
-//! Manager requests, as far as a task run needs them: is a delivery's file proven, does a task fulfil
-//! its request. ponytail: writing, mapping and sending requests is planner work (step 4b).
+//! Manager requests: at run time, is a delivery's file proven and does a task fulfil its request;
+//! the planner half is in plan.rs (manager) and map.rs (report).
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use indexmap::IndexMap;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::tasks::{Task, Template, write_paths};
 use crate::{guestfile, mail};
+
+mod map;
+mod plan;
+pub use map::*;
+pub use plan::*;
 
 pub const WRITTEN: &str = "written and checked";
 
@@ -15,7 +20,7 @@ pub fn root() -> PathBuf {
     crate::paths::runs()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Request {
     pub to: String,
     pub task: String,
@@ -33,42 +38,44 @@ pub struct Request {
     pub status: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Day {
-    #[allow(dead_code)]
-    manager: String,
-    #[allow(dead_code)]
-    date: String,
+pub struct Day {
+    pub manager: String,
+    pub date: String,
     #[serde(default)]
-    requests: Vec<Request>,
+    pub requests: Vec<Request>,
     #[serde(default)]
-    #[allow(dead_code)]
-    rejects: Vec<String>,
+    pub rejects: Vec<String>,
 }
 
 fn dir(root: &Path) -> PathBuf {
     root.join("world").join("requests")
 }
 
-pub fn find(msgid: &str, root: &Path) -> Result<Option<Request>> {
+/// Every manager day (world/requests/2*.yaml), oldest first; an unreadable one is an error, never skipped.
+pub fn days(root: &Path) -> Result<Vec<Day>> {
     let mut paths: Vec<PathBuf> = match std::fs::read_dir(dir(root)) {
         Ok(rd) => rd.filter_map(|e| e.ok().map(|e| e.path())).collect(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
         Err(e) => return Err(e.into()),
     };
     paths.retain(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('2') && n.ends_with(".yaml")));
     paths.sort();
-    for p in paths {
-        let d: Day = serde_yaml::from_str(&std::fs::read_to_string(&p)?).with_context(|| p.display().to_string())?;
-        if let Some(r) = d.requests.into_iter().find(|r| r.msgid == msgid) {
-            for s in r.status.iter() {
+    paths
+        .iter()
+        .map(|p| {
+            let d: Day = serde_yaml::from_str(&std::fs::read_to_string(p)?).with_context(|| p.display().to_string())?;
+            for s in d.requests.iter().filter_map(|r| r.status.as_ref()) {
                 anyhow::ensure!(["planned", "sent", "failed", "rejected"].contains(&s.as_str()), "{}: status {s:?}", p.display());
             }
-            return Ok(Some(r));
-        }
-    }
-    Ok(None)
+            Ok(d)
+        })
+        .collect()
+}
+
+pub fn find(msgid: &str, root: &Path) -> Result<Option<Request>> {
+    Ok(days(root)?.into_iter().flat_map(|d| d.requests).find(|r| r.msgid == msgid))
 }
 
 fn seen_path(root: &Path, user: &str) -> PathBuf {
