@@ -81,8 +81,14 @@ impl Proc for Os {
         self.id()
     }
     fn poll(&mut self) -> Option<i32> {
-        // an unreadable status counts as exited, so the worker is restarted rather than trusted
-        self.try_wait().map_or(Some(-1), |s| s.map(|s| s.code().unwrap_or(-1)))
+        match self.try_wait() {
+            Ok(s) => s.map(|s| s.code().unwrap_or(-1)),
+            // an unreadable status counts as exited: kill it so the restart never runs beside it
+            Err(_) => {
+                Proc::kill(self);
+                Some(-1)
+            }
+        }
     }
     fn kill(&mut self) {
         let _ = Os::kill(self);
@@ -240,7 +246,16 @@ pub fn summary(world: &World, users: &[String], day: NaiveDate, state_dir: &Path
     ];
     for u in users {
         let (mut current, mut done, mut abandoned) = ("-".to_string(), 0, 0);
-        let text = std::fs::read_to_string(world.day_log(u, &day.to_string())).unwrap_or_default();
+        // missing is no day yet; unreadable is unknown, never an empty day (a torn last line is read lossily)
+        let text = match std::fs::read(world.day_log(u, &day.to_string())) {
+            Ok(b) => Some(String::from_utf8_lossy(&b).into_owned()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(String::new()),
+            Err(_) => None,
+        };
+        let Some(text) = text else {
+            lines.push(format!("{u:10} {:30} log unreadable", "-"));
+            continue;
+        };
         for e in text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()) {
             match e["event"].as_str() {
                 Some("item_start") => current = format!("{} {}", crate::timeline::text(e.get("at")), crate::timeline::text(e.get("template"))),
@@ -291,7 +306,8 @@ mod tests {
     #[test]
     fn a_dying_worker_is_restarted_with_backoff_and_the_others_are_untouched() {
         let dir = std::env::temp_dir().join(format!("ludius-rangerun-{}", std::process::id()));
-        let exits: Rc<RefCell<Vec<(String, Rc<RefCell<Option<i32>>>)>>> = Rc::default();
+        type Exit = Rc<RefCell<Option<i32>>>;
+        let exits: Rc<RefCell<Vec<(String, Exit)>>> = Rc::default();
         let seen = exits.clone();
         let spawn: Spawn = Box::new(move |s, _| {
             let code = Rc::new(RefCell::new(None));
