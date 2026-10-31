@@ -52,7 +52,15 @@ def test_capped_counter_fails_closed_when_lost_or_invalid(
 ) -> None:
     monkeypatch.setattr(calls, "PATH", tmp_path / "calls.json")
     monkeypatch.setenv("LUDIUS_CAP_LLM", "21")
+    (tmp_path / "calls").mkdir()  # per-persona counters exist: this run has history
     if stored is not None:
         calls.PATH.write_text(stored, encoding="utf-8")
     with pytest.raises(calls.CapReached):
         calls.count("llm")
+
+
+def test_capped_counter_starts_at_zero_on_fresh_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(calls, "PATH", tmp_path / "calls.json")
+    monkeypatch.setenv("LUDIUS_CAP_LLM", "21")
+    calls.count("llm")
+    assert _counts(calls.PATH) == (0, 1)

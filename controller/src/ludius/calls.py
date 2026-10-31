@@ -66,6 +66,10 @@ def count(kind: Kind) -> None:
             _lock(fd)
             try:
                 old: dict[str, Any] = json.loads(PATH.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                if cap is not None and (PATH.parent / "calls").exists():
+                    raise  # lost mid-run: fail closed; only a fresh runs/ (no per-persona counters yet) starts at 0
+                old = {"decision": 0, "llm": 0}
             except (OSError, ValueError):
                 if cap is not None:
                     raise

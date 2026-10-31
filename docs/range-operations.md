@@ -67,7 +67,8 @@ cp runs/openrouter-calls.json $A/; echo '{"decision": 0, "llm": 0}' > runs/openr
 ls runs runs/world   # world: narrative.yaml and locks only
 ```
 
-The call caps fail closed: if `runs/openrouter-calls.json` is missing, every persona's planning fails and the warp
+A fresh `runs/` (no `runs/calls/` yet) starts the counter at 0. The call caps still fail closed: if
+`runs/openrouter-calls.json` goes missing once per-persona counters exist, every persona's planning fails and the warp
 aborts. The `LUDIUS_CAP_DECISION`/`LUDIUS_CAP_LLM` ceilings in `.env` are totals against this file, so reset it
 (or raise the caps) before each run.
 
