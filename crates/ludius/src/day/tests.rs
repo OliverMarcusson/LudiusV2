@@ -4,29 +4,36 @@ use std::rc::Rc;
 
 use super::*;
 
-type Calls = Rc<RefCell<Vec<String>>>;
+pub(crate) type Calls = Rc<RefCell<Vec<String>>>;
 
+/// Records what the day asks of the desktop; a task named in `fail` (file_name or template) fails.
 #[derive(Default)]
-struct Fake {
-    calls: Calls,
-    locked_out: bool,
-    dirty: bool,
-    time: Option<Rc<Cell<NaiveDateTime>>>,
+pub(crate) struct Fake {
+    pub calls: Calls,
+    pub locked_out: bool,
+    pub dirty: bool,
+    pub time: Option<Rc<Cell<NaiveDateTime>>>,
+    pub fail: BTreeSet<String>,
 }
 
 impl Desk for Fake {
-    fn run(&mut self, task: &mut Task, between: Option<Between>, hygiene: bool, _: &BTreeSet<String>) -> Result<Outcome> {
-        if hygiene && !self.normalize()? && self.escalate().is_err() {
-            return Ok(Outcome { status: "abandoned".into(), steps: 0, reason: "escalation denied".into(), subgoals_done: vec![] });
+    fn run(&mut self, task: &mut Task, between: Option<Between>, hygiene: bool, keep: &BTreeSet<String>) -> Result<Outcome> {
+        if hygiene {
+            self.calls.borrow_mut().push(if keep.is_empty() { "normalize".into() } else { format!("normalize keep {keep:?}") });
+            if self.dirty && self.escalate().is_err() {
+                return Ok(Outcome { status: "abandoned".into(), steps: 0, reason: "escalation denied".into(), subgoals_done: vec![] });
+            }
         }
         if let Some(t) = &self.time {
             self.calls.borrow_mut().push(t.get().format("%H:%M").to_string());
         }
-        self.calls.borrow_mut().push(format!("run {}", task.inst.params["file_name"]));
+        let name = task.inst.params.get("file_name").cloned().unwrap_or_else(|| task.template.task.clone());
+        self.calls.borrow_mut().push(format!("run {name}"));
         if let Some(b) = between {
             b(self)?;
         }
-        Ok(Outcome { status: "done".into(), steps: 1, reason: String::new(), subgoals_done: vec![] })
+        let status = if self.fail.contains(&name) { "failed" } else { "done" };
+        Ok(Outcome { status: status.into(), steps: 1, reason: String::new(), subgoals_done: vec![] })
     }
     fn normalize(&mut self) -> Result<bool> {
         self.calls.borrow_mut().push("normalize".into());
@@ -45,7 +52,7 @@ impl Desk for Fake {
     }
 }
 
-fn note(at: &str, interrupt: bool) -> PlanItem {
+pub(crate) fn note(at: &str, interrupt: bool) -> PlanItem {
     let params = [("file_name".to_string(), format!("note {}", at.replace(':', ""))), ("body".to_string(), "text".to_string())];
     PlanItem { template: "notepad_write_note".into(), at: at.into(), interrupt, params: params.into_iter().collect(), ..Default::default() }
 }
@@ -58,9 +65,12 @@ fn plan(items: Vec<PlanItem>) -> DayPlan {
     DayPlan { persona: "aberg".into(), date: "2026-11-02".into(), items }
 }
 
-fn log(name: &str) -> GroundTruth {
-    // SAFETY: tests only read LUDIUS_DATA, always set to the same value.
-    unsafe { std::env::set_var("LUDIUS_DATA", Path::new(env!("CARGO_MANIFEST_DIR")).join("../../controller/data")) };
+pub(crate) fn log(name: &str) -> GroundTruth {
+    // SAFETY: tests only read LUDIUS_DATA and LUDIUS_APPS (the apps as in controller/tests/conftest.py), always set to the same values.
+    unsafe {
+        std::env::set_var("LUDIUS_DATA", Path::new(env!("CARGO_MANIFEST_DIR")).join("../../controller/data"));
+        std::env::set_var("LUDIUS_APPS", "edge,excel,explorer,notepad,outlook,paint,powerpoint,powershell,wordpad");
+    }
     let path = std::env::temp_dir().join(format!("ludius-day-{}-{name}.jsonl", std::process::id()));
     let _ = std::fs::remove_file(&path);
     GroundTruth::open(&path).unwrap()
@@ -79,7 +89,7 @@ fn time_jump<'r>(log: &'r GroundTruth, calls: &Calls, clock_fails: bool) -> DayR
     day
 }
 
-fn d() -> NaiveDate {
+pub(crate) fn d() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 11, 2).unwrap()
 }
 

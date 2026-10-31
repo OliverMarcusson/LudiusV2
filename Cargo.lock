@@ -1123,6 +1123,7 @@ dependencies = [
  "fancy-regex",
  "fs2",
  "indexmap",
+ "ludius-chat",
  "ludius-intranet",
  "ludius-mail",
  "ludius-proto",
@@ -1137,6 +1138,14 @@ dependencies = [
  "tokio",
  "tonic",
  "zip",
+]
+
+[[package]]
+name = "ludius-chat"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde_json",
 ]
 
 [[package]]

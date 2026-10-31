@@ -1,6 +1,6 @@
 pub mod assist;
 pub mod calls;
-pub mod chat;
+pub use ludius_chat as chat;
 pub mod day;
 pub mod decisions;
 pub mod guestfile;
@@ -12,6 +12,7 @@ pub mod options;
 pub mod paths;
 pub mod planner;
 pub mod policy;
+pub mod react;
 pub mod reply;
 pub mod requests;
 pub mod runner;

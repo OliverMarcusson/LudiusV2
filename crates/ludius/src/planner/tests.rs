@@ -2,8 +2,11 @@ use super::*;
 use std::path::Path;
 
 fn setup() -> std::path::PathBuf {
-    // SAFETY: tests only read LUDIUS_DATA, always set to the same value.
-    unsafe { std::env::set_var("LUDIUS_DATA", Path::new(env!("CARGO_MANIFEST_DIR")).join("../../controller/data")) };
+    // SAFETY: tests only read LUDIUS_DATA and LUDIUS_APPS (the apps as in controller/tests/conftest.py), always set to the same values.
+    unsafe {
+        std::env::set_var("LUDIUS_DATA", Path::new(env!("CARGO_MANIFEST_DIR")).join("../../controller/data"));
+        std::env::set_var("LUDIUS_APPS", "edge,excel,explorer,notepad,outlook,paint,powerpoint,powershell,wordpad");
+    }
     let dir = std::env::temp_dir().join(format!("ludius-planner-{}-{:?}", std::process::id(), std::thread::current().id()));
     let _ = std::fs::remove_dir_all(&dir);
     dir

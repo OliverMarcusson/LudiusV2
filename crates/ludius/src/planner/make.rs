@@ -30,7 +30,7 @@ The day's tasks, times and recipients are fixed; you give each one a concrete re
 company story, the persona's role and what really happened before, and write all content (file names, note \
 text, search queries, messages) in the persona's own style. Use plain ASCII only. Never mention the range, \
 training, Ludius, security tools or anything outside the fiction.";
-const GOSSIP: &str = "harmless office gossip about colleagues or the company (who is back from holiday, the new coffee machine, a \
+pub(crate) const GOSSIP: &str = "harmless office gossip about colleagues or the company (who is back from holiday, the new coffee machine, a \
 project running late, a rumour about the office move), never about anyone's misconduct, health, pay, relationships or job";
 const DM_PURPOSES: [&str; 2] = [
     "one line of small talk",
