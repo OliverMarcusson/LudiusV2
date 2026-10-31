@@ -233,6 +233,16 @@ def generate_day(
                     rejects.append(f"read before request {it.template} at {it.at}: {why}")
                 else:
                     plan.items = sorted([*others, read], key=lambda x: x.at)
+            if back := requests.deliver(it, boss, inbox_mails, role, plan.items):
+                made = {f"documents\\{back.params['file_name']}".casefold(): date.isoformat()}
+                why = dict(planner.validate(
+                    [*plan.items, back], role, [], src.policy, colleagues | {boss.user}, None, set(followups),
+                    existing, threads, people, persona.user, date.isoformat(), set(inbox), teams, {**owned, **made},
+                )).get(len(plan.items))  # fmt: skip
+                if why:
+                    rejects.append(f"mail back request {it.template} at {it.at}: {why}")
+                else:
+                    plan.items = sorted([*plan.items, back], key=lambda x: x.at)
     rejects += notes
     return Generated(plan, rejects, auto)
 

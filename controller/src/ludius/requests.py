@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import math
 import re
 import uuid
 from pathlib import Path
@@ -267,7 +268,8 @@ def _plan(
         "task (one name above), subject (one line, under 70 characters, new), body (the mail: 3-8 short lines with "
         "greeting and sign-off, 40-600 characters, saying exactly what to do and by when), include (1-3 short "
         "words or phrases the result must contain, each written verbatim in the body); for a task that saves a "
-        'file: file_name (the exact name without extension, written in the body in double quotes, "like this"); '
+        'file: file_name (the exact name without extension, written in the body in double quotes, "like this"), '
+        "and the body asks for the file mailed back to you as an attachment, not only saved; "
         "for a mail or meeting to someone else: colleague (their account; their first name in the body). A reply "
         "task asks the report to answer this mail itself; give it no colleague and no file_name."
     )
@@ -390,6 +392,36 @@ def read_first(
         return None
     return PlanItem(template=kind, at=f"{t // 60:02d}:{t % 60:02d}", params={"sender": m.sender, "subject": m.subject},
                     context=f"Reads the manager's mail {m.subject!r} before doing what it asks.")  # fmt: skip
+
+
+def deliver(
+    it: PlanItem, boss: Person, inbox: list[mail.Message] | None, templates: dict[str, Template], items: list[PlanItem]
+) -> PlanItem | None:
+    """Mail a requested file back to the manager once its write is done: saving it alone never reaches them."""
+    t = templates.get(it.template)
+    kind = next((k for k, x in templates.items() if x.capability == "mail.send" and x.attaches and not x.writes), None)
+    m = next((m for m in inbox or [] if m.msgid == it.request), None)
+    if t is None or t.capability != "file.write" or not t.writes or kind is None or m is None:
+        return None
+    try:
+        folder, _, name = t.writes[0].format_map({**t.defaults, **it.params, **it.content}).rpartition("\\")
+    except KeyError:
+        return None
+    if folder != "Documents":
+        return None
+    taken = {x.at for x in items}
+    at = int(it.at[:2]) * 60 + int(it.at[3:]) + math.ceil(t.budget_minutes) + 1
+    while f"{at // 60:02d}:{at % 60:02d}" in taken:
+        at += 1
+    if at >= 24 * 60:
+        return None
+    first = boss.name.split()[0]
+    return PlanItem(
+        template=kind, at=f"{at // 60:02d}:{at % 60:02d}",
+        params={"to": f"{boss.user}@{mail.DOMAIN}", "to_name": boss.name, "subject": f"RE: {m.subject}",
+                "body": f"hi {first}\nhere is {name} as you asked\n", "file_name": name},
+        context=f"Sends {name} back to the manager, who asked for it in {m.subject!r}.",
+    )  # fmt: skip
 
 
 def mismatch(ask: Request, template: Template, values: dict[str, str]) -> str | None:

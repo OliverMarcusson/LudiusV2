@@ -9,7 +9,7 @@ import pytest
 
 from ludius import cli, loop, mail, reply, requests
 from ludius.loop import GroundTruth, Runner
-from ludius.planner import PlanItem, validate
+from ludius.planner import Person, PlanItem, validate
 from ludius.policy import Policy
 from ludius.tasks import Persona, Task, TaskInstance, Template, check_done
 from ludius.v1 import observation_pb2 as obs
@@ -285,3 +285,21 @@ def test_launch_query_goes_into_the_start_search_only(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="mail.read"):
         bad = {**raw, "subgoals": {**raw["subgoals"], "close_outlook": {"goal": "x", "copy_text": True}}}
         Template.model_validate(bad)
+
+
+def test_a_requested_file_is_mailed_back_to_the_manager() -> None:
+    ts = cli.load_templates()
+    boss = Person(name="Marcus Vellinga", role="lead", department="ops", user="mvellinga")
+    req = PlanItem(
+        template="word_short_document", at="10:31", params={"file_name": "feb volumes"}, request="<7@ludius.internal>"
+    )
+    back = requests.deliver(req, boss, [msg(7)], ts, [req])
+    assert back is not None and back.template == "outlook_send_attachment"
+    assert back.at > "10:31" and back.params["file_name"] == "feb volumes.docx"
+    assert back.params["to"] == "mvellinga@ludius.internal" and back.params["subject"] == f"RE: {SUBJECT}"
+    owned = {"documents\\feb volumes.docx": "2026-11-02"}
+    people = {"mvellinga": boss.name}
+    assert not validate([back], ts, [], Policy(), {"mvellinga"}, people=people, owned=owned, day="2026-11-02")
+    assert requests.deliver(req, boss, [msg(8)], ts, [req]) is None
+    assert requests.deliver(PlanItem(template="paint_quick_sketch", at="10:31", params={"file_name": "x"},
+                                     request="<7@ludius.internal>"), boss, [msg(7)], ts, []) is None  # fmt: skip
