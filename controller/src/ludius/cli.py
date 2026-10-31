@@ -804,9 +804,10 @@ def cmd_canary(args: argparse.Namespace) -> int:
     log_path = RUNS / "canary" / f"{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
     log = GroundTruth(log_path)
     try:
-        runner = Runner(agent, decider, load_persona(args.persona), log, clock="compressed", seed=0,
+        persona = load_persona(args.persona)
+        runner = Runner(agent, decider, persona, log, clock="compressed", seed=0,
                         assist=make_assist(), policy=make_policy())  # fmt: skip
-        states = canary.run(load_templates(), DATA / "admission.yaml", runner, make_session(agent, log),
+        states = canary.run(load_templates(), DATA / "admission.yaml", runner, make_session(agent, log, persona.user),
                             RUNS / "health.json", set(args.app) or None)  # fmt: skip
     finally:
         log.close()
@@ -1007,7 +1008,7 @@ def make_session(agent: HostAgent, log: GroundTruth, user: str) -> Session:
 def cmd_session(args: argparse.Namespace) -> int:
     agent = agent_from(args)
     log = GroundTruth(RUNS / f"{time.strftime('%Y%m%d-%H%M%S')}-session.jsonl")
-    s = make_session(agent, log)
+    s = make_session(agent, log, os.environ.get("LUDIUS_PERSONA", ""))
     if args.op == "lock":
         agent.chord(keys.chord("Win+L"))
         time.sleep(3)
