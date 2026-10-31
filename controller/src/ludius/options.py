@@ -160,6 +160,15 @@ def launch_target(e: obs.Element | None, snap: obs.Snapshot) -> bool:
     return w.process_name.lower() in LAUNCH_PROCESSES or (run and e.name == "Open:")
 
 
+_OFF_RANGE_RESULT = re.compile(r"\bstore\b|\bsearch the web\b|\bweb results?\b", re.I)
+
+
+def off_range_result(e: obs.Element, snap: obs.Snapshot) -> bool:
+    """A Start search result that leads to the Store or the web: off the range, never the app asked for."""
+    w = snap.windows[e.window] if 0 <= e.window < len(snap.windows) else None
+    return w is not None and w.process_name.lower() in LAUNCH_PROCESSES and bool(_OFF_RANGE_RESULT.search(e.name))
+
+
 def field_of_another_step(e: obs.Element | None, task: Task, sg: Subgoal) -> bool:
     if e is None or (sg.field and re.search(task.fmt_re(sg.field), e.name)):
         return False
@@ -188,7 +197,7 @@ def build_options(v: StepView, task: Task, sg: Subgoal, policy: Policy) -> list[
     content = task.text(sg)
     literal = "" if sg.text else sg.search
     for e in v.allowed:
-        if any(element_matches(e, c, task) for c in sg.avoid):
+        if any(element_matches(e, c, task) for c in sg.avoid) or off_range_result(e, v.snapshot):
             continue
         if content is None and not sg.copy_text and e.role == "edit":
             continue

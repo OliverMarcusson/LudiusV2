@@ -112,6 +112,36 @@ def test_a_name_is_never_typed_into_the_field_of_another_step() -> None:
         assert field_of_another_step(e, task, task.subgoal("open_chat")) is False
 
 
+def test_start_search_offers_no_store_or_web_result() -> None:
+    from ludius.options import build_options, view
+    from ludius.policy import Policy
+    from ludius.v1 import observation_pb2 as obs
+
+    t = cli.load_templates()["outlook_read_mail"]
+    params = {"sender": "x@ludius.internal", "sender_name": "X", "subject": "Hi"}
+    task = Task(t, TaskInstance(template=t.task, params=params, variant=0), random.Random(0))
+    fg = obs.Window(kind=obs.Window.FOREGROUND, process_name="SearchApp.exe", title="Search")
+    names = ["Outlook (classic), App", "Microsoft Store, App", "outlook - See web results"]
+    els = [
+        obs.Element(
+            id=i + 1,
+            key=f"k{i}",
+            role="list item",
+            name=n,
+            enabled=True,
+            bounds=obs.Rect(x=10, y=10 + 20 * i, width=50, height=9),
+            window=0,
+        )
+        for i, n in enumerate(names)
+    ]
+    snap = obs.Snapshot(windows=[fg], elements=els)
+    sg = task.subgoal("open_outlook")
+    clicked = {
+        o.element.name for o in build_options(view(snap, task, sg, Policy()), task, sg, Policy()) if o.kind == "click"
+    }
+    assert clicked == {"Outlook (classic), App"}
+
+
 def test_a_file_shown_without_its_extension_can_be_selected_and_uploaded() -> None:
     from ludius.tasks import check_done, preconditions
     from ludius.v1 import observation_pb2 as obs
