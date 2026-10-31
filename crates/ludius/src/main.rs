@@ -18,7 +18,7 @@ use rand::SeedableRng;
 const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--persona P.yaml] [--clock realtime|compressed] [--seed N] [--variant N] [--model M] [--log PATH] [--restore CHECKPOINT]
        ludius plan-worker --temporal HOST:PORT [--model M]
        ludius [--agent ADDR] [--vm VM] worker --temporal HOST:PORT [--persona USER|P.yaml] [--model M]
-       ludius [--agent ADDR] range up|status [USER...] [--temporal HOST:PORT] [--model M] [--timezone TZ]
+       ludius [--agent ADDR] range up|status|interactions [USER...] [--temporal HOST:PORT] [--model M] [--timezone TZ]
        ludius timeline LOG.jsonl... [--out CSV]";
 
 /// The checkout's .env fills variables the environment doesn't set.
@@ -98,6 +98,21 @@ fn main() -> Result<()> {
                 let temporal = temporal.unwrap_or_else(|| "127.0.0.1:7233".into());
                 let specs = rangerun::specs(&users, &agent_addr, &temporal, &model, &env);
                 rangerun::serve(rangerun::Supervisor::new(specs.into_iter().map(rangerun::Child::new).collect(), &state, Box::new(rangerun::spawn)))?;
+            }
+            Some("interactions") => {
+                let days = runs().join("days");
+                let mut t = ludius::interactions::Tracker::new(&days, known, &runs().join("monitor-interactions.jsonl"), ludius::interactions::kinds()?);
+                tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
+                    loop {
+                        for i in t.step()? {
+                            println!("{}", serde_json::json!({"interaction": i}));
+                        }
+                        tokio::select! {
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                            _ = tokio::signal::ctrl_c() => return anyhow::Ok(()),
+                        }
+                    }
+                })?;
             }
             _ => bail!(USAGE),
         }

@@ -10,6 +10,7 @@ pub mod durable;
 pub mod growth;
 pub mod guestfile;
 pub mod hostagent;
+pub mod interactions;
 pub mod keys;
 pub mod llm;
 pub use ludius_mail as mail;
