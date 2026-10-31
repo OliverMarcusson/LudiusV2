@@ -1,4 +1,4 @@
-# BEGIN ludius-monitor
+# BEGIN ludius-console
 monitor.ludius.se {
 	import claustra_forward http://127.0.0.1:18452
 }
@@ -9,4 +9,4 @@ http://:18452 {
 		header_up Host __BOX_DNS_NAME__:__TS_PORT__
 	}
 }
-# END ludius-monitor
+# END ludius-console

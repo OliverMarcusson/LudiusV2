@@ -63,7 +63,7 @@ pub fn parse_origins(value: &str) -> Result<HashSet<String>, String> {
         .split([';', ','])
         .map(str::trim)
         .filter(|e| !e.is_empty())
-        .map(|e| if ORIGIN.is_match(e) { Ok(e.to_lowercase()) } else { Err(format!("MONITOR_ALLOWED_ORIGINS: {e} is not an origin like https://monitor.example")) })
+        .map(|e| if ORIGIN.is_match(e) { Ok(e.to_lowercase()) } else { Err(format!("CONSOLE_ALLOWED_ORIGINS: {e} is not an origin like https://monitor.example")) })
         .collect()
 }
 
@@ -289,13 +289,13 @@ fn config() -> Result<Config, String> {
     let runs = PathBuf::from(env("LUDIUS_RUNS", "/var/lib/ludius/runs"));
     let data = PathBuf::from(env("LUDIUS_DATA", "/etc/ludius/data"));
     Ok(Config {
-        portraits: PathBuf::from(env("MONITOR_PORTRAITS", &runs.join("portraits").to_string_lossy())),
+        portraits: PathBuf::from(env("CONSOLE_PORTRAITS", &runs.join("portraits").to_string_lossy())),
         personas: data.join("personas"),
         templates: data.join("templates"),
         runs,
-        include: Regex::new(&format!("(?i){}", env("MONITOR_INCLUDE", "^ludius-"))).map_err(|e| e.to_string())?,
-        allowed_origins: parse_origins(&env("MONITOR_ALLOWED_ORIGINS", ""))?,
-        allowed_hosts: env("MONITOR_ALLOWED_HOSTS", "127.0.0.1;localhost").split([';', ',']).map(|h| h.trim().to_lowercase()).filter(|h| !h.is_empty()).collect(),
+        include: Regex::new(&format!("(?i){}", env("CONSOLE_INCLUDE", "^ludius-"))).map_err(|e| e.to_string())?,
+        allowed_origins: parse_origins(&env("CONSOLE_ALLOWED_ORIGINS", ""))?,
+        allowed_hosts: env("CONSOLE_ALLOWED_HOSTS", "127.0.0.1;localhost").split([';', ',']).map(|h| h.trim().to_lowercase()).filter(|h| !h.is_empty()).collect(),
         openrouter_key: std::env::var("OPENROUTER_API_KEY").ok().filter(|k| !k.trim().is_empty()),
         openrouter_key_file: std::env::var("OPENROUTER_KEY_FILE").ok().filter(|f| !f.is_empty()).map(PathBuf::from),
     })
@@ -312,7 +312,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         image_gate: Default::default(),
         http: reqwest::Client::builder().timeout(Duration::from_secs(180)).build()?,
     };
-    let root = env("MONITOR_ROOT", "/srv/monitor");
+    let root = env("CONSOLE_ROOT", "/srv/console");
     let api = Router::new()
         .route("/vms", get(vms))
         .route("/vms/{name}/stream", get(stream))
@@ -326,7 +326,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .fallback_service(tower_http::services::ServeDir::new(root))
         .layer(middleware::from_fn_with_state(app.clone(), guard))
         .with_state(app);
-    let listen = env("MONITOR_LISTEN", "127.0.0.1:7452");
+    let listen = env("CONSOLE_LISTEN", "127.0.0.1:7452");
     let listener = tokio::net::TcpListener::bind(&listen).await?;
     eprintln!("ludius-console on {listen}");
     axum::serve(listener, router)

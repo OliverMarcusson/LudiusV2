@@ -13,7 +13,7 @@ How to run a multi-day test on the Proxmox range and leave it clean afterwards. 
 | Secrets | `/root/src/LudiusV2.new/.env`. Source it, never print it |
 | Run output | `/root/src/LudiusV2.new/runs` (counter, plans, days, range journals) |
 | Scratch, logs, archives | `/root/warp` (snapshot logs, `warpN.out`, `warpN-runs-<ts>.tgz`) |
-| Services | `ludius-compose` (systemd, runs `podman compose` on `/etc/ludius/compose`: `ludius-postgres-1`, `ludius-temporal-1`, `ludius-host-agent-1` on gRPC 7451, `ludius-monitor-1` on 7452), Caddy on 7453, Podman `ludius-vlmcsd` |
+| Services | `ludius-compose` (systemd, runs `podman compose` on `/etc/ludius/compose`: `ludius-postgres-1`, `ludius-temporal-1`, `ludius-host-agent-1` on gRPC 7451, `ludius-console-1` on 7452), Caddy on 7453, Podman `ludius-vlmcsd` |
 
 VMs (persona accounts come from `infra/ansible/group_vars/all/range-vms.yml`, VM name `ludius-<user>`):
 

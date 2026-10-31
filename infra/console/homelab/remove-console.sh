@@ -4,7 +4,7 @@ set -euo pipefail
 file=${1:-/srv/compose/edge/Caddyfile}
 : "${CADDY:?set CADDY to the command that runs caddy, e.g. 'docker compose exec -T <service> caddy'}"
 : "${CADDY_CONF:=/etc/caddy/Caddyfile}"
-: "${BLOCK:=ludius-monitor}"
+: "${BLOCK:=ludius-console}"
 [[ $BLOCK =~ ^[a-z][a-z0-9-]*$ ]] || { echo "ABORT: bad BLOCK name: $BLOCK" >&2; exit 1; }
 backup=$file.bak-before-$BLOCK-teardown
 begin="# BEGIN $BLOCK"

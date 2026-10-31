@@ -23,8 +23,8 @@ Running a multi-day warp on the live range (sync, snapshot, launch, watch, roll 
       (PERMISSION_DENIED) and nothing in `/var/log/pve/tasks` names it.
 - [ ] `ss -ltnp` shows only the gRPC and monitor ports; `/run/ludius-agent` is created 0700 (screendump scratch).
 - [ ] Monitor at `https://monitor.ludius.se`: Tailscale on the box, `tailscale serve` to 127.0.0.1:7452, homelab Caddy
-      with Claustra login. Follow `infra/monitor/README.md` (bring-up, homelab steps, verification, teardown). Agent
-      environment: `Monitor__AllowedOrigins=https://monitor.ludius.se` and `Monitor__Root`. Check: `infra/monitor/check.sh`
+      with Claustra login. Follow `infra/console/README.md` (bring-up, homelab steps, verification, teardown). Agent
+      environment: `Monitor__AllowedOrigins=https://monitor.ludius.se` and `Monitor__Root`. Check: `infra/console/check.sh`
       passes, and the monitor streams after the Claustra login.
 
 ## 2. VM config (template)

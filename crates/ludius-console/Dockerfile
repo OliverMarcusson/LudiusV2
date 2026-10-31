@@ -15,5 +15,5 @@ RUN cargo build --release --locked -p ludius-console
 
 FROM gcr.io/distroless/cc-debian13
 COPY --from=build /src/target/release/ludius-console /ludius-console
-COPY --from=web /web/dist /srv/monitor
+COPY --from=web /web/dist /srv/console
 ENTRYPOINT ["/ludius-console"]

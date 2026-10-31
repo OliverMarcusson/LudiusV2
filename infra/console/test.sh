@@ -200,26 +200,26 @@ echo "caddy $*" >>"$STUB_DIR/caddy.log"
 [[ $1 != validate || ${CADDY_VALIDATE_RC:-0} -eq 0 ]]
 STUB
 site=$'a.example {\n}\n'
-block=$'# BEGIN ludius-monitor\nmonitor.ludius.se {\n}\n# END ludius-monitor\n'
-remove() { env CADDY="bash $tmp/caddy.sh" "$@" "$here/homelab/remove-monitor.sh" "$tmp/Caddyfile"; }
+block=$'# BEGIN ludius-console\nmonitor.ludius.se {\n}\n# END ludius-console\n'
+remove() { env CADDY="bash $tmp/caddy.sh" "$@" "$here/homelab/remove-console.sh" "$tmp/Caddyfile"; }
 fixture() { rm -f "$tmp"/Caddyfile* "$tmp/caddy.log"; printf '%s' "$1" >"$tmp/Caddyfile"; cp "$tmp/Caddyfile" "$tmp/before"; }
 untouched() { if cmp -s "$tmp/before" "$tmp/Caddyfile" && [[ ! -e $tmp/caddy.log ]]; then :; else echo "FAIL: $1: file changed or caddy ran"; fails=$((fails + 1)); fi; }
 
 fixture "$site$block$site"
 expect "remove: one ordered pair" 0 remove
 cmp -s "$tmp/Caddyfile" <(printf '%s%s' "$site" "$site") || { echo "FAIL: wrong result"; fails=$((fails + 1)); }
-[[ -e $tmp/Caddyfile.bak-before-ludius-monitor-teardown ]] || { echo "FAIL: no backup"; fails=$((fails + 1)); }
+[[ -e $tmp/Caddyfile.bak-before-ludius-console-teardown ]] || { echo "FAIL: no backup"; fails=$((fails + 1)); }
 [[ $(cut -d' ' -f1-2 "$tmp/caddy.log" | tr '\n' ,) == "caddy validate,caddy reload," ]] || { echo "FAIL: validate then reload expected"; fails=$((fails + 1)); }
 
-fixture "$site$(sed -e 's/__BOX_TAILNET_IP__/100.1.2.3/' -e 's/__BOX_DNS_NAME__/box.t.ts.net/' -e 's/__TS_PORT__/8452/g' "$here/homelab/monitor.caddy")"$'\n'
-expect "remove: the shipped monitor.caddy, as appended by the README" 0 remove
+fixture "$site$(sed -e 's/__BOX_TAILNET_IP__/100.1.2.3/' -e 's/__BOX_DNS_NAME__/box.t.ts.net/' -e 's/__TS_PORT__/8452/g' "$here/homelab/console.caddy")"$'\n'
+expect "remove: the shipped console.caddy, as appended by the README" 0 remove
 grep -q ludius "$tmp/Caddyfile" && { echo "FAIL: shipped block still present"; fails=$((fails + 1)); }
 
-fixture "$site"$'# BEGIN ludius-monitor\nmonitor.ludius.se {\n}\n'"$site"
+fixture "$site"$'# BEGIN ludius-console\nmonitor.ludius.se {\n}\n'"$site"
 expect "remove: END missing -> abort, file untouched" 1 remove; untouched "END missing"
 fixture "$site$block$block"
 expect "remove: two pairs -> abort" 1 remove; untouched "two pairs"
-fixture "$site"$'# END ludius-monitor\nx\n# BEGIN ludius-monitor\n'"$site"
+fixture "$site"$'# END ludius-console\nx\n# BEGIN ludius-console\n'"$site"
 expect "remove: END before BEGIN -> abort" 1 remove; untouched "reversed"
 fixture "$site"
 expect "remove: no markers -> abort" 1 remove; untouched "no markers"
@@ -230,7 +230,7 @@ if cmp -s "$tmp/before" "$tmp/Caddyfile" && ! grep -q '^caddy reload' "$tmp/cadd
 fixture "$site$block$(sed -e 's/__BOX_TAILNET_IP__/100.1.2.3/' -e 's/__BOX_DNS_NAME__/box.t.ts.net/' -e 's/__PVE_TS_PORT__/8453/g' "$here/homelab/pve.caddy")"$'\n'"$site"
 expect "remove: BLOCK=ludius-pve takes only the Proxmox block" 0 remove BLOCK=ludius-pve
 grep -q 'pve.ludius.se' "$tmp/Caddyfile" && { echo "FAIL: pve block still present"; fails=$((fails + 1)); }
-grep -q '^# BEGIN ludius-monitor' "$tmp/Caddyfile" || { echo "FAIL: monitor block was removed too"; fails=$((fails + 1)); }
+grep -q '^# BEGIN ludius-console' "$tmp/Caddyfile" || { echo "FAIL: monitor block was removed too"; fails=$((fails + 1)); }
 [[ -e $tmp/Caddyfile.bak-before-ludius-pve-teardown ]] || { echo "FAIL: no ludius-pve backup"; fails=$((fails + 1)); }
 expect "remove: default BLOCK then takes the monitor block" 0 remove
 grep -q ludius "$tmp/Caddyfile" && { echo "FAIL: blocks still present"; fails=$((fails + 1)); }

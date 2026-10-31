@@ -72,29 +72,29 @@ The `tests` block is the proof at save time: Tailscale rejects a policy file whe
 1. **Desktop, before box day:** run the Claustra precheck (below). The tailnet policy is applied (above); create the tagged auth key if the box is not enrolled yet.
 2. **Box** (root, in the repo checkout):
    ```sh
-   TS_AUTHKEY=tskey-auth-... infra/monitor/bring-up.sh
+   TS_AUTHKEY=tskey-auth-... infra/console/bring-up.sh
    ```
    Installs Tailscale from Tailscale's apt repo (and `jq`) unless it is already there (this box has 1.104.4 from pkgs.tailscale.com), joins the tailnet unless it is already enrolled (then `TS_AUTHKEY` is not needed), then **verifies the box's identity: tagged `tag:ludius-box` and nothing else, no user owner, no advertised routes or exit node, no exit node in use.** If the box is already enrolled with anything else it aborts before `serve` and tells you to `tailscale logout` and start over. Only then it runs `tailscale serve --bg --http=8452 http://127.0.0.1:7452`, installs Bun (pinned, sha256-checked against the release's `SHASUMS256.txt`), builds `web/console`, and runs `check.sh`. Before `serve` it also binds pveproxy to loopback and masks spiceproxy and rpcbind (see above), and it publishes a second mapping, `tailscale serve --bg --http=8453 https+insecure://127.0.0.1:8006`. `DRY_RUN=1` prints the mutating commands only (the identity check is read-only and still runs on an enrolled machine).
-3. **Box:** the host agent and the monitor run as compose services (`infra/box/compose-install.sh`; `MONITOR_ALLOWED_ORIGINS`, `LUDIUS_RUNS_DIR`, `LUDIUS_DATA_DIR` and the image tags in `/etc/ludius/compose.env`). Install the Host-fixing Caddy: `infra/box/install.sh`. Then point serve at the Caddy: `AGENT_MONITOR=http://127.0.0.1:7453 infra/monitor/bring-up.sh` (see "Fallback if `tailscale serve` rewrites Host"; this is the box's real path).
+3. **Box:** the host agent and the monitor run as compose services (`infra/box/compose-install.sh`; `CONSOLE_ALLOWED_ORIGINS`, `LUDIUS_RUNS_DIR`, `LUDIUS_DATA_DIR` and the image tags in `/etc/ludius/compose.env`). Install the Host-fixing Caddy: `infra/box/install.sh`. Then point serve at the Caddy: `AGENT_CONSOLE=http://127.0.0.1:7453 infra/console/bring-up.sh` (see "Fallback if `tailscale serve` rewrites Host"; this is the box's real path).
 4. **Homelab** (the orchestrator applies after the owner's OK; nothing here is applied by the worker):
    ```sh
-   scp infra/monitor/homelab/monitor.caddy root@192.168.0.67:/tmp/monitor.caddy
+   scp infra/console/homelab/console.caddy root@192.168.0.67:/tmp/console.caddy
    ssh root@192.168.0.67
    cd /srv/compose/edge
    BOX_IP=<tailnet ip>; BOX_DNS=<box MagicDNS name, e.g. ludius-box.tailec5e26.ts.net>; TS_PORT=8452
-   grep -q 'BEGIN ludius-monitor' Caddyfile && echo "already applied" && exit
-   [ -e Caddyfile.bak-before-ludius-monitor ] || cp -a Caddyfile Caddyfile.bak-before-ludius-monitor
-   sed -e "s/__BOX_TAILNET_IP__/$BOX_IP/" -e "s/__BOX_DNS_NAME__/$BOX_DNS/" -e "s/__TS_PORT__/$TS_PORT/g" /tmp/monitor.caddy >> Caddyfile
+   grep -q 'BEGIN ludius-console' Caddyfile && echo "already applied" && exit
+   [ -e Caddyfile.bak-before-ludius-console ] || cp -a Caddyfile Caddyfile.bak-before-ludius-console
+   sed -e "s/__BOX_TAILNET_IP__/$BOX_IP/" -e "s/__BOX_DNS_NAME__/$BOX_DNS/" -e "s/__TS_PORT__/$TS_PORT/g" /tmp/console.caddy >> Caddyfile
    ss -ltn | grep -w 18452 && echo "port 18452 is taken, pick another in the snippet"
    docker compose exec <caddy-service> caddy validate --config /etc/caddy/Caddyfile   # service and path unconfirmed
    ```
-   If validate fails: `cp -a Caddyfile.bak-before-ludius-monitor Caddyfile`. Otherwise reload:
+   If validate fails: `cp -a Caddyfile.bak-before-ludius-console Caddyfile`. Otherwise reload:
    ```sh
    docker compose exec <caddy-service> caddy reload --config /etc/caddy/Caddyfile
    ```
    The Proxmox site is its own marked block, applied the same way (own backup name, own marker pair):
    ```sh
-   scp infra/monitor/homelab/pve.caddy root@192.168.0.67:/tmp/pve.caddy     # from the desktop, before ssh
+   scp infra/console/homelab/pve.caddy root@192.168.0.67:/tmp/pve.caddy     # from the desktop, before ssh
    cd /srv/compose/edge
    BOX_IP=<tailnet ip>; BOX_DNS=<box MagicDNS name>; PVE_TS_PORT=8453
    grep -q 'BEGIN ludius-pve' Caddyfile && echo "already applied" && exit
@@ -103,7 +103,7 @@ The `tests` block is the proof at save time: Tailscale rejects a policy file whe
    docker compose exec <caddy-service> caddy validate --config /etc/caddy/Caddyfile
    ```
    On a validate failure `cp -a Caddyfile.bak-before-ludius-pve Caddyfile`, otherwise reload as above. WebSockets (noVNC console, xterm.js shell) need no extra Caddy config: `reverse_proxy` upgrades them, and `tailscale serve` proxies upgrades as well (unconfirmed for the installed version; the browser console test in "Verify" settles it).
-   **Host header (seen on the box, Tailscale 1.104.4):** `tailscale serve` answers only the box's MagicDNS name as Host (`<ip>:8453` gets a 404) and passes that Host to the backend unchanged. Hence the loopback hops set `Host <BOX_DNS>:<port>`; pveproxy ignores Host, but the agent answers only `127.0.0.1:7452`, so the monitor needs the box-side Caddy fallback below (`AGENT_MONITOR=http://127.0.0.1:7453`).
+   **Host header (seen on the box, Tailscale 1.104.4):** `tailscale serve` answers only the box's MagicDNS name as Host (`<ip>:8453` gets a 404) and passes that Host to the backend unchanged. Hence the loopback hops set `Host <BOX_DNS>:<port>`; pveproxy ignores Host, but the agent answers only `127.0.0.1:7452`, so the monitor needs the box-side Caddy fallback below (`AGENT_CONSOLE=http://127.0.0.1:7453`).
 
    **Claustra:** each host must be registered as a forward-auth relying party, or Claustra answers `403 unknown relying party`. Same pattern as `ark.marcusson.dev` in `nixos-infra/modules/claustra.nix` (copy agh's owner allowlist), run on the homelab:
    ```sh
@@ -117,7 +117,7 @@ The `tests` block is the proof at save time: Tailscale rejects a policy file whe
    SQL
    ```
    (`monitor.ludius.se` the same way.) Teardown: `DELETE FROM forward_allowed_emails WHERE rp_host = '<host>'; DELETE FROM forward_hosts WHERE host = '<host>';`
-5. **Homelab DNS:** `grep -rn DOMAINS /srv/compose/edge` finds the `favonia/cloudflare-ddns` containers. Back up the file first (`cp -a compose.yaml compose.yaml.bak-before-ludius-monitor`, matching the Caddyfile pattern). Add `monitor.ludius.se` and `pve.ludius.se` to the `DOMAINS` of a container whose sops-sealed token covers the `ludius.se` zone (the list is comma-separated: `DOMAINS=monitor.ludius.se,pve.ludius.se`), then `docker compose up -d <that-ddns-service>`. If no such container exists (none for `ludius.se` yet), copy an existing ddns service, give it its own sealed token and `DOMAINS=monitor.ludius.se,pve.ludius.se`. Follow the existing containers' `PROXIED` setting.
+5. **Homelab DNS:** `grep -rn DOMAINS /srv/compose/edge` finds the `favonia/cloudflare-ddns` containers. Back up the file first (`cp -a compose.yaml compose.yaml.bak-before-ludius-console`, matching the Caddyfile pattern). Add `monitor.ludius.se` and `pve.ludius.se` to the `DOMAINS` of a container whose sops-sealed token covers the `ludius.se` zone (the list is comma-separated: `DOMAINS=monitor.ludius.se,pve.ludius.se`), then `docker compose up -d <that-ddns-service>`. If no such container exists (none for `ludius.se` yet), copy an existing ddns service, give it its own sealed token and `DOMAINS=monitor.ludius.se,pve.ludius.se`. Follow the existing containers' `PROXIED` setting.
 
 ### Proxmox admin account (box, once, before the UI is used)
 
@@ -141,13 +141,13 @@ monitor.ludius.se {
 }
 ```
 
-Logged out you must land on the Claustra login; after login you must get a 502 from the dead upstream, not the login again (a loop means the SSO cookie does not carry to `ludius.se`). Back the Caddyfile up before adding the block (`cp -a Caddyfile Caddyfile.bak-before-ludius-monitor-precheck`) and put it back afterwards (`cp -a Caddyfile.bak-before-ludius-monitor-precheck Caddyfile`, then validate and reload). The throwaway block carries no markers, so `remove-monitor.sh` does not remove it.
+Logged out you must land on the Claustra login; after login you must get a 502 from the dead upstream, not the login again (a loop means the SSO cookie does not carry to `ludius.se`). Back the Caddyfile up before adding the block (`cp -a Caddyfile Caddyfile.bak-before-ludius-console-precheck`) and put it back afterwards (`cp -a Caddyfile.bak-before-ludius-console-precheck Caddyfile`, then validate and reload). The throwaway block carries no markers, so `remove-console.sh` does not remove it.
 
 ## Verify
 
-On the box: `infra/monitor/check.sh` must exit 0. It fails closed: if `ss`, `ip`, `tailscale` or `jq` cannot answer it exits 2 (abort), never "nothing found, all good". It checks (1) from `ss -ltn`, IPv4 and IPv6, that ports 7452, 7453, 8452, 8453 and the Proxmox ports 8006 (pveproxy), 3128 (spiceproxy) and 85 (pvedaemon) listen on loopback only (a wildcard or global-address listener on any of them fails), and that no other TCP listener sits on a public address except `PUBLIC_TCP_ALLOW` (default `22`; rpcbind 111 or postfix 25 would fail here); (2) that a TCP connect to each of those ports on every global address of the box, IPv6 included, is refused or times out (`tailscale0` excluded); (3) from `tailscale serve status --json` that serve holds exactly two mappings, `:8452 -> http://127.0.0.1:7452` and `:8453 -> https+insecure://127.0.0.1:8006`, each at `/` only, with no other port, no Services, no Foreground session and no funnel. (`ss` never lists the tailnet port because `tailscale serve` listens inside tailscaled; the connect probes cover it.)
+On the box: `infra/console/check.sh` must exit 0. It fails closed: if `ss`, `ip`, `tailscale` or `jq` cannot answer it exits 2 (abort), never "nothing found, all good". It checks (1) from `ss -ltn`, IPv4 and IPv6, that ports 7452, 7453, 8452, 8453 and the Proxmox ports 8006 (pveproxy), 3128 (spiceproxy) and 85 (pvedaemon) listen on loopback only (a wildcard or global-address listener on any of them fails), and that no other TCP listener sits on a public address except `PUBLIC_TCP_ALLOW` (default `22`; rpcbind 111 or postfix 25 would fail here); (2) that a TCP connect to each of those ports on every global address of the box, IPv6 included, is refused or times out (`tailscale0` excluded); (3) from `tailscale serve status --json` that serve holds exactly two mappings, `:8452 -> http://127.0.0.1:7452` and `:8453 -> https+insecure://127.0.0.1:8006`, each at `/` only, with no other port, no Services, no Foreground session and no funnel. (`ss` never lists the tailnet port because `tailscale serve` listens inside tailscaled; the connect probes cover it.)
 
-`infra/monitor/test.sh` runs the same script, the bring-up identity gate and pveproxy binding, and `teardown.sh` against stubbed `ss`, `ip`, `tailscale` and `systemctl`, and the homelab removal script against sample Caddyfiles (needs `jq` and `python3`; run it before box day).
+`infra/console/test.sh` runs the same script, the bring-up identity gate and pveproxy binding, and `teardown.sh` against stubbed `ss`, `ip`, `tailscale` and `systemctl`, and the homelab removal script against sample Caddyfiles (needs `jq` and `python3`; run it before box day).
 
 From the homelab, over the tailnet, with the agent running:
 
@@ -172,7 +172,7 @@ Proxmox UI:
 Box:
 
 ```sh
-infra/monitor/teardown.sh     # tailscale serve --http=8452 off; --http=8453 off; tailscale logout
+infra/console/teardown.sh     # tailscale serve --http=8452 off; --http=8453 off; tailscale logout
 ```
 
 Delete the machine in the Tailscale admin console if listed, and revoke the auth key.
@@ -180,14 +180,14 @@ Delete the machine in the Tailscale admin console if listed, and revoke the auth
 Homelab:
 
 ```sh
-scp infra/monitor/homelab/remove-monitor.sh root@192.168.0.67:/tmp/
+scp infra/console/homelab/remove-console.sh root@192.168.0.67:/tmp/
 ssh root@192.168.0.67
 export CADDY='docker compose -f /srv/compose/edge/compose.yaml exec -T <caddy-service> caddy'   # service name unconfirmed
-/tmp/remove-monitor.sh                      # the monitor block
-BLOCK=ludius-pve /tmp/remove-monitor.sh     # the Proxmox block
+/tmp/remove-console.sh                      # the monitor block
+BLOCK=ludius-pve /tmp/remove-console.sh     # the Proxmox block
 ```
 
-The script refuses unless the Caddyfile has exactly one `# BEGIN ludius-monitor` and one `# END ludius-monitor` line, BEGIN first (otherwise it says so and leaves the file alone; `DRY_RUN=1` shows the lines it would remove). `BLOCK` names the marker pair (`ludius-monitor` by default). It writes `Caddyfile.bak-before-<block>-teardown`, removes the block, runs `caddy validate` and, if that fails, restores the backup and stops; only a validated file is reloaded.
+The script refuses unless the Caddyfile has exactly one `# BEGIN ludius-console` and one `# END ludius-console` line, BEGIN first (otherwise it says so and leaves the file alone; `DRY_RUN=1` shows the lines it would remove). `BLOCK` names the marker pair (`ludius-console` by default). It writes `Caddyfile.bak-before-<block>-teardown`, removes the block, runs `caddy validate` and, if that fails, restores the backup and stops; only a validated file is reloaded.
 
 Remove `monitor.ludius.se` and `pve.ludius.se` from `DOMAINS` and `docker compose up -d <ddns-service>`. Removing a domain from `DOMAINS` does not delete the Cloudflare record (to my recollection of cloudflare-ddns; unconfirmed), so delete the `monitor` and `pve` records in the `ludius.se` zone in the dashboard. Remove the ddns container too if it was added only for this.
 
@@ -205,14 +205,14 @@ http://:7453 {   # port only: a site named 127.0.0.1:7453 answers an empty 200 t
 }
 ```
 
-Then run `AGENT_MONITOR=http://127.0.0.1:7453 infra/monitor/bring-up.sh` (serve maps `:8452` to `:7453`; it passes the same value to `check.sh`, so run a later check as `AGENT_MONITOR=http://127.0.0.1:7453 infra/monitor/check.sh`). The check always covers 7452, 7453 and 8452, so the agent's own `127.0.0.1:7452` is verified loopback-only as well. Origin is untouched either way.
+Then run `AGENT_CONSOLE=http://127.0.0.1:7453 infra/console/bring-up.sh` (serve maps `:8452` to `:7453`; it passes the same value to `check.sh`, so run a later check as `AGENT_CONSOLE=http://127.0.0.1:7453 infra/console/check.sh`). The check always covers 7452, 7453 and 8452, so the agent's own `127.0.0.1:7452` is verified loopback-only as well. Origin is untouched either way.
 
 ## Box-day checklist (beyond the commands above)
 
 - [x] Tailnet policy applied with the `tests` block; box enrolled as `ludius-box` (`100.119.100.45`, tagged). [ ] The curl proofs under "Tailnet policy" pass.
 - [ ] **Claustra cross-domain login:** the precheck passes on `monitor.ludius.se` (login page, then the dead-upstream 502, no login loop).
 - [ ] **Claustra authorizes the owner only:** `claustra_forward` proves "logged in to Claustra", not "is the owner". Confirm in Claustra which accounts can log in and which hosts they may reach (a per-host allowlist, if it has one; not visible from the Caddyfile pattern). If any other account exists, log in as it and confirm `monitor.ludius.se` is refused before frames are ever served.
-- [ ] `infra/monitor/check.sh` exits 0 on the box with the agent running and pveproxy restarted on loopback (`ss -ltn` shows `127.0.0.1:8006`, nothing on 111 or 3128).
+- [ ] `infra/console/check.sh` exits 0 on the box with the agent running and pveproxy restarted on loopback (`ss -ltn` shows `127.0.0.1:8006`, nothing on 111 or 3128).
 - [ ] A PVE-realm admin exists (password typed by the owner), TOTP decided; the console and shell tests under "Verify" pass through `pve.ludius.se`.
 - [ ] Cloudflare token covers `ludius.se`; TLS for `monitor.ludius.se` and `pve.ludius.se` issued; the Verify steps below pass.
 
@@ -232,4 +232,4 @@ Then run `AGENT_MONITOR=http://127.0.0.1:7453 infra/monitor/bring-up.sh` (serve 
 
 ## Validation done (static)
 
-`shellcheck` on all scripts, `infra/monitor/test.sh` (stubbed `ss`/`ip`/`tailscale`/`systemctl`, a throwaway listener on 127.0.0.1 and ::1, sample Caddyfiles), `DRY_RUN=1` of `teardown.sh`, and for the Ansible role `yamllint` and `ansible-playbook --syntax-check proxmox-host.yml` in a `python:3.13` container (ansible-core does not run on a Windows control node); `pve-repos.yml` was also run in that container against sample apt source files (enterprise `.sources` and `.list` renamed, the no-subscription file untouched, second run changed nothing). The rest of the role was not executed. The Caddy snippet was not run through `caddy validate` (no Caddy here, and the `claustra_forward` snippet is defined only on the homelab).
+`shellcheck` on all scripts, `infra/console/test.sh` (stubbed `ss`/`ip`/`tailscale`/`systemctl`, a throwaway listener on 127.0.0.1 and ::1, sample Caddyfiles), `DRY_RUN=1` of `teardown.sh`, and for the Ansible role `yamllint` and `ansible-playbook --syntax-check proxmox-host.yml` in a `python:3.13` container (ansible-core does not run on a Windows control node); `pve-repos.yml` was also run in that container against sample apt source files (enterprise `.sources` and `.list` renamed, the no-subscription file untouched, second run changed nothing). The rest of the role was not executed. The Caddy snippet was not run through `caddy validate` (no Caddy here, and the `claustra_forward` snippet is defined only on the homelab).

@@ -4,7 +4,7 @@ set -euo pipefail
 : "${TS_HOSTNAME:=ludius-box}"
 : "${TS_TAG:=tag:ludius-box}"
 : "${TS_PORT:=8452}"
-: "${AGENT_MONITOR:=http://127.0.0.1:7452}"
+: "${AGENT_CONSOLE:=http://127.0.0.1:7452}"
 : "${PVE_TS_PORT:=8453}"
 : "${PVE_TARGET:=https+insecure://127.0.0.1:8006}"
 : "${BUN_VERSION:=1.3.14}"
@@ -36,7 +36,7 @@ install_bun() {
   rm -rf "$tmp"
 }
 
-build_monitor() {
+build_console() {
   cd "$repo/web/console"
   bun install --frozen-lockfile
   bun run build
@@ -91,7 +91,7 @@ fi
 bind_pve_loopback() {
   local changed=
   grep -qx 'LISTEN_IP="127.0.0.1"' "$PVEPROXY_DEFAULT" 2>/dev/null || {
-    printf '%s\n' '# Managed by infra/monitor/bring-up.sh. Reached over the tailnet via tailscale serve.' 'LISTEN_IP="127.0.0.1"' >"$PVEPROXY_DEFAULT"
+    printf '%s\n' '# Managed by infra/console/bring-up.sh. Reached over the tailnet via tailscale serve.' 'LISTEN_IP="127.0.0.1"' >"$PVEPROXY_DEFAULT"
     changed=1
   }
   [[ -z $changed ]] || systemctl restart pveproxy
@@ -102,12 +102,12 @@ bind_pve_loopback() {
 }
 run bind_pve_loopback
 
-run tailscale serve --bg --http="$TS_PORT" "$AGENT_MONITOR"
+run tailscale serve --bg --http="$TS_PORT" "$AGENT_CONSOLE"
 run tailscale serve --bg --http="$PVE_TS_PORT" "$PVE_TARGET"
 
 command -v bun >/dev/null || run install_bun
-run build_monitor
+run build_console
 
 echo "monitor UI built: $repo/web/console/dist"
 echo "agent needs: Monitor__Root=$repo/web/console/dist  Monitor__AllowedOrigins=https://monitor.ludius.se"
-[[ -n $DRY_RUN ]] || TS_PORT=$TS_PORT AGENT_MONITOR=$AGENT_MONITOR PVE_TS_PORT=$PVE_TS_PORT PVE_TARGET=$PVE_TARGET "$repo/infra/monitor/check.sh"
+[[ -n $DRY_RUN ]] || TS_PORT=$TS_PORT AGENT_CONSOLE=$AGENT_CONSOLE PVE_TS_PORT=$PVE_TS_PORT PVE_TARGET=$PVE_TARGET "$repo/infra/console/check.sh"

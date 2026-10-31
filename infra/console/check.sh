@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${AGENT_MONITOR:=http://127.0.0.1:7452}"
+: "${AGENT_CONSOLE:=http://127.0.0.1:7452}"
 : "${TS_PORT:=8452}"
 : "${PVE_TS_PORT:=8453}"
 : "${PVE_TARGET:=https+insecure://127.0.0.1:8006}"
 : "${PUBLIC_TCP_ALLOW:=22}"
 : "${PROBE_TIMEOUT:=3}"
-agent_port=${AGENT_MONITOR##*:}
+agent_port=${AGENT_CONSOLE##*:}
 pve_port=${PVE_TARGET##*:}
 ports=$(printf '%s\n' 7452 7453 8006 3128 85 "$agent_port" "$pve_port" "$TS_PORT" "$PVE_TS_PORT" | sort -u)
 fail=0
@@ -37,11 +37,11 @@ while read -r addr; do
   elif [[ $loc == public ]] && ! grep -qw -- "$port" <<<"${PUBLIC_TCP_ALLOW//,/ }"; then
     bad "unexpected public listener $host:$port (allowed public TCP ports: $PUBLIC_TCP_ALLOW)"
   fi
-  [[ $addr == "${AGENT_MONITOR#http://}" ]] && agent_up=1
+  [[ $addr == "${AGENT_CONSOLE#http://}" ]] && agent_up=1
   [[ $addr == "127.0.0.1:$pve_port" ]] && pve_up=1
 done < <(awk '{print $4}' <<<"$ss_out")
-if [[ -n $agent_up ]]; then ok "agent monitor on ${AGENT_MONITOR#http://}, no wider listener on $(tr '\n' ' ' <<<"$ports")"
-else echo "warn: nothing on ${AGENT_MONITOR#http://} yet (agent not running?)"; fi
+if [[ -n $agent_up ]]; then ok "agent monitor on ${AGENT_CONSOLE#http://}, no wider listener on $(tr '\n' ' ' <<<"$ports")"
+else echo "warn: nothing on ${AGENT_CONSOLE#http://} yet (agent not running?)"; fi
 [[ -n $pve_up ]] || echo "warn: nothing on 127.0.0.1:$pve_port yet (pveproxy not running, or not bound to loopback?)"
 
 valid_ip() {
@@ -100,7 +100,7 @@ if [[ ${#probe_addrs[@]} -eq 0 ]]; then bad "no global address found to probe"; 
 fi
 
 serve_json=$(tailscale serve status --json) || die "tailscale serve status failed"
-if jq -e --arg p1 "$TS_PORT" --arg t1 "$AGENT_MONITOR" --arg p2 "$PVE_TS_PORT" --arg t2 "$PVE_TARGET" '
+if jq -e --arg p1 "$TS_PORT" --arg t1 "$AGENT_CONSOLE" --arg p2 "$PVE_TS_PORT" --arg t2 "$PVE_TARGET" '
      def want: {($p1): $t1, ($p2): $t2};
      [(.Web // {}) | to_entries[] | (.key | split(":") | last) as $port
         | (.value.Handlers // {}) | to_entries[] | {port: $port, path: .key, proxy: .value.Proxy}] as $h
@@ -110,9 +110,9 @@ if jq -e --arg p1 "$TS_PORT" --arg t1 "$AGENT_MONITOR" --arg p2 "$PVE_TS_PORT" -
        and (((.AllowFunnel // {}) | [.[]] | any) | not)
        and ((.Services // {}) | length == 0)
        and ((.Foreground // {}) | length == 0)' <<<"$serve_json" >/dev/null; then
-  ok "tailscale serve holds only :$TS_PORT -> $AGENT_MONITOR and :$PVE_TS_PORT -> $PVE_TARGET, no funnel"
+  ok "tailscale serve holds only :$TS_PORT -> $AGENT_CONSOLE and :$PVE_TS_PORT -> $PVE_TARGET, no funnel"
 else
-  bad "tailscale serve config is not exactly :$TS_PORT -> $AGENT_MONITOR and :$PVE_TS_PORT -> $PVE_TARGET: $(jq -c . <<<"$serve_json" 2>&1)"
+  bad "tailscale serve config is not exactly :$TS_PORT -> $AGENT_CONSOLE and :$PVE_TS_PORT -> $PVE_TARGET: $(jq -c . <<<"$serve_json" 2>&1)"
 fi
 
 exit "$fail"

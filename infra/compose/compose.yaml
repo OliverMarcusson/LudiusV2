@@ -93,16 +93,16 @@ services:
       - /etc/pve/pve-root-ca.pem:/etc/pve/pve-root-ca.pem:ro  # only the CA, not /etc/pve/priv
     secrets: [pve_token, pve_root_password]
 
-  monitor:
-    image: ${LUDIUS_MONITOR_IMAGE:?set LUDIUS_MONITOR_IMAGE in .env}
+  console:
+    image: ${LUDIUS_CONSOLE_IMAGE:?set LUDIUS_CONSOLE_IMAGE in .env}
     restart: unless-stopped
     network_mode: host  # Caddy proxies 127.0.0.1:7452; the host agent is on 127.0.0.1:7451
     security_opt: ["apparmor=unconfined"]  # the default profile denies the signal handler's unix socket
     environment:
-      MONITOR_LISTEN: ${MONITOR_LISTEN:-127.0.0.1:7452}
+      CONSOLE_LISTEN: ${CONSOLE_LISTEN:-127.0.0.1:7452}
       LUDIUS_AGENT: http://${AGENT_LISTEN:-127.0.0.1:7451}
-      MONITOR_ALLOWED_ORIGINS: ${MONITOR_ALLOWED_ORIGINS:-}
-      MONITOR_ALLOWED_HOSTS: ${MONITOR_ALLOWED_HOSTS:-127.0.0.1;localhost}
+      CONSOLE_ALLOWED_ORIGINS: ${CONSOLE_ALLOWED_ORIGINS:-}
+      CONSOLE_ALLOWED_HOSTS: ${CONSOLE_ALLOWED_HOSTS:-127.0.0.1;localhost}
       LUDIUS_RUNS: /var/lib/ludius/runs
       LUDIUS_DATA: /etc/ludius/data
       OPENROUTER_KEY_FILE: /run/secrets/openrouter_key  # portraits; empty disables them
