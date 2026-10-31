@@ -173,6 +173,8 @@ const KIND_LABEL: Record<Interaction["kind"], string> = {
   mail: "mailed",
   reply: "replied to",
   invite: "invited",
+  chat: "messaged",
+  file: "shared a file with",
   request: "asked",
   request_done: "delivered a request for"
 }

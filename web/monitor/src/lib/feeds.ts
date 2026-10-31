@@ -165,12 +165,12 @@ export interface Interaction {
   id: string
   from: string
   to: string
-  kind: "mail" | "reply" | "invite" | "request" | "request_done"
+  kind: "mail" | "reply" | "invite" | "chat" | "file" | "request" | "request_done"
   label: string
   logical: string | null
 }
 
-const KINDS: readonly string[] = ["mail", "reply", "invite", "request", "request_done"]
+const KINDS: readonly string[] = ["mail", "reply", "invite", "chat", "file", "request", "request_done"]
 
 function parseInteractions(v: unknown): Interaction[] {
   if (!Array.isArray(v)) return []

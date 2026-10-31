@@ -12,7 +12,13 @@ import yaml
 from ludius import mail
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "data" / "templates"
-KINDS = {"mail.send": "mail", "mail.reply": "reply", "calendar.invite": "invite"}
+KINDS = {
+    "mail.send": "mail",
+    "mail.reply": "reply",
+    "calendar.invite": "invite",
+    "chat.dm": "chat",
+    "chat.file": "file",
+}
 MAX_READ = 8 << 20
 
 
@@ -72,8 +78,9 @@ def from_day_log(log: Path, sender: str, personas: set[str], sends: dict[str, st
             params: dict[str, Any] = e.get("params") or {}
             to = _persona(params.get("to"), personas)
             if to and to != sender:
-                out.append(Interaction(f"{log.name}:{ms}", [sender, to], sends[e["template"]],
-                                       str(params.get("subject") or ""), _iso(ms), e.get("logical")))  # fmt: skip
+                label = str(params.get("subject") or params.get("message") or "")
+                out.append(Interaction(f"{log.name}:{ms}", [sender, to], sends[e["template"]], label, _iso(ms),
+                                       e.get("logical")))  # fmt: skip
         elif ev == "request_check" and e.get("fulfilled") is True:
             r = requests.get(str(e.get("request")))
             boss = str((r or {}).get("manager") or "")
