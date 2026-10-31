@@ -101,3 +101,32 @@ fn personas_plan_in_parallel_and_failures_come_back() {
     assert!(got["aberg"].as_ref().is_ok_and(|p| p.generated && p.items == 2));
     assert!(got["lnord"].as_ref().is_err_and(|e| e.to_string() == "no plan"));
 }
+
+#[test]
+fn activity_rejects_bad_personas_and_retries_a_busy_planner() {
+    use super::worker::{PlanFire, is_final, plan};
+    let (world, src) = setup("activity");
+    let shared = Shared::new(&world);
+    let fire = |persona: &str| PlanFire { persona: persona.into(), tz: "Europe/Stockholm".into(), occurrence: Utc.with_ymd_and_hms(2026, 10, 27, 21, 0, 0).unwrap() };
+    for (persona, tz) in [("ghost", "Europe/Stockholm"), ("../aberg", "Europe/Stockholm"), ("aberg", "Mars/Base")] {
+        let e = plan(&world, &shared, &src, &never, &PlanFire { tz: tz.into(), ..fire(persona) }).unwrap_err();
+        assert!(is_final(&e), "{e:#}");
+    }
+    // another process holds the planner lock: retry later, not final
+    std::fs::create_dir_all(world.root.join("locks")).unwrap();
+    let held = File::create(world.root.join("locks").join("nightly.lock")).unwrap();
+    held.try_lock().unwrap();
+    let busy = |_: &Persona, _: NaiveDate, s: &Shared| s.hold("", bail_never);
+    let e = plan(&world, &shared, &src, &busy, &fire("aberg")).unwrap_err();
+    assert!(!is_final(&e) && e.to_string().contains("retrying"), "{e:#}");
+    drop(held);
+    let ok = plan(&world, &shared, &src, &fixed(vec![item("09:00", "ifrs 16 lease accounting")]), &fire("aberg")).unwrap();
+    assert!(ok.generated && ok.date == DAY);
+    // a plan file that cannot be kept is final
+    std::fs::write(&ok.path, "persona: lnord\ndate: '2026-10-28'\nitems: []\n").unwrap();
+    assert!(is_final(&plan(&world, &shared, &src, &never, &fire("aberg")).unwrap_err()));
+}
+
+fn bail_never() -> Result<Generated> {
+    panic!("the lock is held elsewhere")
+}

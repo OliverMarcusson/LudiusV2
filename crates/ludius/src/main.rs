@@ -15,7 +15,8 @@ use ludius::tasks::{Persona, Task, TaskInstance, load_template, load_yaml};
 use ludius_proto::v1::lifecycle_request::Op;
 use rand::SeedableRng;
 
-const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--persona P.yaml] [--clock realtime|compressed] [--seed N] [--variant N] [--model M] [--log PATH] [--restore CHECKPOINT]";
+const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--persona P.yaml] [--clock realtime|compressed] [--seed N] [--variant N] [--model M] [--log PATH] [--restore CHECKPOINT]
+       ludius plan-worker --temporal HOST:PORT [--model M]";
 
 /// The checkout's .env fills variables the environment doesn't set.
 fn load_env() {
@@ -62,9 +63,19 @@ fn main() -> Result<()> {
         None => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs(),
     };
     let variant: Option<usize> = flag("--variant")?.map(|v| v.parse()).transpose()?;
-    let model = flag("--model")?.unwrap_or_else(default_model);
+    let model_flag = flag("--model")?;
+    let model = model_flag.clone().unwrap_or_else(default_model);
     let log_flag = flag("--log")?;
     let restore = flag("--restore")?;
+    let temporal = flag("--temporal")?;
+    if args.first().is_some_and(|a| a == "plan-worker") {
+        // the nightly planner worker: no desktop, only the world files and LLM calls
+        let Some(address) = temporal else { bail!("plan-worker needs --temporal HOST:PORT
+{USAGE}") };
+        let model = model_flag.unwrap_or_else(|| std::env::var("LUDIUS_PLANNER_MODEL").unwrap_or_else(|_| PLANNER_MODEL.into()));
+        let rt = tokio::runtime::Runtime::new()?;
+        return rt.block_on(ludius::nightly::worker::serve(&address, "default", &runs(), &env("OPENROUTER_API_KEY"), Some(model)));
+    }
     let [cmd, task_path] = args.as_slice() else { bail!(USAGE) };
     if cmd != "run" {
         bail!("{cmd}: only `run` is ported to Rust; use the Python cli for the rest\n{USAGE}");

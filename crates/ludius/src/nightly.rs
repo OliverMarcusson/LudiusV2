@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::decisions::DecisionsClient;
 use crate::llm::LlmClient;
@@ -22,7 +22,7 @@ use crate::{reply, world_state};
 
 pub const PARALLEL: usize = 8;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Planned {
     pub persona: String,
     pub date: String,
@@ -368,3 +368,5 @@ pub fn generator<'a>(key: &'a str, model: Option<&'a str>, world: &'a World, src
 
 #[cfg(test)]
 mod tests;
+
+pub mod worker;
