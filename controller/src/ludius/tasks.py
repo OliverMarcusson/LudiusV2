@@ -655,6 +655,7 @@ class Task:
         date = profile(template.app).locale["date"]
         self.values |= {f"{k}_ui": date.format(y=v[:4], m=v[5:7], d=v[8:]) for k, v in have.items()
                         if ISO_DATE.fullmatch(v)}  # fmt: skip
+        self.values |= {f"{k}_stem": re.sub(r"\.\w{1,5}$", "", v) for k, v in have.items() if k in NAME_PARAMS}
         self.values |= {f"{k}_head": next(x.strip() for x in v.splitlines() if x.strip())[:HEAD]
                         for k, v in have.items() if v.strip()}  # fmt: skip
 

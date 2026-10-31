@@ -110,3 +110,21 @@ def test_a_name_is_never_typed_into_the_field_of_another_step() -> None:
         opts = build_options(view(snap, task, sg, Policy()), task, sg, Policy())
         assert any(o.kind == "type" for o in opts) is typed, name
         assert field_of_another_step(e, task, task.subgoal("open_chat")) is False
+
+
+def test_a_file_shown_without_its_extension_can_be_selected_and_uploaded() -> None:
+    from ludius.tasks import check_done, preconditions
+    from ludius.v1 import observation_pb2 as obs
+
+    task = chat_task()
+    task.values["persona_name"] = "Anna Berg"
+    item = obs.Element(id=1, role="list item", name="Q4 Accruals", selected=True)
+    other = obs.Element(id=2, role="list item", name="q4 accruals old", selected=True)
+    snap = obs.Snapshot(windows=[obs.Window(title="Open", process_name="msedge.exe", kind=obs.Window.FOREGROUND)])
+    crumbs = [obs.Element(role="split button", name=n) for n in ("All locations", "This PC", "Documents")]
+    snap.elements.extend([*crumbs, obs.Element(role="button", name="Refresh"), item])
+    assert check_done(task.template.subgoals["select_file"].done, snap, task, False)
+    upload = task.template.subgoals["upload_file"]
+    assert "list item" not in (preconditions(upload, snap, task) or "")
+    snap.elements.extend([other])
+    assert "must not match" in (preconditions(upload, snap, task) or "")

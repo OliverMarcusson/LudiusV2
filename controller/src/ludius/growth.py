@@ -78,7 +78,7 @@ def check(t: Template, capabilities: dict[str, Any], templates: dict[str, Templa
     if bad := [p for p in t.processes if p.lower() not in allowed]:
         problems.append(f"processes outside the catalog: {bad}")
     keys = set(t.params) | set(t.defaults)
-    keys |= {f"{k}_{d}" for k in keys for d in ("typo", "enter", "ui", "line")}
+    keys |= {f"{k}_{d}" for k in keys for d in ("typo", "enter", "ui", "line", "stem")}
     if t.task_content:
         problems.append("task_content not permitted for proposals")
         keys |= TASK_CONTENT_KEYS

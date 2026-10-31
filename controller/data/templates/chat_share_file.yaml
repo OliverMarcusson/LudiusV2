@@ -54,14 +54,14 @@ subgoals:
     in_window: *open
     breadcrumb: &crumbs ['This PC|{persona_name}', Documents]
     avoid: [{role: edit}, {role: combo box}, {role: menu item}, {name: '^(Open|Delete|Rename|New folder)$'}]
-    done: {element: {role: list item, name: '^{file_name}$', selected: true}}
+    done: {element: {role: list item, name: '^({file_name}|{file_name_stem})$', selected: true}}
   upload_file:
     goal: "Click Open to upload the selected file {file_name}"
     steps: 3
     in_window: *open
     breadcrumb: *crumbs
-    require: [{role: list item, name: '^{file_name}$', selected: true}]
-    forbid: [{role: list item, name: '^(?!{file_name}$)', selected: true}]
+    require: [{role: list item, name: '^({file_name}|{file_name_stem})$', selected: true}]
+    forbid: [{role: list item, name: '^(?!({file_name}|{file_name_stem})$)', selected: true}]
     avoid: [{name: '^Cancel$'}]
     done: {chat_file: {path: 'Documents\{file_name}', posted: false}}
   write_message:
