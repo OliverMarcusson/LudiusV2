@@ -33,6 +33,7 @@ def qm_exec(vmid: int, script: str) -> str:
 _SET = ("$e = (Get-Date) - [Diagnostics.Process]::GetCurrentProcess().StartTime; "
         "if ($e.TotalSeconds -lt 0 -or $e.TotalSeconds -gt 30) {{ $e = [TimeSpan]::Zero }}; "
         "Set-Date ([DateTimeOffset]::FromUnixTimeMilliseconds({ms}).LocalDateTime + $e) | Out-Null; ")  # fmt: skip
+_PURGE = "klist -li 0x3e7 purge | Out-Null; klist -li 0x3e4 purge | Out-Null; "
 _NOW = "[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()"
 
 
@@ -100,7 +101,9 @@ class RangeClock:
                 errors.append(f"VM {vmid}: {e}")
 
         def set_one(vmid: int) -> str:
-            return self._retry(lambda: self.run(vmid, _SET.format(ms=int((self.now() + offset) * 1000)) + _NOW))
+            return self._retry(
+                lambda: self.run(vmid, _SET.format(ms=int((self.now() + offset) * 1000)) + _PURGE + _NOW)
+            )
 
         def measure(vmid: int) -> None:
             got[vmid] = self._offset(vmid)
