@@ -1,0 +1,16 @@
+[Unit]
+Description=Ludius compose stack (Postgres, Temporal; ports on 127.0.0.1)
+Requires=podman.socket
+After=podman.socket network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/etc/ludius/compose
+ExecStart=/usr/bin/podman compose --env-file /etc/ludius/compose.env up -d
+ExecStop=/usr/bin/podman compose --env-file /etc/ludius/compose.env down
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

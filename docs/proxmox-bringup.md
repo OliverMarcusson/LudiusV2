@@ -77,11 +77,11 @@ Running a multi-day warp on the live range (sync, snapshot, launch, watch, roll 
       (set in `infra/box/ludius-agent.service`)
       in the box's agent config. The default is 1 on both backends (the owner's desktop limit). Check: a 9th persona
       start is refused with "VM cap 8"; srv01 starts beside 8 personas.
-- [x] Temporal server up: on the box `infra/box/temporal/install.sh` (Podman Quadlet units for the `infra/compose`
-      stack: host networking, every port on 127.0.0.1, no firewall rules, no Docker; passwords generated into
-      `/etc/ludius/compose.env`, 0600; units start at boot). Check: `systemctl status ludius-temporal`,
-      `temporal operator cluster health --address 127.0.0.1:7233` (admin-tools image) says SERVING, `ss -tlnp` shows
-      5432 and 723x/693x on 127.0.0.1 only. The box's timezone is the personas' (`timedatectl set-timezone
+- [x] Temporal server up: on the box `infra/box/compose-install.sh` (the `infra/compose` stack under `podman compose`
+      with the docker-compose CLI and aardvark-dns, started at boot by `ludius-compose.service`; ports on 127.0.0.1
+      only, no Docker engine, so the host firewall is untouched; passwords generated into `/etc/ludius/compose.env`,
+      0600; migrates an old Quadlet install and its `ludius-pgdata` volume). Check: `systemctl status ludius-compose`,
+      `podman ps` shows `ludius-temporal-1` healthy, `ss -tlnp` shows 5432 and 7233 on 127.0.0.1 only. The box's timezone is the personas' (`timedatectl set-timezone
       Europe/Stockholm`, done 2026-10-28): per-persona budgets reset at host midnight.
 - [ ] `.env`: `LUDIUS_CAP_DECISION`/`LUDIUS_CAP_LLM` (total ceilings: current total + run budget),
       `LUDIUS_CAP_PERSONA_DECISION`/`LUDIUS_CAP_PERSONA_LLM` (per persona and day), `LUDIUS_PERSONA_PASSWORD_<USER>`

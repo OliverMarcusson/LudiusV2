@@ -4,6 +4,7 @@ services:
   postgres:
     image: postgres:16.15-alpine3.24@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
     restart: unless-stopped
+    security_opt: ["apparmor=unconfined"]
     environment:
       POSTGRES_USER: temporal
       POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD in .env}
