@@ -3,6 +3,7 @@ pub mod calls;
 pub use ludius_chat as chat;
 pub mod day;
 pub mod decisions;
+pub mod growth;
 pub mod guestfile;
 pub mod hostagent;
 pub mod keys;
