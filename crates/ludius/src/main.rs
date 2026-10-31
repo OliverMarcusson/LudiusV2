@@ -72,6 +72,17 @@ fn main() -> Result<()> {
     if vm.is_empty() {
         bail!("--vm or LUDIUS_VM is required");
     }
+    // One controller per desktop (durable.desk_lock), and none while a Temporal day reserves it (scheduled.DayOwner).
+    // The lock lives until the process exits; it interoperates with Python's flock/msvcrt lock on the same file.
+    let desk = runs().join("locks").join(format!("{vm}.lock"));
+    std::fs::create_dir_all(desk.parent().unwrap())?;
+    let _desk = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&desk)?;
+    _desk.try_lock().map_err(|_| anyhow::anyhow!("another controller is driving this desktop ({})", desk.display()))?;
+    let day = desk.with_extension("day.json");
+    if day.exists() {
+        let owner = std::fs::read_to_string(&day).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).and_then(|v| v["owner"].as_str().map(String::from));
+        bail!("desktop reserved by {}; resume that Temporal day first", owner.as_deref().unwrap_or("an unreadable reservation"));
+    }
     // ponytail: LUDIUS_VISUAL (the OCR fallback agent) is not ported; a planned add-on.
     if !env("LUDIUS_VISUAL").is_empty() {
         bail!("LUDIUS_VISUAL={:?}: the visual fallback is not in the Rust controller yet", env("LUDIUS_VISUAL"));
