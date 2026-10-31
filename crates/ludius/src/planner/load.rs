@@ -31,6 +31,9 @@ pub fn load_plan(path: &Path, history: bool) -> Result<DayPlan> {
     if history {
         return Ok(plan);
     }
+    if chrono::NaiveDate::parse_from_str(&plan.date, "%Y-%m-%d").is_err() || plan.date.len() != 10 {
+        bail!("{}: date must be YYYY-MM-DD", path.display());
+    }
     let (policy, templates) = (Policy::from_env()?, templates()?);
     let root = path.parent().and_then(Path::parent).unwrap_or(Path::new("."));
     let narrative = root.join("world").join("narrative.yaml");

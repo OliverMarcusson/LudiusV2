@@ -153,18 +153,18 @@ impl World {
         let before_s = before.format("%Y-%m-%d").to_string();
         let mut out = Vec::new();
         for d in sorted_glob(&self.root.join("days"), &format!("-{user}.jsonl"))? {
-            let day = file_name(&d)[..10].to_string();
+            let Some(day) = file_name(&d).get(..10).map(String::from) else { continue };
             if day >= before_s {
                 continue;
             }
             for r in day_records(&d)? {
-                if r["event"] != "item_end" {
+                if r.get("event").and_then(Value::as_str) != Some("item_end") {
                     continue;
                 }
-                let params = r["params"].as_object().map(|p| {
+                let params = r.get("params").and_then(Value::as_object).map(|p| {
                     p.iter().filter(|(k, _)| *k != "body").map(|(k, v)| format!("{k}={}", head(&text(v), 60))).collect::<Vec<_>>().join(", ")
                 });
-                let line = format!("- {day} {} {} {}: {} {}", text(&r["at"]), text(&r["template"]), text(&r["status"]), text(&r["context"]), params.unwrap_or_default());
+                let line = format!("- {day} {} {} {}: {} {}", text(r.get("at").unwrap_or(&Value::Null)), text(r.get("template").unwrap_or(&Value::Null)), text(r.get("status").unwrap_or(&Value::Null)), text(r.get("context").unwrap_or(&Value::Null)), params.unwrap_or_default());
                 out.push(line.trim_end().to_string());
             }
         }
@@ -185,7 +185,7 @@ impl World {
         let mut out = Vec::new();
         for path in sorted_glob(&self.root.join("plans"), ".yaml")? {
             let s = stem_of(&path);
-            let (date, who) = (&s[..10], s.get(11..).unwrap_or(""));
+            let (Some(date), who) = (s.get(..10), s.get(11..).unwrap_or("")) else { continue };
             if who == user || !(start.as_str() <= date && date < end.as_str()) {
                 continue;
             }
@@ -242,7 +242,7 @@ fn slots(log: &Path, keep: impl Fn(&serde_json::Map<String, Value>) -> bool) -> 
     if !log.exists() {
         return Ok(BTreeSet::new());
     }
-    Ok(day_records(log)?.iter().filter(|r| keep(r)).map(|r| (text(&r["at"]), text(&r["template"]))).collect())
+    Ok(day_records(log)?.iter().filter(|r| keep(r)).map(|r| (text(r.get("at").unwrap_or(&Value::Null)), text(r.get("template").unwrap_or(&Value::Null)))).collect())
 }
 
 pub fn done_slots(log: &Path) -> Result<BTreeSet<(String, String)>> {
@@ -259,7 +259,7 @@ pub fn owned_files(root: &Path, user: &str, before: &str) -> Result<BTreeMap<Str
     let mut owned: BTreeMap<String, String> = BTreeMap::new();
     for path in sorted_glob(&root.join("plans"), ".yaml")? {
         let s = stem_of(&path);
-        let date = s[..10].to_string();
+        let Some(date) = s.get(..10).map(String::from) else { continue };
         if s.get(11..) != Some(user) || date.as_str() >= before {
             continue;
         }
@@ -296,7 +296,9 @@ pub fn owned_files(root: &Path, user: &str, before: &str) -> Result<BTreeMap<Str
 pub fn dump(path: &Path, data: &impl Serialize, new: bool) -> Result<()> {
     let dir = path.parent().context("no parent dir")?;
     std::fs::create_dir_all(dir)?;
-    let text = serde_yaml::to_string(data)?;
+    // JSON is YAML both loaders read alike; serde_yaml leaves `10:30`, `yes` unquoted and PyYAML reads them as int/bool.
+    let text = serde_json::to_string_pretty(data)? + "
+";
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
     let tmp = dir.join(format!(".{}.{}.{nanos}.tmp", file_name(path), std::process::id()));
     let result = (|| -> Result<()> {
