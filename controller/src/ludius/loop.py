@@ -251,10 +251,10 @@ class Runner:
         acts = o.kind in ("click", "double_click", "type", "key")
         if sg is not None and sg.confirm and acts and o.keys not in sg.keys:
             return "only this step's confirmed keys may act here (a Paste button would skip the confirm question)"
-        if o.kind in ("click", "double_click", "key") and self._front_moved():
-            return FRONT_MOVED  # a popup that took the front since the decision (Reminders: Alt+S snoozes)
         if o.kind in ("click", "double_click") and e is not None:
             self._move_to(e)
+            if self._front_moved():  # checked last, right before the input: a popup since the decision
+                return FRONT_MOVED  # (Outlook Reminders) would get it
             self.agent.click(count=2 if o.kind == "double_click" else 1)
             if o.kind == "click":
                 self._caret_to_end(e, sg)
@@ -289,6 +289,8 @@ class Runner:
                 fresh = self.agent.observe(wait_settle=True).snapshot
                 if not self._decider_says_done(task, "confirm", sg.confirm, fresh):
                     return f"the Decider did not confirm: {task.fmt(sg.confirm)}"
+            if self._front_moved():  # after the confirm question too: Alt+S in Reminders snoozes
+                return FRONT_MOVED
             self.agent.chord(keys.chord(o.keys))
         elif o.kind == "scroll":
             target = next((x for x in self.snap.elements if "list continues" in " ".join(x.hints)), None)

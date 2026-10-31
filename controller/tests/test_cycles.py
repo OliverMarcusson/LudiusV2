@@ -412,10 +412,31 @@ def test_a_window_that_took_the_front_after_the_decision_gets_no_click_or_key(tm
     runner = Runner(agent, PrefersStart(), Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"), seed=1)  # type: ignore[arg-type]
     tpl = load_templates()["notepad_write_note"]
     task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
-    sg, start = Subgoal(goal="g"), Option("o1", "click", "click Start")
     runner.observe()
+    sg, start = Subgoal(goal="g"), Option("o1", "click", "click Start", element=runner.snap.elements[0])
     agent.open = True  # a popup (Search here) takes the front between the decision and the action
     assert runner.act(start, task, sg) == FRONT_MOVED and agent.clicks == 0
     assert runner.act(Option("o2", "key", "press Alt+S", keys="Alt+S"), task, sg) == FRONT_MOVED and not chords
     runner.observe()
     assert runner.act(Option("o2", "key", "press Alt+S", keys="Alt+S"), task, sg) is None and chords
+
+
+def test_a_window_that_took_the_front_during_the_confirm_question_gets_no_key(tmp_path: Path) -> None:
+    from ludius.loop import FRONT_MOVED
+
+    agent, chords = ToggleAgent(), list[list[int]]()
+    agent.chord = lambda vks: chords.append(vks) or 0  # type: ignore[method-assign]
+    runner = Runner(agent, Answers(0.95), Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"), seed=1)  # type: ignore[arg-type]
+    tpl = load_templates()["notepad_write_note"]
+    task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
+    sg = Subgoal(goal="g", keys=["Ctrl+V"], confirm="Is Notepad in front?")
+    runner.observe()
+    confirm = runner._decider_says_done  # pyright: ignore[reportPrivateUsage]
+
+    def popup_while_asked(*a: Any) -> bool:
+        yes = confirm(*a)
+        agent.open = True  # Reminders pops up while the Decider answers
+        return yes
+
+    runner._decider_says_done = popup_while_asked  # type: ignore[method-assign]
+    assert runner.act(Option("o1", "key", "press Ctrl+V", keys="Ctrl+V"), task, sg) == FRONT_MOVED and not chords
