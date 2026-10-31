@@ -1,5 +1,5 @@
 [Unit]
-Description=Ludius host agent (Proxmox backend)
+Description=Ludius monitor (C# agent; gRPC moved to the Rust host-agent container until the monitor port, step 5)
 After=network.target pve-cluster.service pvedaemon.service
 Wants=pve-cluster.service pvedaemon.service
 
@@ -16,7 +16,7 @@ Environment=Proxmox__Node=ludius-pve
 Environment=Agent__MaxRunningVms=8
 Environment=Proxmox__CapExempt=110:ludius-srv01,110:ludius-dc01,111:ludius-ex01,112:ludius-chat01
 Environment=AllowedHosts=127.0.0.1
-Environment=Kestrel__Endpoints__Grpc__Url=http://127.0.0.1:7451
+Environment=Kestrel__Endpoints__Grpc__Url=http://127.0.0.1:7462
 Environment=Kestrel__Endpoints__Monitor__Url=http://127.0.0.1:7452
 Environment=Monitor__Root=/opt/ludius-agent/monitor
 Environment=Monitor__AllowedOrigins=https://monitor.ludius.se
