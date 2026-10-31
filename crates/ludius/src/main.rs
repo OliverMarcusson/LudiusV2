@@ -19,6 +19,8 @@ const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--per
        ludius plan-worker --temporal HOST:PORT [--model M]
        ludius [--agent ADDR] [--vm VM] worker --temporal HOST:PORT [--persona USER|P.yaml] [--model M]
        ludius [--agent ADDR] range up|status|interactions [USER...] [--temporal HOST:PORT] [--model M] [--timezone TZ]
+       ludius [--agent ADDR] range warp [USER...] --start YYYY-MM-DD [--days 1-7] [--plan-at HH:MM] [--temporal HOST:PORT] [--timezone TZ]
+       ludius [--agent ADDR] range unwarp|sweep
        ludius metrics LOG... [--human LOG...] [--features CSV] [--timeline CSV [--before CSV] [--manifest JSON]]
        ludius timeline LOG.jsonl... [--out CSV]
        ludius store [--dsn DSN] [--s3 http://KEY:SECRET@host:port/bucket]   (defaults LUDIUS_PG, LUDIUS_S3)";
@@ -79,6 +81,7 @@ fn main() -> Result<()> {
     let tz = flag("--timezone")?;
     let (features, timeline, before, manifest) = (flag("--features")?, flag("--timeline")?, flag("--before")?, flag("--manifest")?);
     let (dsn, s3) = (flag("--dsn")?, flag("--s3")?);
+    let (start, days, plan_at) = (flag("--start")?, flag("--days")?, flag("--plan-at")?);
     if args.first().is_some_and(|a| a == "metrics") && args.len() > 1 {
         let paths = |xs: &[String]| xs.iter().map(PathBuf::from).collect::<Vec<_>>();
         let cut = args.iter().position(|a| a == "--human").unwrap_or(args.len());
@@ -119,7 +122,46 @@ fn main() -> Result<()> {
         }
         let tz: chrono_tz::Tz = tz.as_deref().unwrap_or("Europe/Stockholm").parse().map_err(|e| anyhow::anyhow!("--timezone: {e}"))?;
         let state = runs().join("range");
+        let lease = ludius::warp::lease_path(&runs());
+        let clock = |strict: bool| ludius::rangeclock::range(strict, &agent_addr);
         match args.get(1).map(String::as_str) {
+            Some("unwarp") => std::process::exit(ludius::warp::unwarp(|| clock(false), &lease)),
+            Some("sweep") => std::process::exit(ludius::warp::sweep(|| clock(false), &lease, None)?),
+            Some("warp") => {
+                let why = rangerun::refusals(&users, &env, &data().join("personas"));
+                if !why.is_empty() {
+                    eprintln!("range not started:
+  {}", why.join("
+  "));
+                    std::process::exit(2);
+                }
+                let days: usize = days.as_deref().unwrap_or("3").parse().context("--days")?;
+                let dates = ludius::warp::dates(start.as_deref(), days, chrono::Utc::now().with_timezone(&tz).date_naive()).unwrap_or_else(|m| {
+                    eprintln!("{m}");
+                    std::process::exit(2)
+                });
+                let plan_at = chrono::NaiveTime::parse_from_str(plan_at.as_deref().unwrap_or("22:00"), "%H:%M").context("--plan-at HH:MM")?;
+                let clock = clock(true)?;
+                let temporal = temporal.unwrap_or_else(|| "127.0.0.1:7233".into());
+                let specs = rangerun::specs(&users, &agent_addr, &temporal, &model, &env);
+                let sup = rangerun::Supervisor::new(specs.into_iter().map(rangerun::Child::new).collect(), &state, Box::new(rangerun::spawn));
+                let rt = tokio::runtime::Runtime::new()?;
+                let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let raised = stop.clone();
+                rt.spawn(async move {
+                    #[cfg(unix)]
+                    let term = async { tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok()?.recv().await };
+                    #[cfg(not(unix))]
+                    let term = std::future::pending::<Option<()>>();
+                    tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = term => {} }
+                    raised.store(true, std::sync::atomic::Ordering::SeqCst);
+                });
+                let model = Some(std::env::var("LUDIUS_PLANNER_MODEL").unwrap_or_else(|_| PLANNER_MODEL.into()));
+                let live = ludius::warp::Live { rt, temporal, runs: runs(), users: users.clone(), tz, key: env("OPENROUTER_API_KEY"), model };
+                let lease = ludius::clocklease::Lease::new(&lease, "range");
+                let w = ludius::warp::Warp { runs: runs(), users, tz, plan_at, clock, lease, sup, days: &live, stop: &stop };
+                std::process::exit(w.run(&dates)?);
+            }
             Some("status") => println!("{}", rangerun::summary(&ludius::planner::World::new(&runs()), &users, chrono::Utc::now().with_timezone(&tz).date_naive(), &state, &env)),
             Some("up") => {
                 let why = rangerun::refusals(&users, &env, &data().join("personas"));

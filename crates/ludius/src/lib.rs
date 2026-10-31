@@ -21,6 +21,7 @@ pub mod options;
 pub mod paths;
 pub mod planner;
 pub mod policy;
+pub mod rangeclock;
 pub mod rangerun;
 #[cfg(feature = "store")]
 pub mod store;
@@ -34,6 +35,7 @@ pub mod share;
 pub mod tasks;
 pub mod template;
 pub mod timeline;
+pub mod warp;
 pub mod world_state;
 
 #[cfg(feature = "intranet")]

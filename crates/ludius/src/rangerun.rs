@@ -26,6 +26,12 @@ pub fn personas(path: &Path) -> Result<Vec<String>> {
     v["range_personas"].as_array().context("range_personas")?.iter().map(|p| p["user"].as_str().map(String::from).context("range_personas[].user")).collect()
 }
 
+pub fn vmids(path: &Path) -> Result<Vec<(String, u32)>> {
+    let v: Value = serde_yaml::from_str(&std::fs::read_to_string(path).with_context(|| path.display().to_string())?)?;
+    let id = |p: &Value| p["vmid"].as_u64().and_then(|n| u32::try_from(n).ok());
+    v["range_personas"].as_array().context("range_personas")?.iter().map(|p| p["user"].as_str().zip(id(p)).map(|(u, v)| (u.to_string(), v)).context("range_personas[].user/vmid")).collect()
+}
+
 pub fn vm_of(user: &str) -> String {
     format!("ludius-{user}")
 }
