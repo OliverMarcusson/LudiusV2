@@ -17,7 +17,8 @@ use rand::SeedableRng;
 
 const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--persona P.yaml] [--clock realtime|compressed] [--seed N] [--variant N] [--model M] [--log PATH] [--restore CHECKPOINT]
        ludius plan-worker --temporal HOST:PORT [--model M]
-       ludius [--agent ADDR] [--vm VM] worker --temporal HOST:PORT [--persona P.yaml] [--model M]
+       ludius [--agent ADDR] [--vm VM] worker --temporal HOST:PORT [--persona USER|P.yaml] [--model M]
+       ludius [--agent ADDR] range up|status [USER...] [--temporal HOST:PORT] [--model M] [--timezone TZ]
        ludius timeline LOG.jsonl... [--out CSV]";
 
 /// The checkout's .env fills variables the environment doesn't set.
@@ -55,7 +56,9 @@ fn main() -> Result<()> {
     };
     let agent_addr = flag("--agent")?.unwrap_or_else(|| std::env::var("LUDIUS_AGENT").unwrap_or_else(|_| "127.0.0.1:7451".into()));
     let vm = flag("--vm")?.unwrap_or_else(|| env("LUDIUS_VM"));
-    let persona_path = flag("--persona")?.map(PathBuf::from).unwrap_or_else(|| data().join("personas").join("aberg.yaml"));
+    // a bare name is the persona file of that user (as the range supervisor passes it)
+    let persona_path = flag("--persona")?.map(|p| if p.ends_with(".yaml") { PathBuf::from(p) } else { data().join("personas").join(format!("{p}.yaml")) });
+    let persona_path = persona_path.unwrap_or_else(|| data().join("personas").join("aberg.yaml"));
     let clock: Clock = flag("--clock")?.as_deref().unwrap_or("compressed").parse()?;
     if clock == Clock::TimeJump {
         bail!("--clock: realtime or compressed");
@@ -71,6 +74,35 @@ fn main() -> Result<()> {
     let restore = flag("--restore")?;
     let temporal = flag("--temporal")?;
     let out = flag("--out")?;
+    let tz = flag("--timezone")?;
+    if args.first().is_some_and(|a| a == "range") {
+        use ludius::rangerun;
+        let known = rangerun::personas(&rangerun::vms())?;
+        let users: Vec<String> = if args.len() > 2 { args[2..].to_vec() } else { known.clone() };
+        let unknown: Vec<&str> = users.iter().filter(|u| !known.contains(u)).map(String::as_str).collect();
+        if !unknown.is_empty() {
+            bail!("not in {}: {}", rangerun::vms().display(), unknown.join(", "));
+        }
+        let tz: chrono_tz::Tz = tz.as_deref().unwrap_or("Europe/Stockholm").parse().map_err(|e| anyhow::anyhow!("--timezone: {e}"))?;
+        let state = runs().join("range");
+        match args.get(1).map(String::as_str) {
+            Some("status") => println!("{}", rangerun::summary(&ludius::planner::World::new(&runs()), &users, chrono::Utc::now().with_timezone(&tz).date_naive(), &state, &env)),
+            Some("up") => {
+                let why = rangerun::refusals(&users, &env, &data().join("personas"));
+                if !why.is_empty() {
+                    bail!("range not started:
+  {}", why.join("
+  "));
+                }
+                // ponytail: the day and nightly schedules are still created by the Python `ludius range up`
+                let temporal = temporal.unwrap_or_else(|| "127.0.0.1:7233".into());
+                let specs = rangerun::specs(&users, &agent_addr, &temporal, &model, &env);
+                rangerun::serve(rangerun::Supervisor::new(specs.into_iter().map(rangerun::Child::new).collect(), &state, Box::new(rangerun::spawn)))?;
+            }
+            _ => bail!(USAGE),
+        }
+        return Ok(());
+    }
     if args.first().is_some_and(|a| a == "timeline") && args.len() > 1 {
         let out = out.map(PathBuf::from).unwrap_or_else(|| runs().join("timeline.csv"));
         println!("{} rows -> {}", ludius::timeline::export(&args[1..], &out)?, out.display());

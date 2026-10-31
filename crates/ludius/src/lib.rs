@@ -18,6 +18,7 @@ pub mod options;
 pub mod paths;
 pub mod planner;
 pub mod policy;
+pub mod rangerun;
 pub mod react;
 pub mod reply;
 pub mod requests;

@@ -24,7 +24,7 @@ fn truthy(v: Option<&Value>) -> Option<&Value> {
 }
 
 /// str(v) for the CSV: strings as-is, everything else as JSON.
-fn text(v: Option<&Value>) -> String {
+pub fn text(v: Option<&Value>) -> String {
     match v {
         None | Some(Value::Null) => String::new(),
         Some(Value::String(s)) => s.clone(),

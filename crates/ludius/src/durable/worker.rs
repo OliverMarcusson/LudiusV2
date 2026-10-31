@@ -65,6 +65,7 @@ fn info(ctx: &ActivityContext) -> Info {
 }
 
 fn failure(e: anyhow::Error) -> ActivityError {
+    eprintln!("{} {e:#}", crate::rangerun::FAILED);
     let kind = if e.is::<CapReached>() { "CapReached" } else if is_final(&e) { "ValueError" } else { "RuntimeError" };
     ActivityError::application(ApplicationFailure::builder(format!("{e:#}")).type_name(kind.to_string()).non_retryable(is_final(&e)).build())
 }
