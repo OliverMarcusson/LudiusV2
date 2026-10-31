@@ -419,7 +419,8 @@ class Runner:
         if task.inst.request:
             ok, reason = requests.fulfilled(task)
             self.log.write(event="request_check", host_ms=_now(), task=task.template.task,
-                           request=task.inst.request, fulfilled=ok, reason=reason)  # fmt: skip
+                           request=task.inst.request, fulfilled=ok, reason=reason,
+                           capability=task.template.capability)  # fmt: skip
             if ok and task.template.capability == "file.write":
                 with contextlib.suppress(OSError):  # unrecorded only blocks the delivery
                     requests.remember(requests.ROOT, task.owner, task.inst.request, requests.WRITTEN)

@@ -81,7 +81,7 @@ def from_day_log(log: Path, sender: str, personas: set[str], sends: dict[str, st
                 label = str(params.get("subject") or params.get("message") or "")
                 out.append(Interaction(f"{log.name}:{ms}", [sender, to], sends[e["template"]], label, _iso(ms),
                                        e.get("logical")))  # fmt: skip
-        elif ev == "request_check" and e.get("fulfilled") is True:
+        elif ev == "request_check" and e.get("fulfilled") is True and e.get("capability") != "file.write":
             r = requests.get(str(e.get("request")))
             boss = str((r or {}).get("manager") or "")
             if r and boss in personas and boss != sender:

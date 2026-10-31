@@ -234,10 +234,9 @@ def generate_day(
                 else:
                     plan.items = sorted([*others, read], key=lambda x: x.at)
             if back := requests.deliver(it, boss, inbox_mails, role, plan.items):
-                made = planner.asked_files(back, plan, role)
                 why = dict(planner.validate(
                     [*plan.items, back], role, [], src.policy, colleagues | {boss.user}, None, set(followups),
-                    existing, threads, people, persona.user, date.isoformat(), set(inbox), teams, {**owned, **made},
+                    existing, threads, people, persona.user, date.isoformat(), set(inbox), teams, owned,
                 )).get(len(plan.items)) or requests.planned(back, role, world.root)  # fmt: skip
                 if why:
                     rejects.append(f"mail back request {it.template} at {it.at}: {why}")
@@ -256,7 +255,7 @@ def check_existing(world: World, persona: Persona, date: dt.date, src: Sources) 
     if (plan.persona, plan.date) != (persona.user, date.isoformat()):
         raise PlanConflict(f"{path} is the plan of {plan.persona} on {plan.date}, not {persona.user} on {date}")
     narrative = world.narrative()
-    colleagues = narrative.colleagues(persona.user)
+    colleagues = narrative.colleagues(persona.user) | narrative.boss(persona.user)
     threads = world_state.mail_threads(world_state.build(world, narrative, src.personas, date), persona.user)
     people = {p.user: p.name for p in narrative.people if p.user}
     inbox_mails = src.inbox(persona.user)

@@ -9,7 +9,7 @@ import pytest
 
 from ludius import cli, loop, mail, reply, requests
 from ludius.loop import GroundTruth, Runner
-from ludius.planner import DayPlan, Person, PlanItem, asked_files, validate
+from ludius.planner import Person, PlanItem, asked_files, validate
 from ludius.policy import Policy
 from ludius.tasks import Persona, Task, TaskInstance, Template, check_done
 from ludius.v1 import observation_pb2 as obs
@@ -297,11 +297,13 @@ def test_a_requested_file_is_mailed_back_to_the_manager(tmp_path: Path) -> None:
     assert back is not None and back.template == "outlook_send_attachment"
     assert back.at > "10:31" and back.params["file_name"] == "feb volumes.docx"
     assert back.params["to"] == "mvellinga@ludius.internal" and back.params["subject"] == f"RE: {SUBJECT}"
-    owned = asked_files(back, DayPlan(persona="aberg", date="2026-11-02", items=[req, back]), ts)
+    owned = asked_files(back, [req, back], ts, "2026-11-02")
     assert owned == {"documents\\feb volumes.docx": "2026-11-02"} and back.request == req.request
-    assert not asked_files(back, DayPlan(persona="aberg", date="2026-11-02", items=[back]), ts)
+    assert not asked_files(back, [back], ts, "2026-11-02")
     people = {"mvellinga": boss.name}
     assert not validate([back], ts, [], Policy(), {"mvellinga"}, people=people, owned=owned, day="2026-11-02")
+    both = validate([req, back], ts, [], Policy(), {"mvellinga"}, people=people, day="2026-11-02")
+    assert 1 not in dict(both)  # a revalidated plan finds today's write without being told
     ask = requests.Request(to="aberg", task="word_short_document", subject=SUBJECT, body="", file_name="feb volumes",
                            manager="mvellinga", msgid="<7@ludius.internal>")  # fmt: skip
     t = ts["outlook_send_attachment"]

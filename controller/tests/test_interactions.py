@@ -51,7 +51,10 @@ def test_interactions_only_from_verified_effects_between_personas(tmp_path: Path
                                                                 "requests": [request | {"status": "sent"}]}),
                                                 encoding="utf-8")  # fmt: skip
     check = {"event": "request_check", "host_ms": now + 9, "request": msgid, "fulfilled": True}
+    write = check | {"capability": "file.write"}  # the file is written, not yet mailed back
+    (days / "2026-11-02-sdekker.jsonl").write_text(json.dumps(write) + "\n", encoding="utf-8")
+    assert [i.kind for i in t.step()] == ["request"]
     (days / "2026-11-02-sdekker.jsonl").write_text(json.dumps(check) + "\n", encoding="utf-8")
     got = sorted((i.kind, i.personas) for i in t.step())
-    assert got == [("request", ["aberg", "sdekker"]), ("request_done", ["sdekker", "aberg"])]
+    assert got == [("request_done", ["sdekker", "aberg"])]
     assert len(out.read_text(encoding="utf-8").splitlines()) == 3

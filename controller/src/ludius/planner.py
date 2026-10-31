@@ -128,6 +128,12 @@ class Narrative(Strict):
         return {p.user for p in self.people
                 if p.user and p.user != user and p.user in self.accounts}  # fmt: skip
 
+    def boss(self, user: str) -> set[str]:
+        """The user's manager's account, if any: a requested file is mailed back to them."""
+        me = next((p for p in self.people if p.user == user), None)
+        users = {p.user for p in self.people if p.user}
+        return {me.manager} if me and me.manager in users and me.manager != user else set()
+
 
 class PlanItem(TaskInstance):
     at: str
@@ -626,7 +632,7 @@ def validate(
         if not why and cap in ("mail.read", "mail.save", "mail.file"):
             why = _read_mail(it, colleagues or set[str](), inbox or set[tuple[str, str]](), items[:i])
         if not why and t and (cap in OWN_FILES or t.attaches):
-            why = _owned(it, t, owned or {}, day, items)
+            why = _owned(it, t, {**(owned or {}), **asked_files(it, items, templates, day)}, day, items)
         if not why and it.handoff and it.handoff not in (colleagues or set[str]()):
             why = f"handoff {it.handoff!r} is not a colleague's account"
         if not why and it.followup and cap == "chat.read":
@@ -1151,14 +1157,14 @@ def done_slots(log: Path) -> set[tuple[str, str]]:
             if r.get("event") == "item_end" and r.get("status") == "done"}  # fmt: skip
 
 
-def asked_files(it: PlanItem, plan: DayPlan, templates: dict[str, Template]) -> dict[str, str]:
+def asked_files(it: PlanItem, items: list[PlanItem], templates: dict[str, Template], day: str) -> dict[str, str]:
     """Files an earlier item of the same request writes today: its delivery may attach them."""
     out: dict[str, str] = {}
-    for x in plan.items:
+    for x in items:
         t = templates.get(x.template)
         if it.request and x.request == it.request and x.at < it.at and t and t.capability == "file.write":
             with suppress(KeyError):
-                out |= {w.format_map({**t.defaults, **x.params, **x.content}).casefold(): plan.date for w in t.writes}
+                out |= {w.format_map({**t.defaults, **x.params, **x.content}).casefold(): day for w in t.writes}
     return out
 
 
@@ -1179,8 +1185,8 @@ def load_plan(path: Path, *, history: bool = False) -> DayPlan:
              if (t := templates.get(it.template)) and (t.capability in OWN_FILES or t.attaches)]  # fmt: skip
     owned = owned_files(path.parent.parent, plan.persona, plan.date) if edits and not history else {}
     for it in [] if history else edits:
-        if why := _owned(it, templates[it.template], {**owned, **asked_files(it, plan, templates)}, plan.date,
-                         plan.items):  # fmt: skip
+        if why := _owned(it, templates[it.template], {**owned, **asked_files(it, plan.items, templates, plan.date)},
+                         plan.date, plan.items):  # fmt: skip
             raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
     for it in plan.items:
         if it.template in templates and (why := item_problem(it, templates, policy, plan.persona, teams, shares)
@@ -1192,7 +1198,7 @@ def load_plan(path: Path, *, history: bool = False) -> DayPlan:
     if mail:
         people = {p.user: p.name for p in world.people if p.user} if world else {}
         for it in mail:
-            mates = world.colleagues(plan.persona) if world else set[str]()
+            mates = world.colleagues(plan.persona) | world.boss(plan.persona) if world else set[str]()
             if why := _recipient(it, mates, people) or _sender(it, set(people) - {plan.persona}):
                 raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
     return plan
