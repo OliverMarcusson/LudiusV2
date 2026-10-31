@@ -381,8 +381,9 @@ class Runner:
             return Outcome("abandoned", 0, f"start: {why}", done)
         for name in task.subgoal_names:
             sg = task.subgoal(name)
+            carry: dict[str, Any] = {}
             result = self._subgoal(task, name, sg, budget=min(sg.steps, task.template.budget_steps - steps), t0=t0,
-                                   may_detour=self.assist is not None)  # fmt: skip
+                                   may_detour=self.assist is not None, carry=carry)  # fmt: skip
             steps = self._steps = steps + result[1]
             detours = 0
             while (result[0] != "done" and (result[2] == "step budget" or result[2].startswith(STUCK))
@@ -392,7 +393,7 @@ class Runner:
                 steps = self._steps = steps + self._assisted(task, name, sg, t0, steps, result[2])
                 left = task.template.budget_steps - steps
                 result = self._subgoal(task, name, sg, budget=min(sg.steps // 2 + 2, left), t0=t0,
-                                       may_detour=detours < MAX_DETOURS)  # fmt: skip
+                                       may_detour=detours < MAX_DETOURS, carry=carry)  # fmt: skip
                 steps = self._steps = steps + result[1]
             if result[0] != "done":
                 reason = result[2]
@@ -436,7 +437,14 @@ class Runner:
         return self._subgoal(task, f"{name}/detour", helper, budget=budget, t0=t0)[1]
 
     def _subgoal(
-        self, task: Task, name: str, sg: Subgoal, budget: int, t0: float, may_detour: bool = False
+        self,
+        task: Task,
+        name: str,
+        sg: Subgoal,
+        budget: int,
+        t0: float,
+        may_detour: bool = False,
+        carry: dict[str, Any] | None = None,
     ) -> tuple[str, int, str]:
         history: list[str] = []
         verifications = 0
@@ -447,7 +455,12 @@ class Runner:
         recovering = False
         dead: dict[tuple[Any, ...], set[tuple[str, str]]] = {}
         snap = self.observe()
-        added_baseline(sg.done, snap, task)
+        if carry:
+            typed_ok, pressed_ok, clicked_ok, last_click, task.added_base = carry["state"]
+        else:
+            added_baseline(sg.done, snap, task)
+            if carry is not None:
+                carry["state"] = (typed_ok, pressed_ok, clicked_ok, last_click, task.added_base)
         seen = {fingerprint(snap)}
         guarded = False
         escs = ladders = 0
@@ -609,6 +622,8 @@ class Runner:
             clicked_ok = clicked_ok or (sg.in_window is not None and not refused and chosen.kind == "click")
             if chosen.kind != "rescan":
                 last_click = chosen.element if chosen.kind == "click" and not refused else None
+            if carry is not None:
+                carry["state"] = (typed_ok, pressed_ok, clicked_ok, last_click, task.added_base)
             outcome = "back to an earlier screen" if changed and revisit else "changed" if changed else "no change"
             last_result = "no visible change" if not changed else outcome
             if refused:

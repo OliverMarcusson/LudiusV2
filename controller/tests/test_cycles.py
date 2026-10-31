@@ -326,3 +326,16 @@ def test_a_stuck_step_takes_at_most_two_detours_without_template_powers(tmp_path
     assert assist.why[0].startswith(f"{STUCK}: no progress")
     detour = [e for e in events if e.get("event") == "step" and e["subgoal"].endswith("/detour")]
     assert detour and not any(e["action"] == "type" for e in detour)
+
+
+def test_a_resumed_step_keeps_its_baseline_and_flags(tmp_path: Path) -> None:
+    runner = Runner(ToggleAgent(), PrefersStart(), Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"))  # type: ignore[arg-type]
+    task = open_ended()
+    sg = task.subgoal(task.subgoal_names[0])
+    carry: dict[str, Any] = {}
+    runner._subgoal(task, "s", sg, budget=0, t0=1e18, carry=carry)  # pyright: ignore[reportPrivateUsage]
+    assert carry["state"] == (False, False, False, None, None)
+    carry["state"] = (True, True, False, None, 5)
+    task.added_base = None
+    runner._subgoal(task, "s", sg, budget=0, t0=1e18, carry=carry)  # pyright: ignore[reportPrivateUsage]
+    assert task.added_base == 5
