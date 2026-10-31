@@ -16,7 +16,8 @@ use ludius_proto::v1::lifecycle_request::Op;
 use rand::SeedableRng;
 
 const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--persona P.yaml] [--clock realtime|compressed] [--seed N] [--variant N] [--model M] [--log PATH] [--restore CHECKPOINT]
-       ludius plan-worker --temporal HOST:PORT [--model M]";
+       ludius plan-worker --temporal HOST:PORT [--model M]
+       ludius timeline LOG.jsonl... [--out CSV]";
 
 /// The checkout's .env fills variables the environment doesn't set.
 fn load_env() {
@@ -68,6 +69,12 @@ fn main() -> Result<()> {
     let log_flag = flag("--log")?;
     let restore = flag("--restore")?;
     let temporal = flag("--temporal")?;
+    let out = flag("--out")?;
+    if args.first().is_some_and(|a| a == "timeline") && args.len() > 1 {
+        let out = out.map(PathBuf::from).unwrap_or_else(|| runs().join("timeline.csv"));
+        println!("{} rows -> {}", ludius::timeline::export(&args[1..], &out)?, out.display());
+        return Ok(());
+    }
     if args.first().is_some_and(|a| a == "plan-worker") {
         // the nightly planner worker: no desktop, only the world files and LLM calls
         let Some(address) = temporal else { bail!("plan-worker needs --temporal HOST:PORT

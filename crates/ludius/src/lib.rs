@@ -2,6 +2,7 @@ pub mod admission;
 pub mod assist;
 pub mod calls;
 pub mod canary;
+pub mod clocklease;
 pub use ludius_chat as chat;
 pub mod day;
 pub mod decisions;
@@ -25,6 +26,7 @@ pub mod session;
 pub mod share;
 pub mod tasks;
 pub mod template;
+pub mod timeline;
 pub mod world_state;
 
 #[cfg(feature = "intranet")]
