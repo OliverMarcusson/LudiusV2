@@ -1,0 +1,3 @@
+# The guest observer runs on persona VMs without the VC++ runtime.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

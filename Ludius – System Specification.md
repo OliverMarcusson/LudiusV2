@@ -397,7 +397,7 @@ Check early whether FlaUI works under NativeAOT. If not, use CsWin32 with source
 
 ```
 proto/            gRPC schemas (observation, actions, agent control)
-guest/observer/   C# – UIA snapshot, settle, preflight, vsock/hvsocket client
+crates/ludius-observer/  Rust – UIA snapshot, settle, vsock/hvsocket server (replaces the C# guest/observer/)
 host/agent/       C# – QMP and Hyper-V backends, channel relay, lifecycle
 controller/       Python – step loop, options, policy, failure ladder, clock adapters
 planner/          Python – narrative, day plans, content, template generation

@@ -108,9 +108,12 @@ Export-Certificate -Cert $ca -FilePath $caFile | Out-Null
 
 $uiAccess = -not $NoUiAccess
 $out = Join-Path $root 'out\observer'
-dotnet publish (Join-Path $root 'guest\observer') -c Release -o $out -p:UiAccess=$uiAccess -nologo -v q
-if ($LASTEXITCODE) { throw 'observer publish failed' }
+$features = if ($uiAccess) { @('--features', 'uiaccess') } else { @() }
+cargo build --release -p ludius-observer @features --manifest-path (Join-Path $root 'Cargo.toml')
+if ($LASTEXITCODE) { throw 'observer build failed' }
+New-Item -ItemType Directory -Force $out | Out-Null
 $exe = Join-Path $out 'uiprobe.exe'
+Copy-Item (Join-Path $root 'target\release\uiprobe.exe') $exe -Force
 if ((Set-AuthenticodeSignature $exe -Certificate $signer -HashAlgorithm SHA256).Status -notin 'Valid', 'UnknownError') { throw 'signing failed' }
 
 $s = New-PSSession -VMName $vm -Credential $admin

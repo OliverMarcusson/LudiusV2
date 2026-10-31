@@ -9,7 +9,7 @@ Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrati
 | Path | What |
 | --- | --- |
 | `proto/` | gRPC schemas: observation (guest channel) and host agent API |
-| `guest/observer/` | C# observer (`uiprobe.exe`): UIA3 snapshots, element table, hints, stable ids, cap, settle (UIA events + DXGI dirty rects), Hyper-V socket server. Read-only; writes nothing to disk |
+| `crates/ludius-observer/` | Rust observer (`uiprobe.exe`), replacing the C# `guest/observer/`: UIA3 snapshots, element table, hints, stable ids, cap, settle (UIA events + DXGI dirty rects), Hyper-V socket or vsock server. Read-only; writes nothing to disk |
 | `host/agent/` | C# host agent: gRPC on `127.0.0.1:7451`, Hyper-V WMI keyboard/mouse, observer relay, lifecycle, console frames |
 | `controller/` | Python: planner (narrative, day plans, content, near-duplicate check), day runner (clock modes, breaks, interruptions), Decisions client, options, policy, completion checks, step loop, session hygiene, unlock, failure ladder 1–8, ground truth and instructor timeline, CLI |
 | `controller/data/` | Templates (Notepad, Explorer, Edge), personas, hand-written task instances |

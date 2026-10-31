@@ -7,8 +7,10 @@ $secrets = Join-Path $root 'secrets'
 New-Item -ItemType Directory -Force $secrets | Out-Null
 Export-Certificate -Cert $ca -FilePath (Join-Path $secrets 'range-root-ca.cer') | Out-Null
 $out = Join-Path $root 'out\observer'
-dotnet publish (Join-Path $root 'guest\observer') -c Release -o $out -p:UiAccess=true -nologo -v q
-if ($LASTEXITCODE) { throw 'observer publish failed' }
+cargo build --release -p ludius-observer --features uiaccess --manifest-path (Join-Path $root 'Cargo.toml')
+if ($LASTEXITCODE) { throw 'observer build failed' }
+New-Item -ItemType Directory -Force $out | Out-Null
 $exe = Join-Path $out 'uiprobe.exe'
+Copy-Item (Join-Path $root 'target\release\uiprobe.exe') $exe -Force
 if ((Set-AuthenticodeSignature $exe -Certificate $signer -HashAlgorithm SHA256).Status -notin 'Valid', 'UnknownError') { throw 'signing failed' }
 "signed $exe; root $(Join-Path $secrets 'range-root-ca.cer')"
