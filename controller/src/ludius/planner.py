@@ -66,7 +66,7 @@ _PRINTABLE = re.compile(r"^[\x20-\x7e\n]*$")
 VALUE_MAX = 300
 _NAME_KEYS = ("file_name", "folder_name", "new_name")
 RECYCLE_AGE_DAYS = 3
-OWN_FILES = ("file.edit", "file.reuse", "file.export", "file.recycle", "file.share", "file.organize")
+OWN_FILES = ("file.edit", "file.reuse", "file.export", "file.recycle", "file.share", "file.organize", "file.move")
 _DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)
 WORK_DAY, MEETING_MINUTES, MEETING_DAYS_AHEAD = ("08:00", "17:00"), (15, 120), 14
 CHAT_CHANNELS: list[str] = yaml.safe_load(
@@ -658,7 +658,8 @@ def _owned(it: PlanItem, t: Template, owned: dict[str, str], day: str, items: li
     recycle = t.capability == "file.recycle"
     shared = [sg.done.file.path for sg in t.subgoals.values() if sg.done and sg.done.file and sg.done.file.share]
     sources = [source for sg in t.subgoals.values()
-               if sg.done and (f := sg.done.file) and (source := f.source or f.export_of or f.extract_of)]  # fmt: skip
+               if sg.done and (f := sg.done.file)
+               and (source := f.source or f.export_of or f.extract_of or f.moved_from)]  # fmt: skip
     try:
         named = t.removes if recycle or t.capability == "file.organize" else shared or sources or t.attaches or t.writes
         paths = [w.format_map({**it.params, **it.content}) for w in named]

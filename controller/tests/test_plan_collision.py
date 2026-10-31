@@ -38,10 +38,10 @@ def note(name: str, at: str = "09:00", template: str = "notepad_write_note", **p
     return {"at": at, "template": template, "params": p, "context": "Needs it for the close."}
 
 
-def check(*items: dict[str, Any], existing: list[str] = EXISTING) -> list[str]:
+def check(*items: dict[str, Any], existing: list[str] = EXISTING, owned: dict[str, str] | None = None) -> list[str]:
     templates = cli.plan_sources().templates
     its = [PlanItem.model_validate(i) for i in items]
-    return [why for _, why in validate(its, templates, [], Policy(), existing=existing)]
+    return [why for _, why in validate(its, templates, [], Policy(), existing=existing, owned=owned)]
 
 
 def _slots(m: pytest.MonkeyPatch, *items: dict[str, Any]) -> None:
@@ -92,11 +92,12 @@ def test_intentional_existing_file_workflow_stays_valid() -> None:
             "folder_name": "oct close q4",
         },
     }
-    assert check(move) == []
+    owned = {"documents\\close checklist q4.txt": "2026-10-01"}
+    assert check(move, owned=owned) == []
     clash = {**move, "params": {**move["params"], "new_name": "ar ageing note"}}
-    assert "new_name: 'ar ageing note' already exists" in check(clash)[0]
+    assert "new_name: 'ar ageing note' already exists" in check(clash, owned=owned)[0]
     fresh = note("another one")
-    assert check(fresh, move) == []
+    assert check(fresh, move, owned=owned) == []
 
 
 def test_collision_is_repaired_once_then_dropped_if_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,7 +168,8 @@ def test_review_gaps_content_override_long_extension_and_renaming_earlier_conten
             "params": {"file_name": "supplier brief", "file_ext": "docx", "new_name": "signed", "folder_name": "oct close q4"},
         }
     )
-    assert validate([move], templates, ["supplier brief"], Policy(), existing=EXISTING) == []
+    owned = {"documents\\supplier brief.docx": "2026-10-01"}
+    assert validate([move], templates, ["supplier brief"], Policy(), existing=EXISTING, owned=owned) == []
 
 
 def test_dotted_folder_names_stay_distinct() -> None:
@@ -219,7 +221,7 @@ def test_social_runs_plan_more_chat_and_gossip_every_day(monkeypatch: pytest.Mon
         for day in range(20):
             items = planner.day_slots(
                 anna, DAY + dt.timedelta(days=day), templates, {"lnord": "Lars Nord"}, {"lnord"}, ["general"], {},
-                {}, set(), set(), {}, [], None, [], {}, {}, set(), [], {},
+                {}, set(), set(), {"documents\\todo.txt": "2026-10-01"}, [], None, [], {}, {}, set(), [], {},
             )  # fmt: skip
             caps = [templates[it.template].capability or "" for it in items if it.template in templates]
             n += sum(c.startswith("chat.") for c in caps)
@@ -335,3 +337,13 @@ def test_managers_plan_their_requests_in_parallel_but_each_manager_once(tmp_path
             nightly.durable.desk_lock(tmp_path / "locks" / "nightly-boss-a.lock"),
         ):
             pass
+
+
+def test_a_move_names_an_owned_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LUDIUS_APPS", raising=False)
+    templates = cli.plan_sources().templates
+    params = {"file_name": "Todo", "file_ext": "txt", "new_name": "todo old", "folder_name": "archive"}
+    move = PlanItem(at="11:00", template="explorer_rename_move", context="tidy", params=params)
+    assert validate([move], templates, [], Policy(), owned={"documents\\todo.txt": "2026-11-01"}) == []
+    for owned in ({"documents\\other.txt": "2026-11-01"}, None):
+        assert "own files" in validate([move], templates, [], Policy(), owned=owned)[0][1]
