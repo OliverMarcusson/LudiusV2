@@ -221,3 +221,28 @@ def test_warp_without_narrative_fails_visibly_before_any_jump(monkeypatch: pytes
         cli._range_warp(args, [], dt.date(2099, 1, 1))  # pyright: ignore[reportPrivateUsage]
     events = [json.loads(x)["event"] for x in (tmp_path / "range" / "warp.jsonl").read_text().splitlines()]
     assert events == ["warp_failed"]
+
+
+def test_warp_refuses_a_reserved_desktop_before_any_jump(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from ludius import cli, rangerun
+    from ludius.clocklease import Lease
+
+    class Untouched(RangeClock):
+        def set(self, at: dt.datetime) -> dict[int, float]:
+            raise AssertionError("clock jumped")
+
+    monkeypatch.setattr(cli, "RUNS", tmp_path)
+    monkeypatch.setattr(cli, "_range_clock", lambda strict=True: Untouched(110, [111]))
+    monkeypatch.setattr(cli, "_clock_lease", lambda vm=None: Lease(tmp_path / "clock.json", "range", renew_s=3600))
+    monkeypatch.setattr(cli, "plan_sources", lambda: None)
+    monkeypatch.setattr(rangerun, "specs", lambda *_: [])
+    (tmp_path / "world").mkdir()
+    (tmp_path / "world" / "narrative.yaml").write_text("{}")
+    (tmp_path / "locks").mkdir()
+    plan = {"persona": "lnord", "date": "2027-02-03", "items": []}
+    day = {"owner": "ludius/day-lnord-2027-02-03", "day": {"plan": plan, "clock": "time-jump", "utc_offset_s": 0}}
+    (tmp_path / "locks" / "ludius-lnord.day.json").write_text(json.dumps(day))
+    args = argparse.Namespace(start="2099-01-05", days=1, timezone="Europe/Stockholm", plan_at="22:00", agent=None,
+                              temporal="127.0.0.1:7233", model="m")  # fmt: skip
+    with pytest.raises(RuntimeError, match="lnord by ludius/day-lnord-2027-02-03"):
+        cli._range_warp(args, ["aberg", "lnord"], dt.date(2099, 1, 1))  # pyright: ignore[reportPrivateUsage]

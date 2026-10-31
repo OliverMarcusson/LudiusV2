@@ -564,7 +564,7 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
     import signal
     from zoneinfo import ZoneInfo
 
-    from ludius import durable, nightly, rangerun
+    from ludius import durable, nightly, rangerun, scheduled
 
     if not args.start or not 1 <= args.days <= 7:
         print("warp needs --start YYYY-MM-DD (a future date) and --days 1-7", file=sys.stderr)
@@ -611,6 +611,10 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
             raise RuntimeError(
                 f"no company narrative at {world.narrative_path}; run `ludius plan narrative --date {start}`"
             )
+        held = [f"{u} by {r.owner}" for u in users
+                if (r := scheduled.DayOwner(RUNS / "locks" / f"{rangerun.vm_of(u)}.lock").read())]  # fmt: skip
+        if held:  # a day left from an interrupted run would fail that persona's first warp day
+            raise RuntimeError(f"desktops still reserved: {'; '.join(held)}; inspect, clear with `ludius reservation`")
         sup.step()
         for d in days:
             jump(dt.datetime.combine(d - dt.timedelta(days=1), dt.time.fromisoformat(args.plan_at), tz))
