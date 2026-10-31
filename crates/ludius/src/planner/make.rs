@@ -22,7 +22,7 @@ use crate::policy::Policy;
 use crate::tasks::{ATTACHABLE, Persona, Template, sends};
 use crate::template::casefold;
 
-const NARRATIVE_SYSTEM: &str = "You write the backstory of a fictional, ordinary small company for a cyber-defence training range. \
+pub(crate) const NARRATIVE_SYSTEM: &str = "You write the backstory of a fictional, ordinary small company for a cyber-defence training range. \
 It must read as mundane and plausible: real-sounding departments, projects and calendar events. \
 No security incidents, no hacking, no real companies or real people.";
 const PLAN_SYSTEM: &str = "You write the content of one ordinary working day for one employee of a fictional company in a training range. \

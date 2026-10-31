@@ -11,6 +11,7 @@ pub mod hostagent;
 pub mod keys;
 pub mod llm;
 pub use ludius_mail as mail;
+pub mod nightly;
 pub mod options;
 pub mod paths;
 pub mod planner;
