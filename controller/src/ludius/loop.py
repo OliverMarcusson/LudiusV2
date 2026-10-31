@@ -149,7 +149,7 @@ class Runner:
         self.snap: obs.Snapshot = obs.Snapshot()
         self.display: tuple[int, int, int] | None = None
         self.mapping_ok = True
-        self._steps = 0
+        self._steps = self._live = 0
         self.image = os.environ.get("LUDIUS_DECISION_IMAGE") == "1"
 
     def _refocus(self, task: Task, name: str, sg: Subgoal, snap: obs.Snapshot) -> None:
@@ -455,7 +455,15 @@ class Runner:
         budget = min(helper.steps, task.template.budget_steps - steps)
         return self._subgoal(task, f"{name}/detour", helper, budget=budget, t0=t0)[1]
 
-    def _subgoal(
+    def _subgoal(self, *a: Any, **k: Any) -> tuple[str, int, str]:
+        self._live = 0
+        try:
+            return self._subgoal_steps(*a, **k)
+        except CapReached:
+            self._steps += self._live  # the run's budget abandonment counts this subgoal's steps too
+            raise
+
+    def _subgoal_steps(
         self,
         task: Task,
         name: str,
@@ -489,6 +497,7 @@ class Runner:
         waited, wait_why = 0.0, ""
         while step < budget:
             step += 1
+            self._live = step
             if time.monotonic() - t0 > task.template.budget_minutes * 60:
                 return "failed", step - 1, "time budget"
             if waited > WAIT_CAP_S:

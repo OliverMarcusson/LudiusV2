@@ -200,6 +200,8 @@ def test_a_spent_budget_abandons_the_task_the_same_way_at_every_site(tmp_path: P
     assert any(e["event"] == "ladder" and e["reason"] == "budget spent" for e in events[spent:])
     assert [e["event"] for e in events].count("task_end") == 1
     assert events[-1]["status"] == "abandoned" and events[-1]["reason"] == "budget spent"
+    if site == "decision":  # the refused decision was the subgoal's first step
+        assert out.steps == events[-1]["steps"] == 1
     assert events[-1]["steps"] == out.steps
 
 
