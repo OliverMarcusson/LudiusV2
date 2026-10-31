@@ -93,6 +93,22 @@ services:
       - /etc/pve/pve-root-ca.pem:/etc/pve/pve-root-ca.pem:ro  # only the CA, not /etc/pve/priv
     secrets: [pve_token, pve_root_password]
 
+  monitor:
+    image: ${LUDIUS_MONITOR_IMAGE:?set LUDIUS_MONITOR_IMAGE in .env}
+    restart: unless-stopped
+    network_mode: host  # Caddy proxies 127.0.0.1:7452; the host agent is on 127.0.0.1:7451
+    environment:
+      MONITOR_LISTEN: ${MONITOR_LISTEN:-127.0.0.1:7452}
+      LUDIUS_AGENT: http://${AGENT_LISTEN:-127.0.0.1:7451}
+      MONITOR_ALLOWED_ORIGINS: ${MONITOR_ALLOWED_ORIGINS:-}
+      MONITOR_ALLOWED_HOSTS: ${MONITOR_ALLOWED_HOSTS:-127.0.0.1;localhost}
+      LUDIUS_RUNS: /var/lib/ludius/runs
+      LUDIUS_DATA: /etc/ludius/data
+    volumes:
+      - ${LUDIUS_RUNS_DIR:?set LUDIUS_RUNS_DIR in .env}:/var/lib/ludius/runs  # read-only except runs/portraits
+      - ${LUDIUS_DATA_DIR:?set LUDIUS_DATA_DIR in .env}:/etc/ludius/data:ro  # controller/data: personas, templates
+      - /etc/localtime:/etc/localtime:ro  # the warp journal writes naive local times
+
 secrets:
   pve_token:
     file: ${LUDIUS_SECRETS:-./secrets}/pve_token

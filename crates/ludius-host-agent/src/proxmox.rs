@@ -2,7 +2,7 @@ use crate::error::{E, R, down};
 use crate::guest::Guest;
 use crate::pve::Pve;
 use crate::qmp::{self, Qmp};
-use ludius_proto::v1::GuestExecResult;
+use ludius_proto::v1::{GuestExecResult, VmInfo};
 use ludius_proto::v1::lifecycle_request::Op;
 use regex::Regex;
 use serde_json::{Value, json};
@@ -74,6 +74,7 @@ pub struct Proxmox {
     cache: Mutex<Cache>,
     /// Held while activating a VM; maps VMs being started to when, so the cap counts them.
     activation: tokio::sync::Mutex<HashMap<u32, Instant>>,
+    captures: crate::rfb::Captures,
 }
 
 pub fn valid_name(name: &str) -> bool {
@@ -153,7 +154,7 @@ async fn pause(lo: u64, hi: u64) {
 
 impl Proxmox {
     pub fn new(api: Pve, o: Options) -> Self {
-        Proxmox { api, o, cache: Mutex::default(), activation: tokio::sync::Mutex::default() }
+        Proxmox { api, o, cache: Mutex::default(), activation: tokio::sync::Mutex::default(), captures: Default::default() }
     }
 
     fn cache(&self) -> std::sync::MutexGuard<'_, Cache> {
@@ -251,6 +252,42 @@ impl Proxmox {
                 })
             })
             .collect())
+    }
+
+    /// Range VMs for the monitor: no templates, no range servers.
+    pub async fn list_vms(&self) -> R<Vec<VmInfo>> {
+        let mut vms: Vec<VmInfo> = self
+            .list()
+            .await?
+            .into_iter()
+            .filter(|v| self.in_range(v) && !v.template && !self.o.cap_exempt.contains(&(v.id, v.name.clone())))
+            .map(|v| {
+                let (w, h) = if v.status == "running" { self.o.screen } else { (0, 0) };
+                let state = match v.status.as_str() {
+                    "running" => "running",
+                    "stopped" => "off",
+                    _ => "other",
+                };
+                VmInfo { name: v.name, state: state.into(), width: w, height: h }
+            })
+            .collect();
+        vms.sort_by_key(|v| v.name.to_lowercase());
+        Ok(vms)
+    }
+
+    /// A JPEG of the VM's console, at most `max_width` wide.
+    pub async fn frame(&self, name: &str, max_width: usize) -> R<Arc<Vec<u8>>> {
+        let vm = match self.get(name).await {
+            Ok(vm) if !self.o.cap_exempt.contains(&(vm.id, vm.name.clone())) => vm,
+            r => {
+                self.captures.close(name);
+                r?;
+                return Err(E::Denied(format!("{name} is a range server: not on the monitor")));
+            }
+        };
+        let qmp = vm.qmp.path.clone();
+        let connect = move || -> crate::rfb::Connect { Box::pin(async move { Qmp { path: qmp }.vnc_client().await }) };
+        self.captures.frame(name, format!("{}|{}", vm.id, vm.identity), connect, max_width).await
     }
 
     /// The raw /cluster/resources list, for the controller's own range checks.

@@ -22,6 +22,17 @@ impl Qmp {
         Ok(self.run(&[(command, arguments)], None).await?.remove(0))
     }
 
+    /// A VNC connection to the VM's console: one end of a socket pair handed to QEMU (getfd + add_client).
+    pub async fn vnc_client(&self) -> R<UnixStream> {
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().map_err(down)?;
+        let name = json!({ "fdname": "ludius-monitor" });
+        let add = json!({ "protocol": "vnc", "fdname": "ludius-monitor", "skipauth": true });
+        self.run(&[("getfd", Some(name)), ("add_client", Some(add))], Some(theirs.as_raw_fd())).await?;
+        drop(theirs);
+        ours.set_nonblocking(true).map_err(down)?;
+        UnixStream::from_std(ours).map_err(down)
+    }
+
     /// Runs commands on one QMP session; `pass_fd` rides along with the first command (SCM_RIGHTS).
     pub async fn run(&self, commands: &[(&str, Option<Value>)], pass_fd: Option<RawFd>) -> R<Vec<Value>> {
         tokio::time::timeout(TIMEOUT, self.session(commands, pass_fd))
@@ -114,7 +125,8 @@ fn sendmsg_fd(sock: RawFd, data: &[u8], fd: RawFd) -> std::io::Result<()> {
     unsafe {
         let mut iov = libc::iovec { iov_base: data.as_ptr() as *mut _, iov_len: data.len() };
         let space = libc::CMSG_SPACE(size_of::<RawFd>() as u32) as usize;
-        let mut control = vec![0u8; space];
+        let mut control = [0u64; 4]; // u64 keeps the cmsghdr aligned; 32 bytes >= CMSG_SPACE(one fd)
+        debug_assert!(space <= size_of_val(&control));
         let mut msg: libc::msghdr = std::mem::zeroed();
         msg.msg_iov = &mut iov;
         msg.msg_iovlen = 1;

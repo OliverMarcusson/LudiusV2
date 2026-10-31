@@ -3,6 +3,7 @@ mod guest;
 mod proxmox;
 mod pve;
 mod qmp;
+mod rfb;
 
 use error::{E, R};
 use ludius_proto::v1::host_agent_server::{HostAgent, HostAgentServer};
@@ -104,11 +105,14 @@ impl HostAgent for Agent {
     }
 
     async fn list_vms(&self, _: Request<ListVmsRequest>) -> Res<ListVmsResult> {
-        Err(Status::unimplemented("list_vms: not in this build yet"))
+        Ok(Response::new(ListVmsResult { vms: self.pm.list_vms().await? }))
     }
 
-    async fn frame(&self, _: Request<FrameRequest>) -> Res<FrameResult> {
-        Err(Status::unimplemented("frame: not in this build yet"))
+    async fn frame(&self, r: Request<FrameRequest>) -> Res<FrameResult> {
+        let r = r.into_inner();
+        let width = if r.max_width <= 0 { 640 } else { r.max_width.min(8192) } as usize;
+        let jpeg = self.pm.frame(&r.vm, width).await?;
+        Ok(Response::new(FrameResult { jpeg: jpeg.to_vec() }))
     }
 }
 
