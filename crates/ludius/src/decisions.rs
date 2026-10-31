@@ -54,6 +54,11 @@ pub struct Decision {
     pub response: Value,
 }
 
+/// Anything that picks one option for a screen state (the Decider client, or a test double).
+pub trait Decider {
+    fn decide(&self, state: &Value, options: &Options, ask_progress: bool, image: Option<&[u8]>) -> Result<Decision>;
+}
+
 impl Decision {
     pub fn top(&self, n: usize) -> Vec<(String, f64)> {
         let mut v: Vec<_> = self.probabilities.iter().map(|(k, p)| (k.clone(), *p)).collect();
@@ -323,5 +328,11 @@ mod tests {
         assert!(build_request("m", &json!({}), &bad, true, None).is_err());
         let r = build_request("m", &json!({}), &opts(), false, None).unwrap();
         assert!(r["questions"].get("subgoal_done").is_none());
+    }
+}
+
+impl Decider for DecisionsClient {
+    fn decide(&self, state: &Value, options: &Options, ask_progress: bool, image: Option<&[u8]>) -> Result<Decision> {
+        DecisionsClient::decide(self, state, options, ask_progress, image)
     }
 }

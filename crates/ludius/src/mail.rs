@@ -101,7 +101,7 @@ pub fn letters(s: &str) -> String {
     casefold(&s).chars().filter(|c| c.is_ascii_digit() || c.is_ascii_lowercase()).collect()
 }
 
-fn above_quote(body: &str) -> &str {
+pub fn above_quote(body: &str) -> &str {
     let re = regex::Regex::new(r"(?m)^From:[^\n]*\r?\nSent:").unwrap();
     re.find(body).map(|m| &body[..m.start()]).unwrap_or(body)
 }

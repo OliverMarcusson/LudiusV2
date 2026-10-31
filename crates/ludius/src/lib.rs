@@ -11,6 +11,7 @@ pub mod mail;
 pub mod options;
 pub mod paths;
 pub mod policy;
+pub mod reply;
 pub mod share;
 pub mod tasks;
 pub mod template;
