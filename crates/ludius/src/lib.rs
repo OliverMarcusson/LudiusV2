@@ -1,3 +1,4 @@
+pub mod admission;
 pub mod assist;
 pub mod calls;
 pub use ludius_chat as chat;
