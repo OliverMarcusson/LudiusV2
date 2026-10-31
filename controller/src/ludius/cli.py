@@ -163,6 +163,7 @@ def _restart_observer(vm: str) -> None:
 
     if not shutil.which("qm") or (vmid := rangerun.vmids().get(vm.removeprefix("ludius-"))) is None:
         return
+    rangeclock.confine({vmid: rangerun.vm_of(vm.removeprefix("ludius-"))}, rangeclock.resources(), socket.gethostname())
     for n in range(rangeclock.RETRIES + 1):  # the guest agent can lag the rollback
         try:
             rangeclock.qm_exec(vmid, OBSERVER_RESTART)
@@ -590,16 +591,16 @@ def _range_sweep() -> int:
     from ludius import clocklease
 
     path = _clock_lease("range").path
-    if (rec := clocklease.orphan(path)) is None:
-        return 0
-    try:
-        got = _range_clock(strict=False).reset()
-    except Exception as e:  # noqa: BLE001  keep the lease; the next sweep retries
-        print(f"sweep: range clock lease orphaned (pid {rec.get('pid')}), reset FAILED, retrying: {e}", file=sys.stderr)
-        return 3
-    with suppress(OSError, ValueError):
-        if json.loads(path.read_text(encoding="utf-8")) == rec:
-            path.unlink()
+    with clocklease.exclusive(path):  # a warp's lease-and-jump waits for this sweep, so the lease is still rec
+        if (rec := clocklease.orphan(path)) is None:
+            return 0
+        try:
+            got = _range_clock(strict=False).reset()
+        except Exception as e:  # noqa: BLE001  keep the lease; the next sweep retries
+            print(f"sweep: range clock lease orphaned (pid {rec.get('pid')}), reset FAILED, retrying: {e}",
+                  file=sys.stderr)  # fmt: skip
+            return 3
+        path.unlink(missing_ok=True)
     print(json.dumps({"swept": rec, "offsets_s": {str(k): round(v, 1) for k, v in got.items()}}))
     return 0
 
@@ -608,7 +609,7 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
     import signal
     from zoneinfo import ZoneInfo
 
-    from ludius import durable, nightly, rangerun, scheduled
+    from ludius import clocklease, durable, nightly, rangerun, scheduled
 
     if not args.start or not 1 <= args.days <= 7:
         print("warp needs --start YYYY-MM-DD (a future date) and --days 1-7", file=sys.stderr)
@@ -642,8 +643,9 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
                 "offsets_s": {str(k): round(v, 1) for k, v in got.items()}}  # fmt: skip
 
     def jump(at: dt.datetime) -> None:
-        lease.hold()
-        note(event="clock_set", logical=at.isoformat(), **offsets(clock.set(at)))
+        with clocklease.exclusive(lease.path):
+            lease.hold()
+            note(event="clock_set", logical=at.isoformat(), **offsets(clock.set(at)))
 
     def term(*_: object) -> None:
         raise KeyboardInterrupt

@@ -31,13 +31,16 @@ def qm_exec(vmid: int, script: str) -> str:
 
 
 # A qm call that timed out can still run later: the sequence file makes the guest skip a Set-Date older than one
-# it already applied.
-_SET = ("$q = \"$env:ProgramData\\ludius-clock.seq\"; $o = 0L; "
+# it already applied; the mutex keeps check and set together across guest processes.
+_SET = ("$m = New-Object Threading.Mutex($false, 'Global\\ludius-clock'); "
+        "if (-not $m.WaitOne(30000)) {{ throw 'clock mutex busy' }}; try {{ "
+        "$q = \"$env:ProgramData\\ludius-clock.seq\"; $o = 0L; "
         "if (Test-Path $q) {{ [void][long]::TryParse((Get-Content -Raw $q).Trim(), [ref]$o) }}; "
-        "if ($o -ge {seq}) {{ exit 0 }}; [IO.File]::WriteAllText($q, '{seq}'); "
+        "if ($o -lt {seq}) {{ [IO.File]::WriteAllText($q, '{seq}'); "
         "$e = (Get-Date) - [Diagnostics.Process]::GetCurrentProcess().StartTime; "
         "if ($e.TotalSeconds -lt 0 -or $e.TotalSeconds -gt 30) {{ $e = [TimeSpan]::Zero }}; "
-        "Set-Date ([DateTimeOffset]::FromUnixTimeMilliseconds({ms}).LocalDateTime + $e) | Out-Null; ")  # fmt: skip
+        "Set-Date ([DateTimeOffset]::FromUnixTimeMilliseconds({ms}).LocalDateTime + $e) | Out-Null }} "
+        "}} finally {{ $m.ReleaseMutex() }}; ")  # fmt: skip
 _PURGE = "klist -li 0x3e7 purge | Out-Null; klist -li 0x3e4 purge | Out-Null; "
 _NOW = "[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()"
 

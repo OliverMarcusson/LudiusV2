@@ -4,7 +4,8 @@ import datetime as dt
 import json
 import os
 import threading
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,20 @@ class Lease:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"vm": self.vm, "pid": os.getpid(), "renewed": now}), encoding="utf-8")
         tmp.replace(self.path)
+
+
+@contextmanager
+def exclusive(path: Path) -> Iterator[None]:
+    """Host lock next to the lease: the sweeper's check-reset-delete and a warp's lease-and-jump never interleave."""
+    try:
+        import fcntl
+    except ImportError:  # Windows: the Hyper-V sweeper lives in the host agent
+        yield
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_suffix(".lock").open("a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        yield
 
 
 def orphan(path: Path, now: dt.datetime | None = None) -> dict[str, Any] | None:
