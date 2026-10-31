@@ -85,7 +85,7 @@ fn mapping_recheck_on_display_change() {
 fn document_click_keeps_the_caret_at_the_end() {
     let (agent, log) = (Fake::default(), log());
     let mut r = runner(&agent, &log);
-    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../controller/data");
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
     unsafe { std::env::set_var("LUDIUS_DATA", &data) };
     let t = crate::tasks::load_template(&data.join("templates/notepad_write_note.yaml")).unwrap();
     let inst = crate::tasks::TaskInstance { template: t.task.clone(), params: t.example.clone(), variant: Some(0), ..Default::default() };

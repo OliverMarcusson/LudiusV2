@@ -1,2 +1,2 @@
 # Intranet downloads are served and checked byte for byte: never convert line endings.
-controller/data/intranet/files/** -text
+data/intranet/files/** -text

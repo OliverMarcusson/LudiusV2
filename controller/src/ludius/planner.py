@@ -70,7 +70,7 @@ OWN_FILES = ("file.edit", "file.reuse", "file.export", "file.recycle", "file.sha
 _DEVICE = re.compile(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?", re.IGNORECASE)
 WORK_DAY, MEETING_MINUTES, MEETING_DAYS_AHEAD = ("08:00", "17:00"), (15, 120), 14
 CHAT_CHANNELS: list[str] = yaml.safe_load(
-    (Path(__file__).resolve().parents[2] / "data" / "chat.yaml").read_text("utf-8")
+    (Path(__file__).resolve().parents[3] / "data" / "chat.yaml").read_text("utf-8")
 )["channels"]
 SHOWN_EXISTING = 80
 GOSSIP_LEVEL = 0
@@ -1212,7 +1212,7 @@ def load_plan(path: Path, *, history: bool = False) -> DayPlan:
 
 @functools.cache
 def _templates() -> dict[str, Template]:
-    ts = [load_template(p) for p in sorted((Path(__file__).resolve().parents[2] / "data" / "templates").glob("*.yaml"))]
+    ts = [load_template(p) for p in sorted((Path(__file__).resolve().parents[3] / "data" / "templates").glob("*.yaml"))]
     return {t.task: t for t in ts}
 
 

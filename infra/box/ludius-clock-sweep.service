@@ -3,5 +3,5 @@ Description=Ludius: reset the range clocks if a dead warp left its clock lease
 
 [Service]
 Type=oneshot
-WorkingDirectory=/root/src/LudiusV2.new/controller
-ExecStart=/bin/bash -c 'set -a && . ../.env && set +a && exec .venv/bin/python -m ludius.cli range sweep'
+WorkingDirectory=/root/src/LudiusV2.new
+ExecStart=/root/src/LudiusV2.new/ludius-rs range sweep

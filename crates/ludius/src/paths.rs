@@ -9,9 +9,9 @@ pub fn runs() -> PathBuf {
     std::env::var_os("LUDIUS_RUNS").map(PathBuf::from).unwrap_or_else(|| root().join("runs"))
 }
 
-/// Templates, apps, personas: LUDIUS_DATA, else controller/data in the checkout.
+/// Templates, apps, personas: LUDIUS_DATA, else data/ in the checkout.
 pub fn data() -> PathBuf {
-    std::env::var_os("LUDIUS_DATA").map(PathBuf::from).unwrap_or_else(|| root().join("controller").join("data"))
+    std::env::var_os("LUDIUS_DATA").map(PathBuf::from).unwrap_or_else(|| root().join("data"))
 }
 
 pub fn env(key: &str) -> String {

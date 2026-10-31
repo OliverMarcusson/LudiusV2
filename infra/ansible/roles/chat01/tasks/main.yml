@@ -206,7 +206,7 @@
     dest: /usr/local/sbin/chat-setup
     mode: "0755"
   vars:
-    chat: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../controller/data/chat.yaml') | from_yaml }}"
+    chat: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../../data/chat.yaml') | from_yaml }}"
 
 - name: Team, channels and users (SSO only)
   ansible.builtin.command: /usr/local/sbin/chat-setup

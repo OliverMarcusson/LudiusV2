@@ -34,13 +34,13 @@ persona_cores: 4
 persona_memory_mb: 6144
 display_args: -global VGA.xres=1920 -global VGA.yres=1080
 personas: "{{ range_personas | map(attribute='user') | list }}"
-persona_files: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/../../controller/data/personas/*.yaml') | map('basename') | map('splitext') | map('first') | list }}"
+persona_files: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/../../data/personas/*.yaml') | map('basename') | map('splitext') | map('first') | list }}"
 range_admin_user: ludiusbringup
 range_admin_password: "{{ vault_range_admin_password }}"
 bringup_teardown: true
-observer_check_cmd: uv run --project {{ playbook_dir }}/../../controller ludius
+observer_check_cmd: "{{ playbook_dir }}/../../ludius-rs"
 narrative_file: "{{ playbook_dir }}/../../runs/world/narrative.yaml"
-intranet_dir: "{{ playbook_dir }}/../../controller/data/intranet"
+intranet_dir: "{{ playbook_dir }}/../../data/intranet"
 people: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).people }}"
 team_channels: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).channels | default({}) }}"
 team_shares: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).shares | default({}) }}"

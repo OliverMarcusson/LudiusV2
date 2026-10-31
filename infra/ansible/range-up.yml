@@ -22,7 +22,7 @@
           - range_admin_password | length >= 12
         fail_msg: >-
           unsafe or duplicate narrative people (user: lower case, at most 10 characters, so WS-<USER>01 fits a
-          computer name), a persona outside the narrative or without controller/data/personas/<user>.yaml, no persona,
+          computer name), a persona outside the narrative or without data/personas/<user>.yaml, no persona,
           more personas than {{ mail_backend }} log-in mailboxes ({{ login_mailbox_cap }}), an unknown mail_backend,
           or a password Samba would refuse (<user><suffix> under 6, DC admin under 8 or without upper, lower and digit), or a bring-up password
           under 12 characters

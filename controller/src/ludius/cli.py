@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from ludius import nightly, rangeclock, rangerun
 
 ROOT = Path(__file__).resolve().parents[3]
-DATA = ROOT / "controller" / "data"
+DATA = ROOT / "data"
 RUNS = Path(os.environ.get("LUDIUS_RUNS") or ROOT / "runs")
 
 
@@ -1206,7 +1206,7 @@ def main(argv: list[str] | None = None) -> int:
 
     it = sub.add_parser("intranet", help="check a range intranet folder (Markdown pages); prints the pages as JSON")
     it.add_argument("what", choices=["check"])
-    it.add_argument("dir", nargs="?", type=Path, help="default: LUDIUS_INTRANET or controller/data/intranet")
+    it.add_argument("dir", nargs="?", type=Path, help="default: LUDIUS_INTRANET or data/intranet")
     it.set_defaults(fn=cmd_intranet)
 
     ch = sub.add_parser("chat", help="chat01: reset (delete) the direct messages between range accounts")

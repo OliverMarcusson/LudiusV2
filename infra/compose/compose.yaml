@@ -108,7 +108,7 @@ services:
       OPENROUTER_KEY_FILE: /run/secrets/openrouter_key  # portraits; empty disables them
     volumes:
       - ${LUDIUS_RUNS_DIR:?set LUDIUS_RUNS_DIR in .env}:/var/lib/ludius/runs  # read-only except runs/portraits
-      - ${LUDIUS_DATA_DIR:?set LUDIUS_DATA_DIR in .env}:/etc/ludius/data:ro  # controller/data: personas, templates
+      - ${LUDIUS_DATA_DIR:?set LUDIUS_DATA_DIR in .env}:/etc/ludius/data:ro  # data: personas, templates
       - /etc/localtime:/etc/localtime:ro  # the warp journal writes naive local times
     secrets: [openrouter_key]
 

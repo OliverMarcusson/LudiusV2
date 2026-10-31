@@ -322,7 +322,7 @@ REFERS_TO_EXISTING: dict[str, set[str]] = {
     "chat.read_channel": {"channel"},
     "chat.file": {"to", "to_name", "file_name"},
 }
-APPS = Path(__file__).resolve().parents[2] / "data" / "apps"
+APPS = Path(__file__).resolve().parents[3] / "data" / "apps"
 COMMITS = ["send", "send anyway", "save", "yes", "ok", "replace", "delete"]
 LAUNCH_TEXT = "launch_query"
 

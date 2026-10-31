@@ -210,7 +210,7 @@ mod tests {
     use super::*;
 
     fn data_dir() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../controller/data")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
     }
 
     #[test]

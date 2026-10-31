@@ -15,8 +15,8 @@ static class ConsoleData
     public static void Map(RouteGroupBuilder api, WebApplication app, string defaultRuns)
     {
         var runs = Path.GetFullPath(app.Configuration["Monitor:Runs"] ?? defaultRuns, app.Environment.ContentRootPath);
-        var personas = Path.GetFullPath(app.Configuration["Monitor:Personas"] ?? "../../controller/data/personas", app.Environment.ContentRootPath);
-        var templates = Path.GetFullPath(app.Configuration["Monitor:Templates"] ?? "../../controller/data/templates", app.Environment.ContentRootPath);
+        var personas = Path.GetFullPath(app.Configuration["Monitor:Personas"] ?? "../../data/personas", app.Environment.ContentRootPath);
+        var templates = Path.GetFullPath(app.Configuration["Monitor:Templates"] ?? "../../data/templates", app.Environment.ContentRootPath);
         Portraits.Map(api, app, runs, personas);
         api.MapGet("/templates", () => Read(() => Templates(templates)));
         api.MapGet("/console", () => Read(() => Catalog(runs, personas)));

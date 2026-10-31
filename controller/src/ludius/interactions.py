@@ -11,7 +11,7 @@ import yaml
 
 from ludius import mail
 
-TEMPLATES = Path(__file__).resolve().parents[2] / "data" / "templates"
+TEMPLATES = Path(__file__).resolve().parents[3] / "data" / "templates"
 KINDS = {
     "mail.send": "mail",
     "mail.reply": "reply",

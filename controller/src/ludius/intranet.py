@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-DIR = Path(os.environ.get("LUDIUS_INTRANET") or Path(__file__).resolve().parents[2] / "data" / "intranet")
+DIR = Path(os.environ.get("LUDIUS_INTRANET") or Path(__file__).resolve().parents[3] / "data" / "intranet")
 FIELDS = {"title", "section", "owner", "updated", "popular", "tags", "files"}
 MAX_PAGE = 64 << 10
 MAX_FILE = 1_000_000

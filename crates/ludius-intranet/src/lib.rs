@@ -12,7 +12,7 @@ pub const RANGE_DOMAIN: &str = "corp.ludius.test";
 const FIELDS: [&str; 7] = ["title", "section", "owner", "updated", "popular", "tags", "files"];
 const FILE_RE: &str = r"(?i)[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}\.(?:pdf|docx|xlsx|pptx|txt|csv|png|jpg)";
 
-/// LUDIUS_INTRANET, else intranet/ under LUDIUS_DATA (default controller/data).
+/// LUDIUS_INTRANET, else intranet/ under LUDIUS_DATA (default data/).
 pub fn dir() -> PathBuf {
     if let Some(d) = std::env::var_os("LUDIUS_INTRANET") {
         return PathBuf::from(d);
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn repo_intranet_loads() {
-        let d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../controller/data/intranet");
+        let d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/intranet");
         assert!(!load(&d).unwrap().is_empty());
     }
 }

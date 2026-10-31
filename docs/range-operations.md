@@ -9,7 +9,7 @@ How to run a multi-day test on the Proxmox range and leave it clean afterwards. 
 | --- | --- |
 | Host | `ssh root@95.216.39.232` (Proxmox) |
 | Code the range runs | `/root/src/LudiusV2.new`: a plain copy, **not a git repo**. `/root/src/LudiusV2` is older; don't use it |
-| Python | `/root/src/LudiusV2.new/controller/.venv` (editable install, no pytest: run the tests locally) |
+| Controller | `/root/src/LudiusV2.new/ludius-rs` (the Rust `ludius` binary; run it from `/root/src/LudiusV2.new`, it reads `.env` there and `data/`, `runs/` under it) |
 | Secrets | `/root/src/LudiusV2.new/.env`. Source it, never print it |
 | Run output | `/root/src/LudiusV2.new/runs` (counter, plans, days, range journals) |
 | Scratch, logs, archives | `/root/warp` (snapshot logs, `warpN.out`, `warpN-runs-<ts>.tgz`) |
@@ -26,21 +26,26 @@ VMs (persona accounts come from `infra/ansible/group_vars/all/range-vms.yml`, VM
 | 122 | lnord | 127 | eyilmaz |
 | | | 128 | sdekker |
 
-Every remote command below starts with the same prefix:
+Every remote command below runs from the checkout copy (the binary loads `.env` itself; variables already set win):
 
 ```bash
-cd /root/src/LudiusV2.new/controller && set -a && . ../.env && set +a
+cd /root/src/LudiusV2.new
 ```
 
 ## 1. Sync the code
 
-The box copy only changes when you push to it. Send committed `HEAD` (never your dirty tree) and keep a backup:
+The box copy only changes when you push to it. Build the Linux binary from committed `HEAD` (never your dirty tree)
+in the WSL Fedora podman container, then send it and `data/`, keeping a backup:
 
 ```bash
-git archive --format=tar HEAD controller | ssh root@95.216.39.232 \
-  'cd /root/src/LudiusV2.new && tar czf /root/warp/pre-sync-controller-$(date +%Y%m%d%H%M).tgz --exclude=controller/.venv controller && tar xf -'
-ssh root@95.216.39.232 'cd /root/src/LudiusV2.new/controller && .venv/bin/python -c "import ludius.cli, ludius.durable, ludius.scheduled; print(\"ok\")"'
+git archive --format=tar HEAD Cargo.toml Cargo.lock crates proto | wsl.exe -d FedoraLinux-44 -- sh -c 'podman run --rm -i -e CARGO_INCREMENTAL=0 -v ludius-cargo:/usr/local/cargo/registry -v ludius-target:/tgt -e CARGO_TARGET_DIR=/tgt docker.io/library/rust:1.96-trixie sh -c "mkdir /src && cd /src && tar xf - && cargo build --release -p ludius --bin ludius >&2 && cat /tgt/release/ludius" > /tmp/ludius-rs'
+wsl.exe -d FedoraLinux-44 -- sh -c 'cat /tmp/ludius-rs' | ssh root@95.216.39.232 'cd /root/src/LudiusV2.new && cp -p ludius-rs /root/warp/ludius-rs.$(date +%Y%m%d%H%M) 2>/dev/null; cat > ludius-rs.new && chmod +x ludius-rs.new && mv ludius-rs.new ludius-rs'
+git archive --format=tar HEAD data | ssh root@95.216.39.232 \
+  'cd /root/src/LudiusV2.new && tar czf /root/warp/pre-sync-data-$(date +%Y%m%d%H%M).tgz data 2>/dev/null; tar xf -'
+ssh root@95.216.39.232 'cd /root/src/LudiusV2.new && ./ludius-rs intranet check > /dev/null && echo ok'
 ```
+
+Never sync while a warp runs.
 
 Comparing with `sha1sum` against a Windows checkout shows every file as changed (CRLF); compare file lists or use
 `git archive` output instead.
@@ -48,10 +53,10 @@ Comparing with `sha1sum` against a Windows checkout shows every file as changed 
 ## 2. Pre-flight
 
 ```bash
-ssh root@95.216.39.232 'cd /root/src/LudiusV2.new; ls runs runs/range; cat runs/openrouter-calls.json; pgrep -af "ludius.cli";  podman ps --format "{{.Names}} {{.Status}}"; for v in 110 111 112 121 122 123 124 125 126 127 128; do echo -n "$v $(qm status $v | cut -d" " -f2) snaps=$(qm listsnapshot $v | grep -vc current) | "; done; echo'
+ssh root@95.216.39.232 'cd /root/src/LudiusV2.new; ls runs runs/range; cat runs/openrouter-calls.json; pgrep -af "[l]udius-rs";  podman ps --format "{{.Names}} {{.Status}}"; for v in 110 111 112 121 122 123 124 125 126 127 128; do echo -n "$v $(qm status $v | cut -d" " -f2) snaps=$(qm listsnapshot $v | grep -vc current) | "; done; echo'
 ```
 
-Expect: no `ludius.cli` process, all 10 VMs running, no snapshots, agent and Temporal up.
+Expect: no `ludius-rs` process, all 10 VMs running, no snapshots, agent and Temporal up.
 
 **Clear the last run and seed the counter.** A rolled-back run still leaves its files in `runs/`, and the next run
 reads them as real history. The worst offender is `runs/world/requests/`: the planner and the monitor treat
@@ -73,7 +78,7 @@ snapshot, move those files aside. Only top-level files the intranet offers (`fil
 `Downloads\earlier-runs-<ts>`; nothing is deleted and other files (scenario ones included) stay:
 
 ```bash
-cd /root/src/LudiusV2.new/controller; ts=$(date +%Y%m%d%H%M)
+cd /root/src/LudiusV2.new; ts=$(date +%Y%m%d%H%M)
 names=$(grep -rh "^files:" data/intranet | sed "s/^files: *//" | tr -d '\r' | tr "," "\n" | sed "s/^ *//;s/ *$//;s/'/''/g" | sort -u | paste -sd"|")
 for u in aberg lnord dkoster pvanloon nokafor lsmit eyilmaz sdekker; do v=$(qm list | awk -v n="ludius-$u" '$2==n {print $1}')
   echo "$u: $(qm guest exec "$v" --timeout 60 -- powershell -NoProfile -Command "\$d='C:/Users/$u/Downloads'; \$a=\"\$d/earlier-runs-$ts\"; \$n='$names'.Split('|'); Get-ChildItem -LiteralPath \$d -File | Where-Object { \$n -contains \$_.Name } | ForEach-Object { New-Item -ItemType Directory -Force \$a > \$null; Move-Item -LiteralPath \$_.FullName -Destination \$a; \$_.Name }" | grep -o '"out-data" : "[^"]*')"; done
@@ -90,8 +95,8 @@ apps of its first played day itself and skips a drifted app's items (`skipped_dr
 fix a profile before the warp rather than lose its items.
 
 ```bash
-cd /root/src/LudiusV2.new/controller && set -a && . ../.env && set +a
-for u in aberg lnord dkoster pvanloon nokafor lsmit eyilmaz sdekker; do .venv/bin/python -m ludius.cli --vm ludius-$u canary --persona data/personas/$u.yaml outlook word excel; done
+cd /root/src/LudiusV2.new
+for u in aberg lnord dkoster pvanloon nokafor lsmit eyilmaz sdekker; do ./ludius-rs --vm ludius-$u canary --persona $u outlook word excel; done
 ```
 
 Without `--persona` the canary signs in as aberg and every other VM stays locked. Every app must print `ok`; rebuild the profile or fix the app on a VM that prints `drift`.
@@ -130,13 +135,13 @@ range clock (dc01 first, skew < 60 s) forward:
 Detach it from the ssh session (`setsid nohup`, stdin from `/dev/null`), or it dies when ssh drops:
 
 ```bash
-ssh root@95.216.39.232 'cd /root/src/LudiusV2.new/controller && set -a && . ../.env && set +a && export LUDIUS_NO_ESCALATE=1 && setsid nohup .venv/bin/python -m ludius.cli range warp --start 2026-11-02 --days 2 < /dev/null > /root/warp/warpN.out 2>&1 & sleep 20; pgrep -f "ludius.cli range warp"; tail -5 /root/warp/warpN.out' < /dev/null
+ssh root@95.216.39.232 'cd /root/src/LudiusV2.new && export LUDIUS_NO_ESCALATE=1 && setsid nohup ./ludius-rs range warp --start 2026-11-02 --days 2 < /dev/null > /root/warp/warpN.out 2>&1 & sleep 20; pgrep -f "[l]udius-rs range warp"; tail -5 /root/warp/warpN.out' < /dev/null
 ```
 
 The local ssh may still hang after the `&`; that doesn't matter, because the warp runs in its own session.
 
 The monitor's interaction toasts need a second process: start
-`.venv/bin/python -m ludius.cli range interactions` the same way, after the pre-flight (no model calls).
+`./ludius-rs range interactions` the same way, after the pre-flight (no model calls).
 
 To stop a warp early, `kill -TERM <pid>` the `range warp` process once: it terminates the running day workflows,
 stops the workers (30 s grace for all, then kill) and only then resets the clocks (`interrupted`, then
@@ -146,7 +151,7 @@ remote shell's own command line and kills it.
 ## 5. Watch it
 
 ```bash
-ssh root@95.216.39.232 'date; pgrep -af "ludius.cli range warp"; R=/root/src/LudiusV2.new/runs; cut -c1-260 $R/range/warp.jsonl; grep -v "\"start\"" $R/range/supervisor.jsonl | tail -5; cat $R/openrouter-calls.json; tail -3 /root/warp/warpN.out'
+ssh root@95.216.39.232 'date; pgrep -af "[l]udius-rs range warp"; R=/root/src/LudiusV2.new/runs; cut -c1-260 $R/range/warp.jsonl; grep -v "\"start\"" $R/range/supervisor.jsonl | tail -5; cat $R/openrouter-calls.json; tail -3 /root/warp/warpN.out'
 ```
 
 - `runs/range/warp.jsonl`: the warp's own steps (clock sets, planning, day start/end, reset).
@@ -173,11 +178,11 @@ cd /root/src/LudiusV2.new && tar czf /root/warp/warpN-runs-$(date +%Y%m%d%H%M).t
 cd /root/warp; for v in 110 111 112 121 122 123 124 125 126 127 128; do qm rollback $v pre-warp > rb-$v.log 2>&1 || echo "$v rollback FAILED"; done
 
 # 3. Clocks to real time (harmless if the warp already reset them)
-cd /root/src/LudiusV2.new/controller && set -a && . ../.env && set +a && .venv/bin/python -m ludius.cli range unwarp
+cd /root/src/LudiusV2.new && ./ludius-rs range unwarp
 
 # 4. Restart the observer: after a RAM rollback its vsock listener is dead (errno 104) even though uiprobe runs
 for v in 121 122 123 124 125 126 127 128; do qm guest exec $v --timeout 30 -- powershell -NoProfile -Command "Stop-Process -Name uiprobe -Force -EA SilentlyContinue; Start-Sleep 2; Start-ScheduledTask -TaskName RangeAssist" >/dev/null; done
-sleep 20; for u in aberg lnord dkoster pvanloon nokafor lsmit eyilmaz sdekker; do echo "$u: $(timeout 40 .venv/bin/python -m ludius.cli --vm ludius-$u observe --limit 0 2>&1 | grep -E "settled=|details" | head -1 | cut -c1-120)"; done
+sleep 20; for u in aberg lnord dkoster pvanloon nokafor lsmit eyilmaz sdekker; do echo "$u: $(timeout 40 ./ludius-rs --vm ludius-$u observe --limit 0 2>&1 | grep -E "settled=|details" | head -1 | cut -c1-120)"; done
 
 # 5. Drop the snapshots
 for v in 110 111 112 121 122 123 124 125 126 127 128; do qm delsnapshot $v pre-warp || echo "$v delsnapshot FAILED"; done
@@ -206,13 +211,13 @@ for that VM.
 ## Scenario intranet
 
 dc01 serves the range intranet from a folder of Markdown pages, one `<id>.md` per page (default
-`controller/data/intranet`; the header format is in `controller/src/ludius/intranet.py`). For a scenario's own pages,
+`data/intranet`; the header format is in `crates/ludius-intranet/src/lib.rs`). For a scenario's own pages,
 copy the folder, edit it, and point both sides at it: Ansible `-e intranet_dir=<dir>` and the planner's
 `LUDIUS_INTRANET=<dir>` (it lists the page titles so lookups search for real pages). Check it with
 `ludius intranet check <dir>`; the dc01 role runs the same check and stops before deploying a bad folder. Pages are
 plain text; links may only point inside `corp.ludius.test`. Apply with `PLAYBOOK=range-exchange.yml /root/range-up.sh --tags dc01`.
-Not with a bare `ansible-playbook`: the box has no `uv`, and `range-up.sh` points `observer_check_cmd` at the controller's
-venv.
+`observer_check_cmd` defaults to the checkout's `ludius-rs`; on a control node without it, pass
+`-e observer_check_cmd=<path to a ludius binary>`.
 
 Downloads: list them on a page (`files: Q4 plan.xlsx, checklist.pdf`) and put them in the folder's `files/`
 (`.pdf .docx .xlsx .pptx .txt .csv .png .jpg`, 1 MB each so the guest check reads it whole, 50 MiB together). The check fails on a file that is
