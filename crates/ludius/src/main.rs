@@ -17,6 +17,7 @@ use rand::SeedableRng;
 
 const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--persona P.yaml] [--clock realtime|compressed] [--seed N] [--variant N] [--model M] [--log PATH] [--restore CHECKPOINT]
        ludius plan-worker --temporal HOST:PORT [--model M]
+       ludius [--agent ADDR] [--vm VM] worker --temporal HOST:PORT [--persona P.yaml] [--model M]
        ludius timeline LOG.jsonl... [--out CSV]";
 
 /// The checkout's .env fills variables the environment doesn't set.
@@ -83,6 +84,17 @@ fn main() -> Result<()> {
         let rt = tokio::runtime::Runtime::new()?;
         return rt.block_on(ludius::nightly::worker::serve(&address, "default", &runs(), &env("OPENROUTER_API_KEY"), Some(model)));
     }
+    if args.first().is_some_and(|a| a == "worker") {
+        // the persona's day worker (scheduled.serve): holds the desk lock while it serves
+        let Some(address) = temporal else { bail!("worker needs --temporal HOST:PORT
+{USAGE}") };
+        if vm.is_empty() {
+            bail!("--vm or LUDIUS_VM is required");
+        }
+        let persona: Persona = load_yaml(&persona_path)?;
+        let cfg = ludius::durable::worker::Config { runs: runs(), persona, vm, agent: agent_addr, key: env("OPENROUTER_API_KEY"), model };
+        return tokio::runtime::Runtime::new()?.block_on(ludius::durable::worker::serve(&address, "default", cfg));
+    }
     let [cmd, task_path] = args.as_slice() else { bail!(USAGE) };
     if cmd != "run" {
         bail!("{cmd}: only `run` is ported to Rust; use the Python cli for the rest\n{USAGE}");
@@ -93,9 +105,7 @@ fn main() -> Result<()> {
     // One controller per desktop (durable.desk_lock), and none while a Temporal day reserves it (scheduled.DayOwner).
     // The lock lives until the process exits; it interoperates with Python's flock/msvcrt lock on the same file.
     let desk = runs().join("locks").join(format!("{vm}.lock"));
-    std::fs::create_dir_all(desk.parent().unwrap())?;
-    let _desk = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&desk)?;
-    _desk.try_lock().map_err(|_| anyhow::anyhow!("another controller is driving this desktop ({})", desk.display()))?;
+    let _desk = ludius::durable::desk_lock(&desk)?;
     let day = desk.with_extension("day.json");
     if day.exists() {
         let owner = std::fs::read_to_string(&day).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).and_then(|v| v["owner"].as_str().map(String::from));

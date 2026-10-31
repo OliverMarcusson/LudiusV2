@@ -48,7 +48,8 @@ pub fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Clock {
     Realtime,
     Compressed,
@@ -114,6 +115,8 @@ impl Agent for HostAgent {
 pub struct GroundTruth {
     f: Mutex<File>,
     pub path: std::path::PathBuf,
+    /// Called after each write: a durable day's activity heartbeats from ground-truth writes.
+    pub beat: Mutex<Option<Box<dyn Fn() + Send>>>,
 }
 
 impl GroundTruth {
@@ -121,13 +124,17 @@ impl GroundTruth {
         if let Some(p) = path.parent() {
             std::fs::create_dir_all(p)?;
         }
-        Ok(Self { f: Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(path)?), path: path.to_path_buf() })
+        Ok(Self { f: Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(path)?), path: path.to_path_buf(), beat: Mutex::new(None) })
     }
 
     pub fn write(&self, rec: Value) -> Result<()> {
         let mut f = self.f.lock().unwrap();
         writeln!(f, "{rec}")?;
         f.flush()?;
+        drop(f);
+        if let Some(beat) = &*self.beat.lock().unwrap() {
+            beat();
+        }
         Ok(())
     }
 }

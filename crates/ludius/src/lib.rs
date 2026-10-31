@@ -6,6 +6,7 @@ pub mod clocklease;
 pub use ludius_chat as chat;
 pub mod day;
 pub mod decisions;
+pub mod durable;
 pub mod growth;
 pub mod guestfile;
 pub mod hostagent;

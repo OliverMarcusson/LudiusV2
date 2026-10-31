@@ -67,7 +67,7 @@ fn reactor<'r>(who: (&str, &str), narrative: PathBuf, log: &'r GroundTruth, llm:
         }),
         narrative,
         log,
-        existing: Box::new(Vec::new),
+        existing: Box::new(|| Ok(vec![])),
         poll: Box::new(|_| Some(vec![])),
         talk: Box::new(|_, _| None),
         decider: None,

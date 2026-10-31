@@ -25,7 +25,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
 sha2 = "0.10"
-tokio = { version = "1.54.1", features = ["rt", "rt-multi-thread", "macros", "time"] }
+tokio = { version = "1.54.1", features = ["rt", "rt-multi-thread", "macros", "time", "sync"] }
 tonic = "0.14.9"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 temporalio-sdk = "1.1.1"
