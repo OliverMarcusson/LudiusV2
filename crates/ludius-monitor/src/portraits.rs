@@ -28,11 +28,14 @@ fn key(app: &App) -> Option<String> {
     if let Some(k) = &app.cfg.openrouter_key {
         return Some(k.clone());
     }
+    // The key alone, or an env file with an OPENROUTER_API_KEY= line.
     let text = std::fs::read_to_string(app.cfg.openrouter_key_file.as_ref()?).ok()?;
-    text.lines()
-        .find_map(|l| l.strip_prefix("OPENROUTER_API_KEY="))
-        .map(|k| k.trim().trim_matches(['"', '\'']).to_string())
-        .filter(|k| !k.is_empty())
+    let key = match text.lines().find_map(|l| l.strip_prefix("OPENROUTER_API_KEY=")) {
+        Some(k) => k,
+        None if !text.contains('=') => text.trim(),
+        None => return None,
+    };
+    Some(key.trim().trim_matches(['"', '\'']).to_string()).filter(|k| !k.is_empty())
 }
 
 fn file_for(app: &App, user: &str) -> PathBuf {

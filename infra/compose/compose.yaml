@@ -97,6 +97,7 @@ services:
     image: ${LUDIUS_MONITOR_IMAGE:?set LUDIUS_MONITOR_IMAGE in .env}
     restart: unless-stopped
     network_mode: host  # Caddy proxies 127.0.0.1:7452; the host agent is on 127.0.0.1:7451
+    security_opt: ["apparmor=unconfined"]  # the default profile denies the signal handler's unix socket
     environment:
       MONITOR_LISTEN: ${MONITOR_LISTEN:-127.0.0.1:7452}
       LUDIUS_AGENT: http://${AGENT_LISTEN:-127.0.0.1:7451}
@@ -104,16 +105,20 @@ services:
       MONITOR_ALLOWED_HOSTS: ${MONITOR_ALLOWED_HOSTS:-127.0.0.1;localhost}
       LUDIUS_RUNS: /var/lib/ludius/runs
       LUDIUS_DATA: /etc/ludius/data
+      OPENROUTER_KEY_FILE: /run/secrets/openrouter_key  # portraits; empty disables them
     volumes:
       - ${LUDIUS_RUNS_DIR:?set LUDIUS_RUNS_DIR in .env}:/var/lib/ludius/runs  # read-only except runs/portraits
       - ${LUDIUS_DATA_DIR:?set LUDIUS_DATA_DIR in .env}:/etc/ludius/data:ro  # controller/data: personas, templates
       - /etc/localtime:/etc/localtime:ro  # the warp journal writes naive local times
+    secrets: [openrouter_key]
 
 secrets:
   pve_token:
     file: ${LUDIUS_SECRETS:-./secrets}/pve_token
   pve_root_password:
     file: ${LUDIUS_SECRETS:-./secrets}/pve_root_password
+  openrouter_key:
+    file: ${LUDIUS_SECRETS:-./secrets}/openrouter_key
 
 volumes:
   pgdata:
