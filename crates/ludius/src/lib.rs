@@ -15,6 +15,7 @@ pub mod policy;
 pub mod react;
 pub mod reply;
 pub mod requests;
+pub mod revision;
 pub mod runner;
 pub mod session;
 pub mod share;
