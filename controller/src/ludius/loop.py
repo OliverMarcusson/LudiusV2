@@ -610,7 +610,11 @@ class Runner:
             snap = self.observe(timeout_ms=10000 if chosen.kind == "rescan" else 5000)
             if chosen.kind == "rescan":
                 step, waited, wait_why = step - 1, waited + time.monotonic() - w0, "the screen to load"
-            if chosen.kind == "key" and not refused and chosen.keys in sg.keys and fingerprint(snap) == here:
+            slow_window = sg.done is not None and bool(sg.done.window or sg.done.foreground)
+            if (chosen.kind == "key" and not refused and chosen.keys in sg.keys
+                    and (fingerprint(snap) == here or slow_window and not check_done(
+                        sg.done, snap, task, typed_ok, outside=False, pressed_ok=pressed_ok,
+                        clicked_ok=clicked_ok, last_click=last_click))):  # fmt: skip
                 time.sleep(SLOW_KEY_WAIT_S)
                 snap = self.observe(timeout_ms=10000)
             after = fingerprint(snap)

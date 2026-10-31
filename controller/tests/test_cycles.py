@@ -295,6 +295,45 @@ def test_a_slow_dialog_from_the_subgoal_key_gets_a_second_look(tmp_path: Path, m
     assert (status, steps) == ("done", 1)
 
 
+class SlowMessageAgent(ToggleAgent):
+    def __init__(self) -> None:
+        super().__init__()
+        self.presses, self.since = 0, -1
+
+    def chord(self, vks: list[int]) -> int:
+        self.presses, self.since = self.presses + 1, 0
+        return 0
+
+    def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
+        if self.since >= 0:
+            self.since += 1
+        title = {-1: "Inbox - Outlook", 1: "Inbox - Outlook (busy)"}.get(self.since, "Untitled - Message (HTML) ")
+        fg = obs.Window(title=title, process_name="OUTLOOK.EXE", kind=obs.Window.FOREGROUND)
+        s = obs.Snapshot(screen_width=1920, screen_height=1080, dpi=96, settled=True, windows=[fg])
+        return pb.ObserveResult(snapshot=s)
+
+
+class PressesCtrlN(PrefersStart):
+    def decide(
+        self, state: dict[str, Any], options: dict[str, str], *, ask_progress: bool = True, image: bytes | None = None
+    ) -> Decision:
+        key = next(k for k, t in options.items() if t == "press Ctrl+N")
+        return Decision(key, 0.9, {key: 0.9}, 0.0, 0.0, "fake")
+
+
+def test_a_window_key_that_changed_the_screen_still_waits_for_its_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loop, "SLOW_KEY_WAIT_S", 0)
+    agent = SlowMessageAgent()
+    runner = Runner(agent, PressesCtrlN(), Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"), seed=1)  # type: ignore[arg-type]
+    tpl = load_templates()["outlook_send_mail"]
+    task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
+    sg = task.subgoal("new_message_shortcut")
+    status, _, _ = runner._subgoal(task, "new_message_shortcut", sg, budget=4, t0=1e18)  # pyright: ignore[reportPrivateUsage]
+    assert (status, agent.presses) == ("done", 1)
+
+
 class Proposes:
     narrative = Path("unused")
 
