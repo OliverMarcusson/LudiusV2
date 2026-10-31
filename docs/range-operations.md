@@ -13,7 +13,7 @@ How to run a multi-day test on the Proxmox range and leave it clean afterwards. 
 | Secrets | `/root/src/LudiusV2.new/.env`. Source it, never print it |
 | Run output | `/root/src/LudiusV2.new/runs` (counter, plans, days, range journals) |
 | Scratch, logs, archives | `/root/warp` (snapshot logs, `warpN.out`, `warpN-runs-<ts>.tgz`) |
-| Services | `ludius-agent` (systemd), `ludius-compose` (systemd, runs `podman compose` on `/etc/ludius/compose`: `ludius-postgres-1`, `ludius-temporal-1`), Podman `ludius-vlmcsd` |
+| Services | `ludius-compose` (systemd, runs `podman compose` on `/etc/ludius/compose`: `ludius-postgres-1`, `ludius-temporal-1`, `ludius-host-agent-1` on gRPC 7451, `ludius-monitor-1` on 7452), Caddy on 7453, Podman `ludius-vlmcsd` |
 
 VMs (persona accounts come from `infra/ansible/group_vars/all/range-vms.yml`, VM name `ludius-<user>`):
 
@@ -48,7 +48,7 @@ Comparing with `sha1sum` against a Windows checkout shows every file as changed 
 ## 2. Pre-flight
 
 ```bash
-ssh root@95.216.39.232 'cd /root/src/LudiusV2.new; ls runs runs/range; cat runs/openrouter-calls.json; pgrep -af "ludius.cli"; systemctl is-active ludius-agent; podman ps --format "{{.Names}} {{.Status}}"; for v in 110 111 112 121 122 123 124 125 126 127 128; do echo -n "$v $(qm status $v | cut -d" " -f2) snaps=$(qm listsnapshot $v | grep -vc current) | "; done; echo'
+ssh root@95.216.39.232 'cd /root/src/LudiusV2.new; ls runs runs/range; cat runs/openrouter-calls.json; pgrep -af "ludius.cli";  podman ps --format "{{.Names}} {{.Status}}"; for v in 110 111 112 121 122 123 124 125 126 127 128; do echo -n "$v $(qm status $v | cut -d" " -f2) snaps=$(qm listsnapshot $v | grep -vc current) | "; done; echo'
 ```
 
 Expect: no `ludius.cli` process, all 10 VMs running, no snapshots, agent and Temporal up.
