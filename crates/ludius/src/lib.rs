@@ -30,6 +30,7 @@ pub mod reply;
 pub mod requests;
 pub mod revision;
 pub mod runner;
+pub mod schedules;
 pub mod session;
 pub mod share;
 pub mod tasks;

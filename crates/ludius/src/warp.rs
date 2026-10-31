@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, anyhow, bail};
-use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, Offset, TimeZone, Utc, Weekday};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Tz;
 use serde_json::{Value, json};
 
 use crate::clocklease::{self, Lease};
-use crate::durable::{DayInput, DayOwner, workflow_id};
+use crate::durable::{DayOwner, workflow_id};
 use crate::planner::{DayPlan, World};
 use crate::rangeclock::RangeClock;
 use crate::rangerun::{Supervisor, vm_of};
@@ -275,60 +275,44 @@ pub struct Live {
     pub model: Option<String>,
 }
 
-async fn connect(address: &str) -> Result<temporalio_client::Client> {
-    use temporalio_client::{Client, ClientOptions, Connection, ConnectionOptions};
-    let url = if address.contains("://") { address.to_string() } else { format!("http://{address}") };
-    let connection = Connection::connect(ConnectionOptions::new(url::Url::parse(&url)?).build()).await?;
-    Ok(Client::new(connection, ClientOptions::new("default").build())?)
+/// nightly.ensure_days for `users` on `date` (the plans `range up --today` and the warp need).
+pub fn ensure(runs: &Path, users: &[String], key: &str, model: Option<&str>, date: NaiveDate) -> BTreeMap<String, Result<crate::nightly::Planned>> {
+    use crate::nightly::{Sources, ensure_days, generator, worker::personas};
+    let world = World::new(runs);
+    let decider = || crate::decisions::DecisionsClient::new(key, None, None);
+    let inbox = |u: &str| crate::mail::newest(u, "inbox");
+    let src = (|| -> Result<Sources> {
+        Ok(Sources {
+            personas: personas()?.into_iter().filter(|p| users.contains(&p.user)).collect(),
+            templates: crate::planner::templates()?,
+            policy: crate::policy::Policy::from_env()?,
+            inbox: &inbox,
+            decider: (!key.is_empty()).then_some(&decider as _),
+        })
+    })();
+    let src = match src {
+        Ok(s) => s,
+        Err(e) => return users.iter().map(|u| (u.clone(), Err(anyhow!("plan sources: {e:#}")))).collect(),
+    };
+    let generate = generator(key, model, &world, &src);
+    ensure_days(&generate, &world, &src.personas, &src, date)
 }
 
 impl Days for Live {
     fn plan(&self, date: NaiveDate) -> BTreeMap<String, Result<DayPlan>> {
-        use crate::nightly::{Sources, ensure_days, generator, worker::personas};
-        let world = World::new(&self.runs);
-        let decider = || crate::decisions::DecisionsClient::new(&self.key, None, None);
-        let inbox = |u: &str| crate::mail::newest(u, "inbox");
-        let src = (|| -> Result<Sources> {
-            Ok(Sources {
-                personas: personas()?.into_iter().filter(|p| self.users.contains(&p.user)).collect(),
-                templates: crate::planner::templates()?,
-                policy: crate::policy::Policy::from_env()?,
-                inbox: &inbox,
-                decider: (!self.key.is_empty()).then_some(&decider as _),
-            })
-        })();
-        let src = match src {
-            Ok(s) => s,
-            Err(e) => return self.users.iter().map(|u| (u.clone(), Err(anyhow!("plan sources: {e:#}")))).collect(),
-        };
-        let generate = generator(&self.key, self.model.as_deref(), &world, &src);
-        ensure_days(&generate, &world, &src.personas, &src, date).into_iter().map(|(u, r)| (u, r.and_then(|p| crate::planner::load_plan(Path::new(&p.path), false)))).collect()
+        ensure(&self.runs, &self.users, &self.key, self.model.as_deref(), date).into_iter().map(|(u, r)| (u, r.and_then(|p| crate::planner::load_plan(Path::new(&p.path), false)))).collect()
     }
 
     fn play(&self, plans: &BTreeMap<String, DayPlan>, canary: bool, sup: &mut Supervisor, stop: &AtomicBool) -> Result<Option<BTreeMap<String, Value>>> {
-        use temporalio_client::errors::WorkflowGetResultError;
-        use temporalio_client::{WorkflowIdConflictPolicy, WorkflowIdReusePolicy, WorkflowStartOptions};
         self.rt.block_on(async {
-            let client = connect(&self.temporal).await?;
+            let client = crate::schedules::connect(&self.temporal, "default").await?;
             let one = |plan: &DayPlan| {
                 let client = client.clone();
                 let plan = plan.clone();
                 async move {
-                    let day = NaiveDate::parse_from_str(&plan.date, "%Y-%m-%d")?;
-                    let noon = self.tz.from_local_datetime(&day.and_hms_opt(12, 0, 0).unwrap()).earliest().context("noon")?;
-                    let utc_offset_s = i64::from(noon.offset().fix().local_minus_utc());
-                    let opts = WorkflowStartOptions::new(crate::durable::task_queue(&plan.persona), workflow_id(&plan))
-                        .id_reuse_policy(WorkflowIdReusePolicy::AllowDuplicate)
-                        .id_conflict_policy(WorkflowIdConflictPolicy::UseExisting)
-                        .build();
-                    let inp = DayInput { plan, clock: crate::runner::Clock::Compressed, utc_offset_s, heartbeat_s: 300, retry_s: 30, canary };
-                    let h = client.start_workflow(crate::durable::PersonaDay::run, inp, opts).await?;
-                    Ok::<Value, anyhow::Error>(match h.get_result(Default::default()).await {
+                    Ok::<Value, anyhow::Error>(match crate::schedules::play(&client, plan, self.tz, crate::runner::Clock::Compressed, canary).await? {
                         Ok(done) => json!(done.iter().map(|d| format!("{} {} {}", d.at, d.template, d.status)).collect::<Vec<_>>()),
-                        Err(e @ (WorkflowGetResultError::Failed(_) | WorkflowGetResultError::Terminated { .. } | WorkflowGetResultError::Cancelled { .. } | WorkflowGetResultError::TimedOut)) => {
-                            json!(format!("failed: {e}"))
-                        }
-                        Err(e) => return Err(e.into()),
+                        Err(e) => json!(format!("failed: {e}")),
                     })
                 }
             };
@@ -356,7 +340,7 @@ impl Days for Live {
         use temporalio_client::errors::WorkflowInteractionError;
         use temporalio_client::{UntypedWorkflow, WorkflowExecutionStatus, WorkflowTerminateOptions};
         self.rt.block_on(async {
-            let Ok(client) = connect(&self.temporal).await else { return wids.to_vec() };
+            let Ok(client) = crate::schedules::connect(&self.temporal, "default").await else { return wids.to_vec() };
             let mut left = vec![];
             for wid in wids {
                 let h = client.get_workflow_handle::<UntypedWorkflow>(wid.clone());
