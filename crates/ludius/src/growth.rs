@@ -176,7 +176,7 @@ pub fn save(raw: &Value, proposed: &Path) -> Result<PathBuf> {
     anyhow::ensure!(regex::Regex::new("^[a-z][a-z0-9_]{2,40}$").unwrap().is_match(task), "proposal task {task:?} is not snake_case");
     std::fs::create_dir_all(proposed)?;
     let path = proposed.join(format!("{task}.yaml"));
-    std::fs::write(&path, format!("# Proposed by the planner LLM; admitted only via `ludius validate`.\n{}", yaml(raw)?))?;
+    std::fs::write(&path, format!("# Proposed by the planner LLM; admitted only via `ludius validate`.\n{}", serde_json::to_string_pretty(raw)?))?;
     Ok(path)
 }
 

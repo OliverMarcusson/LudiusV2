@@ -60,7 +60,7 @@ pub fn admit(template: &Template, results: &BTreeMap<usize, Vec<String>>, source
     entry.insert("admitted_variants".into(), serde_yaml::to_value(&keep)?);
     entry.insert("admitted".into(), (!keep.is_empty()).into());
     data.insert(template.task.clone(), Value::Mapping(entry));
-    std::fs::write(record, serde_yaml::to_string(&data)?)?;
+    std::fs::write(record, serde_json::to_string_pretty(&data)?)?;
     if keep.is_empty() {
         return Ok(false);
     }
@@ -78,7 +78,7 @@ pub fn admit(template: &Template, results: &BTreeMap<usize, Vec<String>>, source
         subgoals.retain(|k, _| k.as_str().is_some_and(|k| used.contains(&k.to_string())));
     }
     raw.insert("variants".into(), serde_yaml::to_value(&variants)?);
-    std::fs::write(&target, serde_yaml::to_string(&raw)?)?;
+    std::fs::write(&target, serde_json::to_string_pretty(&raw)?)?;
     if !same(source, &target) {
         std::fs::remove_file(source)?;
     }
@@ -121,7 +121,7 @@ mod tests {
         let admitted = Template::from_yaml(&std::fs::read_to_string(dir.join("notepad_admit_note.yaml")).unwrap()).unwrap();
         assert_eq!(admitted.variants, t.variants[1..]);
         let record = std::fs::read_to_string(dir.join("admission.yaml")).unwrap();
-        assert!(record.contains("0: 0/3") && record.contains("admitted: true"), "{record}");
+        assert!(record.contains("\"0\": \"0/3\"") && record.contains("\"admitted\": true"), "{record}");
         let (r, stopped) = validate(&t, 1, &mut || anyhow::bail!("no checkpoint"), &mut desk, &log, &mut |_| {}).unwrap();
         assert!(r.is_empty() && stopped.contains("no checkpoint"));
     }
