@@ -83,7 +83,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             policy=make_policy(),
             composer=make_composer(),
         )
-        out = run_task(runner, make_session(agent, log), task)
+        out = run_task(runner, make_session(agent, log, persona.user), task)
     finally:
         log.close()
         decider.close()
@@ -161,10 +161,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
     log = GroundTruth(log_path)
     try:
         try:
-            runner = Runner(agent, decider, load_persona(args.persona), log, clock="compressed", seed=0,
+            persona = load_persona(args.persona)
+            runner = Runner(agent, decider, persona, log, clock="compressed", seed=0,
                             assist=make_assist(), policy=make_policy())  # fmt: skip
             results, stopped = admission.validate(template, args.runs, lambda: restore(agent, args.restore), runner,
-                                                  make_session(agent, log))  # fmt: skip
+                                                  make_session(agent, log, persona.user))  # fmt: skip
         finally:
             decider.close()
             agent.close()
@@ -346,7 +347,7 @@ def build_day(
                     composer=make_composer())  # fmt: skip
     return DayRunner(
         runner,
-        make_session(agent, log),
+        make_session(agent, log, persona.user),
         templates,
         log,
         clock,
@@ -997,8 +998,10 @@ def make_reactor(persona: Persona, templates: dict[str, Template], policy: Polic
                    decider=DecisionsClient(key))  # fmt: skip
 
 
-def make_session(agent: HostAgent, log: GroundTruth) -> Session:
-    return Session(agent, log, os.environ.get("LUDIUS_PERSONA_PASSWORD", ""), lifecycle=lambda op: agent.lifecycle(op))
+def make_session(agent: HostAgent, log: GroundTruth, user: str) -> Session:
+    from ludius import rangerun
+
+    return Session(agent, log, rangerun.password(user, dict(os.environ)), lifecycle=lambda op: agent.lifecycle(op))
 
 
 def cmd_session(args: argparse.Namespace) -> int:
