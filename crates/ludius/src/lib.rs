@@ -1,6 +1,7 @@
 pub mod assist;
 pub mod calls;
 pub mod chat;
+pub mod day;
 pub mod decisions;
 pub mod guestfile;
 pub mod hostagent;

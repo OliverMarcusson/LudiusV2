@@ -113,6 +113,7 @@ impl Agent for HostAgent {
 /// The ground-truth JSONL file: one record per line, flushed as written.
 pub struct GroundTruth {
     f: Mutex<File>,
+    pub path: std::path::PathBuf,
 }
 
 impl GroundTruth {
@@ -120,7 +121,7 @@ impl GroundTruth {
         if let Some(p) = path.parent() {
             std::fs::create_dir_all(p)?;
         }
-        Ok(Self { f: Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(path)?) })
+        Ok(Self { f: Mutex::new(std::fs::OpenOptions::new().create(true).append(true).open(path)?), path: path.to_path_buf() })
     }
 
     pub fn write(&self, rec: Value) -> Result<()> {
@@ -178,6 +179,9 @@ fn helper(goal: &str, launch: bool) -> Result<Subgoal> {
 
 /// Typed/pressed/clicked state and the added-item baseline, carried across a subgoal's detours.
 type Carry = (bool, bool, bool, Option<Element>, Option<usize>);
+
+/// Runs after each subgoal with the runner, so an interrupt can run a task inside the task.
+pub type Hook<'h, 'a> = &'h mut dyn FnMut(&mut Runner<'a>) -> Result<()>;
 
 pub struct Runner<'a> {
     pub agent: &'a dyn Agent,
@@ -315,7 +319,7 @@ impl<'a> Runner<'a> {
     }
 
     /// Run one task. A reached call cap abandons it as "budget spent"; any other error is the caller's.
-    pub fn run(&mut self, task: &mut Task, between: Option<&mut dyn FnMut() -> Result<()>>) -> Result<Outcome> {
+    pub fn run(&mut self, task: &mut Task, between: Option<Hook<'_, 'a>>) -> Result<Outcome> {
         self.steps = 0;
         let mut done = Vec::new();
         match self.run_task(task, between, &mut done) {
@@ -330,7 +334,7 @@ impl<'a> Runner<'a> {
         }
     }
 
-    fn run_task(&mut self, task: &mut Task, mut between: Option<&mut dyn FnMut() -> Result<()>>, done: &mut Vec<String>) -> Result<Outcome> {
+    fn run_task(&mut self, task: &mut Task, mut between: Option<Hook<'_, 'a>>, done: &mut Vec<String>) -> Result<Outcome> {
         let mut t0 = Instant::now();
         let mut steps: i64 = 0;
         task.owner = self.persona.user.clone();
@@ -406,7 +410,7 @@ impl<'a> Runner<'a> {
                 && i + 1 < names.len()
             {
                 let paused = Instant::now();
-                b()?;
+                b(self)?;
                 t0 += paused.elapsed();
             }
         }

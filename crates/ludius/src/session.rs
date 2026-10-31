@@ -259,11 +259,11 @@ impl<'a> Session<'a> {
 }
 
 /// One task with desktop hygiene around it (port of day.run_task).
-pub fn run_task(
-    runner: &mut crate::runner::Runner,
+pub fn run_task<'a>(
+    runner: &mut crate::runner::Runner<'a>,
     session: &Session,
     task: &mut crate::tasks::Task,
-    between: Option<&mut dyn FnMut() -> Result<()>>,
+    between: Option<crate::runner::Hook<'_, 'a>>,
     hygiene: bool,
     keep: &BTreeSet<String>,
 ) -> Result<crate::runner::Outcome> {
