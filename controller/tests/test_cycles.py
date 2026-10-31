@@ -334,6 +334,30 @@ def test_a_window_key_that_changed_the_screen_still_waits_for_its_window(
     assert (status, agent.presses) == ("done", 1)
 
 
+class InboxInFront(ToggleAgent):
+    def observe(self, wait_settle: bool = True, quiet_ms: int = 300, timeout_ms: int = 5000) -> pb.ObserveResult:
+        fg = obs.Window(title="Inbox - Outlook", process_name="OUTLOOK.EXE", kind=obs.Window.FOREGROUND)
+        s = obs.Snapshot(screen_width=1920, screen_height=1080, dpi=96, settled=True, windows=[fg])
+        return pb.ObserveResult(snapshot=s)
+
+
+def test_a_precondition_that_stays_blocked_is_stuck_when_a_detour_may_follow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ludius.loop import STUCK, STUCK_WAITS
+
+    monkeypatch.setattr(loop, "BLOCKED_WAIT_S", 0)
+    log = tmp_path / "gt.jsonl"
+    runner = Runner(InboxInFront(), PrefersStart(), Persona(name="t", user="t"), GroundTruth(log), seed=1)  # type: ignore[arg-type]
+    tpl = load_templates()["outlook_send_mail"]
+    task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
+    sg = task.subgoal("send_shortcut")
+    status, _, why = runner._subgoal(task, "send_shortcut", sg, budget=4, t0=1e18, may_detour=True)  # pyright: ignore[reportPrivateUsage]
+    assert status == "failed" and why.startswith(f"{STUCK}: precondition")
+    waits = log.read_text(encoding="utf-8").count('"event": "wait"')
+    assert waits == STUCK_WAITS - 1
+
+
 class Proposes:
     narrative = Path("unused")
 

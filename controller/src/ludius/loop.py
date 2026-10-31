@@ -53,6 +53,7 @@ from ludius.v1 import observation_pb2 as obs
 
 STUCK = "stuck"
 MAX_DETOURS = 2
+STUCK_WAITS = 6
 
 Clock = Literal["realtime", "compressed", "time-jump"]
 DONE_THRESHOLD = 0.85
@@ -463,7 +464,7 @@ class Runner:
                 carry["state"] = (typed_ok, pressed_ok, clicked_ok, last_click, task.added_base)
         seen = {fingerprint(snap)}
         guarded = False
-        escs = ladders = 0
+        escs = ladders = blocks = 0
         sat: list[str] = []
         shot_why: str | None = None
         step = 0
@@ -540,6 +541,9 @@ class Runner:
                     self.agent.chord(keys.chord("Esc"))
                     self.log.write(event="dismiss", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
                                    window=popup)  # fmt: skip
+            blocks = blocks + 1 if blocked else 0
+            if blocked and blocks >= STUCK_WAITS and may_detour:
+                return "failed", step - 1, f"{STUCK}: {blocked}"
             if blocked:
                 self.log.write(event="wait", host_ms=_now(), task=task.template.task, subgoal=name, step=step,
                                reason=blocked)  # fmt: skip
