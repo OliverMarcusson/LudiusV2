@@ -33,7 +33,7 @@ subgoals:
   write_body:
     goal: "Type the note into the Notepad text area"
     text: body
-    done: {typed: true}
+    done: {ask: "In Notepad, does the document text contain this complete note, preserving its lines: {body}?"}
   save_shortcut:
     goal: "Open the Save As dialog with the keyboard shortcut"
     keys: [Ctrl+S]
@@ -69,7 +69,6 @@ pixels:
   done:
     open_from_start: {present: ['-Notepad$']}
     open_from_run: {present: ['-Notepad$']}
-    write_body: {present: ['^{body_head}', '^.{0,2}\*.*-Notepad$']}
     save_shortcut: {present: ['^SaveAs$', '^Filename:', '^Saveastype:']}
     save_menu: {present: ['^SaveAs$', '^Filename:', '^Saveastype:']}
     name_file: {present: ['^Filename:', '(^|\\){file_name}(\.txt)?$']}

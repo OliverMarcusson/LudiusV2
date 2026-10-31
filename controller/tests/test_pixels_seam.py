@@ -221,7 +221,7 @@ def test_head_of_a_multi_line_value_is_its_first_visible_line() -> None:
     assert done("Short note for the fixture.", screen([])) is False
 
 
-def test_notepad_template_pixels_checks_for_body_and_file_name_on_real_rows() -> None:
+def test_notepad_body_needs_judging_and_file_name_uses_pixels_on_real_rows() -> None:
     def rows(name: str, value: str | None = None, drop: str = "") -> obs.Snapshot:
         s = real(name)
         for e in [e for e in s.elements if e.name == drop]:
@@ -237,13 +237,15 @@ def test_notepad_template_pixels_checks_for_body_and_file_name_on_real_rows() ->
     empty_ocr = real("notepad-empty")
     del empty_ocr.elements[:]
     body = task(file_name="x", body="Short note for the fixture.\nline 2")
-    assert done(body, "write_body", real("notepad-unsaved-prompt")) is True
-    assert done(task(file_name="x", body="Another note\nline 2"), "write_body", real("notepad-unsaved-prompt")) is False
-    assert done(task(file_name="x", body="  \n "), "write_body", real("notepad-unsaved-prompt")) is False
+    check = body.subgoal("write_body").done
+    assert check and check.ask and not check.pixels
+    assert body.values["body"] in body.fmt(check.ask)
+    assert done(body, "write_body", real("notepad-unsaved-prompt")) is None
+    assert done(task(file_name="x", body="Another note\nline 2"), "write_body", real("notepad-unsaved-prompt")) is None
     star_only = rows("notepad-unsaved-prompt", drop="Short note for the fixture.")
-    assert done(body, "write_body", star_only) is False
-    assert done(body, "write_body", real("notepad-empty")) is False
-    assert done(body, "write_body", empty_ocr) is False
+    assert done(body, "write_body", star_only) is None
+    assert done(body, "write_body", real("notepad-empty")) is None
+    assert done(body, "write_body", empty_ocr) is None
 
     name = "pixels-walk-20261026-230211"
     t = task(file_name=name, body="x")

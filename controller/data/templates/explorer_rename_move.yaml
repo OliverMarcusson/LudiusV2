@@ -24,17 +24,17 @@ subgoals:
     done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
   go_documents:
     goal: "Go to the Documents folder"
-    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
+    done: {ask: "Does File Explorer show the user's own Documents folder (This PC > Documents or pinned Documents), not a library, Public Documents or another folder?"}
   rename_keys:
     goal: "Select the file {file_name}, press F2, type {new_name} and press Enter"
     text: new_name
     keys: [F2, Enter]
-    done: {element: {role: list item, name: '^{new_name}(\.\w+)?$'}}
+    done: {ask: "In the user's own Documents folder, is the renamed file \"{new_name}\" shown as a normal file item (its extension may be hidden), with rename editing finished?"}
   rename_menu:
     goal: "Right-click the file {file_name}, choose Rename, type {new_name} and press Enter"
     text: new_name
     keys: [Enter]
-    done: {element: {role: list item, name: '^{new_name}(\.\w+)?$'}}
+    done: {ask: "In the user's own Documents folder, is the renamed file \"{new_name}\" shown as a normal file item (its extension may be hidden), with rename editing finished?"}
   move_keys:
     goal: "Cut the file {new_name} with Ctrl+X, open the folder {folder_name} and paste it there with Ctrl+V"
     keys: [Ctrl+X, Ctrl+V]

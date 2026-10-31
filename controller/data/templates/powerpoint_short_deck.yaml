@@ -54,7 +54,7 @@ subgoals:
     text: bullets
     unreadable_ok: true
     avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
-    done: {typed: true, element: {role: list item, name: '^Slide {slide_title}$', selected: true, at: slide}}
+    done: {ask: "On the selected PowerPoint slide titled \"{slide_title}\", are these items readable as separate bullets in the content area, without clipping or overlap: {bullets}?"}
   new_slide2:
     goal: "Add another new slide with Ctrl+M"
     needs: slide2_title
@@ -78,7 +78,7 @@ subgoals:
     text: bullets2
     unreadable_ok: true
     avoid: [{role: edit}, {role: combo box}, {name: '^New Slide$'}, {role: list item, name: '^Slide( |$)'}]
-    done: {typed: true, element: {role: list item, name: '^Slide {slide2_title}$', selected: true, at: slide2}}
+    done: {ask: "On the selected PowerPoint slide titled \"{slide2_title}\", are these items readable as separate bullets in the content area, without clipping or overlap: {bullets2}?"}
   save_as:
     goal: "Open the Save As dialog with F12"
     keys: [F12]

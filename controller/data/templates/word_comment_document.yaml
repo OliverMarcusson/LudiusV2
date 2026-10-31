@@ -32,14 +32,14 @@ subgoals:
     steps: 6
     in_window: &word {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}
     avoid: [{role: edit}, {role: combo box}, {name: '^(File Tab|Save As)$'}]
-    done: {element: {role: edit, name: 'Comment$', focused: true}}
+    done: {ask: "In the Word document \"{file_name}\", is a new empty comment box open with the text cursor ready to type a comment?"}
   write_comment:
     goal: "Type the comment into the new comment box: {comment}"
     text: comment
     unreadable_ok: true
     in_window: *word
     avoid: [{role: combo box}, {name: '^(File Tab|Save As)$'}]
-    done: {typed: true}
+    done: {ask: "In Word document \"{file_name}\", is \"{comment}\" visible in a review comment, rather than inserted into the document body?"}
   save_keys:
     goal: "Save the document with Ctrl+S"
     keys: [Ctrl+S]

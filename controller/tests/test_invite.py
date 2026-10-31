@@ -271,7 +271,7 @@ def test_a_save_name_typed_at_the_focus_replaces_the_box(tmp_path: Path) -> None
     body = obs.Element(key="b", role="document", name="Text Editor", value="press 3 oil leak", focused=True,
                        enabled=True, actions=["value"], bounds=obs.Rect(x=1, y=1, width=50, height=20))  # fmt: skip
     runner.snap = obs.Snapshot(windows=[fg], elements=[body])
-    agent.snaps, agent.chords = [runner.snap], []
+    agent.snaps, agent.chords = [runner.snap], list[list[int]]()
     assert runner.act(Option("o1", "type", "type", content="file_name"), t, t.subgoal("name_file")) is not None
     assert agent.chords == []
 
@@ -294,19 +294,20 @@ def test_a_url_typed_again_replaces_what_the_address_bar_holds(tmp_path: Path) -
     for o in (Option("o1", "type", "type", content="chat_url"), Option("o2", "type", "type", element=bar,
                                                                          content="chat_url")):  # fmt: skip
         runner.snap = obs.Snapshot(windows=[fg], elements=[bar])
-        agent.snaps, agent.chords = [runner.snap], []
+        agent.snaps, agent.chords = [runner.snap], list[list[int]]()
         assert runner.act(o, t, t.subgoal("open_chat")) is None
         assert agent.chords == [keys.chord("Ctrl+A"), [-1]]
     box = edit("Search the web", "")
     runner.snap = obs.Snapshot(windows=[fg], elements=[box])
-    agent.snaps, agent.chords = [runner.snap], []
+    agent.snaps, agent.chords = [runner.snap], list[list[int]]()
     assert runner.act(Option("o1", "type", "type", content="chat_url"), t, t.subgoal("open_chat")) is not None
     assert agent.chords == []
 
 
 def test_answer_needs_a_listed_invite_and_one_new_matching_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ludius.planner import _invite
-    a = {"at": "09:00", "template": "outlook_answer_invite", "context": "Answer Marcus.",
+    from ludius.planner import _invite  # pyright: ignore[reportPrivateUsage]
+
+    a: dict[str, Any] = {"at": "09:00", "template": "outlook_answer_invite", "context": "Answer Marcus.",
          "params": {"to": "mvellinga@ludius.internal", "to_name": "Marcus Vellinga", "subject": "q4",
                     "response": "accept"}}  # fmt: skip
     listed = {("mvellinga", "q4")}
@@ -316,7 +317,11 @@ def test_answer_needs_a_listed_invite_and_one_new_matching_response(monkeypatch:
     me, org = "aberg@ludius.internal", "mvellinga@ludius.internal"
     pos = mail.Message(me, 5_000, 5_000, "", (org,), 9, mail.RESPONSES["accept"])
     box: list[mail.Message] = []
-    monkeypatch.setattr(mail, "messages", lambda user, folder, subject: list(box))
+
+    def fake_messages(user: str, folder: str, subject: str):
+        return list(box)
+
+    monkeypatch.setattr(mail, "messages", fake_messages)
     assert not mail.responded(org, "q4", me, "accept", 1_000, frozenset())
     box[:] = [pos]
     assert mail.responded(org, "q4", me, "accept", 1_000, frozenset())
@@ -332,17 +337,22 @@ def test_answer_needs_a_listed_invite_and_one_new_matching_response(monkeypatch:
 
 def test_to_answer_needs_the_sender_to_be_the_organizer(monkeypatch: pytest.MonkeyPatch) -> None:
     from ludius import reply
+
     org = "mvellinga@ludius.internal"
     req = mail.Message(org, 0, 0, "", ("aberg@ludius.internal",), 7, mail.MEETING_REQUEST, subject="q4", organizer=org)
     box = [req]
-    monkeypatch.setattr(mail, "matching", lambda user, folder, subject: list(box))
+
+    def fake_matching(user: str, folder: str, subject: str):
+        return list(box)
+
+    monkeypatch.setattr(mail, "matching", fake_matching)
     assert reply.to_answer("aberg", org, "q4", PEOPLE, Policy()) == req
     box[:] = [dataclasses.replace(req, organizer="boss@ludius.internal")]
     assert isinstance(reply.to_answer("aberg", org, "q4", PEOPLE, Policy()), str)
 
 
 def test_the_response_menu_counts_only_after_a_click_in_the_invitation_and_send_stays_in_it() -> None:
-    a = {"at": "09:00", "template": "outlook_answer_invite", "context": "Answer Marcus.",
+    a: dict[str, Any] = {"at": "09:00", "template": "outlook_answer_invite", "context": "Answer Marcus.",
          "params": {"to": "mvellinga@ludius.internal", "to_name": "Marcus Vellinga", "subject": "q4",
                     "response": "decline"}}  # fmt: skip
     t = Task(cli.load_templates()["outlook_answer_invite"], PlanItem.model_validate(a), random.Random(0))

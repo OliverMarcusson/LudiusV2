@@ -35,7 +35,11 @@ def test_attach_only_an_own_documents_file_of_an_allowed_type() -> None:
 
 def test_done_needs_the_baseline_bytes_attached_alone(monkeypatch: pytest.MonkeyPatch) -> None:
     disk: dict[str, Any] = {}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+
+    def fake_read(user: str, rel: str):
+        return disk.get(rel)
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     t = cli.plan_sources().templates["outlook_send_attachment"]
     tk = Task(t, TaskInstance(template=t.task, params={**TO, "file_name": "Rates.xlsx"}), random.Random(0))
     tk.owner, tk.started_ms, tk.mail_before = "aberg", 1_000_000, frozenset()
@@ -48,7 +52,11 @@ def test_done_needs_the_baseline_bytes_attached_alone(monkeypatch: pytest.Monkey
     disk[rel] = GuestFile(True, 500, b"a,b")
     assert file_baseline(tk, Policy()) is None
     got: list[Any] = []
-    monkeypatch.setattr(mail, "delivered", lambda *a: got.append(a[-1]) or True)
+
+    def fake_delivered(*a: Any):
+        return got.append(a[-1]) or True
+
+    monkeypatch.setattr(mail, "delivered", fake_delivered)
     assert check_done(t.subgoals["send_shortcut"].done, ET.Element("x"), tk, False) is True  # type: ignore[arg-type]
     assert got == [("rates.xlsx", hashlib.sha256(b"a,b").hexdigest())]
 
@@ -61,7 +69,11 @@ def test_ews_attachments_are_names_and_hashes_and_item_attachments_unknown(monke
     reply = ET.fromstring(f'<m:R xmlns:m="{ews.M}" {t}><m:GetAttachmentResponseMessage><m:Attachments>'
                           f"<t:FileAttachment><t:Name>Rates.xlsx </t:Name><t:Content>{data}</t:Content>"
                           "</t:FileAttachment></m:Attachments></m:GetAttachmentResponseMessage></m:R>")  # fmt: skip
-    monkeypatch.setattr(ews, "call", lambda mailbox, body: reply)
+
+    def fake_call(mailbox: str, body: str):
+        return reply
+
+    monkeypatch.setattr(ews, "call", fake_call)
     assert ews._attachments("a", item) == (("rates.xlsx", hashlib.sha256(b"a,b").hexdigest()),)  # pyright: ignore[reportPrivateUsage]
     content = reply.find(f".//{{{ews.T}}}Content")
     assert content is not None
@@ -94,8 +106,16 @@ def test_save_an_attachment_only_from_a_listed_mail_of_an_allowed_type() -> None
 def test_saved_attachment_done_needs_the_mail_attachment_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     disk: dict[str, Any] = {}
     inbox: list[mail.Message] | None = None
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
-    monkeypatch.setattr(mail, "matching", lambda *a: inbox)
+
+    def fake_read(user: str, rel: str):
+        return disk.get(rel)
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
+
+    def fake_matching(*a: Any):
+        return inbox
+
+    monkeypatch.setattr(mail, "matching", fake_matching)
     t = cli.plan_sources().templates["outlook_save_attachment"]
     tk = Task(t, TaskInstance(template=t.task, params=SAVE), random.Random(0))
     tk.owner, tk.started_ms = "aberg", 1_000_000
@@ -139,9 +159,17 @@ def test_revise_and_mail_attaches_the_saved_revision(monkeypatch: pytest.MonkeyP
                     owned={r"documents\rates.docx": "2026-11-01"}, day="2026-11-02") == []  # fmt: skip
     rel, old, new = r"Documents\Rates.docx", docx("Rates"), docx("Rates", "One more point")
     disk = {rel: GuestFile(True, 500, old)}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, r: disk.get(r))
+
+    def fake_read(user: str, r: str):
+        return disk.get(r)
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     got: list[Any] = []
-    monkeypatch.setattr(mail, "delivered", lambda *a: got.append(a[-1]) or True)
+
+    def fake_delivered(*a: Any):
+        return got.append(a[-1]) or True
+
+    monkeypatch.setattr(mail, "delivered", fake_delivered)
     t = templates["word_revise_and_mail"]
     tk = Task(t, TaskInstance(template=t.task, params=REVISE), random.Random(0))
     tk.owner, tk.started_ms, tk.mail_before = "aberg", 1_000_000, frozenset()

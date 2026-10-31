@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from test_word import docx
-from test_world_state import _day
+from test_world_state import _day  # pyright: ignore[reportPrivateUsage]
 
 from ludius import cli, guestfile, planner, tasks
 from ludius.loop import Runner
@@ -65,7 +65,11 @@ def test_notepad_only_where_word_is_missing(monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.fixture
 def task(monkeypatch: pytest.MonkeyPatch) -> tuple[Task, dict[str, Any]]:
     disk: dict[str, Any] = {}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get("file"))
+
+    def fake_read(user: str, rel: str):
+        return disk.get("file")
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     t = cli.plan_sources().templates["word_edit_document"]
     inst = TaskInstance(template=t.task, params={"file_name": "close memo", "body": "one more point\nand another"})
     tk = Task(t, inst, random.Random(0))
@@ -149,14 +153,18 @@ def test_the_file_is_opened_only_from_documents(task: tuple[Task, dict[str, Any]
         assert preconditions(open_file, snap("explorer.exe", *elsewhere), tk, None), elsewhere
     assert preconditions(save, snap("WINWORD.EXE", "close memo - Word"), tk, None) is None
     assert preconditions(save, snap("WINWORD.EXE", "other memo - Word"), tk, None)
-    assert Runner._popup_over(open_file, snap("WINWORD.EXE", "Check out our new look"), tk) == "Check out our new look"
-    assert Runner._popup_over(open_file, snap("explorer.exe", "Documents", "This PC", "Documents"), tk) is None
-    assert Runner._popup_over(open_file, snap("msedge.exe", "Intranet"), tk) is None
+    assert Runner._popup_over(open_file, snap("WINWORD.EXE", "Check out our new look"), tk) == "Check out our new look"  # pyright: ignore[reportPrivateUsage]
+    assert Runner._popup_over(open_file, snap("explorer.exe", "Documents", "This PC", "Documents"), tk) is None  # pyright: ignore[reportPrivateUsage]
+    assert Runner._popup_over(open_file, snap("msedge.exe", "Intranet"), tk) is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_save_as_copy_needs_the_source_unchanged_and_a_new_file(monkeypatch: pytest.MonkeyPatch) -> None:
     disk: dict[str, Any] = {}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+
+    def fake_read(user: str, rel: str):
+        return disk.get(rel)
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     t = cli.plan_sources().templates["word_save_as_copy"]
     params = {"file_name": "close memo", "new_name": "close memo v2", "body": "one more point"}
     tk = Task(t, TaskInstance(template=t.task, params=params), random.Random(0))
@@ -226,7 +234,11 @@ def test_pdf_export_needs_a_new_pdf_and_the_document_unchanged(monkeypatch: pyte
     again = {**owned, r"documents\close memo.pdf": "2026-11-01"}
     assert "already has that copy" in validate([item], templates, [], Policy(), owned=again, day="2026-11-02")[0][1]
     disk: dict[str, Any] = {}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+
+    def fake_read(user: str, rel: str):
+        return disk.get(rel)
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     t = templates["word_export_pdf"]
     tk = Task(t, TaskInstance(template=t.task, params={"file_name": "close memo"}), random.Random(0))
     tk.owner, tk.started_ms = "aberg", 1_000_000
@@ -263,7 +275,11 @@ def test_zip_needs_exactly_the_file_inside(monkeypatch: pytest.MonkeyPatch) -> N
     assert validate([it("11:00", "explorer_zip_file", **params)], templates, [], Policy(),
                     owned={r"documents\close memo.docx": "2026-11-01"}, day="2026-11-02") == []  # fmt: skip
     disk: dict[str, Any] = {}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+
+    def fake_read(user: str, rel: str):
+        return disk.get(rel)
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     t = templates["explorer_zip_file"]
     tk = Task(t, TaskInstance(template=t.task, params=params), random.Random(0))
     tk.owner, tk.started_ms = "aberg", 1_000_000
@@ -293,7 +309,11 @@ def test_extract_needs_the_archived_bytes_in_a_new_file(monkeypatch: pytest.Monk
     assert validate([item], templates, [], Policy(), owned=owned, day="2026-11-02") == []
     assert validate([item], templates, [], Policy(), owned={}, day="2026-11-02")
     disk: dict[str, Any] = {}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+
+    def fake_read(user: str, rel: str):
+        return disk.get(rel)
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     t = templates["explorer_extract_zip"]
     tk = Task(t, TaskInstance(template=t.task, params=params), random.Random(0))
     tk.owner, tk.started_ms = "aberg", 1_000_000
@@ -322,13 +342,17 @@ def test_extract_needs_the_archived_bytes_in_a_new_file(monkeypatch: pytest.Monk
 def test_a_comment_needs_one_new_comment_and_the_text_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LUDIUS_APPS")
     disk: dict[str, Any] = {}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get("file"))
+
+    def fake_read(user: str, rel: str):
+        return disk.get("file")
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     templates = cli.plan_sources().templates
     plan = it("11:00", "word_comment_document", file_name="Close Memo", comment="check the dates")
-    assert validate([plan], templates, [], Policy(), owned={"documents\close memo.docx": "2026-11-01"}) == []
+    assert validate([plan], templates, [], Policy(), owned={r"documents\close memo.docx": "2026-11-01"}) == []
     assert "own files" in validate([plan], templates, [], Policy(), owned={})[0][1]
     bad = it("11:00", "word_comment_document", file_name="Close Memo", comment="'quoted'")
-    assert "comment" in validate([bad], templates, [], Policy(), owned={"documents\close memo.docx": "x"})[0][1]
+    assert "comment" in validate([bad], templates, [], Policy(), owned={r"documents\close memo.docx": "x"})[0][1]
     t = templates["word_comment_document"]
     tk = Task(t, TaskInstance(template=t.task, params={"file_name": "close memo", "comment": "check the dates"}),
               random.Random(0))  # fmt: skip
@@ -344,19 +368,24 @@ def test_a_comment_needs_one_new_comment_and_the_text_unchanged(monkeypatch: pyt
         with zipfile.ZipFile(out, "w") as z:
             for n, b in parts.items():
                 z.writestr(n, b)
-            z.writestr("word/comments.xml", f'<w:comments xmlns:w="{guestfile._W[1:-1]}">{body}</w:comments>')
+            z.writestr("word/comments.xml", f'<w:comments xmlns:w="{guestfile._W[1:-1]}">{body}</w:comments>')  # pyright: ignore[reportPrivateUsage]
         return out.getvalue()
 
     disk["file"] = guestfile.GuestFile(False)
-    assert file_baseline(tk, Policy()) == "Documents\close memo.docx: not there, nothing to comment on"
+    assert file_baseline(tk, Policy()) == r"Documents\close memo.docx: not there, nothing to comment on"
     disk["file"] = guestfile.GuestFile(True, 500, b"not a zip")
-    assert file_baseline(tk, Policy()) == "Documents\close memo.docx: unreadable on the guest"
+    assert file_baseline(tk, Policy()) == r"Documents\close memo.docx: unreadable on the guest"
     disk["file"] = guestfile.GuestFile(True, 500, noted("old note"))
     assert file_baseline(tk, Policy()) is None
     disk["file"] = guestfile.GuestFile(True, 2_000_000, noted("old note", "Check the  dates"))
     assert check_done(done, snap, tk, False) is True
-    for wrong in (noted("old note"), noted("Check the dates"), noted("old note", "check the dates", "check the dates"),
-                  noted("old note", "check the date"), noted("old note", "check the dates", text=("Close memo",))):
+    for wrong in (
+        noted("old note"),
+        noted("Check the dates"),
+        noted("old note", "check the dates", "check the dates"),
+        noted("old note", "check the date"),
+        noted("old note", "check the dates", text=("Close memo",)),
+    ):
         disk["file"] = guestfile.GuestFile(True, 2_000_000, wrong)
         assert check_done(done, snap, tk, False) is False
     disk["file"] = guestfile.GuestFile(True, 999_999, noted("old note", "check the dates"))

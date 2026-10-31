@@ -2,8 +2,6 @@
 
 Background user activity (noise) for Windows VMs in DFIR training ranges. See [the system specification](Ludius%20–%20System%20Specification.md).
 
-Progress against the spec is tracked in [`docs/progress.html`](docs/progress.html), published at https://marcusson.dev/ludius-progress. Update its `SECTIONS` list and change log whenever work lands, then republish.
-
 Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrative and each persona's day plan, including all content. A day runner plays the plan through the hypervisor's virtual keyboard and mouse. The guest reads the screen through UI Automation, and a Decisions model (via OpenRouter, default `liquid/d1.1`) chooses one action per step.
 
 ## Layout
@@ -98,9 +96,9 @@ cd web\monitor; bun run lint; bun run build
 
 ## Status
 
-Current evidence is in the tracker, [`docs/progress.html`](docs/progress.html), published at https://marcusson.dev/ludius-progress. The Verified section above is a dated snapshot from 2026-10-26.
+The Verified section above is a dated snapshot from 2026-10-26.
 
-Built, with partial verification (the tracker has the limits):
+Built, with partial verification:
 - Hyper-V guest, host and controller layers; visual fallback (PP-OCR and OmniParser) when a window has no UI tree; template growth with code admission; `ludius day --temporal` runs, on demand; a PostgreSQL mirror of ground truth.
 - Partial: cross-persona handoffs (mistake admission pending), clone lifecycle (guarded delete tested, no real deletion), pixels-only mode, and filterability (provenance and a held-out split only).
 

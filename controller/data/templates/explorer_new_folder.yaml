@@ -24,7 +24,7 @@ subgoals:
     done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
   go_documents:
     goal: "Go to the Documents folder"
-    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
+    done: {ask: "Does File Explorer show the user's own Documents folder (This PC > Documents or pinned Documents), not a library, Public Documents or another folder?"}
   new_folder_shortcut:
     goal: "Create a new folder here with Ctrl+Shift+N"
     keys: [Ctrl+Shift+N]
@@ -36,17 +36,17 @@ subgoals:
     goal: "Name the new folder {folder_name} and confirm the name"
     text: folder_name
     keys: [Enter]
-    done: {element: {role: list item, name: '^{folder_name}$'}}
+    done: {ask: "Does File Explorer show the user's own Documents folder containing the folder \"{folder_name}\", with folder-name editing finished?"}
   name_folder_typo:
     goal: "Name the new folder {folder_name_typo} and confirm the name"
     text: folder_name_typo
     keys: [Enter]
-    done: {element: {role: list item, name: '^{folder_name_typo}$'}}
+    done: {ask: "Does File Explorer show the folder \"{folder_name_typo}\" as a normal folder item, with folder-name editing finished?"}
   rename_folder:
     goal: "Rename the folder {folder_name_typo} to {folder_name}: select it, press F2, type the name, press Enter"
     text: folder_name
     keys: [F2, Enter]
-    done: {element: {role: list item, name: '^{folder_name}$'}}
+    done: {ask: "Does File Explorer show the user's own Documents folder containing the folder \"{folder_name}\", with folder-name editing finished?"}
   close_explorer:
     goal: "Close File Explorer"
     done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}

@@ -119,7 +119,7 @@ PLAN = DayPlan.model_validate({"persona": "aberg", "date": DAY.isoformat(), "ite
 def test_personas_plan_in_parallel_and_each_pays_for_its_own_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    world, _, src = _setup(tmp_path)
+    _, _, src = _setup(tmp_path)
     _slots(monkeypatch, *ITEMS)
     monkeypatch.setattr(calls, "PATH", tmp_path / "openrouter-calls.json")
     both = threading.Barrier(2, timeout=10)
@@ -133,9 +133,12 @@ def test_personas_plan_in_parallel_and_each_pays_for_its_own_calls(
     acts = nightly.PlanActivities(tmp_path, lambda: src, lambda: Parallel({"items": ITEMS}))  # type: ignore[arg-type, return-value]
     at = dt.datetime(2026, 10, 27, 21, 0, tzinfo=dt.UTC)
     out: dict[str, nightly.Planned] = {}
-    threads = [threading.Thread(target=lambda u=p.user: out.update({u: acts.plan(nightly.PlanFire(
-        persona=u, tz="Europe/Stockholm", occurrence=at))})) for p in src.personas
-        if p.user in ("aberg", "lnord")]  # fmt: skip
+
+    def plan(user: str) -> None:
+        out[user] = acts.plan(nightly.PlanFire(persona=user, tz="Europe/Stockholm", occurrence=at))
+
+    threads = [threading.Thread(target=plan, args=(p.user,)) for p in src.personas
+               if p.user in ("aberg", "lnord")]  # fmt: skip
     for t in threads:
         t.start()
     for t in threads:
@@ -232,7 +235,7 @@ def test_activity_rejects_unknown_persona_and_waits_on_a_busy_planner(tmp_path: 
         with pytest.raises(ApplicationError) as e:
             acts.plan(nightly.PlanFire(persona=persona, tz="Europe/Stockholm", occurrence=at))
         assert e.value.non_retryable
-    acts = nightly.PlanActivities(tmp_path, cli.plan_sources, ScriptedLlm)
+    acts = nightly.PlanActivities(tmp_path, cli.plan_sources, lambda: ScriptedLlm())  # type: ignore[return-value]
     with durable.desk_lock(tmp_path / "locks" / "nightly.lock"), pytest.raises(RuntimeError, match="retrying"):
         acts.plan(nightly.PlanFire(persona="aberg", tz="Europe/Stockholm", occurrence=at))
     assert activity._Definition.must_from_callable(acts.plan).name == "nightly_plan"  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]

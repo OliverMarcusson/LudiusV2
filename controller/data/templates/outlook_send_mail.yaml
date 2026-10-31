@@ -28,16 +28,16 @@ subgoals:
   fill_to:
     goal: "Type {to} into the To field of the new mail"
     text: to
-    done: {typed: true}
+    done: {ask: "In the new Outlook mail, is {to} resolved as the only To recipient (it may be displayed as {to_name})?"}
   fill_subject:
     goal: "Type the subject into the Subject field: {subject}"
     text: subject
-    done: {typed: true}
+    done: {ask: "In the new Outlook mail, does the Subject field contain \"{subject}\"?"}
   write_body:
     goal: "Type the mail text into the message body (below the Subject field)"
     text: body
     unreadable_ok: true
-    done: {typed: true}
+    done: {ask: "In the new Outlook mail to {to_name} with subject \"{subject}\", is this complete text in the message body below the Subject field: {body}?"}
   send_shortcut:
     goal: "Send the mail with Alt+S"
     keys: [send]

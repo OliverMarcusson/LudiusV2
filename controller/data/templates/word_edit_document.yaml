@@ -39,7 +39,7 @@ subgoals:
     unreadable_ok: true
     in_window: &word {process: winword.exe, title: '^{file_name}(\.docx)? - Word$'}
     avoid: [{role: edit}, {role: combo box}, {name: '^(File Tab|Save As)$'}]
-    done: {typed: true}
+    done: {ask: "In Word document \"{file_name}\", are these new paragraphs visible at the end of the existing document body, after the old text: {body}?"}
   save_keys:
     goal: "Save the document with Ctrl+S"
     keys: [Ctrl+S]

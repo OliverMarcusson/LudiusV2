@@ -50,12 +50,12 @@ subgoals:
     goal: "Replace the End time with {end}"
     text: end
     replace: true
-    done: {element: {role: edit, name: "^End time, combo$", value: "^{end}$"}}
+    done: {ask: "In the Outlook meeting invitation to {to_name}, are the subject \"{subject}\", location \"{location}\", start date {date_ui}, start time {start}, end date {date_ui} and end time {end} shown correctly?"}
   write_body:
     goal: "Type the agenda into the meeting's message body (below the times)"
     text: body
     unreadable_ok: true
-    done: {typed: true}
+    done: {ask: "In the Outlook meeting invitation with subject \"{subject}\", is this complete agenda visible in the message body below the times: {body}?"}
   send_shortcut:
     goal: "Send the meeting invitation with Alt+S"
     keys: [send]

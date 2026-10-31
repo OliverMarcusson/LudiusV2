@@ -32,13 +32,13 @@ subgoals:
     text: title_enter
     unreadable_ok: true
     avoid: [{role: edit}, {role: combo box}]
-    done: {typed: true}
+    done: {ask: "In the new Word document, is \"{title}\" visible as the first paragraph in the document body?"}
   write_body:
     goal: "Type the body text below the title, at the keyboard focus (each line is its own paragraph)"
     text: body
     unreadable_ok: true
     avoid: [{role: edit}, {role: combo box}]
-    done: {typed: true}
+    done: {ask: "In Word, is the first paragraph \"{title}\" followed by these body paragraphs in order, in the document itself rather than a dialog or ribbon field: {body}?"}
   save_as:
     goal: "Open the Save As dialog with F12"
     keys: [F12]

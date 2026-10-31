@@ -40,6 +40,11 @@ def test_lease_is_renewed_until_released(tmp_path: Path, monkeypatch: pytest.Mon
 def test_set_clock_keeps_the_lease_when_the_reset_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LUDIUS_VM", "ludius-x")
     monkeypatch.setattr(cli, "RUNS", tmp_path)
+
+    def hyperv_clock(address: str | None, vm: str) -> None:
+        pass
+
+    monkeypatch.setattr(cli, "require_hyperv_clock", hyperv_clock)
     cli._clock_lease.cache_clear()  # pyright: ignore[reportPrivateUsage]
     lease = tmp_path / "locks" / "clock-ludius-x.json"
     fail_reset = False
@@ -65,6 +70,11 @@ def test_set_clock_keeps_the_lease_when_the_reset_fails(tmp_path: Path, monkeypa
 def test_explicit_vm_clock_and_lease_target_match(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LUDIUS_VM", "ludius-default")
     monkeypatch.setattr(cli, "RUNS", tmp_path)
+
+    def hyperv_clock(address: str | None, vm: str) -> None:
+        pass
+
+    monkeypatch.setattr(cli, "require_hyperv_clock", hyperv_clock)
     cli._clock_lease.cache_clear()  # pyright: ignore[reportPrivateUsage]
     calls: list[list[str]] = []
 

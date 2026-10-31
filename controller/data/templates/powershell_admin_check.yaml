@@ -34,15 +34,15 @@ subgoals:
   check_services:
     goal: "List the stopped services in PowerShell"
     text: services_cmd
-    done: {typed: true}
+    done: {ask: "In PowerShell, has Get-Service with the stopped-services filter finished, with its result visible (an empty result is valid) and a new prompt below it, without a visible command error?"}
   check_admins:
     goal: "List the members of the local Administrators group in PowerShell"
     text: admins_cmd
-    done: {typed: true}
+    done: {ask: "In PowerShell, has Get-LocalGroupMember Administrators finished, with the local group members visible and a new prompt below them, without a visible command error?"}
   check_disk:
     goal: "Show the free space on drive C in PowerShell"
     text: disk_cmd
-    done: {typed: true}
+    done: {ask: "In PowerShell, has Get-PSDrive C finished, showing drive C and its free space with a new prompt below it, without a visible command error?"}
   exit_shell:
     goal: "Close PowerShell with the exit command"
     text: exit_cmd

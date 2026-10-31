@@ -3,7 +3,7 @@ from __future__ import annotations
 from ludius.cli import DATA, load_persona, load_templates
 from ludius.planner import PlanItem, Scenario, role_templates, validate
 from ludius.policy import Policy
-from ludius.tasks import Template
+from ludius.tasks import Done, ElementCheck, Template
 
 
 def test_lookalike_work_follows_risk_profile_and_avoids_scenario() -> None:
@@ -28,6 +28,10 @@ def test_checked_text_must_fit_the_observer_value_cap() -> None:
     body = "\n".join(f"point {i} - something to settle with the auditors before the close" for i in range(5))
     params = {"file_name": "cost policy", "heading": "ERP costs - draft policy", "body": body}
     long = PlanItem(at="14:00", template="wordpad_formatted_note", params=params)
+    assert validate([long], templates, [], Policy()) == []
+    checked = templates[long.template].model_copy(deep=True)
+    checked.subgoals["bullets_body"].done = Done(element=ElementCheck(value="^{heading}\n{body}\n?$"))
+    templates = {**templates, checked.task: checked}
     assert "text too long" in validate([long], templates, [], Policy())[0][1]
     short = long.model_copy(update={"params": {**long.params, "body": "\n".join(body.splitlines()[:2])}})
     assert validate([short], templates, [], Policy()) == []

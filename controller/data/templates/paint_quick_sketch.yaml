@@ -31,7 +31,7 @@ subgoals:
   add_caption:
     goal: "Click the Text tool (A) on the Home tab, click an empty spot on the canvas and type: {caption}"
     text: caption
-    done: {typed: true}
+    done: {ask: "In Paint, is the caption \"{caption}\" visibly readable on the canvas, rather than in a ribbon field or dialog?"}
   save_shortcut:
     goal: "Open the Save As dialog with the keyboard shortcut"
     keys: [Ctrl+S]
@@ -41,7 +41,7 @@ subgoals:
     done: {window: {process: mspaint.exe, title: "^Save As$"}}
   open_pictures:
     goal: "In the Save As dialog, open the Pictures folder"
-    done: {element: {role: list item, name: "^Saved Pictures$"}}
+    done: {ask: "Does Paint's Save As dialog show the user's own Pictures folder as the save location?"}
   name_file:
     goal: "Enter {file_name} as the file name in the Save As dialog"
     text: file_name

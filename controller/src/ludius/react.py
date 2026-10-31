@@ -273,8 +273,12 @@ def posted(user: str, where: str, message: str, since_ms: int) -> int | None:
 
 
 def reset(user: str, other: str) -> int | None:
-    ids = _query(PAIR_SQL, u=user, o=other)
-    if not isinstance(ids, list) or not all(isinstance(i, str) and _POST_ID.fullmatch(i) for i in ids):
+    result = _query(PAIR_SQL, u=user, o=other)
+    if not isinstance(result, list):
+        return None
+    raw = cast(list[object], result)
+    ids = [i for i in raw if isinstance(i, str) and _POST_ID.fullmatch(i)]
+    if len(ids) != len(raw):
         return None
     if ids:
         p = _ssh("sudo -u mattermost /opt/mattermost/bin/mmctl --local post delete " + " ".join(ids), "", timeout=120)

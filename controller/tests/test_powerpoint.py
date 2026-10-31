@@ -150,7 +150,10 @@ def test_slide_checks_on_screen(task: tuple[Task, dict[str, Any]]) -> None:
     titled = deck_snap(("Slide Q4 close status", False), ("Slide Open points", True))
     assert check_done(sgs["write_slide_title"].done, titled, tk, True) is True
     assert check_done(sgs["write_slide_title"].done, titled, tk, False) is False
-    assert check_done(sgs["write_bullets"].done, titled, tk, True) is True
+    assert check_done(sgs["write_bullets"].done, titled, tk, True) is None
+    done = sgs["write_bullets"].done
+    assert done and done.ask
+    assert DECK["slide_title"] in tk.fmt(done.ask) and DECK["bullets"] in tk.fmt(done.ask)
     sg = tk.subgoal("write_slide_title")
     assert any(element_matches(obs.Element(name="New Slide"), c, tk) for c in sg.avoid)
     thumb = obs.Element(role="list item", name="Slide")
@@ -179,7 +182,7 @@ def test_text_on_another_slide_is_not_done(task: tuple[Task, dict[str, Any]]) ->
                   deck_snap(("Slide Q4 close status", False), ("Slide Open points", True), ("Slide", False)),
                   deck_snap(("Slide Q4 close status", True), ("Slide Open points", False),
                             ("Slide Open points", False))):  # fmt: skip
-        assert check_done(sgs["write_bullets"].done, wrong, tk, True) is False
+        assert check_done(sgs["write_bullets"].done, wrong, tk, True) is None
         assert check_done(sgs["write_slide_title"].done, wrong, tk, True) is False
     right = deck_snap(("Slide Q4 close status", False), ("Slide Open points", False), ("Slide Open points", True))
     assert check_done(sgs["write_slide_title"].done, right, tk, True) is True

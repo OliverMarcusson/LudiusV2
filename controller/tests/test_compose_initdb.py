@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[2] / "infra" / "compose" / "initdb" / "10-ludius.sh"
-BASH = shutil.which("bash")
+BASH = shutil.which("bash", path="C:/Program Files/Git/bin") if os.name == "nt" else shutil.which("bash")
 PW = "p'w\"x$y;z"
 
 
@@ -17,7 +17,7 @@ def _run(env: dict[str, str], bin_dir: Path | None = None) -> subprocess.Complet
     assert BASH is not None
     path = os.pathsep.join(filter(None, [str(bin_dir) if bin_dir else None, os.environ["PATH"]]))
     base = {k: v for k, v in os.environ.items() if k != "LUDIUS_DB_PASSWORD"}
-    return subprocess.run([BASH, str(SCRIPT)], env={**base, "PATH": path, **env},  # noqa: S603
+    return subprocess.run([BASH, "-s"], input=SCRIPT.read_text(encoding="utf-8"), env={**base, "PATH": path, **env},  # noqa: S603
                           capture_output=True, text=True, timeout=60)  # fmt: skip
 
 

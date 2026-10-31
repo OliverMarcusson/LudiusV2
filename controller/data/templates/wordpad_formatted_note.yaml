@@ -59,21 +59,15 @@ subgoals:
   bold_keys_heading:
     goal: 'Press Ctrl+B to turn bold on in the document, then type the heading: {heading}'
     text: heading
-    done:
-      typed: true
+    done: {ask: "In the WordPad document, is the heading \"{heading}\" visible in bold?"}
   bold_ribbon_heading:
     goal: 'Click the Bold button on the Home tab, then type the heading: {heading}'
     text: heading
-    done:
-      typed: true
+    done: {ask: "In the WordPad document, is the heading \"{heading}\" visible in bold?"}
   bullets_body:
     goal: Start a new line, turn bold off, click the Bullets button on the Home tab and type the list items
     text: body
-    done:
-      typed: true
-      element:
-        role: document
-        value: ^{heading}\n{body}\n?$
+    done: {ask: "In WordPad, is the heading \"{heading}\" bold, followed by these list items as separate bullets in non-bold text: {body}?"}
   save_shortcut:
     goal: Open the Save As dialog with the keyboard shortcut
     keys:

@@ -404,7 +404,7 @@ def test_typing_rechecks_its_target_on_a_fresh_snapshot(
     clicks: list[int] = []
     click = agent.click
     agent.click = lambda button=0, count=1: clicks.append(1) or click(button, count)  # type: ignore[method-assign]
-    agent.fresh, agent.typed = snap(), []
+    agent.fresh, agent.typed = snap(), list[str]()
     agent.fresh.elements[0].focused = True
     agent.fresh.elements.append(obs.Element(id=9, role="edit", name="Address and search bar", focused=True))
     assert (
@@ -415,7 +415,11 @@ def test_typing_rechecks_its_target_on_a_fresh_snapshot(
 
 def test_add_rows_needs_the_old_cells_and_the_new_rows_below(monkeypatch: pytest.MonkeyPatch) -> None:
     disk: dict[str, Any] = {}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get("file"))
+
+    def fake_read(user: str, rel: str):
+        return disk.get("file")
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     t = cli.plan_sources().templates["excel_add_rows"]
     tk = Task(t, TaskInstance(template=t.task, params={"file_name": "stock", "rows": "folders\t4"}), random.Random(0))
     tk.owner, tk.started_ms = "aberg", 1_000_000
@@ -461,7 +465,11 @@ def test_csv_import_needs_the_csv_cells_in_a_new_workbook(monkeypatch: pytest.Mo
     assert "already has" in validate([item], templates, [], Policy(), owned={csv: "2026-11-01", r"documents\rates.xlsx":
                                      "2026-11-01"}, day="2026-11-02")[0][1]  # fmt: skip
     disk: dict[str, Any] = {}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+
+    def fake_read(user: str, rel: str):
+        return disk.get(rel)
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     t = templates["excel_import_csv"]
     tk = Task(t, TaskInstance(template=t.task, params={"file_name": "rates"}), random.Random(0))
     tk.owner, tk.started_ms = "aberg", 1_000_000

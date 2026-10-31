@@ -35,7 +35,7 @@ subgoals:
     text: body
     unreadable_ok: true
     caret: start
-    done: {typed: true}
+    done: {ask: "In the Outlook reply to {to_name} about \"{subject}\", is this complete reply text in the message body above the quoted original mail: {body}?"}
   send_shortcut:
     goal: "Send the reply with Alt+S"
     keys: [send]

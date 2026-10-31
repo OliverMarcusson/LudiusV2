@@ -1,6 +1,6 @@
 # LudiusV2 agent instructions
 
-Read `Ludius – System Specification.md` first; it wins over this file. Coordination lives in the untracked `TASKS.md`; the tracker `docs/progress.html` is updated and published by the orchestrator only.
+Read `Ludius – System Specification.md` first; it wins over this file. Coordination lives in the untracked `TASKS.md`.
 
 ## Threat model (what safeguards defend against)
 
@@ -16,6 +16,8 @@ Read `Ludius – System Specification.md` first; it wins over this file. Coordin
 3. **Template**: goal, app, planner content, which shared check proves done, which irreversible effects it has. No per-template copies of shared rules.
 
 Add a template-level guard only for an effect the shared layer does not cover yet; then move it into the shared layer when a second template needs it.
+
+For UI validation, prefer dynamic checks (`done.ask` or `confirm`). Use static checks only when they are very simple and robust against UI changes. Replace brittle static checks instead of layering additional checks on top; retain shared safety guards and external outcome checks.
 
 ## "Done" contract for a new task type
 

@@ -28,12 +28,12 @@ subgoals:
     replace: true
     field: "^Address and search bar$"
     allow_destructive: ["(?i)accept.*|reject.*"]
-    done: {foreground: {process: msedge.exe, title: "{search_query}"}}
+    done: {ask: "Does Edge show intranet search results for \"{search_query}\", rather than just that text in the address bar?"}
   open_result:
     goal: "Open one of the search results that matches the search"
     allow_destructive: ["(?i)accept.*|reject.*"]
     steps: 10
-    done: {foreground: {process: msedge.exe, title: '^(?!.* - Intranet search).* - Intranet page'}}
+    done: {ask: "In Edge, is an intranet result page open whose visible content addresses \"{search_query}\", rather than a search results page or an error page?"}
   close_edge:
     goal: "Close Microsoft Edge"
     done: {window: {process: msedge.exe, absent: true}}

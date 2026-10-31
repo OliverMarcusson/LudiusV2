@@ -217,7 +217,7 @@ def test_chat_notification_reads_then_reacts_outside_the_plan(tmp_path: Path, fa
     calls: list[str] = []
     log = GroundTruth(tmp_path / "day.jsonl")
     runner = FakeRunner(log, calls)
-    runner.fail = {"read": set(), "read ui": {"chat_read_messages"}}.get(fail, {fail})
+    runner.fail = {"read": set[str](), "read ui": {"chat_read_messages"}}.get(fail, {fail})
     reactor = Reactor(Persona(name="Anna Berg", user="aberg"), load_templates(), Policy(), llm, narrative, log,  # type: ignore[arg-type]
                       poll=lambda user: polls.pop(0) if polls else [],
                       talk=lambda user, other: (talk, 200) if other == "lnord" else None)  # fmt: skip
@@ -278,9 +278,17 @@ def test_messages_sent_while_reading_or_answering_are_answered_too(tmp_path: Pat
 
 def test_unread_reads_mattermost_and_unreadable_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     out = b'[{"id": "p1", "sender": "lnord", "createat": 1, "message": "hi"}]\n'
-    monkeypatch.setattr(react, "_ssh", lambda remote, stdin: subprocess.CompletedProcess([], 0, out, b""))
+
+    def fake_ssh(remote: str, stdin: str):
+        return subprocess.CompletedProcess([], 0, out, b"")
+
+    monkeypatch.setattr(react, "_ssh", fake_ssh)
     assert react.unread("aberg") == [Post("p1", "lnord", "hi", 1)]
-    monkeypatch.setattr(react, "_ssh", lambda remote, stdin: None)
+
+    def failed_ssh(remote: str, stdin: str):
+        return None
+
+    monkeypatch.setattr(react, "_ssh", failed_ssh)
     assert react.unread("aberg") is None
     assert react.unread("x; rm") is None
 

@@ -36,7 +36,11 @@ def test_recycle_only_an_own_old_file_no_other_item_uses(monkeypatch: pytest.Mon
 @pytest.fixture
 def task(monkeypatch: pytest.MonkeyPatch) -> tuple[Task, dict[str, Any]]:
     disk: dict[str, Any] = {}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get("file"))
+
+    def fake_read(user: str, rel: str):
+        return disk.get("file")
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     t = cli.plan_sources().templates["explorer_recycle_file"]
     tk = Task(t, TaskInstance(template=t.task, params={"file_name": "old draft", "file_ext": "txt"}), random.Random(0))
     tk.owner, tk.started_ms = "aberg", 1_000_000
@@ -119,7 +123,11 @@ def test_move_download_only_an_own_file_then_same_bytes_in_documents_and_gone(
     assert validate([move], templates, [], Policy(), owned=owned, day="2026-11-02") == []
     assert "move only" in validate([move], templates, [], Policy(), owned={}, day="2026-11-02")[0][1]
     disk: dict[str, Any] = {}
-    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+
+    def fake_read(user: str, rel: str):
+        return disk.get(rel)
+
+    monkeypatch.setattr(tasks.guestfile, "read", fake_read)
     t = templates["explorer_file_download"]
     tk = Task(t, TaskInstance(template=t.task, params={"file_name": "rates.csv"}), random.Random(0))
     tk.owner, tk.started_ms = "aberg", 1_000_000
