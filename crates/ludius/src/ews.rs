@@ -42,11 +42,13 @@ pub struct Message {
     pub files: Vec<String>,
 }
 
-fn folder_id(folder: &str) -> &'static str {
+/// None for any other folder: unknown, never silently the inbox.
+fn folder_id(folder: &str) -> Option<&'static str> {
     match folder {
-        "sent" => "sentitems",
-        "calendar" => "calendar",
-        _ => "inbox",
+        "inbox" => Some("inbox"),
+        "sent" => Some("sentitems"),
+        "calendar" => Some("calendar"),
+        _ => None,
     }
 }
 
@@ -126,7 +128,7 @@ fn find(mailbox: &str, folder: &str, subject: Option<&str>, fields: &str, whole:
         quoteattr(s))).unwrap_or_default();
     let whole = whole || subject.is_some();
     let size = if whole { PAGE } else { LISTED };
-    let parent = if parent.is_empty() { format!(r#"<t:DistinguishedFolderId Id="{}"/>"#, folder_id(folder)) } else { parent.to_string() };
+    let parent = if parent.is_empty() { format!(r#"<t:DistinguishedFolderId Id="{}"/>"#, folder_id(folder)?) } else { parent.to_string() };
     let text = call(mailbox, &format!(
         r#"<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>{fields}</m:ItemShape><m:IndexedPageItemView MaxEntriesReturned="{size}" Offset="0" BasePoint="Beginning"/>{restrict}<m:SortOrder><t:FieldOrder Order="Descending"><t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder></m:SortOrder><m:ParentFolderIds>{parent}</m:ParentFolderIds></m:FindItem>"#))?;
     let ok = {

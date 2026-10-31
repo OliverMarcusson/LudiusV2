@@ -318,10 +318,14 @@ pub struct Done {
 
 impl Done {
     pub fn validate(&self) -> Result<()> {
-        if let Some(m) = &self.mail
-            && let Some(a) = &m.attachment
-        {
-            ensure!(noise(a), "mail check: attachment {a:?} is a file in a noise folder");
+        if let Some(m) = &self.mail {
+            ensure!(m.folder == "inbox" || m.folder == "sent", "mail check: folder {:?} is inbox or sent", m.folder);
+            if let Some(a) = &m.attachment {
+                ensure!(noise(a), "mail check: attachment {a:?} is a file in a noise folder");
+            }
+        }
+        if let Some(px) = &self.pixels {
+            ensure!(!px.present.is_empty(), "pixels check: present needs at least one pattern");
         }
         if let Some(c) = &self.chat_file {
             ensure!(noise(&c.path), "chat file check: {:?} is a file in a noise folder", c.path);
@@ -798,6 +802,7 @@ impl Template {
                 ensure!(self.cap() == "file.share", "{t}: share check {:?} needs capability file.share", f.path);
             } else if let Some(from) = &f.moved_from {
                 ensure!(self.removes.contains(from) && MOVES.contains(&self.cap()), "{t}: move check {:?} needs a move capability removing it", f.path);
+                ensure!(self.writes.contains(&f.path), "{t}: file check {:?} is not a declared write", f.path);
             } else {
                 ensure!(self.writes.contains(&f.path), "{t}: file check {:?} is not a declared write", f.path);
             }
@@ -2099,6 +2104,10 @@ mod tests {
         assert!(outside.validate().is_err());
         let comment = FileCheck { path: "Documents\\a.docx".into(), comment: Some("c".into()), ..Default::default() };
         assert!(comment.validate().is_ok());
+        let px = Done { pixels: Some(PixelsCheck { present: vec![], absent: vec![] }), ..Default::default() };
+        assert!(px.validate().is_err());
+        let sent: Done = serde_yaml::from_str("mail: {mailbox: m, folder: Sent}").unwrap();
+        assert!(sent.validate().unwrap_err().to_string().contains("inbox or sent"));
     }
 
     #[test]
