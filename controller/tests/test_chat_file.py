@@ -125,6 +125,6 @@ def test_a_file_shown_without_its_extension_can_be_selected_and_uploaded() -> No
     snap.elements.extend([*crumbs, obs.Element(role="button", name="Refresh"), item])
     assert check_done(task.template.subgoals["select_file"].done, snap, task, False)
     upload = task.template.subgoals["upload_file"]
-    assert "list item" not in (preconditions(upload, snap, task) or "")
+    assert preconditions(upload, snap, task) is None
     snap.elements.extend([other])
     assert "must not match" in (preconditions(upload, snap, task) or "")
