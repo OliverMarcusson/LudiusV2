@@ -23,8 +23,10 @@ cp -a "$pub"/. /opt/ludius-agent/
 chmod 0755 /opt/ludius-agent/ludius-host-agent
 rm -rf /opt/ludius-agent/monitor && cp -a "$dist" /opt/ludius-agent/monitor
 install -m 0644 "$repo/infra/box/ludius-agent.service" /etc/systemd/system/ludius-agent.service
+for u in ludius-clock-sweep.service ludius-clock-sweep.timer; do install -m 0644 "$repo/infra/box/$u" /etc/systemd/system/$u; done
 
 systemctl daemon-reload
 systemctl enable ludius-agent caddy
+systemctl enable --now ludius-clock-sweep.timer
 systemctl restart caddy
 systemctl start ludius-agent

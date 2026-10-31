@@ -99,7 +99,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 def start_agent(args: argparse.Namespace) -> HostAgent:
     agent = agent_from(args)
     if args.restore:
-        restore(agent, args.restore)
+        restore(agent, args.restore, args.vm)
     return agent
 
 
@@ -143,10 +143,34 @@ def set_clock(at: dt.datetime | None, *, vm: str | None = None, agent: str | Non
         _clock_lease(vm).release()
 
 
-def restore(agent: HostAgent, checkpoint: str) -> None:
+def restore(agent: HostAgent, checkpoint: str, vm: str | None = None) -> None:
     agent.lifecycle(pb.LifecycleRequest.RESTORE, checkpoint)
     agent.lifecycle(pb.LifecycleRequest.START)
+    _restart_observer(vm or os.environ.get("LUDIUS_VM", ""))
     _wait_for_observer(agent)
+
+
+OBSERVER_RESTART = (
+    "Stop-Process -Name uiprobe -Force -EA SilentlyContinue; Start-Sleep 2; Start-ScheduledTask -TaskName RangeAssist"
+)
+
+
+def _restart_observer(vm: str) -> None:
+    """Proxmox: after a RAM rollback uiprobe still runs but its vsock listener is dead (errno 104)."""
+    import shutil
+
+    from ludius import rangeclock, rangerun
+
+    if not shutil.which("qm") or (vmid := rangerun.vmids().get(vm.removeprefix("ludius-"))) is None:
+        return
+    for n in range(rangeclock.RETRIES + 1):  # the guest agent can lag the rollback
+        try:
+            rangeclock.qm_exec(vmid, OBSERVER_RESTART)
+            return
+        except rangeclock.AgentDown:
+            if n == rangeclock.RETRIES:
+                raise
+            time.sleep(rangeclock.RETRY_S)
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -164,8 +188,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
             persona = load_persona(args.persona)
             runner = Runner(agent, decider, persona, log, clock="compressed", seed=0,
                             assist=make_assist(), policy=make_policy())  # fmt: skip
-            results, stopped = admission.validate(template, args.runs, lambda: restore(agent, args.restore), runner,
-                                                  make_session(agent, log, persona.user))  # fmt: skip
+            results, stopped = admission.validate(template, args.runs, lambda: restore(agent, args.restore, args.vm),
+                                                  runner, make_session(agent, log, persona.user))  # fmt: skip
         finally:
             decider.close()
             agent.close()
@@ -480,6 +504,8 @@ def cmd_range(args: argparse.Namespace) -> int:
     today = dt.datetime.now(ZoneInfo(args.timezone)).date()
     if args.what == "unwarp":
         return _range_unwarp()
+    if args.what == "sweep":
+        return _range_sweep()
     if args.what == "interactions":
         return _range_interactions()
     if args.what == "status":
@@ -557,6 +583,24 @@ def _range_unwarp() -> int:
         return 3
     _clock_lease("range").path.unlink(missing_ok=True)
     print(json.dumps({"offsets_s": {str(k): round(v, 1) for k, v in got.items()}}))
+    return 0
+
+
+def _range_sweep() -> int:
+    from ludius import clocklease
+
+    path = _clock_lease("range").path
+    if (rec := clocklease.orphan(path)) is None:
+        return 0
+    try:
+        got = _range_clock(strict=False).reset()
+    except Exception as e:  # noqa: BLE001  keep the lease; the next sweep retries
+        print(f"sweep: range clock lease orphaned (pid {rec.get('pid')}), reset FAILED, retrying: {e}", file=sys.stderr)
+        return 3
+    with suppress(OSError, ValueError):
+        if json.loads(path.read_text(encoding="utf-8")) == rec:
+            path.unlink()
+    print(json.dumps({"swept": rec, "offsets_s": {str(k): round(v, 1) for k, v in got.items()}}))
     return 0
 
 
@@ -1140,8 +1184,9 @@ def main(argv: list[str] | None = None) -> int:
     rg = sub.add_parser("range", help="multi-persona run: start and supervise every persona's worker, or summarize")
     rg.add_argument(
         "what",
-        choices=["up", "status", "warp", "unwarp", "interactions"],
+        choices=["up", "status", "warp", "unwarp", "sweep", "interactions"],
         help="warp: time-jump test over --days simulated weekdays (Proxmox); unwarp: clocks to real time; "
+        "sweep: unwarp only if a dead warp left its clock lease (timer); "
         "interactions: keep the monitor's interaction popups current (no model calls)",
     )
     rg.add_argument("--start", help="warp: first simulated date YYYY-MM-DD (after today)")

@@ -4,7 +4,9 @@ import datetime as dt
 import json
 import os
 import threading
+from contextlib import suppress
 from pathlib import Path
+from typing import Any
 
 RENEW_S = 30
 STALE_S = 120
@@ -51,3 +53,18 @@ class Lease:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"vm": self.vm, "pid": os.getpid(), "renewed": now}), encoding="utf-8")
         tmp.replace(self.path)
+
+
+def orphan(path: Path, now: dt.datetime | None = None) -> dict[str, Any] | None:
+    """The lease if its holder stopped renewing it; None when absent, fresh, unreadable or its process still runs."""
+    try:
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        renewed = dt.datetime.fromisoformat(rec["renewed"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if (now or dt.datetime.now(dt.UTC)) - renewed < dt.timedelta(seconds=STALE_S):
+        return None
+    with suppress(OSError):
+        if b"ludius" in Path(f"/proc/{int(rec.get('pid') or 0)}/cmdline").read_bytes():
+            return None
+    return rec

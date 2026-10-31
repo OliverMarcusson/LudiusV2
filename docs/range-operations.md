@@ -71,6 +71,19 @@ The call caps fail closed: if `runs/openrouter-calls.json` is missing, every per
 aborts. The `LUDIUS_CAP_DECISION`/`LUDIUS_CAP_LLM` ceilings in `.env` are totals against this file, so reset it
 (or raise the caps) before each run.
 
+**Probe the apps.** A broken Outlook profile (or any app that no longer opens) otherwise only shows up as a day of
+failed tasks. Apps without an admitted task get an open-and-close probe: no writes, no sends.
+
+```bash
+cd /root/src/LudiusV2.new/controller && set -a && . ../.env && set +a
+for u in aberg lnord dkoster pvanloon nokafor lsmit eyilmaz sdekker; do .venv/bin/python -m ludius.cli --vm ludius-$u canary outlook word excel; done
+```
+
+Every app must print `ok`; rebuild the profile or fix the app on a VM that prints `drift`.
+
+**Evaluation time left.** `range-exchange.yml` fails when dc01 or ex01 has under `winsrv_eval_min_days` (14) days
+of evaluation left. Fix with `slmgr /rearm` and a reboot; at 0 rearms left the VM has to be rebuilt.
+
 ## 3. Snapshot (rollback point)
 
 RAM snapshots, dc01 and ex01 first, then the personas in parallel:
@@ -165,7 +178,10 @@ for that VM.
   back the old result.
 - A day reservation (`runs/locks/<vm>.day.json`) left by a killed or terminated day refuses the next day on that
   VM ("desktop reserved by" / "reserved day input changed"). After a rollback, move them aside (pre-flight).
-- A killed warp leaves the range clocks jumped (there is no lease sweeper on Proxmox): `ludius range unwarp`.
+- A killed warp leaves the range clocks jumped until `ludius-clock-sweep.timer` (every minute, `ludius range
+  sweep`) sees its lease unrenewed for 2 minutes and resets them; `ludius range unwarp` does it at once.
+- Swap the observer by copying over the existing `uiprobe.exe` (`Copy-Item`), never `Move-Item`: a moved file keeps
+  its old ACL instead of inheriting the folder's, and RangeAssist can no longer start it.
 - Start-up compensation for a guest clock set is clamped to 0–30 s; skew over 60 s between dc01 and a persona
   stops the warp.
 - Clock sets check pool `ludius` membership, node and VM name first; a VM outside the pool is refused, not set.

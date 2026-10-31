@@ -1,0 +1,25 @@
+---
+# The evaluation runs 180 days from activation; `slmgr /rearm` and a reboot restart it, up to 5 times.
+- name: Evaluation time left, {{ s.name }}
+  ansible.builtin.command:
+    argv: [qm, guest, exec, "{{ s.vmid }}", --timeout, "60", --, powershell.exe, -NoProfile, -NonInteractive, -Command, "{{ eval_query }}"]
+  vars:
+    eval_query: >-
+      $p = Get-CimInstance SoftwareLicensingProduct -Filter "PartialProductKey IS NOT NULL AND Name LIKE 'Windows%'"
+      | Select-Object -First 1; $r = (Get-CimInstance SoftwareLicensingService).RemainingWindowsReArmCount;
+      "$($p.LicenseStatus) $([math]::Floor($p.GracePeriodRemaining / 1440)) $r $($p.Description -match 'TIMEBASED_EVAL')"
+  register: eval_q
+  changed_when: false
+  failed_when: false
+
+- name: Evaluation not about to run out, {{ s.name }}
+  vars:
+    f: "{{ ((eval_q.stdout | from_json)['out-data'] | default('') if eval_q.rc == 0 else '') | split }}"
+  ansible.builtin.assert:
+    that:
+      - f | length == 4
+      - f[3] != 'True' or (f[0] == '1' and f[1] | int >= winsrv_eval_min_days | int)
+    fail_msg: >-
+      {{ s.name }}: {{ ('evaluation has ' ~ f[1] ~ ' days left (license status ' ~ f[0] ~ '); in the guest run
+      slmgr /rearm and reboot it (' ~ f[2] ~ ' rearms left; at 0, rebuild the server)') if f | length == 4
+      else 'license state unreadable (' ~ (eval_q.stderr | default('') | trim)[-200:] ~ ')' }}

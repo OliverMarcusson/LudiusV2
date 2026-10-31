@@ -30,7 +30,12 @@ def qm_exec(vmid: int, script: str) -> str:
     return str(res.get("out-data", ""))
 
 
-_SET = ("$e = (Get-Date) - [Diagnostics.Process]::GetCurrentProcess().StartTime; "
+# A qm call that timed out can still run later: the sequence file makes the guest skip a Set-Date older than one
+# it already applied.
+_SET = ("$q = \"$env:ProgramData\\ludius-clock.seq\"; $o = 0L; "
+        "if (Test-Path $q) {{ [void][long]::TryParse((Get-Content -Raw $q).Trim(), [ref]$o) }}; "
+        "if ($o -ge {seq}) {{ exit 0 }}; [IO.File]::WriteAllText($q, '{seq}'); "
+        "$e = (Get-Date) - [Diagnostics.Process]::GetCurrentProcess().StartTime; "
         "if ($e.TotalSeconds -lt 0 -or $e.TotalSeconds -gt 30) {{ $e = [TimeSpan]::Zero }}; "
         "Set-Date ([DateTimeOffset]::FromUnixTimeMilliseconds({ms}).LocalDateTime + $e) | Out-Null; ")  # fmt: skip
 _PURGE = "klist -li 0x3e7 purge | Out-Null; klist -li 0x3e4 purge | Out-Null; "
@@ -101,9 +106,11 @@ class RangeClock:
                 errors.append(f"VM {vmid}: {e}")
 
         def set_one(vmid: int) -> str:
-            return self._retry(
-                lambda: self.run(vmid, _SET.format(ms=int((self.now() + offset) * 1000)) + _PURGE + _NOW)
-            )
+            def once() -> str:
+                ms = int((self.now() + offset) * 1000)
+                return self.run(vmid, _SET.format(seq=time.time_ns(), ms=ms) + _PURGE + _NOW)
+
+            return self._retry(once)
 
         def measure(vmid: int) -> None:
             got[vmid] = self._offset(vmid)

@@ -5,6 +5,7 @@ import re
 import time
 from collections import Counter
 from collections.abc import Callable
+from contextlib import suppress
 
 from ludius import keys
 from ludius.loop import Agent, GroundTruth
@@ -158,7 +159,20 @@ class Session:
             else:
                 self.agent.chord(keys.chord("Esc"))
             time.sleep(0.6)
-        self.log.write(event="normalize_failed", host_ms=_now(), closed=closed)
+        left: dict[str, object] = {}
+        with suppress(Exception):  # diagnostics only; unreadable leaves them out
+            snap = self.observe()
+            fg = _fg(snap)
+            left = {
+                "foreground": f"{fg.title} ({fg.process_name}, {fg.class_name})" if fg else None,
+                "windows": [
+                    f"{w.title} ({w.process_name}, {w.class_name})"
+                    for w in snap.windows
+                    if w.kind in (obs.Window.POPUP, obs.Window.OWNED)
+                ][:6],  # fmt: skip
+                "apps": [f"{a.title} ({a.process_name})" for a in snap.apps][:8],
+            }
+        self.log.write(event="normalize_failed", host_ms=_now(), closed=closed, **left)
         return False
 
     def _click(self, e: obs.Element) -> None:

@@ -26,7 +26,21 @@ def pick(templates: dict[str, Template], admission: dict[str, Any]) -> dict[str,
         t = templates[name]
         if rec.get("admitted") and variants and t.app not in out:
             out[t.app] = (t, int(variants[0]))
+    for name in sorted(templates):  # an app with no admitted task still gets checked that it opens and closes
+        if templates[name].app not in out and (p := open_probe(templates[name])) is not None:
+            out[p.app] = (p, 0)
     return out
+
+
+def open_probe(t: Template) -> Template | None:
+    """Only t's launch and its app-close subgoal: no writes, no sends. A broken Outlook profile fails the launch."""
+    first, last = t.variants[0][0], t.variants[0][-1]
+    w = (d := t.subgoals[last].done) and d.window
+    if not t.subgoals[first].launch or not w or not w.absent or not w.process or w.class_name:
+        return None
+    return t.model_copy(update={"task": f"{t.app}_open_probe", "capability": None, "variants": [[first, last]],
+                                "weights": None, "subgoals": {first: t.subgoals[first], last: t.subgoals[last]},
+                                "writes": [], "removes": [], "key_commits": []})  # fmt: skip
 
 
 def judge(statuses: list[str]) -> str:

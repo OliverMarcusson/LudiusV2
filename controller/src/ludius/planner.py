@@ -1224,7 +1224,14 @@ def _dump(path: Path, data: Any, mode: str = "w") -> None:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(text)
-            os.replace(tmp, path)
+            for n in range(10):  # Windows refuses a replace while another thread has the target open
+                try:
+                    os.replace(tmp, path)
+                    break
+                except PermissionError:
+                    if n == 9:
+                        raise
+                    time.sleep(0.05 * (n + 1))
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
             raise

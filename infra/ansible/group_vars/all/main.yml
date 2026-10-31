@@ -52,6 +52,7 @@ range_servers: >-
   {{ [[srv01_vmid | int, 'ludius-srv01']] if mail_backend == 'grommunio'
      else [[srv01_vmid | int, 'ludius-dc01'], [ex01_vmid | int, 'ludius-ex01'], [chat01_vmid | int, 'ludius-chat01']] }}
 ex01_vmid: 111
+winsrv_eval_min_days: 14
 chat01_vmid: 112
 chat01_ip: "{{ range_net }}.13"
 chat01_build_mac: "BC:24:11:4C:55:13"

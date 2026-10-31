@@ -117,6 +117,17 @@
             that: winsrv_failures | default([]) | length == 0
             fail_msg: "{{ winsrv_failures | default([]) }}; uplinks are detached"
 
+        - name: Evaluation not about to run out
+          tags: [always]
+          ansible.builtin.include_tasks:
+            file: tasks/winsrv-eval-left.yml
+            apply:
+              tags: [always]
+          loop: "{{ servers }}"
+          loop_control:
+            loop_var: s
+            label: "{{ s.name }}"
+
         - name: Exchange ISO in ex01's CD drive
           tags: [ex01]
           ansible.builtin.command: qm set {{ ex01_vmid }} --sata0 local:iso/ExchangeServerSE-x64.iso,media=cdrom

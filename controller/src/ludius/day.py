@@ -146,7 +146,7 @@ class DayRunner:
             return
         if self.templates[item.template].irreversible and (item.at, item.template) in started_slots(self.log.path):
             self.log.write(event="item_skipped", host_ms=_now(), logical=f"{day.isoformat()}T{item.at}",
-                           template=item.template, reason="already attempted: its effects are never repeated")  # fmt: skip
+                           template=item.template, reason="already attempted, effects never repeated")  # fmt: skip
             self._ended(day, item, "skipped")
             return
         self._started(day, item)
