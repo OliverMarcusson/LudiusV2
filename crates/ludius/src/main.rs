@@ -20,7 +20,8 @@ const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--per
        ludius [--agent ADDR] [--vm VM] worker --temporal HOST:PORT [--persona USER|P.yaml] [--model M]
        ludius [--agent ADDR] range up|status|interactions [USER...] [--temporal HOST:PORT] [--model M] [--timezone TZ]
        ludius metrics LOG... [--human LOG...] [--features CSV] [--timeline CSV [--before CSV] [--manifest JSON]]
-       ludius timeline LOG.jsonl... [--out CSV]";
+       ludius timeline LOG.jsonl... [--out CSV]
+       ludius store [--dsn DSN] [--s3 http://KEY:SECRET@host:port/bucket]   (defaults LUDIUS_PG, LUDIUS_S3)";
 
 /// The checkout's .env fills variables the environment doesn't set.
 fn load_env() {
@@ -77,6 +78,7 @@ fn main() -> Result<()> {
     let out = flag("--out")?;
     let tz = flag("--timezone")?;
     let (features, timeline, before, manifest) = (flag("--features")?, flag("--timeline")?, flag("--before")?, flag("--manifest")?);
+    let (dsn, s3) = (flag("--dsn")?, flag("--s3")?);
     if args.first().is_some_and(|a| a == "metrics") && args.len() > 1 {
         let paths = |xs: &[String]| xs.iter().map(PathBuf::from).collect::<Vec<_>>();
         let cut = args.iter().position(|a| a == "--human").unwrap_or(args.len());
@@ -89,6 +91,22 @@ fn main() -> Result<()> {
             out["artifacts"] = ludius::artifacts::report(Path::new(&t), &personas, &logs, manifest.as_deref().map(Path::new), before.as_deref().map(Path::new))?;
         }
         println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    #[cfg(not(feature = "store"))]
+    if args.first().is_some_and(|a| a == "store") {
+        let _ = (dsn, s3);
+        bail!("ludius store: built without the store feature");
+    }
+    #[cfg(feature = "store")]
+    if args.first().is_some_and(|a| a == "store") {
+        use ludius::store;
+        let Some(dsn) = dsn.or_else(|| std::env::var("LUDIUS_PG").ok()).filter(|d| !d.is_empty()) else { bail!("no database: pass --dsn or set LUDIUS_PG") };
+        let s3 = s3.or_else(|| std::env::var("LUDIUS_S3").ok()).filter(|u| !u.is_empty());
+        let shots = s3.as_deref().map(store::bucket).transpose()?;
+        let done = store::sync(&mut store::connect(&dsn)?, &runs(), shots.as_ref())?;
+        let tail = if shots.is_some() { format!(", {} screenshots", done.shots) } else { " (no S3: screenshots skipped)".into() };
+        println!("{} trace lines, {} world/plan files{tail} synced from {}", done.lines, done.docs, runs().display());
         return Ok(());
     }
     if args.first().is_some_and(|a| a == "range") {

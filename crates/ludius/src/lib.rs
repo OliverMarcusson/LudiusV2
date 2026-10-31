@@ -22,6 +22,8 @@ pub mod paths;
 pub mod planner;
 pub mod policy;
 pub mod rangerun;
+#[cfg(feature = "store")]
+pub mod store;
 pub mod react;
 pub mod reply;
 pub mod requests;
