@@ -59,7 +59,9 @@ class Spec:
 
 
 def specs(users: list[str], agent: str, temporal: str, model: str, env: dict[str, str]) -> list[Spec]:
-    cli = [sys.executable, "-m", "ludius.cli", "--agent", agent]
+    # LUDIUS_WORKER_CMD: run the workers from the Rust `ludius` binary (same argv), e.g. for the warp-day comparison
+    rust = env.get("LUDIUS_WORKER_CMD")
+    cli = [rust, "--agent", agent] if rust else [sys.executable, "-m", "ludius.cli", "--agent", agent]
     base = {k: v for k, v in env.items() if k not in ("LUDIUS_PERSONA", "LUDIUS_VM")}
     out = [Spec("plan", [*cli, "plan-worker", "--temporal", temporal], base)]
     for u in users:
