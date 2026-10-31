@@ -37,7 +37,7 @@ install_bun() {
 }
 
 build_monitor() {
-  cd "$repo/web/monitor"
+  cd "$repo/web/console"
   bun install --frozen-lockfile
   bun run build
 }
@@ -108,6 +108,6 @@ run tailscale serve --bg --http="$PVE_TS_PORT" "$PVE_TARGET"
 command -v bun >/dev/null || run install_bun
 run build_monitor
 
-echo "monitor UI built: $repo/web/monitor/dist"
-echo "agent needs: Monitor__Root=$repo/web/monitor/dist  Monitor__AllowedOrigins=https://monitor.ludius.se"
+echo "monitor UI built: $repo/web/console/dist"
+echo "agent needs: Monitor__Root=$repo/web/console/dist  Monitor__AllowedOrigins=https://monitor.ludius.se"
 [[ -n $DRY_RUN ]] || TS_PORT=$TS_PORT AGENT_MONITOR=$AGENT_MONITOR PVE_TS_PORT=$PVE_TS_PORT PVE_TARGET=$PVE_TARGET "$repo/infra/monitor/check.sh"

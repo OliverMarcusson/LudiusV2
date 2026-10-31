@@ -29,11 +29,11 @@ jobs:
       - run: dotnet build Ludius.sln -c Release
       - run: dotnet test host/agent.tests -c Release
 
-  monitor:
+  console:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: web/monitor
+        working-directory: web/console
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

@@ -3,7 +3,7 @@
 !Cargo.lock
 !proto
 !crates
-!web/monitor
+!web/console
 crates/*/target
-web/monitor/node_modules
-web/monitor/dist
+web/console/node_modules
+web/console/dist

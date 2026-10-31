@@ -1139,6 +1139,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "ludius-console"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.23.1",
+ "chrono",
+ "ludius-proto",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tonic",
+ "tower-http",
+]
+
+[[package]]
 name = "ludius-host-agent"
 version = "0.1.0"
 dependencies = [
@@ -1163,24 +1181,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "regex",
-]
-
-[[package]]
-name = "ludius-monitor"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64 0.23.1",
- "chrono",
- "ludius-proto",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "serde_yaml",
- "tokio",
- "tonic",
- "tower-http",
 ]
 
 [[package]]

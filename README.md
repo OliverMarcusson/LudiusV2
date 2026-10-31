@@ -13,7 +13,7 @@ Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrati
 | `host/agent/` | C# host agent: gRPC on `127.0.0.1:7451`, Hyper-V WMI keyboard/mouse, observer relay, lifecycle, console frames |
 | `controller/` | Python: planner (narrative, day plans, content, near-duplicate check), day runner (clock modes, breaks, interruptions), Decisions client, options, policy, completion checks, step loop, session hygiene, unlock, failure ladder 1–8, ground truth and instructor timeline, CLI |
 | `controller/data/` | Templates (Notepad, Explorer, Edge), personas, hand-written task instances |
-| `web/monitor/` | Operator monitor: view-only desktop feeds of the range VMs (React, shadcn/ui), served by the host agent |
+| `web/console/` | Operator monitor: view-only desktop feeds of the range VMs (React, shadcn/ui), served by the host agent |
 | `fixtures/` | Recorded snapshots + console frames + expected choices, used for offline replay |
 | `infra/hyperv/` | Unattended Win10 test VM, provisioning, screenshot helper |
 
@@ -52,7 +52,7 @@ Each run writes a ground-truth JSONL file to `runs/` (gitignored); days go to `r
 A view-only web page with a 12 fps video feed of every range VM's desktop; a tile opens a larger view. Frames come from Hyper-V's console thumbnail on the host (nothing runs in the guest for this): about 22 ms per frame at 640 px and 100 ms at 1280 px, so the agent captures up to three frames in parallel and serves each VM and size from one shared capture loop over a WebSocket. Measured: 12 fps at 640 and 960 px, about 11.5 at 1280 px (the focus view), and three viewers of one VM at 11.8 fps each. Full 1080p frames take 350 ms, so the feed is capped at 1280 px.
 
 ```powershell
-cd web\monitor; bun install; bun run build   # the host agent serves web/monitor/dist
+cd web\console; bun install; bun run build   # the host agent serves web/console/dist
 dotnet run --project hostgent              # then open http://127.0.0.1:7452
 bun run dev                                    # development, proxies /api to the agent
 ```
@@ -75,7 +75,7 @@ uv run ruff check src tests; uv run ruff format --check src tests; uv run pyrigh
 uv run pytest -m "not service"    # offline: same suite minus the tests marked service, starts nothing
 $env:LUDIUS_LIVE_DECISION=1; uv run pytest -k decision_choice    # live Decisions replay on fixtures
 dotnet build Ludius.sln
-cd web\monitor; bun run lint; bun run build
+cd web\console; bun run lint; bun run build
 ```
 
 ## Verified (2026-10-26, Win10 22H2 guest, 1920×1080)

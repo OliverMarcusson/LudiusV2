@@ -1,4 +1,4 @@
-//! The monitor console: serves web/monitor/dist and its /api. VM lists and console frames come from
+//! The monitor console: serves web/console/dist and its /api. VM lists and console frames come from
 //! the host agent over gRPC; everything else is read from the runs directory and controller data.
 mod console;
 mod portraits;
@@ -328,7 +328,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(app);
     let listen = env("MONITOR_LISTEN", "127.0.0.1:7452");
     let listener = tokio::net::TcpListener::bind(&listen).await?;
-    eprintln!("ludius-monitor on {listen}");
+    eprintln!("ludius-console on {listen}");
     axum::serve(listener, router)
         .with_graceful_shutdown(async {
             let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
