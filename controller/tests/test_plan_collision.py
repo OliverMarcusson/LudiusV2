@@ -87,6 +87,7 @@ def test_intentional_existing_file_workflow_stays_valid() -> None:
         "context": "Files the note away.",
         "params": {
             "file_name": "close checklist q4",
+            "file_ext": "txt",
             "new_name": "close checklist q4 old",
             "folder_name": "oct close q4",
         },
@@ -163,7 +164,7 @@ def test_review_gaps_content_override_long_extension_and_renaming_earlier_conten
             "at": "11:00",
             "template": "explorer_rename_move",
             "context": "Files it away.",
-            "params": {"file_name": "supplier brief", "new_name": "signed", "folder_name": "oct close q4"},
+            "params": {"file_name": "supplier brief", "file_ext": "docx", "new_name": "signed", "folder_name": "oct close q4"},
         }
     )
     assert validate([move], templates, ["supplier brief"], Policy(), existing=EXISTING) == []

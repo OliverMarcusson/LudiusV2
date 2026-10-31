@@ -2,11 +2,11 @@ task: explorer_rename_move
 app: explorer
 capability: file.move
 processes: [explorer.exe]
-writes: ['Documents\{folder_name}\{new_name}.*']
-removes: ['Documents\{file_name}.*']
-params: [file_name, new_name, folder_name]
-about: "Rename an existing file in Documents and move it into an existing folder there with Cut and Paste. file_name: the file's current name as Explorer shows it (no extension); new_name: its new name without extension; folder_name: an existing folder in Documents."
-example: {file_name: admission test note, new_name: admission test note old, folder_name: admission test folder}
+writes: ['Documents\{folder_name}\{new_name}.{file_ext}']
+removes: ['Documents\{file_name}.{file_ext}']
+params: [file_name, file_ext, new_name, folder_name]
+about: "Rename one of the persona's own files in Documents (under Own recent files) and move it into an existing folder there with Cut and Paste. file_name: the file's current name exactly, without folder and extension; file_ext: its extension without the dot; new_name: its new name without extension; folder_name: an existing folder in Documents."
+example: {file_name: admission test note, file_ext: txt, new_name: admission test note old, folder_name: admission test folder}
 variants:
   - [open_explorer_keys, go_documents, rename_keys, move_keys, close_explorer]
   - [open_explorer_taskbar, go_documents, rename_keys, move_menu, close_explorer]
@@ -39,16 +39,12 @@ subgoals:
     goal: "Cut the file {new_name} with Ctrl+X, open the folder {folder_name} and paste it there with Ctrl+V"
     keys: [Ctrl+X, Ctrl+V]
     steps: 14
-    done:
-      foreground: {process: explorer.exe, class_name: CabinetWClass, title: '^{folder_name}$'}
-      element: {role: list item, name: '^{new_name}(\.\w+)?$'}
+    done: {file: {path: 'Documents\{folder_name}\{new_name}.{file_ext}', moved_from: 'Documents\{file_name}.{file_ext}'}}
   move_menu:
     goal: "Select the file {new_name}, open its context menu with Shift+F10 and choose Cut, open the folder {folder_name}, then press Shift+F10 there and choose Paste"
     keys: [Shift+F10]
     steps: 14
-    done:
-      foreground: {process: explorer.exe, class_name: CabinetWClass, title: '^{folder_name}$'}
-      element: {role: list item, name: '^{new_name}(\.\w+)?$'}
+    done: {file: {path: 'Documents\{folder_name}\{new_name}.{file_ext}', moved_from: 'Documents\{file_name}.{file_ext}'}}
   close_explorer:
     goal: "Close File Explorer"
     done: {window: {process: explorer.exe, class_name: CabinetWClass, absent: true}}

@@ -32,7 +32,7 @@ def test_owned_files_follow_done_writes_and_moves(tmp_path: Path) -> None:
         it("09:00", "word_short_document", file_name="close memo", title="Close memo", body="accruals by friday"),
         it("09:20", "notepad_write_note", file_name="todo", body="call bank"),
         it("09:40", "notepad_write_note", file_name="failed note", body="x"),
-        it("10:00", "explorer_rename_move", file_name="todo", new_name="todo old", folder_name="archive"),
+        it("10:00", "explorer_rename_move", file_name="todo", file_ext="txt", new_name="todo old", folder_name="archive"),
     ], done=["09:00", "09:20", "10:00"])  # fmt: skip
     assert owned_files(tmp_path, "aberg", TUE.isoformat()) == {
         "documents\\close memo.docx": MON.isoformat(),

@@ -408,6 +408,7 @@ def profile(app: str) -> Profile:
     return Profile.model_validate(_merge(base, own))
 
 
+MOVES = ("file.organize", "file.move")
 NAME_PARAMS = {"file_name", "folder_name", "new_name"}
 
 
@@ -529,9 +530,9 @@ class Template(Strict):
                 sg.done
                 and sg.done.file
                 and sg.done.file.moved_from is not None
-                and (sg.done.file.moved_from not in self.removes or self.capability != "file.organize")
+                and (sg.done.file.moved_from not in self.removes or self.capability not in MOVES)
             ):
-                raise ValueError(f"{self.task}: move check {sg.done.file.path!r} needs file.organize removing it")
+                raise ValueError(f"{self.task}: move check {sg.done.file.path!r} needs a move capability removing it")
             elif sg.done and sg.done.file and sg.done.file.path not in self.writes:
                 raise ValueError(f"{self.task}: file check {sg.done.file.path!r} is not a declared write")
         appends = [f for sg in self.subgoals.values() if sg.done and (f := sg.done.file) and (f.append or f.comment)]
