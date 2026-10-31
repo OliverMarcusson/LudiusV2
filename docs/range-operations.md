@@ -73,7 +73,9 @@ aborts. The `LUDIUS_CAP_DECISION`/`LUDIUS_CAP_LLM` ceilings in `.env` are totals
 (or raise the caps) before each run.
 
 **Probe the apps.** A broken Outlook profile (or any app that no longer opens) otherwise only shows up as a day of
-failed tasks. Apps without an admitted task get an open-and-close probe: no writes, no sends.
+failed tasks. Apps without an admitted task get an open-and-close probe: no writes, no sends. The warp probes the
+apps of its first played day itself and skips a drifted app's items (`skipped_drift`); run the loop below beforehand to
+fix a profile before the warp rather than lose its items.
 
 ```bash
 cd /root/src/LudiusV2.new/controller && set -a && . ../.env && set +a
@@ -197,6 +199,8 @@ copy the folder, edit it, and point both sides at it: Ansible `-e intranet_dir=<
 `LUDIUS_INTRANET=<dir>` (it lists the page titles so lookups search for real pages). Check it with
 `ludius intranet check <dir>`; the dc01 role runs the same check and stops before deploying a bad folder. Pages are
 plain text; links may only point inside `corp.ludius.test`. Apply with `PLAYBOOK=range-exchange.yml /root/range-up.sh --tags dc01`.
+Not with a bare `ansible-playbook`: the box has no `uv`, and `range-up.sh` points `observer_check_cmd` at the controller's
+venv.
 
 Downloads: list them on a page (`files: Q4 plan.xlsx, checklist.pdf`) and put them in the folder's `files/`
 (`.pdf .docx .xlsx .pptx .txt .csv .png .jpg`, 1 MB each so the guest check reads it whole, 50 MiB together). The check fails on a file that is

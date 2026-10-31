@@ -651,7 +651,7 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, term)
-    reset_failed, failure, failed, playing, open_days = False, None, 0, list[str](), list[str]()
+    reset_failed, failure, failed, playing, open_days, probed = False, None, 0, list[str](), list[str](), False
     try:
         if not world.narrative_path.exists():
             raise RuntimeError(
@@ -684,7 +684,9 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
             first = min(dt.time.fromisoformat(i.at) for p in plans.values() for i in p.items)
             jump(dt.datetime.combine(d, first, tz) - dt.timedelta(minutes=10))
             playing = [durable.workflow_id(p) for p in plans.values()]
-            results = asyncio.run(_play_days(args.temporal, plans, tz, sup))
+            # the first played day probes each app first (runs/health.json); a drifted app's items are skipped
+            results = asyncio.run(_play_days(args.temporal, plans, tz, sup, canary=not probed))
+            probed = True
             playing = []
             for u, res in results.items():
                 note(event="day", persona=u, date=d, result=res)
@@ -725,7 +727,7 @@ def _range_warp(args: argparse.Namespace, users: list[str], today: dt.date) -> i
 
 
 async def _play_days(
-    temporal: str, plans: dict[str, planner.DayPlan], tz: dt.tzinfo, sup: rangerun.Supervisor
+    temporal: str, plans: dict[str, planner.DayPlan], tz: dt.tzinfo, sup: rangerun.Supervisor, canary: bool = False
 ) -> dict[str, object]:
     from temporalio.client import WorkflowFailureError
     from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
@@ -736,7 +738,7 @@ async def _play_days(
 
     async def one(plan: planner.DayPlan) -> object:
         noon = dt.datetime.combine(dt.date.fromisoformat(plan.date), dt.time(12), tz).utcoffset() or dt.timedelta()
-        inp = durable.DayInput(plan=plan, clock="compressed", utc_offset_s=int(noon.total_seconds()))
+        inp = durable.DayInput(plan=plan, clock="compressed", utc_offset_s=int(noon.total_seconds()), canary=canary)
         wid = durable.workflow_id(plan)
         h = await client.start_workflow(durable.PersonaDay.run, inp, id=wid, task_queue=durable.task_queue(plan),
                                         id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
