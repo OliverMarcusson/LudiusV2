@@ -9,7 +9,7 @@ use crate::tasks::{COMMITS, pixels_window, profile};
 use crate::template::{escape, fullmatch, search};
 
 const NEVER: &str = r"clear (browsing )?(history|cache|data)|empty recycle bin|disk clean-?up|uninstall|clear (the )?log|clear (all )?events|log size|format (disk|drive)|delete browsing";
-const SHELL_PROCESSES: [&str; 5] = ["explorer.exe", "searchapp.exe", "searchui.exe", "startmenuexperiencehost.exe", "shellexperiencehost.exe"];
+pub const SHELL_PROCESSES: [&str; 5] = ["explorer.exe", "searchapp.exe", "searchui.exe", "startmenuexperiencehost.exe", "shellexperiencehost.exe"];
 const DESKTOP_CLASSES: [&str; 3] = ["Progman", "WorkerW", "Shell_TrayWnd"];
 const ACTIVATION_KEYS: [&str; 9] = ["enter", "space", "ctrl+o", "alt+enter", "ctrl+enter", "shift+enter", "f2", "delete", "shift+delete"];
 const FOCUS_KEYS: [&str; 5] = ["enter", "space", "ctrl+enter", "shift+enter", "alt+enter"];

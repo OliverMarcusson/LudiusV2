@@ -1,3 +1,4 @@
+pub mod assist;
 pub mod calls;
 pub mod chat;
 pub mod decisions;
@@ -7,6 +8,7 @@ pub mod hostagent;
 pub mod keys;
 pub mod llm;
 pub mod mail;
+pub mod options;
 pub mod paths;
 pub mod policy;
 pub mod share;
