@@ -140,3 +140,25 @@ def test_move_download_only_an_own_file_then_same_bytes_in_documents_and_gone(
         assert check_done(done, snap, tk, False) is False
     disk[src], disk[dst] = guestfile.GuestFile(False), guestfile.GuestFile(True, 500, b"a,b")
     assert check_done(done, snap, tk, False) is True
+
+
+def test_rename_then_copy_is_not_a_move(monkeypatch: pytest.MonkeyPatch) -> None:
+    disk: dict[str, Any] = {}
+    monkeypatch.setattr(tasks.guestfile, "read", lambda user, rel: disk.get(rel))
+    t = cli.plan_sources().templates["explorer_rename_move"]
+    params = {"file_name": "memo", "file_ext": "txt", "new_name": "memo old", "folder_name": "archive"}
+    tk = Task(t, TaskInstance(template=t.task, params=params), random.Random(0))
+    tk.owner, tk.started_ms = "aberg", 1_000_000
+    src, renamed, dst = r"Documents\memo.txt", r"Documents\memo old.txt", r"Documents\archive\memo old.txt"
+    disk[src], disk[renamed], disk[dst] = (
+        guestfile.GuestFile(True, 500, b"m"),
+        guestfile.GuestFile(False),
+        guestfile.GuestFile(False),
+    )
+    assert file_baseline(tk, Policy()) is None
+    done, snap = t.subgoals["move_menu"].done, obs.Snapshot()
+    disk[src], disk[dst] = guestfile.GuestFile(False), guestfile.GuestFile(True, 500, b"m")
+    disk[renamed] = guestfile.GuestFile(True, 500, b"m")
+    assert check_done(done, snap, tk, False) is False
+    disk[renamed] = guestfile.GuestFile(False)
+    assert check_done(done, snap, tk, False) is True

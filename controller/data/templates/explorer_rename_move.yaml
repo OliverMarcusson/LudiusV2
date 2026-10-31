@@ -3,7 +3,7 @@ app: explorer
 capability: file.move
 processes: [explorer.exe]
 writes: ['Documents\{folder_name}\{new_name}.{file_ext}']
-removes: ['Documents\{file_name}.{file_ext}']
+removes: ['Documents\{file_name}.{file_ext}', 'Documents\{new_name}.{file_ext}']
 params: [file_name, file_ext, new_name, folder_name]
 about: "Rename one of the persona's own files in Documents (under Own recent files) and move it into an existing folder there with Cut and Paste. file_name: the file's current name exactly, without folder and extension; file_ext: its extension without the dot; new_name: its new name without extension; folder_name: an existing folder in Documents."
 example: {file_name: admission test note, file_ext: txt, new_name: admission test note old, folder_name: admission test folder}

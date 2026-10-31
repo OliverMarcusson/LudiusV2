@@ -1189,9 +1189,9 @@ def _file_ok(c: FileCheck, task: Task) -> bool:
         return False
     f = guestfile.read(task.owner, rel)
     if c.moved_from is not None:
-        s = guestfile.read(task.owner, task.fmt(c.moved_from))
+        gone = [guestfile.read(task.owner, task.fmt(r)) for r in dict.fromkeys([c.moved_from, *task.template.removes])]
         moved = f is not None and f.exists and f.data == task.sources_before.get(task.fmt(c.moved_from))
-        return moved and s is not None and not s.exists
+        return moved and all(s is not None and not s.exists for s in gone)
     if c.download is not None:
         return f is not None and f.exists and f.data == intranet.download_bytes(task.fmt(c.download))
     if c.extract_of is not None:
