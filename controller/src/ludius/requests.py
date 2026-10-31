@@ -35,6 +35,7 @@ WEEKLY = 3
 MAPPED_MAX = 2
 DECISION_MIN = 0.6
 READ_LEAD = 5
+WRITTEN = "written and checked"
 SHOWN = 2000
 _LINE = re.compile(r"[\x20-\x7e]+")
 _TEXT = re.compile(r"[\x20-\x7e\n]+")
@@ -421,10 +422,32 @@ def deliver(
         params={"to": f"{boss.user}@{mail.DOMAIN}", "to_name": boss.name, "subject": f"RE: {m.subject}",
                 "body": f"hi {first}\nhere is {name} as you asked\n", "file_name": name},
         context=f"Sends {name} back to the manager, who asked for it in {m.subject!r}.",
+        request=it.request,
     )  # fmt: skip
 
 
+def _delivery(template: Template) -> bool:
+    return template.capability == "mail.send" and bool(template.attaches) and not template.writes
+
+
+def waiting(task: Task, root: Path = ROOT) -> str | None:
+    """A delivery sends only a file its request's write proved: an abandoned or wrong write is never sent."""
+    if not task.inst.request or not _delivery(task.template):
+        return None
+    try:
+        ok = seen(root, task.owner).get(task.inst.request) == WRITTEN
+    except (OSError, yaml.YAMLError) as e:
+        return f"request records unreadable: {e}"
+    return None if ok else "the requested file was not written and checked first, nothing to send"
+
+
 def mismatch(ask: Request, template: Template, values: dict[str, str]) -> str | None:
+    if _delivery(template) and ask.file_name:
+        name = values.get("file_name", "")
+        if values.get("to", "").strip().lower() != f"{ask.manager}@{mail.DOMAIN}":
+            return f"to {values.get('to')!r}, the file goes back to {ask.manager}"
+        ok = name.rpartition(".")[0].casefold() == ask.file_name.casefold()
+        return None if ok else f"attaches {name!r}, asked for {ask.file_name!r}"
     if template.task != ask.task:
         return f"asked for {ask.task}, planned {template.task}"
     if template.capability == "mail.reply":

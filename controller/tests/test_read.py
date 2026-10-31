@@ -9,7 +9,7 @@ import pytest
 
 from ludius import cli, loop, mail, reply, requests
 from ludius.loop import GroundTruth, Runner
-from ludius.planner import Person, PlanItem, validate
+from ludius.planner import DayPlan, Person, PlanItem, asked_files, validate
 from ludius.policy import Policy
 from ludius.tasks import Persona, Task, TaskInstance, Template, check_done
 from ludius.v1 import observation_pb2 as obs
@@ -287,7 +287,7 @@ def test_launch_query_goes_into_the_start_search_only(tmp_path: Path) -> None:
         Template.model_validate(bad)
 
 
-def test_a_requested_file_is_mailed_back_to_the_manager() -> None:
+def test_a_requested_file_is_mailed_back_to_the_manager(tmp_path: Path) -> None:
     ts = cli.load_templates()
     boss = Person(name="Marcus Vellinga", role="lead", department="ops", user="mvellinga")
     req = PlanItem(
@@ -297,9 +297,21 @@ def test_a_requested_file_is_mailed_back_to_the_manager() -> None:
     assert back is not None and back.template == "outlook_send_attachment"
     assert back.at > "10:31" and back.params["file_name"] == "feb volumes.docx"
     assert back.params["to"] == "mvellinga@ludius.internal" and back.params["subject"] == f"RE: {SUBJECT}"
-    owned = {"documents\\feb volumes.docx": "2026-11-02"}
+    owned = asked_files(back, DayPlan(persona="aberg", date="2026-11-02", items=[req, back]), ts)
+    assert owned == {"documents\\feb volumes.docx": "2026-11-02"} and back.request == req.request
+    assert not asked_files(back, DayPlan(persona="aberg", date="2026-11-02", items=[back]), ts)
     people = {"mvellinga": boss.name}
     assert not validate([back], ts, [], Policy(), {"mvellinga"}, people=people, owned=owned, day="2026-11-02")
+    ask = requests.Request(to="aberg", task="word_short_document", subject=SUBJECT, body="", file_name="feb volumes",
+                           manager="mvellinga", msgid="<7@ludius.internal>")  # fmt: skip
+    t = ts["outlook_send_attachment"]
+    assert requests.mismatch(ask, t, back.params) is None
+    assert requests.mismatch(ask, t, {**back.params, "file_name": "other.docx"})
+    task = Task(t, back, random.Random(0))
+    task.owner = "aberg"
+    assert requests.waiting(task, tmp_path)
+    requests.remember(tmp_path, "aberg", back.request, requests.WRITTEN)
+    assert requests.waiting(task, tmp_path) is None
     assert requests.deliver(req, boss, [msg(8)], ts, [req]) is None
     assert requests.deliver(PlanItem(template="paint_quick_sketch", at="10:31", params={"file_name": "x"},
                                      request="<7@ludius.internal>"), boss, [msg(7)], ts, []) is None  # fmt: skip

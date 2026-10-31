@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import random
@@ -375,7 +376,7 @@ class Runner:
             self.log.write(event="task_content", host_ms=_now(), task=task.template.task, reason=why, **rec)
         if (task.template.sends_mail or task.template.capability == "calendar.respond") and not why:
             task.mail_before = mail_baseline(task)
-        if why := why or file_baseline(task, self.policy):
+        if why := why or requests.waiting(task) or file_baseline(task, self.policy):
             self.log.write(event="blocked", host_ms=_now(), task=task.template.task, reason=why)
             self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status="abandoned",
                            reason=f"start: {why}", steps=0)  # fmt: skip
@@ -419,6 +420,9 @@ class Runner:
             ok, reason = requests.fulfilled(task)
             self.log.write(event="request_check", host_ms=_now(), task=task.template.task,
                            request=task.inst.request, fulfilled=ok, reason=reason)  # fmt: skip
+            if ok and task.template.capability == "file.write":
+                with contextlib.suppress(OSError):  # unrecorded only blocks the delivery
+                    requests.remember(requests.ROOT, task.owner, task.inst.request, requests.WRITTEN)
             reason = f"request: {reason}"
             status = "done" if ok else "failed"
         self.log.write(event="task_end", host_ms=_now(), task=task.template.task, status=status, steps=steps,

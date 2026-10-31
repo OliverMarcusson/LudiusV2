@@ -12,7 +12,7 @@ import tempfile
 import time
 from collections import Counter
 from collections.abc import Generator, Iterable
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, cast
@@ -1150,6 +1150,17 @@ def done_slots(log: Path) -> set[tuple[str, str]]:
             if r.get("event") == "item_end" and r.get("status") == "done"}  # fmt: skip
 
 
+def asked_files(it: PlanItem, plan: DayPlan, templates: dict[str, Template]) -> dict[str, str]:
+    """Files an earlier item of the same request writes today: its delivery may attach them."""
+    out: dict[str, str] = {}
+    for x in plan.items:
+        t = templates.get(x.template)
+        if it.request and x.request == it.request and x.at < it.at and t and t.capability == "file.write":
+            with suppress(KeyError):
+                out |= {w.format_map({**t.defaults, **x.params, **x.content}).casefold(): plan.date for w in t.writes}
+    return out
+
+
 def load_plan(path: Path, *, history: bool = False) -> DayPlan:
     plan = DayPlan.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
     if dup := {k for k, n in Counter((it.at, it.template) for it in plan.items).items() if n > 1}:
@@ -1167,7 +1178,8 @@ def load_plan(path: Path, *, history: bool = False) -> DayPlan:
              if (t := templates.get(it.template)) and (t.capability in OWN_FILES or t.attaches)]  # fmt: skip
     owned = owned_files(path.parent.parent, plan.persona, plan.date) if edits and not history else {}
     for it in [] if history else edits:
-        if why := _owned(it, templates[it.template], owned, plan.date, plan.items):
+        if why := _owned(it, templates[it.template], {**owned, **asked_files(it, plan, templates)}, plan.date,
+                         plan.items):  # fmt: skip
             raise ValueError(f"{path}: {it.template} at {it.at}: {why}")
     for it in plan.items:
         if it.template in templates and (why := item_problem(it, templates, policy, plan.persona, teams, shares)
