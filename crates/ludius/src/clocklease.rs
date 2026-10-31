@@ -1,7 +1,7 @@
 //! The range clock lease (port of clocklease.py): a warp renews the lease file while the range clocks are
 //! jumped; a sweeper resets the clocks once the holder stops renewing it.
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
+use std::sync::mpsc::{RecvTimeoutError, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -42,6 +42,10 @@ impl Lease {
                 // release drops the sender, which ends the loop; a failed write is retried on the next tick
                 while rx.recv_timeout(every) == Err(RecvTimeoutError::Timeout) {
                     let _g = lock.lock().unwrap();
+                    // release may have run while this tick waited for the lock
+                    if rx.try_recv() == Err(TryRecvError::Disconnected) {
+                        break;
+                    }
                     let _ = write(&path, &vm);
                 }
             })?;
@@ -54,10 +58,12 @@ impl Lease {
         let renewer = {
             let _g = self.lock.lock().unwrap();
             let _ = std::fs::remove_file(&self.path);
-            self.renewer.take()
+            self.renewer.take().map(|(stop, t)| {
+                drop(stop);
+                t
+            })
         };
-        if let Some((stop, t)) = renewer {
-            drop(stop);
+        if let Some(t) = renewer {
             let _ = t.join();
         }
     }
