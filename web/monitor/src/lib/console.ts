@@ -189,6 +189,8 @@ const activities: Record<string, string> = {
 export const activityName = (name: string) => activities[name] ?? "Other activity"
 
 export function latestDay(catalog: Catalog, user: string): string | undefined {
+  const recorded = catalog.latest?.find((d) => d.user === user)?.date
+  if (recorded) return recorded
   return catalog.index
     .filter((i) => i.user === user)
     .map((i) => i.date)

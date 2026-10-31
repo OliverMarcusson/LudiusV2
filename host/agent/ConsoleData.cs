@@ -78,8 +78,10 @@ static class ConsoleData
             latest = people?.Select(p =>
             {
                 var user = Text(p, "user");
-                var date = index.Where(i => i.User == user && i.Source == "days").Select(i => i.Date).Order().LastOrDefault()
-                    ?? index.Where(i => i.User == user).Select(i => i.Date).Order().LastOrDefault();
+                // Most recently written, not the highest date: a warp can play a day before an earlier warp's.
+                var written = (DayIndex i) => File.GetLastWriteTimeUtc(Path.Combine(runs, i.Source, $"{i.Date}-{user}" + (i.Source == "plans" ? ".yaml" : ".jsonl")));
+                var date = index.Where(i => i.User == user && i.Source == "days").OrderBy(written).Select(i => i.Date).LastOrDefault()
+                    ?? index.Where(i => i.User == user).OrderBy(written).Select(i => i.Date).LastOrDefault();
                 var day = date is null ? null : Day(runs, date, user);
                 var events = day?.Events;
                 var start = events is null ? -1 : Array.FindLastIndex(events, e => Text(e, "event") == "day_start");
