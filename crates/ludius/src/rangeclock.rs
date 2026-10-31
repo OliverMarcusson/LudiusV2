@@ -192,7 +192,11 @@ pub fn violations(expected: &BTreeMap<u32, String>, resources: &Value, node: &st
 
 /// A PowerShell script in a range VM through the host agent (QEMU guest agent exec).
 pub fn agent_exec(address: &str, vm: &str, script: &str) -> Result<String> {
-    let cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", script].map(String::from).to_vec();
+    // exec-status goes by guest pid, and Windows reuses pids: an earlier exec whose status was never read (timed
+    // out, or brought back by a RAM rollback) can answer for this one. The nonce proves the output is ours.
+    let nonce = format!("ludius-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos());
+    let script = format!("'{nonce}'; {script}");
+    let cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", &script].map(String::from).to_vec();
     let res = HostAgent::new(address, vm)?.guest_exec(cmd, 60).map_err(|e| {
         if crate::hostagent::code(&e) == Some(tonic::Code::Unavailable) { anyhow!(AgentDown(format!("{vm}: guest exec: {e:#}"))) } else { e }
     })?;
@@ -200,7 +204,15 @@ pub fn agent_exec(address: &str, vm: &str, script: &str) -> Result<String> {
         let err: String = res.err_data.chars().rev().take(300).collect::<Vec<_>>().into_iter().rev().collect();
         bail!("{vm}: exit {}: {err}", if res.exited { res.exitcode.to_string() } else { "none (timed out)".into() });
     }
-    Ok(res.out_data)
+    own_output(vm, &nonce, &res.out_data)
+}
+
+/// The output after our nonce line; another exec's output is retryable (AgentDown), never a reading.
+fn own_output(vm: &str, nonce: &str, out: &str) -> Result<String> {
+    match out.split_once('\n') {
+        Some((first, rest)) if first.trim_end() == nonce => Ok(rest.to_string()),
+        _ => Err(anyhow!(AgentDown(format!("{vm}: guest exec returned another command's output")))),
+    }
 }
 
 /// The range's clock (cli._range_clock): DC and Exchange plus every persona VM of range-vms.yml. `strict`
@@ -366,6 +378,14 @@ mod tests {
         assert_eq!(sets(&r), [110, 111]);
         let g = r.lock().unwrap();
         assert!(g.off[&110].abs() < 1.0 && g.off[&111].abs() < 1.0);
+    }
+
+    #[test]
+    fn stale_exec_output_is_not_a_reading() {
+        assert_eq!(own_output("vm", "ludius-1", "ludius-1\r\n1793486803000\r\n").unwrap().trim(), "1793486803000");
+        let e = own_output("vm", "ludius-1", "1793400000000\r\n").unwrap_err();
+        assert!(e.is::<AgentDown>());
+        assert!(own_output("vm", "ludius-1", "ludius-0\r\n1\r\n").is_err());
     }
 
     #[test]
