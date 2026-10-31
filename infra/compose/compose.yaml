@@ -90,7 +90,7 @@ services:
     volumes:
       - /var/run/qemu-server:/var/run/qemu-server  # QMP sockets
       - /var/lib/ludius/agent-scratch:/var/lib/ludius/agent-scratch  # QEMU writes screendumps here: same path on both sides
-      - /etc/pve:/etc/pve:ro
+      - /etc/pve/pve-root-ca.pem:/etc/pve/pve-root-ca.pem:ro  # only the CA, not /etc/pve/priv
     secrets: [pve_token, pve_root_password]
 
 secrets:

@@ -230,7 +230,8 @@ impl Proxmox {
     }
 
     async fn config(&self, id: u32) -> R<Value> {
-        self.api.get(&format!("/nodes/{}/qemu/{id}/config", self.o.node), &[]).await
+        // current=1: the running config, not pending changes merged in.
+        self.api.get(&format!("/nodes/{}/qemu/{id}/config", self.o.node), &[("current", "1")]).await
     }
 
     async fn list(&self) -> R<Vec<PveVm>> {
@@ -559,6 +560,8 @@ impl Proxmox {
             c.invalidate(id);
             c.vms.remove(target);
         }
+        // Ends `configuring` even when the RPC is cancelled mid-clone (the future is dropped).
+        let _done = Configured { pm: self, id, target };
         let res = async {
             self.complete(self.api.post(&format!("/nodes/{}/qemu/{}/clone", self.o.node, src.id), &args).await?).await?;
             let cfg = self.config(id).await?;
@@ -570,16 +573,7 @@ impl Proxmox {
             Ok(())
         }
         .await;
-        {
-            let mut c = self.cache();
-            let n = c.configuring.get_mut(&id).unwrap();
-            *n -= 1;
-            if *n == 0 {
-                c.configuring.remove(&id);
-            }
-            c.invalidate(id);
-            c.vms.remove(target);
-        }
+        drop(_done);
         res?;
         self.state(id).await
     }
@@ -613,10 +607,31 @@ impl Proxmox {
     }
 }
 
+/// Any exec failure but a bad argument or a denial is a guest agent that may come back: retryable.
 fn agent_down(e: E) -> E {
     match e {
-        E::Failed(m) if m.contains("agent") => E::Down(m),
+        E::Failed(m) | E::Task(m) => E::Down(m),
         e => e,
+    }
+}
+
+struct Configured<'a> {
+    pm: &'a Proxmox,
+    id: u32,
+    target: &'a str,
+}
+
+impl Drop for Configured<'_> {
+    fn drop(&mut self) {
+        let mut c = self.pm.cache();
+        if let Some(n) = c.configuring.get_mut(&self.id) {
+            *n -= 1;
+            if *n == 0 {
+                c.configuring.remove(&self.id);
+            }
+        }
+        c.invalidate(self.id);
+        c.vms.remove(self.target);
     }
 }
 
