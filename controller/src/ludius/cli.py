@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import random
-import socket
 import subprocess
 import sys
 import time
@@ -146,7 +145,7 @@ def set_clock(at: dt.datetime | None, *, vm: str | None = None, agent: str | Non
 def restore(agent: HostAgent, checkpoint: str, vm: str | None = None) -> None:
     agent.lifecycle(pb.LifecycleRequest.RESTORE, checkpoint)
     agent.lifecycle(pb.LifecycleRequest.START)
-    _restart_observer(vm or os.environ.get("LUDIUS_VM", ""))
+    _restart_observer(agent, vm or os.environ.get("LUDIUS_VM", ""))
     _wait_for_observer(agent)
 
 
@@ -155,18 +154,17 @@ OBSERVER_RESTART = (
 )
 
 
-def _restart_observer(vm: str) -> None:
+def _restart_observer(agent: HostAgent, vm: str) -> None:
     """Proxmox: after a RAM rollback uiprobe still runs but its vsock listener is dead (errno 104)."""
-    import shutil
-
     from ludius import rangeclock, rangerun
 
-    if not shutil.which("qm") or (vmid := rangerun.vmids().get(vm.removeprefix("ludius-"))) is None:
+    if agent.backend() != "proxmox" or (vmid := rangerun.vmids().get(vm.removeprefix("ludius-"))) is None:
         return
-    rangeclock.confine({vmid: rangerun.vm_of(vm.removeprefix("ludius-"))}, rangeclock.resources(), socket.gethostname())
+    name = rangerun.vm_of(vm.removeprefix("ludius-"))
+    rangeclock.confine({vmid: name}, *agent.resources())
     for n in range(rangeclock.RETRIES + 1):  # the guest agent can lag the rollback
         try:
-            rangeclock.qm_exec(vmid, OBSERVER_RESTART)
+            rangeclock.agent_exec(name, OBSERVER_RESTART, agent.address)
             return
         except rangeclock.AgentDown:
             if n == rangeclock.RETRIES:
@@ -568,11 +566,12 @@ def _range_clock(*, strict: bool = True) -> rangeclock.RangeClock:
     dc, ex = int(main["srv01_vmid"]), int(main["ex01_vmid"])
     names = {dc: "ludius-dc01", ex: "ludius-ex01"} | {v: rangerun.vm_of(u) for u, v in rangerun.vmids().items()}
     if strict:
-        rangeclock.confine(names, rangeclock.resources(), socket.gethostname())
+        rangeclock.confine(names, *rangeclock.resources())
     return rangeclock.RangeClock(
         dc,
         [v for v in names if v != dc],
-        verify=lambda: rangeclock.violations(names, rangeclock.resources(), socket.gethostname()),
+        rangeclock.by_name(names),
+        verify=lambda: rangeclock.violations(names, *rangeclock.resources()),
     )
 
 

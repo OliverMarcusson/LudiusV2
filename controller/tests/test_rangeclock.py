@@ -146,7 +146,7 @@ def test_range_clock_refuses_before_touching_any_vm(monkeypatch: pytest.MonkeyPa
     from ludius import cli, rangeclock
 
     monkeypatch.setenv("LUDIUS_MAIL_BACKEND", "exchange")
-    monkeypatch.setattr(rangeclock, "resources", lambda: RES)
+    monkeypatch.setattr(rangeclock, "resources", lambda: (RES, "pve"))
     with pytest.raises(ValueError, match="not range VMs"):
         cli._range_clock()  # pyright: ignore[reportPrivateUsage]
     assert cli._range_clock(strict=False).dc == 110  # pyright: ignore[reportPrivateUsage]

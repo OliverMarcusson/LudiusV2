@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import socket
 import time
 from typing import Any
@@ -69,6 +70,10 @@ class HostAgent:
         result: obs.FileContent = self._stub.ReadGuestFile(req, timeout=60)
         return result
 
+    def backend(self) -> str:
+        info: pb.AgentInfo = self._stub.Info(pb.InfoRequest(), timeout=10)
+        return info.backend
+
     def local_hyperv(self) -> bool:
         try:
             info: pb.AgentInfo = self._stub.Info(pb.InfoRequest(), timeout=10)
@@ -76,6 +81,15 @@ class HostAgent:
             code = e.code()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
             return code == grpc.StatusCode.UNIMPLEMENTED and _loopback(self.address)
         return info.backend == "hyperv" and info.host.casefold() == socket.gethostname().casefold()
+
+    def guest_exec(self, command: list[str], timeout_s: int = 60) -> pb.GuestExecResult:
+        req = pb.GuestExecRequest(vm=self.vm, command=command, timeout_s=timeout_s)
+        result: pb.GuestExecResult = self._stub.GuestExec(req, timeout=timeout_s + 30)
+        return result
+
+    def resources(self) -> tuple[list[dict[str, object]], str]:
+        result: pb.ResourcesResult = self._stub.Resources(pb.ResourcesRequest(), timeout=60)
+        return json.loads(result.json), result.node
 
     def screenshot(self) -> bytes:
         result: pb.ScreenshotResult = self._stub.Screenshot(pb.ScreenshotRequest(vm=self.vm), timeout=60)

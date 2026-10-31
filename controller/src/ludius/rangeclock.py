@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import datetime as dt
-import json
-import subprocess
+import os
 import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ludius.hostagent import HostAgent
 
 MAX_SKEW_S = 60.0
 POOL = "ludius"
@@ -18,19 +21,39 @@ class AgentDown(RuntimeError):
     pass
 
 
-def qm_exec(vmid: int, script: str) -> str:
-    argv = ["qm", "guest", "exec", str(vmid), "--timeout", "60", "--", "powershell", "-NoProfile", "-NonInteractive",
-            "-Command", script]  # fmt: skip
-    out = subprocess.run(argv, capture_output=True, text=True, timeout=90)
-    if out.returncode:
-        raise AgentDown(f"VM {vmid}: qm guest exec exit {out.returncode}: {out.stderr.strip()[-300:]}")
-    res = json.loads(out.stdout)
-    if res.get("exitcode") != 0 or not res.get("exited", 1):
-        raise RuntimeError(f"VM {vmid}: exit {res.get('exitcode')}: {str(res.get('err-data', ''))[-300:]}")
-    return str(res.get("out-data", ""))
+def agent(vm: str = "", address: str | None = None) -> HostAgent:
+    from ludius.hostagent import HostAgent
+
+    return HostAgent(address or os.environ.get("LUDIUS_AGENT", "127.0.0.1:7451"), vm)
 
 
-# A qm call that timed out can still run later: the sequence file makes the guest skip a Set-Date older than one
+def agent_exec(vm: str, script: str, address: str | None = None) -> str:
+    """Runs a PowerShell script in a range VM through the host agent (QEMU guest agent exec)."""
+    import grpc
+
+    a = agent(vm, address)
+    try:
+        res = a.guest_exec(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], timeout_s=60)
+    except grpc.RpcError as e:
+        if e.code() == grpc.StatusCode.UNAVAILABLE:  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+            raise AgentDown(f"{vm}: guest exec: {e.details()}") from e  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        raise
+    finally:
+        a.close()
+    if res.exitcode != 0 or not res.exited:
+        raise RuntimeError(f"{vm}: exit {res.exitcode if res.exited else 'none (timed out)'}: {res.err_data[-300:]}")
+    return res.out_data
+
+
+def _no_exec(vmid: int) -> str:
+    raise RuntimeError(f"VM {vmid}: no guest exec configured")
+
+
+def by_name(names: Mapping[int, str]) -> Exec:
+    return lambda vmid, script: agent_exec(names[vmid], script)
+
+
+# A guest exec that timed out can still run later: the sequence file makes the guest skip a Set-Date older than one
 # it already applied; the mutex keeps check and set together across guest processes.
 _SET = ("$m = New-Object Threading.Mutex($false, 'Global\\ludius-clock'); "
         "if (-not $m.WaitOne(30000)) {{ throw 'clock mutex busy' }}; try {{ "
@@ -49,7 +72,7 @@ _NOW = "[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()"
 class RangeClock:
     dc: int
     members: list[int]
-    run: Exec = qm_exec
+    run: Exec = lambda vmid, _: _no_exec(vmid)
     now: Callable[[], float] = time.time
     verify: Callable[[], dict[int, str]] = lambda: {}
     sleep: Callable[[float], None] = time.sleep
@@ -158,10 +181,13 @@ def confine(expected: dict[int, str], resources: Sequence[Mapping[str, object]],
         raise ValueError("range clock refused, not range VMs: " + "; ".join(f"{k}: {v}" for k, v in bad.items()))
 
 
-def resources() -> list[dict[str, object]]:
-    out = subprocess.run(["pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json"],
-                         check=True, capture_output=True, text=True, timeout=60)  # fmt: skip
-    return json.loads(out.stdout)
+def resources() -> tuple[list[dict[str, object]], str]:
+    """/cluster/resources (VMs) and the agent's node, from the host agent."""
+    a = agent()
+    try:
+        return a.resources()
+    finally:
+        a.close()
 
 
 def _iso(t: float) -> str:

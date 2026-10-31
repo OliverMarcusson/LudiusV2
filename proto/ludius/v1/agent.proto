@@ -13,6 +13,10 @@ service HostAgent {
   rpc Screenshot(ScreenshotRequest) returns (ScreenshotResult);
   rpc ReadGuestFile(GuestFileRequest) returns (FileContent);
   rpc Info(InfoRequest) returns (AgentInfo);
+  rpc GuestExec(GuestExecRequest) returns (GuestExecResult);
+  rpc Resources(ResourcesRequest) returns (ResourcesResult);
+  rpc ListVms(ListVmsRequest) returns (ListVmsResult);
+  rpc Frame(FrameRequest) returns (FrameResult);
 }
 
 message InfoRequest {}
@@ -120,4 +124,46 @@ message ScreenshotResult {
   bytes png = 1;
   int32 width = 2;
   int32 height = 3;
+}
+
+message GuestExecRequest {
+  string vm = 1;
+  repeated string command = 2;
+  uint32 timeout_s = 3;
+}
+
+message GuestExecResult {
+  bool exited = 1;
+  int32 exitcode = 2;
+  string out_data = 3;
+  string err_data = 4;
+}
+
+message ResourcesRequest {}
+
+message ResourcesResult {
+  string node = 1;
+  string json = 2;
+}
+
+message ListVmsRequest {}
+
+message VmInfo {
+  string name = 1;
+  string state = 2;
+  int32 width = 3;
+  int32 height = 4;
+}
+
+message ListVmsResult {
+  repeated VmInfo vms = 1;
+}
+
+message FrameRequest {
+  string vm = 1;
+  int32 max_width = 2;
+}
+
+message FrameResult {
+  bytes jpeg = 1;
 }

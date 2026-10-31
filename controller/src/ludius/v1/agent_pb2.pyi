@@ -181,3 +181,73 @@ class ScreenshotResult(_message.Message):
     width: int
     height: int
     def __init__(self, png: _Optional[bytes] = ..., width: _Optional[int] = ..., height: _Optional[int] = ...) -> None: ...
+
+class GuestExecRequest(_message.Message):
+    __slots__ = ("vm", "command", "timeout_s")
+    VM_FIELD_NUMBER: _ClassVar[int]
+    COMMAND_FIELD_NUMBER: _ClassVar[int]
+    TIMEOUT_S_FIELD_NUMBER: _ClassVar[int]
+    vm: str
+    command: _containers.RepeatedScalarFieldContainer[str]
+    timeout_s: int
+    def __init__(self, vm: _Optional[str] = ..., command: _Optional[_Iterable[str]] = ..., timeout_s: _Optional[int] = ...) -> None: ...
+
+class GuestExecResult(_message.Message):
+    __slots__ = ("exited", "exitcode", "out_data", "err_data")
+    EXITED_FIELD_NUMBER: _ClassVar[int]
+    EXITCODE_FIELD_NUMBER: _ClassVar[int]
+    OUT_DATA_FIELD_NUMBER: _ClassVar[int]
+    ERR_DATA_FIELD_NUMBER: _ClassVar[int]
+    exited: bool
+    exitcode: int
+    out_data: str
+    err_data: str
+    def __init__(self, exited: _Optional[bool] = ..., exitcode: _Optional[int] = ..., out_data: _Optional[str] = ..., err_data: _Optional[str] = ...) -> None: ...
+
+class ResourcesRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class ResourcesResult(_message.Message):
+    __slots__ = ("node", "json")
+    NODE_FIELD_NUMBER: _ClassVar[int]
+    JSON_FIELD_NUMBER: _ClassVar[int]
+    node: str
+    json: str
+    def __init__(self, node: _Optional[str] = ..., json: _Optional[str] = ...) -> None: ...
+
+class ListVmsRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class VmInfo(_message.Message):
+    __slots__ = ("name", "state", "width", "height")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    WIDTH_FIELD_NUMBER: _ClassVar[int]
+    HEIGHT_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    state: str
+    width: int
+    height: int
+    def __init__(self, name: _Optional[str] = ..., state: _Optional[str] = ..., width: _Optional[int] = ..., height: _Optional[int] = ...) -> None: ...
+
+class ListVmsResult(_message.Message):
+    __slots__ = ("vms",)
+    VMS_FIELD_NUMBER: _ClassVar[int]
+    vms: _containers.RepeatedCompositeFieldContainer[VmInfo]
+    def __init__(self, vms: _Optional[_Iterable[_Union[VmInfo, _Mapping]]] = ...) -> None: ...
+
+class FrameRequest(_message.Message):
+    __slots__ = ("vm", "max_width")
+    VM_FIELD_NUMBER: _ClassVar[int]
+    MAX_WIDTH_FIELD_NUMBER: _ClassVar[int]
+    vm: str
+    max_width: int
+    def __init__(self, vm: _Optional[str] = ..., max_width: _Optional[int] = ...) -> None: ...
+
+class FrameResult(_message.Message):
+    __slots__ = ("jpeg",)
+    JPEG_FIELD_NUMBER: _ClassVar[int]
+    jpeg: bytes
+    def __init__(self, jpeg: _Optional[bytes] = ...) -> None: ...

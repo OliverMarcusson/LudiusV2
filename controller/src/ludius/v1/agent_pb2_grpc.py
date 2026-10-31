@@ -65,6 +65,26 @@ class HostAgentStub:
                 request_serializer=ludius_dot_v1_dot_agent__pb2.InfoRequest.SerializeToString,
                 response_deserializer=ludius_dot_v1_dot_agent__pb2.AgentInfo.FromString,
                 _registered_method=True)
+        self.GuestExec = channel.unary_unary(
+                '/ludius.v1.HostAgent/GuestExec',
+                request_serializer=ludius_dot_v1_dot_agent__pb2.GuestExecRequest.SerializeToString,
+                response_deserializer=ludius_dot_v1_dot_agent__pb2.GuestExecResult.FromString,
+                _registered_method=True)
+        self.Resources = channel.unary_unary(
+                '/ludius.v1.HostAgent/Resources',
+                request_serializer=ludius_dot_v1_dot_agent__pb2.ResourcesRequest.SerializeToString,
+                response_deserializer=ludius_dot_v1_dot_agent__pb2.ResourcesResult.FromString,
+                _registered_method=True)
+        self.ListVms = channel.unary_unary(
+                '/ludius.v1.HostAgent/ListVms',
+                request_serializer=ludius_dot_v1_dot_agent__pb2.ListVmsRequest.SerializeToString,
+                response_deserializer=ludius_dot_v1_dot_agent__pb2.ListVmsResult.FromString,
+                _registered_method=True)
+        self.Frame = channel.unary_unary(
+                '/ludius.v1.HostAgent/Frame',
+                request_serializer=ludius_dot_v1_dot_agent__pb2.FrameRequest.SerializeToString,
+                response_deserializer=ludius_dot_v1_dot_agent__pb2.FrameResult.FromString,
+                _registered_method=True)
 
 
 class HostAgentServicer:
@@ -106,6 +126,30 @@ class HostAgentServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GuestExec(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Resources(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListVms(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Frame(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_HostAgentServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -138,6 +182,26 @@ def add_HostAgentServicer_to_server(servicer, server):
                     servicer.Info,
                     request_deserializer=ludius_dot_v1_dot_agent__pb2.InfoRequest.FromString,
                     response_serializer=ludius_dot_v1_dot_agent__pb2.AgentInfo.SerializeToString,
+            ),
+            'GuestExec': grpc.unary_unary_rpc_method_handler(
+                    servicer.GuestExec,
+                    request_deserializer=ludius_dot_v1_dot_agent__pb2.GuestExecRequest.FromString,
+                    response_serializer=ludius_dot_v1_dot_agent__pb2.GuestExecResult.SerializeToString,
+            ),
+            'Resources': grpc.unary_unary_rpc_method_handler(
+                    servicer.Resources,
+                    request_deserializer=ludius_dot_v1_dot_agent__pb2.ResourcesRequest.FromString,
+                    response_serializer=ludius_dot_v1_dot_agent__pb2.ResourcesResult.SerializeToString,
+            ),
+            'ListVms': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListVms,
+                    request_deserializer=ludius_dot_v1_dot_agent__pb2.ListVmsRequest.FromString,
+                    response_serializer=ludius_dot_v1_dot_agent__pb2.ListVmsResult.SerializeToString,
+            ),
+            'Frame': grpc.unary_unary_rpc_method_handler(
+                    servicer.Frame,
+                    request_deserializer=ludius_dot_v1_dot_agent__pb2.FrameRequest.FromString,
+                    response_serializer=ludius_dot_v1_dot_agent__pb2.FrameResult.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -302,6 +366,114 @@ class HostAgent:
             '/ludius.v1.HostAgent/Info',
             ludius_dot_v1_dot_agent__pb2.InfoRequest.SerializeToString,
             ludius_dot_v1_dot_agent__pb2.AgentInfo.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GuestExec(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/ludius.v1.HostAgent/GuestExec',
+            ludius_dot_v1_dot_agent__pb2.GuestExecRequest.SerializeToString,
+            ludius_dot_v1_dot_agent__pb2.GuestExecResult.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Resources(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/ludius.v1.HostAgent/Resources',
+            ludius_dot_v1_dot_agent__pb2.ResourcesRequest.SerializeToString,
+            ludius_dot_v1_dot_agent__pb2.ResourcesResult.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListVms(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/ludius.v1.HostAgent/ListVms',
+            ludius_dot_v1_dot_agent__pb2.ListVmsRequest.SerializeToString,
+            ludius_dot_v1_dot_agent__pb2.ListVmsResult.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Frame(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/ludius.v1.HostAgent/Frame',
+            ludius_dot_v1_dot_agent__pb2.FrameRequest.SerializeToString,
+            ludius_dot_v1_dot_agent__pb2.FrameResult.FromString,
             options,
             channel_credentials,
             insecure,

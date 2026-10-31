@@ -73,5 +73,31 @@ services:
         temporal operator cluster health $$a
         temporal operator namespace describe -n default $$a >/dev/null 2>&1 || temporal operator namespace create -n default $$a
 
+  host-agent:
+    image: ${LUDIUS_HOST_AGENT_IMAGE:?set LUDIUS_HOST_AGENT_IMAGE in .env}
+    restart: unless-stopped
+    network_mode: host  # pveproxy listens on 127.0.0.1 only
+    security_opt: ["apparmor=unconfined"]  # the default profile denies unix sockets (QMP, signals), as for postgres
+    environment:
+      PVE_NODE: ${PVE_NODE:?set PVE_NODE in .env}
+      PVE_POOL: ${PVE_POOL:?set PVE_POOL in .env}
+      PVE_CAP_EXEMPT: ${PVE_CAP_EXEMPT:-}
+      AGENT_MAX_RUNNING: ${AGENT_MAX_RUNNING:-1}
+      AGENT_LISTEN: ${AGENT_LISTEN:-127.0.0.1:7451}
+      PVE_TOKEN_FILE: /run/secrets/pve_token
+      PVE_ROOT_PASSWORD_FILE: /run/secrets/pve_root_password
+      AGENT_SCRATCH_DIR: /var/lib/ludius/agent-scratch
+    volumes:
+      - /var/run/qemu-server:/var/run/qemu-server  # QMP sockets
+      - /var/lib/ludius/agent-scratch:/var/lib/ludius/agent-scratch  # QEMU writes screendumps here: same path on both sides
+      - /etc/pve:/etc/pve:ro
+    secrets: [pve_token, pve_root_password]
+
+secrets:
+  pve_token:
+    file: ${LUDIUS_SECRETS:-./secrets}/pve_token
+  pve_root_password:
+    file: ${LUDIUS_SECRETS:-./secrets}/pve_root_password
+
 volumes:
   pgdata:

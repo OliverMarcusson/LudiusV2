@@ -23,6 +23,11 @@ if [[ -f /etc/containers/systemd/ludius-postgres.container ]]; then
   fi
 fi
 
+# host agent secrets (range setup fills them): pve_token is USER@REALM!TOKENID=SECRET; pve_root_password
+# (root@pam, only for setting a clone's vsock args) may stay empty.
+install -d -m 0700 /etc/ludius/secrets /var/lib/ludius/agent-scratch
+for f in pve_token pve_root_password; do [[ -f /etc/ludius/secrets/$f ]] || install -m 0600 /dev/null /etc/ludius/secrets/$f; done
+grep -q '^LUDIUS_SECRETS=' /etc/ludius/compose.env || echo LUDIUS_SECRETS=/etc/ludius/secrets >>/etc/ludius/compose.env
 install -m 0644 "$here/ludius-compose.service" /etc/systemd/system/ludius-compose.service
 systemctl daemon-reload
 systemctl enable ludius-compose.service
