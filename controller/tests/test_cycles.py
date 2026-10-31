@@ -402,3 +402,20 @@ def test_a_resumed_step_keeps_its_baseline_and_flags(tmp_path: Path) -> None:
     task.added_base = None
     runner._subgoal(task, "s", sg, budget=0, t0=1e18, carry=carry)  # pyright: ignore[reportPrivateUsage]
     assert task.added_base == 5
+
+
+def test_a_window_that_took_the_front_after_the_decision_gets_no_click_or_key(tmp_path: Path) -> None:
+    from ludius.loop import FRONT_MOVED
+
+    agent, chords = ToggleAgent(), list[list[int]]()
+    agent.chord = lambda vks: chords.append(vks) or 0  # type: ignore[method-assign]
+    runner = Runner(agent, PrefersStart(), Persona(name="t", user="t"), GroundTruth(tmp_path / "gt.jsonl"), seed=1)  # type: ignore[arg-type]
+    tpl = load_templates()["notepad_write_note"]
+    task = Task(tpl, TaskInstance(template=tpl.task, params=tpl.example, variant=0), random.Random(0))
+    sg, start = Subgoal(goal="g"), Option("o1", "click", "click Start")
+    runner.observe()
+    agent.open = True  # a popup (Search here) takes the front between the decision and the action
+    assert runner.act(start, task, sg) == FRONT_MOVED and agent.clicks == 0
+    assert runner.act(Option("o2", "key", "press Alt+S", keys="Alt+S"), task, sg) == FRONT_MOVED and not chords
+    runner.observe()
+    assert runner.act(Option("o2", "key", "press Alt+S", keys="Alt+S"), task, sg) is None and chords

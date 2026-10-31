@@ -53,6 +53,7 @@ from ludius.v1 import agent_pb2 as pb
 from ludius.v1 import observation_pb2 as obs
 
 STUCK = "stuck"
+FRONT_MOVED = "the foreground window changed before the action"
 MAX_DETOURS = 2
 STUCK_WAITS = 6
 
@@ -250,6 +251,8 @@ class Runner:
         acts = o.kind in ("click", "double_click", "type", "key")
         if sg is not None and sg.confirm and acts and o.keys not in sg.keys:
             return "only this step's confirmed keys may act here (a Paste button would skip the confirm question)"
+        if o.kind in ("click", "double_click", "key") and self._front_moved():
+            return FRONT_MOVED  # a popup that took the front since the decision (Reminders: Alt+S snoozes)
         if o.kind in ("click", "double_click") and e is not None:
             self._move_to(e)
             self.agent.click(count=2 if o.kind == "double_click" else 1)
@@ -295,6 +298,14 @@ class Runner:
             self.agent.scroll(o.notches)
         return None
 
+    def _front_moved(self) -> bool:
+        was = next((w for w in self.snap.windows if w.kind == obs.Window.FOREGROUND), None)
+        if was is None:
+            return False
+        fresh = self.agent.observe(wait_settle=False).snapshot
+        now = next((w for w in fresh.windows if w.kind == obs.Window.FOREGROUND), None)
+        return now is None or _window_id(now) != _window_id(was)
+
     def _type_target(self, o: Option, task: Task, sg: Subgoal, text: str) -> tuple[str | None, obs.Element | None]:
         fresh = self.agent.observe(wait_settle=False).snapshot
         self._focus_shared = sum(e.focused for e in fresh.elements) > 1
@@ -302,7 +313,7 @@ class Runner:
         fg = next((i for i, w in enumerate(fresh.windows) if w.kind == obs.Window.FOREGROUND), None)
         was = next((w for w in self.snap.windows if w.kind == obs.Window.FOREGROUND), None)
         if fg is None or was is None or _window_id(fresh.windows[fg]) != _window_id(was) or fg not in v.windows:
-            return "the foreground window changed before typing", None
+            return FRONT_MOVED, None
         allowed = {e.key: e for e in v.allowed}
         if o.element is None:
             focus = next((e for e in fresh.elements if e.focused), None)
@@ -651,7 +662,7 @@ class Runner:
 
             progress = changed and not revisit
             no_change = 0 if progress else no_change + 1
-            if not progress and chosen.kind != "rescan":
+            if not progress and chosen.kind != "rescan" and refused != FRONT_MOVED:
                 dead.setdefault(here, set()).add(_ident(chosen))
             if no_change == 2:
                 snap = self.observe(timeout_ms=10000)
