@@ -43,7 +43,8 @@ subgoals:
       foreground: {process: explorer.exe, class_name: CabinetWClass, title: '^{folder_name}$'}
       element: {role: list item, name: '^{new_name}(\.\w+)?$'}
   move_menu:
-    goal: "Right-click the file {new_name} and choose Cut, open the folder {folder_name}, then right-click an empty area there and choose Paste"
+    goal: "Select the file {new_name}, open its context menu with Shift+F10 and choose Cut, open the folder {folder_name}, then press Shift+F10 there and choose Paste"
+    keys: [Shift+F10]
     steps: 14
     done:
       foreground: {process: explorer.exe, class_name: CabinetWClass, title: '^{folder_name}$'}
