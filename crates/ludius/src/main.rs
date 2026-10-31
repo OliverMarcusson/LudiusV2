@@ -21,6 +21,10 @@ const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--per
        ludius [--agent ADDR] range up|status|interactions [USER...] [--temporal HOST:PORT] [--model M] [--timezone TZ]
        ludius [--agent ADDR] range warp [USER...] --start YYYY-MM-DD [--days 1-7] [--plan-at HH:MM] [--temporal HOST:PORT] [--timezone TZ]
        ludius [--agent ADDR] range unwarp|sweep
+       ludius [--agent ADDR] [--vm VM] canary [APP...] [--persona P.yaml] [--model M] [--restore CHECKPOINT]
+       ludius [--agent ADDR] [--vm VM] observe [--limit N]
+       ludius intranet check [DIR]
+       ludius chat reset USER USER...
        ludius metrics LOG... [--human LOG...] [--features CSV] [--timeline CSV [--before CSV] [--manifest JSON]]
        ludius timeline LOG.jsonl... [--out CSV]
        ludius store [--dsn DSN] [--s3 http://KEY:SECRET@host:port/bucket]   (defaults LUDIUS_PG, LUDIUS_S3)";
@@ -82,6 +86,54 @@ fn main() -> Result<()> {
     let (features, timeline, before, manifest) = (flag("--features")?, flag("--timeline")?, flag("--before")?, flag("--manifest")?);
     let (dsn, s3) = (flag("--dsn")?, flag("--s3")?);
     let (start, days, plan_at) = (flag("--start")?, flag("--days")?, flag("--plan-at")?);
+    let limit: usize = flag("--limit")?.as_deref().unwrap_or("60").parse().context("--limit")?;
+    if args.first().is_some_and(|a| a == "intranet") {
+        let [_, check, rest @ ..] = args.as_slice() else { bail!(USAGE) };
+        if check != "check" || rest.len() > 1 {
+            bail!(USAGE);
+        }
+        let dir = rest.first().map(PathBuf::from).unwrap_or_else(ludius::intranet::dir);
+        let pages = ludius::intranet::load(&dir).unwrap_or_else(|e| {
+            eprintln!("intranet: {e:#}");
+            std::process::exit(1)
+        });
+        let pages: Vec<_> = pages.iter().map(|p| serde_json::json!({"id": p.id, "title": p.title, "section": p.section, "owner": p.owner, "updated": p.updated, "popular": p.popular, "tags": p.tags, "body": p.body, "files": p.files})).collect();
+        println!("{}", serde_json::Value::from(pages));
+        return Ok(());
+    }
+    if args.first().is_some_and(|a| a == "chat") {
+        let [_, reset, users @ ..] = args.as_slice() else { bail!(USAGE) };
+        let mut seen = std::collections::BTreeSet::new();
+        let users: Vec<&String> = users.iter().filter(|u| seen.insert(u.as_str())).collect();
+        if reset != "reset" || users.len() < 2 {
+            bail!(USAGE);
+        }
+        let mut bad = 0;
+        for (i, a) in users.iter().enumerate() {
+            for b in &users[i + 1..] {
+                let n = ludius::chat::reset(a, b);
+                println!("{a} <-> {b}: {}", n.map_or("unknown (chat01 unreachable or refused)".into(), |n| format!("{n} posts deleted")));
+                bad += usize::from(n.is_none());
+            }
+        }
+        std::process::exit(i32::from(bad > 0));
+    }
+    if args.first().is_some_and(|a| a == "observe") {
+        if vm.is_empty() {
+            bail!("--vm or LUDIUS_VM is required");
+        }
+        // ponytail: --record (fixture capture) is not ported; nothing reads fixtures/ any more.
+        let res = HostAgent::new(&agent_addr, &vm)?.observe(true, 0, 0)?;
+        let s = res.snapshot.unwrap_or_default();
+        println!("settled={} {}ms locked={} elements={} ui_access={}", s.settled, s.settle_ms, s.locked, s.elements.len(), res.hello.is_some_and(|h| h.ui_access));
+        for w in &s.windows {
+            println!("  window {} {} {:?}", w.kind().as_str_name().to_lowercase(), w.process_name, w.title);
+        }
+        for e in s.elements.iter().take(limit) {
+            println!("  {}", ludius::options::describe(e));
+        }
+        return Ok(());
+    }
     if args.first().is_some_and(|a| a == "metrics") && args.len() > 1 {
         let paths = |xs: &[String]| xs.iter().map(PathBuf::from).collect::<Vec<_>>();
         let cut = args.iter().position(|a| a == "--human").unwrap_or(args.len());
@@ -218,10 +270,11 @@ fn main() -> Result<()> {
         let cfg = ludius::durable::worker::Config { runs: runs(), persona, vm, agent: agent_addr, key: env("OPENROUTER_API_KEY"), model };
         return tokio::runtime::Runtime::new()?.block_on(ludius::durable::worker::serve(&address, "default", cfg));
     }
-    let [cmd, task_path] = args.as_slice() else { bail!(USAGE) };
-    if cmd != "run" {
-        bail!("{cmd}: only `run` is ported to Rust; use the Python cli for the rest\n{USAGE}");
-    }
+    let (task_path, apps) = match args.as_slice() {
+        [c, t] if c == "run" => (Some(t.clone()), vec![]),
+        [c, apps @ ..] if c == "canary" => (None, apps.to_vec()),
+        _ => bail!(USAGE),
+    };
     if vm.is_empty() {
         bail!("--vm or LUDIUS_VM is required");
     }
@@ -239,18 +292,26 @@ fn main() -> Result<()> {
         bail!("LUDIUS_VISUAL={:?}: the visual fallback is not in the Rust controller yet", env("LUDIUS_VISUAL"));
     }
 
-    let mut inst: TaskInstance = load_yaml(Path::new(task_path))?;
-    if variant.is_some() {
-        inst.variant = variant;
-    }
-    let template = load_template(&data().join("templates").join(format!("{}.yaml", inst.template)))?;
     let persona: Persona = load_yaml(&persona_path)?;
-    let mut task = Task::new(template, inst, &mut rand::rngs::StdRng::seed_from_u64(seed))?;
+    let task = match &task_path {
+        Some(p) => {
+            let mut inst: TaskInstance = load_yaml(Path::new(p))?;
+            if variant.is_some() {
+                inst.variant = variant;
+            }
+            let template = load_template(&data().join("templates").join(format!("{}.yaml", inst.template)))?;
+            Some(Task::new(template, inst, &mut rand::rngs::StdRng::seed_from_u64(seed))?)
+        }
+        None => None,
+    };
     let agent = HostAgent::new(&agent_addr, &vm)?;
     let key = env("OPENROUTER_API_KEY");
     let decider = DecisionsClient::new(&key, Some(model), None)?;
-    let name = task.template.task.clone();
-    let log_path = log_flag.map(PathBuf::from).unwrap_or_else(|| runs().join(format!("{}-{name}.jsonl", chrono::Local::now().format("%Y%m%d-%H%M%S"))));
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let log_path = match &task {
+        Some(t) => log_flag.map(PathBuf::from).unwrap_or_else(|| runs().join(format!("{stamp}-{}.jsonl", t.template.task))),
+        None => runs().join("canary").join(format!("{stamp}.jsonl")),
+    };
     let log = GroundTruth::open(&log_path)?;
     let lifecycle = |op: Op| agent.lifecycle(op, "", "");
     let password = std::env::var(format!("LUDIUS_PERSONA_PASSWORD_{}", persona.user.to_uppercase())).ok().filter(|p| !p.is_empty()).unwrap_or_else(|| env("LUDIUS_PERSONA_PASSWORD"));
@@ -262,6 +323,17 @@ fn main() -> Result<()> {
         session.wait_ready(180.0).context("observer did not report an unlocked desktop")?;
     }
     let assist = if env("LUDIUS_ASSIST") != "0" && !key.is_empty() { Some(Assist { llm: planner_llm(&key)? }) } else { None };
+    let Some(mut task) = task else {
+        // the drift canaries: one admitted task per app (only `apps` when given), results to runs/health.json
+        let mut runner = Runner::new(&agent, &decider, persona, &log, Clock::Compressed, Policy::from_env()?, Some(0), assist, None);
+        let mut desk = ludius::day::Live { runner: &mut runner, session: &session };
+        let health = runs().join("health.json");
+        let apps = apps.into_iter().collect();
+        let states = ludius::canary::run(&ludius::planner::templates()?, &data().join("admission.yaml"), &mut desk, &log, &health, &apps, &mut |s| println!("{s}"))?;
+        println!("health: {}\nlog: {}", health.display(), log_path.display());
+        std::process::exit(i32::from(states.values().any(|s| s == "drift")));
+    };
+    let name = task.template.task.clone();
     let composer = if key.is_empty() { None } else { Some(Composer { llm: planner_llm(&key)?, narrative: runs().join("world").join("narrative.yaml"), confirm: true }) };
     let mut runner = Runner::new(&agent, &decider, persona, &log, clock, Policy::from_env()?, Some(seed), assist, composer);
     let out = run_task(&mut runner, &session, &mut task, None, true, &Default::default())?;
