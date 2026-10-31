@@ -221,12 +221,12 @@ fn file_name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-fn stem_of(p: &Path) -> String {
+pub(crate) fn stem_of(p: &Path) -> String {
     p.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 /// Files in `dir` ending in `suffix` whose names start with a YYYY-MM-DD date, sorted; a missing dir is empty.
-fn sorted_glob(dir: &Path, suffix: &str) -> Result<Vec<PathBuf>> {
+pub(crate) fn sorted_glob(dir: &Path, suffix: &str) -> Result<Vec<PathBuf>> {
     let Ok(entries) = std::fs::read_dir(dir) else { return Ok(vec![]) };
     let mut out: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| file_name(p).ends_with(suffix) && file_name(p).len() >= 10).collect();
     out.sort();

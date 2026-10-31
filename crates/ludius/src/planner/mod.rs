@@ -21,6 +21,7 @@ pub use load::load_plan;
 pub use make::{Day, catalog, fill_recipient_names, installed, make_narrative, plan_day, role_templates};
 pub use validate::{Context, near_duplicate, validate};
 pub use world::{World, day_records, done_slots, dump, owned_files, started_slots};
+pub(crate) use world::{sorted_glob, stem_of};
 
 pub const BREAK: &str = "break";
 pub const VALUE_MAX: usize = 300;

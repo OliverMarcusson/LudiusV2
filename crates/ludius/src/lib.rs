@@ -20,6 +20,7 @@ pub mod session;
 pub mod share;
 pub mod tasks;
 pub mod template;
+pub mod world_state;
 
 #[cfg(feature = "intranet")]
 pub use ludius_intranet as intranet;
