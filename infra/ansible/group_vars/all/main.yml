@@ -38,7 +38,7 @@ persona_files: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/../../data
 range_admin_user: ludiusbringup
 range_admin_password: "{{ vault_range_admin_password }}"
 bringup_teardown: true
-observer_check_cmd: "{{ playbook_dir }}/../../ludius-rs"
+observer_check_cmd: "env LUDIUS_ROOT={{ playbook_dir }}/../.. {{ playbook_dir }}/../../ludius-rs"
 narrative_file: "{{ playbook_dir }}/../../runs/world/narrative.yaml"
 intranet_dir: "{{ playbook_dir }}/../../data/intranet"
 people: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).people }}"
