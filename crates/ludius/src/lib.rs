@@ -1,4 +1,5 @@
 pub mod admission;
+pub mod artifacts;
 pub mod assist;
 pub mod calls;
 pub mod canary;
@@ -13,6 +14,7 @@ pub mod hostagent;
 pub mod interactions;
 pub mod keys;
 pub mod llm;
+pub mod metrics;
 pub use ludius_mail as mail;
 pub mod nightly;
 pub mod options;

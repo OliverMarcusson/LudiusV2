@@ -19,6 +19,7 @@ const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--per
        ludius plan-worker --temporal HOST:PORT [--model M]
        ludius [--agent ADDR] [--vm VM] worker --temporal HOST:PORT [--persona USER|P.yaml] [--model M]
        ludius [--agent ADDR] range up|status|interactions [USER...] [--temporal HOST:PORT] [--model M] [--timezone TZ]
+       ludius metrics LOG... [--human LOG...] [--features CSV] [--timeline CSV [--before CSV] [--manifest JSON]]
        ludius timeline LOG.jsonl... [--out CSV]";
 
 /// The checkout's .env fills variables the environment doesn't set.
@@ -75,6 +76,21 @@ fn main() -> Result<()> {
     let temporal = flag("--temporal")?;
     let out = flag("--out")?;
     let tz = flag("--timezone")?;
+    let (features, timeline, before, manifest) = (flag("--features")?, flag("--timeline")?, flag("--before")?, flag("--manifest")?);
+    if args.first().is_some_and(|a| a == "metrics") && args.len() > 1 {
+        let paths = |xs: &[String]| xs.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let cut = args.iter().position(|a| a == "--human").unwrap_or(args.len());
+        let (logs, human) = (paths(&args[1..cut]), paths(args.get(cut + 1..).unwrap_or_default()));
+        let mut out = ludius::metrics::report(&logs, &human, features.as_deref().map(Path::new))?;
+        if let Some(t) = timeline {
+            let mut files: Vec<PathBuf> = std::fs::read_dir(data().join("personas"))?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "yaml")).collect();
+            files.sort();
+            let personas = files.iter().map(|p| Ok(load_yaml::<Persona>(p)?.user)).collect::<Result<Vec<_>>>()?;
+            out["artifacts"] = ludius::artifacts::report(Path::new(&t), &personas, &logs, manifest.as_deref().map(Path::new), before.as_deref().map(Path::new))?;
+        }
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
     if args.first().is_some_and(|a| a == "range") {
         use ludius::rangerun;
         let known = rangerun::personas(&rangerun::vms())?;
