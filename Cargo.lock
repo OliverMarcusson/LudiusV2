@@ -1124,6 +1124,7 @@ dependencies = [
  "fs2",
  "indexmap",
  "ludius-intranet",
+ "ludius-mail",
  "ludius-proto",
  "rand 0.10.3",
  "regex",
@@ -1181,6 +1182,18 @@ dependencies = [
  "anyhow",
  "chrono",
  "regex",
+]
+
+[[package]]
+name = "ludius-mail"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "chrono",
+ "regex",
+ "reqwest",
+ "roxmltree",
+ "sha2",
 ]
 
 [[package]]

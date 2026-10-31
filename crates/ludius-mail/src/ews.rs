@@ -5,7 +5,7 @@ use base64::Engine;
 use roxmltree::{Document, Node};
 use sha2::{Digest, Sha256};
 
-use crate::paths::{env, root};
+use crate::{Message, casefold, env, root};
 
 const T: &str = "http://schemas.microsoft.com/exchange/services/2006/types";
 const M: &str = "http://schemas.microsoft.com/exchange/services/2006/messages";
@@ -18,29 +18,6 @@ const FIELDS: [&str; 20] = [
     "calendar:Organizer", "calendar:RequiredAttendees", "calendar:OptionalAttendees", "calendar:Resources",
     "item:Attachments",
 ];
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Message {
-    pub sender: String,
-    pub submit_ms: i64,
-    pub delivery_ms: i64,
-    pub body: String,
-    pub recipients: Vec<String>,
-    pub id: u64,
-    pub cls: String,
-    pub start_ms: i64,
-    pub end_ms: i64,
-    pub created_ms: i64,
-    pub organizer: String,
-    pub subject: String,
-    pub prefix: String,
-    pub msgid: String,
-    pub in_reply_to: String,
-    pub read: bool,
-    /// (casefolded name, sha256 hex), sorted; None = not asked or unreadable.
-    pub attachments: Option<Vec<(String, String)>>,
-    pub files: Vec<String>,
-}
 
 /// None for any other folder: unknown, never silently the inbox.
 fn folder_id(folder: &str) -> Option<&'static str> {
@@ -238,7 +215,7 @@ fn attachments(mailbox: &str, el: Node) -> Option<Vec<(String, String)>> {
         let content = child(a, T, "Content")?;
         let data = base64::engine::general_purpose::STANDARD.decode(content.text().unwrap_or("").trim()).ok()?;
         let hex: String = Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect();
-        got.push((crate::template::casefold(text_of(a).trim()), hex));
+        got.push((casefold(text_of(a).trim()), hex));
     }
     got.sort();
     Some(got)

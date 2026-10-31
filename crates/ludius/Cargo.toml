@@ -15,6 +15,7 @@ fs2 = "0.4"
 indexmap = { version = "2", features = ["serde"] }
 ludius-proto = { version = "0.1.0", path = "../ludius-proto" }
 ludius-intranet = { path = "../ludius-intranet", optional = true }
+ludius-mail = { path = "../ludius-mail", default-features = false }
 rand = "0.10.3"
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "blocking", "rustls"] }
@@ -28,6 +29,8 @@ tonic = "0.14.9"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [features]
-default = ["intranet"]
+default = ["intranet", "mail"]
 # Intranet pages and downloads (outcome check for file.download, planner index). Without it, download checks read as unknown.
 intranet = ["dep:ludius-intranet"]
+# Mail backend (Exchange/EWS). Without it, mail and calendar checks read as unknown and planned mails are not delivered.
+mail = ["ludius-mail/ews"]

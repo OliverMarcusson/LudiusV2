@@ -1,10 +1,66 @@
-//! Mail outcome checks: what a mailbox holds, read state, and planned deliveries (EWS backend).
+//! Mail add-on: outcome checks (what a mailbox holds, read state, invites, responses) and planned
+//! deliveries. Backends are features: `ews` (Exchange). Without one, every read is unknown and nothing is sent.
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
-pub use crate::ews::Message;
-use crate::ews;
-use crate::template::casefold;
+#[cfg(feature = "ews")]
+pub mod ews;
+
+/// No backend compiled in: unknown, never empty; nothing is delivered.
+#[cfg(not(feature = "ews"))]
+mod ews {
+    use super::Message;
+    pub fn read_state(_: &str, _: u64, _: &str) -> Option<bool> {
+        None
+    }
+    pub fn msgids(_: &str, _: &str) -> Option<Vec<String>> {
+        None
+    }
+    pub fn query(_: &str, _: &str, _: Option<&str>, _: bool) -> Option<Vec<Message>> {
+        None
+    }
+    pub fn send(_: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Message {
+    pub sender: String,
+    pub submit_ms: i64,
+    pub delivery_ms: i64,
+    pub body: String,
+    pub recipients: Vec<String>,
+    pub id: u64,
+    pub cls: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub created_ms: i64,
+    pub organizer: String,
+    pub subject: String,
+    pub prefix: String,
+    pub msgid: String,
+    pub in_reply_to: String,
+    pub read: bool,
+    /// (casefolded name, sha256 hex), sorted; None = not asked or unreadable.
+    pub attachments: Option<Vec<(String, String)>>,
+    pub files: Vec<String>,
+}
+
+#[cfg(feature = "ews")]
+fn env(key: &str) -> String {
+    std::env::var(key).unwrap_or_default()
+}
+
+/// Repo root: LUDIUS_ROOT, else the working directory (as ludius::paths::root).
+fn root() -> PathBuf {
+    std::env::var_os("LUDIUS_ROOT").map(PathBuf::from).unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+}
+
+fn casefold(s: &str) -> String {
+    s.to_lowercase().replace('ß', "ss").replace('ς', "σ")
+}
 
 pub const MINUTE_MS: i64 = 60_000;
 pub const MEETING_REQUEST: &str = "IPM.Schedule.Meeting.Request";
@@ -21,7 +77,7 @@ pub fn domain() -> &'static str {
             .ok()
             .filter(|d| !d.is_empty())
             .or_else(|| {
-                let env = std::fs::read_to_string(crate::paths::root().join(".env")).ok()?;
+                let env = std::fs::read_to_string(root().join(".env")).ok()?;
                 env.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == "LUDIUS_MAIL_DOMAIN").map(|(_, v)| v.trim().to_string())
             })
             .filter(|d| !d.is_empty())
