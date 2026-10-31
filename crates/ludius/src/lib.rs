@@ -9,6 +9,7 @@ pub mod llm;
 pub use ludius_mail as mail;
 pub mod options;
 pub mod paths;
+pub mod planner;
 pub mod policy;
 pub mod reply;
 pub mod requests;
