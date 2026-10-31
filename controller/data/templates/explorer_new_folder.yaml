@@ -24,7 +24,7 @@ subgoals:
     done: {foreground: {process: explorer.exe, class_name: CabinetWClass}}
   go_documents:
     goal: "Go to the Documents folder"
-    done: {ask: "Does File Explorer show the user's own Documents folder (This PC > Documents or pinned Documents), not a library, Public Documents or another folder?"}
+    done: {foreground: {process: explorer.exe, class_name: CabinetWClass, title: "^Documents$"}}
   new_folder_shortcut:
     goal: "Create a new folder here with Ctrl+Shift+N"
     keys: [Ctrl+Shift+N]

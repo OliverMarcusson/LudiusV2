@@ -68,8 +68,16 @@ ls runs runs/world   # world: narrative.yaml and locks only
 ```
 
 The guests are not cleared with it: a file an earlier run downloaded stays in the persona's Downloads, and an
-`edge_download_file` for it then abandons (a download never overwrites). Plan history normally avoids that; after
-clearing `runs/`, take the snapshot from guests without those downloads or expect those items to abandon.
+`edge_download_file` for it then abandons (a download never overwrites; the planner forgot it with `runs/`). Before the
+snapshot, move those files aside. Only top-level files the intranet offers (`files:` lines) move, into
+`Downloads\earlier-runs-<ts>`; nothing is deleted and other files (scenario ones included) stay:
+
+```bash
+cd /root/src/LudiusV2.new/controller; ts=$(date +%Y%m%d%H%M)
+names=$(grep -rh "^files:" data/intranet | sed "s/^files: *//" | tr -d '\r' | tr "," "\n" | sed "s/^ *//;s/ *$//;s/'/''/g" | sort -u | paste -sd"|")
+for u in aberg lnord dkoster pvanloon nokafor lsmit eyilmaz sdekker; do v=$(qm list | awk -v n="ludius-$u" '$2==n {print $1}')
+  echo "$u: $(qm guest exec "$v" --timeout 60 -- powershell -NoProfile -Command "\$d='C:/Users/$u/Downloads'; \$a=\"\$d/earlier-runs-$ts\"; \$n='$names'.Split('|'); Get-ChildItem -LiteralPath \$d -File | Where-Object { \$n -contains \$_.Name } | ForEach-Object { New-Item -ItemType Directory -Force \$a > \$null; Move-Item -LiteralPath \$_.FullName -Destination \$a; \$_.Name }" | grep -o '"out-data" : "[^"]*')"; done
+```
 
 A fresh `runs/` (no `runs/calls/` yet) starts the counter at 0. The call caps still fail closed: if
 `runs/openrouter-calls.json` goes missing once per-persona counters exist, every persona's planning fails and the warp
