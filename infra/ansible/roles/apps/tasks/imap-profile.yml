@@ -1,0 +1,166 @@
+---
+# Outlook IMAP profile "Ludius" for the persona (mail_backend imap). A PRF has no password field, so the password goes
+# into the imported account afterwards the way Outlook stores it: 0x02 + DPAPI (the persona's CurrentUser) of the
+# UTF-16 password. Writes the persona's Outlook profile only (plus a transient PRF and logon task); nothing irreversible.
+# Done: srv01's Dovecot logs the persona's IMAP log-in from this machine after Outlook starts with the stored password.
+- name: Outlook IMAP profile
+  vars:
+    imap_account: "{{ domain_netbios }}\\{{ persona }}"
+    imap_profiles: Software\Microsoft\Office\16.0\Outlook\Profiles\Ludius\9375CFF0413111d3B88A00104B2A6676
+    imap_setup_ps: |
+      $ErrorActionPreference = 'Stop'
+      function Start-AsPersona($account, $arg) {
+        $a = New-ScheduledTaskAction -Execute 'C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE' -Argument $arg
+        $p = New-ScheduledTaskPrincipal -UserId $account -LogonType Interactive -RunLevel Limited
+        Register-ScheduledTask -TaskName LudiusOutlookSetup -Action $a -Principal $p -Force | Out-Null
+        Start-ScheduledTask LudiusOutlookSetup
+      }
+      function Get-ImapAccount($account, $profiles) {
+        $sid = ([Security.Principal.NTAccount]$account).Translate([Security.Principal.SecurityIdentifier]).Value
+        if (-not (Test-Path "Registry::HKEY_USERS\$sid")) { throw "$account is not logged on" }
+        Get-ChildItem "Registry::HKEY_USERS\$sid\$profiles" -ErrorAction SilentlyContinue |
+          Where-Object { $_.GetValue('IMAP Server') } | Select-Object -First 1
+      }
+  block:
+    - name: Outlook IMAP account and stored password
+      ansible.windows.win_powershell:
+        script: |
+          param($account, $profiles)
+          {{ imap_setup_ps }}
+          $Ansible.Changed = $false
+          $k = Get-ImapAccount $account $profiles
+          @{ account = [bool]$k; password = [bool]($k -and $k.GetValue('IMAP Password')) }
+        parameters:
+          account: "{{ imap_account }}"
+          profiles: "{{ imap_profiles }}"
+      register: imap_state
+
+    - name: Profile imported from a PRF in the persona's session
+      when: not imap_state.output[0].account
+      ansible.windows.win_powershell:
+        script: |
+          param($account, $profiles, $prf)
+          {{ imap_setup_ps }}
+          $f = 'C:\ProgramData\LudiusOutlook.prf'
+          Set-Content $f $prf -Encoding Unicode
+          try {
+            Start-AsPersona $account "/importprf `"$f`""
+            $deadline = (Get-Date).AddMinutes(3)
+            while (-not (Get-ImapAccount $account $profiles)) {
+              if ((Get-Date) -gt $deadline) { throw 'Outlook did not create the IMAP account from the PRF' }
+              Start-Sleep 5
+            }
+          } finally {
+            Get-Process outlook -ErrorAction SilentlyContinue | Stop-Process -Force
+            Unregister-ScheduledTask LudiusOutlookSetup -Confirm:$false -ErrorAction SilentlyContinue
+            Remove-Item $f -ErrorAction SilentlyContinue
+          }
+        parameters:
+          account: "{{ imap_account }}"
+          profiles: "{{ imap_profiles }}"
+          prf: |
+            [General]
+            Custom=1
+            ProfileName=Ludius
+            DefaultProfile=Yes
+            OverwriteProfile=Yes
+            ModifyDefaultProfileIfPresent=FALSE
+
+            [Internet Account List]
+            Account1=IMAP_I_Mail
+
+            [Account1]
+            UniqueService=No
+            AccountName={{ persona }}@{{ mail_domain }}
+            DisplayName={{ people | selectattr('user', 'eq', persona) | map(attribute='name') | first | default(persona) }}
+            EmailAddress={{ persona }}@{{ mail_domain }}
+            IMAPServer=mail.{{ domain }}
+            IMAPUserName={{ persona }}@{{ mail_domain }}
+            IMAPUseSPA=0
+            IMAPPort=993
+            IMAPUseSSL=1
+            SMTPServer=mail.{{ domain }}
+            SMTPUseAuth=1
+            SMTPAuthMethod=0
+            SMTPPort=587
+            SMTPSecureConnection=2
+            ConnectionType=0
+
+            [IMAP_I_Mail]
+            AccountType=IMAP
+            AccountName=PT_UNICODE,0x0002
+            DisplayName=PT_UNICODE,0x000B
+            EmailAddress=PT_UNICODE,0x000C
+            IMAPServer=PT_UNICODE,0x0100
+            IMAPUserName=PT_UNICODE,0x0101
+            IMAPUseSPA=PT_LONG,0x0108
+            IMAPPort=PT_LONG,0x0104
+            IMAPUseSSL=PT_LONG,0x0105
+            SMTPServer=PT_UNICODE,0x0200
+            SMTPUseAuth=PT_LONG,0x0203
+            SMTPAuthMethod=PT_LONG,0x0208
+            SMTPPort=PT_LONG,0x0201
+            SMTPSecureConnection=PT_LONG,0x020A
+            ConnectionType=PT_LONG,0x000F
+      register: imap_import
+
+    - name: Password stored in the account (DPAPI needs the persona's own log-on)
+      when: not imap_state.output[0].password or imap_import is changed
+      ansible.windows.win_powershell:
+        script: |
+          param($profiles, $pw)
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.Security
+          $k = Get-ChildItem "HKCU:\$profiles" | Where-Object { $_.GetValue('IMAP Server') } | Select-Object -First 1
+          if (-not $k) { throw 'no IMAP account in the Ludius profile' }
+          $plain = [Text.Encoding]::Unicode.GetBytes($pw + [char]0)
+          $blob = [Security.Cryptography.ProtectedData]::Protect($plain, $null, 'CurrentUser')
+          Set-ItemProperty $k.PSPath -Name 'IMAP Password' -Type Binary -Value ([byte[]](@(2) + $blob))
+        parameters:
+          profiles: "{{ imap_profiles }}"
+          pw: "{{ persona }}{{ user_password_suffix }}"
+      become: true
+      become_method: ansible.builtin.runas
+      become_user: "{{ imap_account }}"
+      vars:
+        ansible_become_password: "{{ persona }}{{ user_password_suffix }}"
+      no_log: true
+
+    - name: Persona address for the log-in check
+      ansible.builtin.set_fact:
+        imap_client_ip: "{{ ansible_host }}"
+
+    - name: Srv01 clock before Outlook starts
+      ansible.builtin.command: date +%s
+      delegate_to: srv01
+      register: imap_since
+      changed_when: false
+
+    - name: Outlook started in the persona's session with the stored password
+      ansible.windows.win_powershell:
+        script: |
+          param($account, $profiles)
+          {{ imap_setup_ps }}
+          Get-Process outlook -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-AsPersona $account ''
+        parameters:
+          account: "{{ imap_account }}"
+          profiles: "{{ imap_profiles }}"
+
+    - name: Srv01 logs the persona's IMAP log-in from this machine
+      ansible.builtin.command: journalctl -u dovecot --since @{{ imap_since.stdout }} --no-pager -o cat
+      delegate_to: srv01
+      become: true
+      register: imap_login
+      changed_when: false
+      retries: 18
+      delay: 10
+      until: >-
+        imap_login.stdout is search('Logged in: user=<' ~ (persona ~ '@' ~ mail_domain) | regex_escape ~ '>.*rip='
+        ~ imap_client_ip | regex_escape ~ ',')
+  always:
+    - name: Outlook closed and the setup task removed
+      ansible.windows.win_powershell:
+        script: |
+          Get-Process outlook -ErrorAction SilentlyContinue | Stop-Process -Force
+          Unregister-ScheduledTask LudiusOutlookSetup -Confirm:$false -ErrorAction SilentlyContinue

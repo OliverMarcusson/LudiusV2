@@ -220,6 +220,15 @@
           until: obs is succeeded
           tags: [observer]
 
+        - name: Outlook IMAP profile (persona logged on)
+          ansible.builtin.include_role:
+            name: apps
+            tasks_from: imap-profile
+            apply:
+              tags: [outlook]
+          when: mail_backend == 'imap'
+          tags: [outlook]
+
         - name: Persona done
           ansible.builtin.set_fact:
             persona_done: true
