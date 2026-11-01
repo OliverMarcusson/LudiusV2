@@ -86,6 +86,9 @@ impl Task {
         }
         unset.sort();
         ensure!(unset.is_empty(), "{t}: {} unset", unset.join(", "));
+        // a template's own settings (share host and path, chat address...) are not the plan's to change
+        let fixed: Vec<&String> = inst.params.keys().chain(inst.content.keys()).filter(|k| template.defaults.contains_key(*k) && !template.params.contains(*k)).collect();
+        ensure!(fixed.is_empty(), "{t}: {fixed:?} is the template's own setting, not a plan parameter");
         let mut have: HashMap<String, String> = template.defaults.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         have.extend(env);
         have.extend(inst.params.iter().map(|(k, v)| (k.clone(), v.clone())));
