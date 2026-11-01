@@ -379,7 +379,10 @@ pub fn msgids(mailbox: &str, folder: &str) -> Option<Vec<String>> {
     }
     let got = c.fetch(&uids, "UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]")?;
     c.logout();
-    got.iter().map(|(_, _, _, raw)| MessageParser::default().parse_headers(raw).map(|m| header(&m, "Message-ID"))).collect()
+    // No Message-ID header: the server returns a blank block, which is "no id", not unreadable.
+    got.iter()
+        .map(|(_, _, _, raw)| if raw.trim_ascii().is_empty() { Some(String::new()) } else { MessageParser::default().parse_headers(raw).map(|m| header(&m, "Message-ID")) })
+        .collect()
 }
 
 pub fn read_state(mailbox: &str, k: u64, folder: &str) -> Option<bool> {
