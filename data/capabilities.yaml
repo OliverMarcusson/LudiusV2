@@ -27,7 +27,7 @@ apps:
   - name: chat
     process: msedge.exe
     start_query: edge
-    features: [team chat (Mattermost) in Edge at chat.corp.ludius.test, post a line in a channel, direct message a colleague, read a colleague's messages]
+    features: [team chat (Mattermost) in Edge, post a line in a channel, direct message a colleague, read a colleague's messages]
   - name: outlook
     process: outlook.exe
     start_query: outlook

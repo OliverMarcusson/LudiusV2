@@ -4,7 +4,7 @@ capability: chat.read_channel
 processes: [msedge.exe]
 params: [channel]
 about: "Check a team chat channel for new posts (a request, an answer): open the channel and read the newest. channel: the channel's name."
-defaults: {app_query: edge, chat_url: chat.corp.ludius.test}
+defaults: {app_query: edge, chat_url: "${CHAT_URL}"}
 example: {channel: Operations}
 variants:
   - [open_edge_start, open_chat, open_channel, read_newest, close_edge]

@@ -255,8 +255,11 @@ impl Template {
     }
 }
 
+/// Range settings in a template's text: ${MAIL_DOMAIN} (LUDIUS_MAIL_DOMAIN) and ${CHAT_URL} (LUDIUS_CHAT_URL, the chat
+/// as personas type it in the browser; empty without the chat add-on).
 pub fn load_template(path: &Path) -> Result<Template> {
-    Template::from_yaml(&std::fs::read_to_string(path)?).with_context(|| path.display().to_string())
+    let text = std::fs::read_to_string(path)?.replace("${MAIL_DOMAIN}", crate::mail::domain()).replace("${CHAT_URL}", &std::env::var("LUDIUS_CHAT_URL").unwrap_or_default());
+    Template::from_yaml(&text).with_context(|| path.display().to_string())
 }
 
 pub fn load_yaml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {

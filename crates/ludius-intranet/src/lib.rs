@@ -8,7 +8,10 @@ pub const MAX_PAGE: u64 = 64 << 10;
 pub const MAX_FILE: u64 = 1_000_000;
 pub const MAX_FILES: u64 = 50 << 20;
 pub const MAX_PAGES: usize = 200;
-pub const RANGE_DOMAIN: &str = "corp.ludius.test";
+/// The range's DNS domain (LUDIUS_RANGE_DOMAIN): page links must stay inside it; unset refuses every link.
+fn range_domain() -> String {
+    std::env::var("LUDIUS_RANGE_DOMAIN").unwrap_or_default()
+}
 const FIELDS: [&str; 7] = ["title", "section", "owner", "updated", "popular", "tags", "files"];
 const FILE_RE: &str = r"(?i)[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}\.(?:pdf|docx|xlsx|pptx|txt|csv|png|jpg)";
 
@@ -85,8 +88,9 @@ pub fn parse(id: &str, text: &str) -> Result<Page> {
     let urls = regex::Regex::new(r#"(?i)(?:[a-z][a-z0-9+.-]*:)?//[^\s"'<>()]+"#).unwrap();
     for m in urls.find_iter(text) {
         let host = url_host(m.as_str());
-        if host != RANGE_DOMAIN && !host.ends_with(&format!(".{RANGE_DOMAIN}")) {
-            bail!("{id}.md: link to {host} outside {RANGE_DOMAIN}");
+        let range = range_domain();
+        if range.is_empty() || (host != range && !host.ends_with(&format!(".{range}"))) {
+            bail!("{id}.md: link to {host} outside the range domain {range:?} (LUDIUS_RANGE_DOMAIN)");
         }
     }
     let list = |k: &str| -> Vec<String> {
@@ -189,6 +193,8 @@ mod tests {
 
     #[test]
     fn parses_and_checks_links() {
+        // SAFETY: the only test that reads LUDIUS_RANGE_DOMAIN
+        unsafe { std::env::set_var("LUDIUS_RANGE_DOMAIN", "corp.ludius.test") };
         let ok = "---\ntitle: T\nsection: S\nowner: O\nupdated: 2026-01-02\nfiles: a.pdf\n---\nHello  there\n\nSecond https://intranet.corp.ludius.test/x\n";
         let p = parse("a-page", ok).unwrap();
         assert_eq!(p.body, vec!["Hello there", "Second https://intranet.corp.ludius.test/x"]);

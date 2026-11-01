@@ -71,8 +71,8 @@ fn main() -> Result<()> {
     let vm = flag("--vm")?.unwrap_or_else(|| env("LUDIUS_VM"));
     // a bare name is the persona file of that user (as the range supervisor passes it)
     let persona_flag = flag("--persona")?;
-    let persona_path = persona_flag.clone().map(|p| if p.ends_with(".yaml") { PathBuf::from(p) } else { data().join("personas").join(format!("{p}.yaml")) });
-    let persona_path = persona_path.unwrap_or_else(|| data().join("personas").join("aberg.yaml"));
+    let persona_path = persona_flag.clone().or_else(|| Some(env("LUDIUS_PERSONA")).filter(|p| !p.is_empty())).map(|p| if p.ends_with(".yaml") { PathBuf::from(p) } else { data().join("personas").join(format!("{p}.yaml")) });
+    let persona_file = || persona_path.as_deref().context("--persona or LUDIUS_PERSONA is required");
     let clock_flag = flag("--clock")?;
     let clock: Clock = clock_flag.as_deref().unwrap_or("compressed").parse()?;
     // new schedules default to realtime days (cli.py range/schedule --clock)
@@ -427,7 +427,7 @@ fn main() -> Result<()> {
         if vm.is_empty() {
             bail!("--vm or LUDIUS_VM is required");
         }
-        let persona: Persona = load_yaml(&persona_path)?;
+        let persona: Persona = load_yaml(persona_file()?)?;
         let cfg = ludius::durable::worker::Config { runs: runs(), persona, vm, agent: agent_addr, key: env("OPENROUTER_API_KEY"), model };
         return tokio::runtime::Runtime::new()?.block_on(ludius::durable::worker::serve(&address, "default", cfg));
     }
@@ -453,7 +453,7 @@ fn main() -> Result<()> {
         bail!("LUDIUS_VISUAL={:?}: the visual fallback is not in the Rust controller yet", env("LUDIUS_VISUAL"));
     }
 
-    let persona: Persona = load_yaml(&persona_path)?;
+    let persona: Persona = load_yaml(persona_file()?)?;
     let task = match &task_path {
         Some(p) => {
             let mut inst: TaskInstance = load_yaml(Path::new(p))?;

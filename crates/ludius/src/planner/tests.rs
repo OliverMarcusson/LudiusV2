@@ -8,6 +8,7 @@ fn setup() -> std::path::PathBuf {
         std::env::set_var("LUDIUS_MAIL_BACKEND", "exchange");
         std::env::set_var("LUDIUS_APPS", "edge,excel,explorer,notepad,outlook,paint,powerpoint,powershell,wordpad");
         std::env::set_var("LUDIUS_SCENARIO", "none");
+        std::env::set_var("LUDIUS_MAIL_DOMAIN", "ludius.test");
     }
     let dir = std::env::temp_dir().join(format!("ludius-planner-{}-{:?}", std::process::id(), std::thread::current().id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -218,7 +219,7 @@ fn addons_gate_their_templates() {
 fn validate_rejects_opening_a_mail_filed_earlier() {
     setup();
     let ctx = Context { templates: templates().unwrap(), colleagues: ["bek".to_string()].into(), inbox: [("bek".to_string(), "Lead times".to_string())].into(), ..Default::default() };
-    let mail = |t: &str, at: &str, extra: &[(&str, &str)]| item(t, at, &[&[("sender", "bek@ludius.internal"), ("subject", "Lead times")], extra].concat());
+    let mail = |t: &str, at: &str, extra: &[(&str, &str)]| { let s = format!("bek@{}", crate::mail::domain()); item(t, at, &[&[("sender", s.as_str()), ("subject", "Lead times")], extra].concat()) };
     let items = [mail("outlook_file_mail", "09:00", &[("folder", "Suppliers")]), mail("outlook_read_mail", "14:40", &[])];
     let got = validate(&items, &ctx).unwrap();
     assert_eq!(got.len(), 1, "{got:?}");

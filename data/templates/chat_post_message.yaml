@@ -3,9 +3,9 @@ app: edge
 capability: chat.post
 processes: [msedge.exe]
 params: [channel, message]
-about: "Post one short line in a team chat channel: small talk in Coffee Corner or Off-Topic, a work note in Operations or Town Square. channel: one of Town Square, Off-Topic, Operations, Coffee Corner; message: one line, plain ASCII, under 200 characters."
-defaults: {app_query: edge, chat_url: chat.corp.ludius.test}
-example: {channel: Coffee Corner, message: anyone else think the canteen soup is better on thursdays}
+about: "Post one short line in a team chat channel: small talk in a social channel, a work note in a work channel. channel: one of the chat channels; message: one line, plain ASCII, under 200 characters."
+defaults: {app_query: edge, chat_url: "${CHAT_URL}"}
+example: {channel: Town Square, message: anyone else think the canteen soup is better on thursdays}
 variants:
   - [open_edge_start, open_chat, open_channel, write_message, send_message, close_edge]
   - [open_edge_taskbar, open_chat, open_channel, write_message, send_message, close_edge]

@@ -4,8 +4,8 @@ capability: mail.send
 processes: [outlook.exe, winword.exe, explorer.exe]
 writes: ['Documents\{file_name}.docx']
 params: [file_name, notes, to, to_name, subject, body]
-about: "Add 1-3 lines to the end of one of the persona's own Word documents (a .docx under Own recent files), save it, then mail the revised file to one colleague as an attachment in Outlook. file_name: that file's name exactly, without folder and extension; notes: the added lines, each its own paragraph (plain sentences of letters, digits, spaces and , . ; : ! ? & % # + / -, each line starting with a letter or digit; no quotes, no ' - ' or '--', no list markers); to: the colleague's address <user>@ludius.internal; subject: one line; body: the mail text (ASCII, a few short lines)."
-example: {file_name: q4 accruals memo, notes: "updated the totals for november", to: mvellinga@ludius.internal, to_name: Marcus Vellinga, subject: revised accruals memo, body: "hi marcus\nthe revised memo is attached\n- anna"}
+about: "Add 1-3 lines to the end of one of the persona's own Word documents (a .docx under Own recent files), save it, then mail the revised file to one colleague as an attachment in Outlook. file_name: that file's name exactly, without folder and extension; notes: the added lines, each its own paragraph (plain sentences of letters, digits, spaces and , . ; : ! ? & % # + / -, each line starting with a letter or digit; no quotes, no ' - ' or '--', no list markers); to: the colleague's address <user>@${MAIL_DOMAIN}; subject: one line; body: the mail text (ASCII, a few short lines)."
+example: {file_name: q4 accruals memo, notes: "updated the totals for november", to: mvellinga@${MAIL_DOMAIN}, to_name: Marcus Vellinga, subject: revised accruals memo, body: "hi marcus\nthe revised memo is attached\n- anna"}
 variants:
   - [open_explorer_keys, go_documents, open_file, append_notes, save_keys, close_word, show_extensions, select_file, copy_keys, close_explorer, open_outlook, new_message_shortcut, fill_to, fill_subject, write_body, paste_file, send_shortcut, close_outlook]
 budget_steps: 90

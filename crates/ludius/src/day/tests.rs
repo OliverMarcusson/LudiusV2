@@ -71,6 +71,7 @@ pub(crate) fn log(name: &str) -> GroundTruth {
         std::env::set_var("LUDIUS_DATA", Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"));
         std::env::set_var("LUDIUS_APPS", "edge,excel,explorer,notepad,outlook,paint,powerpoint,powershell,wordpad");
         std::env::set_var("LUDIUS_SCENARIO", "none");
+        std::env::set_var("LUDIUS_MAIL_DOMAIN", "ludius.test");
     }
     let path = std::env::temp_dir().join(format!("ludius-day-{}-{name}.jsonl", std::process::id()));
     let _ = std::fs::remove_file(&path);

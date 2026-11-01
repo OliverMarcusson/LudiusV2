@@ -70,6 +70,9 @@ In the repo's `.env` on the node (gitignored). Every backend also needs `LUDIUS_
 
 ```sh
 LUDIUS_SCENARIO=none                                     # or the scenario file
+LUDIUS_MAIL_DOMAIN=ludius.internal                       # mail_domain; unset, no address passes as a colleague's
+LUDIUS_RANGE_DOMAIN=corp.ludius.test                     # intranet page links must stay inside it
+LUDIUS_CHAT_URL=chat.corp.ludius.test                    # chat add-on: the chat as personas type it in Edge
 LUDIUS_MAIL_BACKEND=exchange
 LUDIUS_EWS_URL=https://10.77.0.12/EWS/Exchange.asmx      # by address: the node has no range DNS; the certificate covers it
 LUDIUS_EWS_USER=ludiussvc@corp.ludius.test

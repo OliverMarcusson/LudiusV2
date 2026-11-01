@@ -75,7 +75,7 @@ pub const APPOINTMENT: &str = "IPM.Appointment";
 /// (user, folder, item id) seen before a task ran.
 pub type Seen = BTreeSet<(String, String, u64)>;
 
-/// LUDIUS_MAIL_DOMAIN, else the checkout's .env, else ludius.internal.
+/// LUDIUS_MAIL_DOMAIN, else the checkout's .env; unset is empty, so no address passes as a colleague's.
 pub fn domain() -> &'static str {
     static D: OnceLock<String> = OnceLock::new();
     D.get_or_init(|| {
@@ -87,7 +87,7 @@ pub fn domain() -> &'static str {
                 env.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == "LUDIUS_MAIL_DOMAIN").map(|(_, v)| v.trim().to_string())
             })
             .filter(|d| !d.is_empty())
-            .unwrap_or_else(|| "ludius.internal".into())
+            .unwrap_or_default()
     })
 }
 
