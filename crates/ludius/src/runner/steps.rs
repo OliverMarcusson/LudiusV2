@@ -179,6 +179,13 @@ impl Runner<'_> {
             let all = if recovering { recovery_options(&v) } else { build_options(&v, task, sg, &self.policy)? };
             let here = fingerprint(&snap);
             let front = foreground(&snap).map(|w| w.handle);
+            // Typed once, judged by an ask: an unsure "no" must not type it all again (warp9: aberg, lsmit and nokafor
+            // typed the same rows 14 times into one sheet or document).
+            let retype = |o: &Opt| ask.is_some() && typed_ok && o.kind == "type" && !o.content.is_empty();
+            let all: Vec<Opt> = all.into_iter().filter(|o| !retype(o)).collect();
+            if all.is_empty() {
+                return failed(step - 1, "typed, but the check did not confirm it");
+            }
             let mut options: Vec<Opt> = all.iter().filter(|o| !dead.get(&here).is_some_and(|d| d.contains(&ident(o)))).cloned().collect();
             if options.is_empty() {
                 options = all;

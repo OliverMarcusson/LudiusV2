@@ -41,7 +41,7 @@ subgoals:
       - {role: combo box}
       - {role: data item, name: '^(?!A1$)'}
       - {name: '^(Add Sheet|New sheet)$'}
-    done: {ask: "In the new Excel workbook, are these rows visible as separate cells starting at A1 on the first sheet, with tabs separating columns and newlines separating rows, and no cell being edited: {rows}?"}
+    done: {ask: "In the new Excel workbook, do the cells from A1 on the first sheet hold these rows, one value per cell (a tab in the list is the next column, a newline the next row; text cut off at a narrow column's edge still counts), with no cell being edited: {rows}?"}
   save_as:
     goal: "Open the Save As dialog with F12"
     keys: [F12]
