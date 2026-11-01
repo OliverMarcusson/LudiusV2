@@ -2,7 +2,7 @@
 
 Background user activity (noise) for Windows VMs in DFIR training ranges. See [the system specification](Ludius%20–%20System%20Specification.md).
 
-Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrative and each persona's day plan, including all content. A day runner plays the plan through the hypervisor's virtual keyboard and mouse. The guest reads the screen through UI Automation, and a Decisions model (via OpenRouter, default `liquid/d1.1`) chooses one action per step.
+Built on Proxmox. An LLM planner (via OpenRouter) writes a company narrative and each persona's day plan, including all content. A day runner plays the plan through the hypervisor's virtual keyboard and mouse. The guest reads the screen through UI Automation, and a Decisions model (via OpenRouter, default `liquid/d1.1`) chooses one action per step.
 
 ## Layout
 
@@ -10,28 +10,21 @@ Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrati
 | --- | --- |
 | `proto/` | gRPC schemas: observation (guest channel) and host agent API |
 | `crates/ludius-observer/` | Rust observer (`uiprobe.exe`), replacing the C# `guest/observer/`: UIA3 snapshots, element table, hints, stable ids, cap, settle (UIA events + DXGI dirty rects), Hyper-V socket or vsock server. Read-only; writes nothing to disk |
-| `host/agent/` | C# host agent: gRPC on `127.0.0.1:7451`, Hyper-V WMI keyboard/mouse, observer relay, lifecycle, console frames |
+| `crates/ludius-host-agent/` | Rust host agent (Proxmox): gRPC on `127.0.0.1:7451`, QMP keyboard/mouse, vsock observer relay, lifecycle, console frames; runs as the compose service `host-agent` (`infra/box/`) |
+| `crates/ludius-console/` | Operator console: serves `web/console/dist` and the read-only console API on `127.0.0.1:7452` |
 | `crates/ludius/` | Rust `ludius` binary: planner (narrative, day plans, content, near-duplicate check), day runner (clock modes, breaks, interruptions), Decisions client, options, policy, completion checks, step loop, session hygiene, unlock, failure ladder, ground truth and instructor timeline, range supervisor, CLI |
 | `data/` | Templates (Notepad, Explorer, Edge), personas, hand-written task instances |
 | `web/console/` | Operator monitor: view-only desktop feeds of the range VMs (React, shadcn/ui), served by the host agent |
 | `fixtures/` | Recorded snapshots + console frames + expected choices, used for offline replay |
 | `infra/hyperv/` | Unattended Win10 test VM, provisioning, screenshot helper |
 
-## Setup (Hyper-V)
+## Setup
 
-You need to be in Hyper-V Administrators, with .NET 10 SDK, Rust (cargo), uv (only for the ISO helpers) and pwsh 7 installed.
-
-```powershell
-infra\hyperv\new-vm.ps1        # unattended Win10 Pro from ~\Downloads\win10.iso; credentials go to .env
-infra\hyperv\provision.ps1     # range CA, signed observer (uiAccess), logon task, "clean" checkpoint
-```
-
-Add `OPENROUTER_API_KEY=...` to `.env`. The host must have Hyper-V socket service `000011cb-facb-11e6-bd58-64006a7986d3` registered under `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Virtualization\GuestCommunicationServices`.
+The range runs on a Proxmox box: [docs/proxmox-bringup.md](docs/proxmox-bringup.md) and [docs/range-operations.md](docs/range-operations.md). Add `OPENROUTER_API_KEY=...` to `.env`. (The local Hyper-V setup and its C# host agent were dropped.)
 
 ## Run
 
 ```powershell
-dotnet run --project host\agent                    # host agent
 cargo build --release -p ludius --bin ludius    # -> target\release\ludius.exe (put it on PATH); it reads .env and data\ from the checkout
 ludius observe                                     # print the current element table
 ludius run data\instances\q3-call-notes.yaml --restore clean [--variant N] [--clock realtime]
@@ -53,7 +46,7 @@ A view-only web page with a 12 fps video feed of every range VM's desktop; a til
 
 ```powershell
 cd web\console; bun install; bun run build   # the host agent serves web/console/dist
-dotnet run --project host\agent              # then open http://127.0.0.1:7452
+cargo run -p ludius-console                  # then open http://127.0.0.1:7452
 bun run dev                                    # development, proxies /api to the agent
 ```
 

@@ -1,8 +1,7 @@
 # Proxmox bring-up checklist (day 1 of the rental)
 
 What can only be verified on the box. Everything else (QMP command shapes, Proxmox API calls, key maps, guest
-channel framing, the observer's file read) is covered offline by `dotnet test host/agent.tests`, on Windows and in
-`mcr.microsoft.com/dotnet/sdk:10.0` (Linux). Tick each item with the evidence (command output) next to it.
+channel framing, the observer's file read) is covered offline by `cargo test -p ludius-host-agent`. Tick each item with the evidence (command output) next to it.
 
 Running a multi-day warp on the live range (sync, snapshot, launch, watch, roll back): [range-operations.md](range-operations.md).
 
@@ -12,11 +11,7 @@ Running a multi-day warp on the live range (sync, snapshot, launch, watch, roll 
       `format: png`).
 - [ ] `modprobe vhost_vsock && ls -l /dev/vhost-vsock` (vsock for the guest channel).
 - [ ] (Installed by `infra/box/install.sh`: unit `ludius-agent`, `/opt/ludius-agent`, loopback 7451/7452, Pool `ludius`; see `infra/box/`.)
-- [ ] Agent published and running as root on the node (pvesh and `/var/run/qemu-server/*.qmp` are root-only):
-      `dotnet publish host/agent -f net10.0 -r linux-x64 --self-contained -c Release -o /opt/ludius-agent`.
-      Config: `Agent:Backend` defaults to `proxmox` on Linux; `Proxmox:Node` (default: hostname),
-      `Proxmox:Resolution` (default `1920x1080`, must match the VM display), `Proxmox:VsockPort` (default 4555, from
-      `Agent:ObserverService`). Kestrel endpoints: bind where the controller can reach them, not wider.
+- [ ] Agent running: the compose service `host-agent` (`infra/box/`, Rust; the C# agent and its `ludius-agent` unit are retired).
 - [ ] Range pool: `pvesh create /pools --poolid ludius`, and `Proxmox:Pool=ludius` in the agent config. Without it
       the agent refuses every VM. Only VMs in that pool on this node are touched (input, observation, lifecycle,
       clone sources); clones are created into it. Check: `ludius vm state` on a VM outside the pool is refused
