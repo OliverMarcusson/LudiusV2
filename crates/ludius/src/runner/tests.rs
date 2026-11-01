@@ -139,3 +139,21 @@ fn reply_titles_and_a_closed_app() {
     assert!(!steps::app_open(&snap(vec![w("Program Manager", "explorer.exe")]), &task));
     assert!(steps::app_open(&snap(vec![]), &task), "an unreadable screen is not a closed app");
 }
+
+#[test]
+fn an_original_titled_re_is_not_the_reply() {
+    use ludius_proto::v1::Window;
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    unsafe { std::env::set_var("LUDIUS_DATA", &data) };
+    let t = crate::tasks::load_template(&data.join("templates/outlook_reply_mail.yaml")).unwrap();
+    let mut inst = crate::tasks::TaskInstance { template: t.task.clone(), params: t.example.clone(), variant: Some(0), ..Default::default() };
+    inst.params.insert("subject".into(), "packaging receipts".into());
+    let mut task = Task::new(t, inst, &mut StdRng::seed_from_u64(0)).unwrap();
+    let done = task.template.subgoals["reply_shortcut"].done.clone();
+    let win = Window { title: "RE: packaging receipts - Message (HTML) ".into(), process_name: "OUTLOOK.EXE".into(), ..Default::default() };
+    let mut snap = Snapshot { windows: vec![win], ..Default::default() };
+    let check = |snap: &Snapshot, task: &mut Task| crate::tasks::check_done(done.as_ref(), snap, task, false, false, false, false, None).unwrap();
+    assert_eq!(check(&snap, &mut task), Some(false), "the read window of a RE: mail");
+    snap.elements.push(Element { role: "button".into(), name: "Send".into(), ..Default::default() });
+    assert_eq!(check(&snap, &mut task), Some(true), "the compose window");
+}

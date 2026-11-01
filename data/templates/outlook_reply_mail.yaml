@@ -26,10 +26,10 @@ subgoals:
   reply_shortcut:
     goal: "Reply to the open mail with Ctrl+R"
     keys: [Ctrl+R]
-    done: {window: {process: outlook.exe, title: '^RE: {subject}\s*-\s*Message'}}
+    done: {window: {process: outlook.exe, title: '^RE: {subject}\s*-\s*Message'}, element: {role: button, name: '^Send$'}}
   reply_button:
     goal: "Reply to the open mail with the Reply button on its Message tab"
-    done: {window: {process: outlook.exe, title: '^RE: {subject}\s*-\s*Message'}}
+    done: {window: {process: outlook.exe, title: '^RE: {subject}\s*-\s*Message'}, element: {role: button, name: '^Send$'}}
   write_reply:
     goal: "Type the reply at the top of the message body, above the quoted mail"
     text: body
