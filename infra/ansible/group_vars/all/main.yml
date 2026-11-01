@@ -23,6 +23,10 @@ domain_netbios: CORP
 mail_domain: "{{ 'ludius.internal' if mail_backend == 'exchange' else domain }}"
 range_bridge: vmbr1
 range_net: 10.77.0
+# More isolated range bridges on the host, for a test range beside this one (ranges/imap-test.yml)
+extra_range_bridges: [{bridge: vmbr3, net: 10.79.0}]
+# VM name prefix of srv01 and the persona clones; a second range on the box needs its own
+vm_prefix: ludius-
 build_bridge: vmbr2
 storage: local-lvm
 template_vmid: 9000
@@ -49,7 +53,7 @@ grommunio_login_mailboxes: 5
 mail_backend: exchange  # exchange (dc01 + ex01), grommunio or imap (both: Debian srv01 with Samba AD)
 login_mailbox_cap: "{{ grommunio_login_mailboxes if mail_backend == 'grommunio' else 99 }}"
 range_servers: >-
-  {{ [[srv01_vmid | int, 'ludius-srv01']] if mail_backend in ['grommunio', 'imap']
+  {{ [[srv01_vmid | int, vm_prefix ~ 'srv01']] if mail_backend in ['grommunio', 'imap']
      else [[srv01_vmid | int, 'ludius-dc01'], [ex01_vmid | int, 'ludius-ex01'], [chat01_vmid | int, 'ludius-chat01']] }}
 ex01_vmid: 111
 winsrv_eval_min_days: 14

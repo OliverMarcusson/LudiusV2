@@ -52,7 +52,7 @@
 
         - name: Srv01 VM, range NIC only (the uplink is attached while provisioning)
           ansible.builtin.command: >-
-            qm create {{ srv01_vmid }} --name ludius-srv01 --pool {{ range_pool }} --ostype l26 --cores 2
+            qm create {{ srv01_vmid }} --name {{ vm_prefix }}srv01 --pool {{ range_pool }} --ostype l26 --cores 2
             --memory 3072 --cpu host --scsihw virtio-scsi-single
             --scsi0 {{ storage }}:0,import-from={{ srv01_image }},discard=on
             --ide2 {{ storage }}:cloudinit --boot order=scsi0 --serial0 socket --vga serial0

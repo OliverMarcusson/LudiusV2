@@ -78,6 +78,7 @@
     line: source /etc/network/interfaces.d/*
 
 - name: Range and build bridges
+  tags: [bridges]
   ansible.builtin.template:
     src: ludius-bridges.j2
     dest: /etc/network/interfaces.d/ludius
@@ -85,6 +86,7 @@
   register: bridges
 
 - name: Apply bridges
+  tags: [bridges]
   ansible.builtin.command: ifreload -a
   when: bridges is changed
   changed_when: true

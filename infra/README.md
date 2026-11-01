@@ -90,3 +90,5 @@ LUDIUS_IMAP_PASSWORD_FILE=/root/.ludius-imap                # written by range-s
 LUDIUS_IMAP_CA=<checkout>/infra/ansible/build/range-ca.crt   # the default
 LUDIUS_SMTP_HOST=10.77.0.11                                 # default: the IMAP host; port 25
 ```
+
+A test range beside the main one: `ansible-playbook range-up.yml -e @ranges/imap-test.yml` (own bridge from `extra_range_bridges`, created by `proxmox-host.yml --tags bridges`; own subnet, VM ids and `vm_prefix`; one persona). Point the controller at its srv01, CA and `imap_password_file`, and drive the persona with `--vm <vm_prefix><user>`.

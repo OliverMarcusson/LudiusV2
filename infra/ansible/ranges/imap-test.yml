@@ -1,0 +1,14 @@
+---
+# IMAP test range beside the main range: its own bridge (extra_range_bridges), subnet, VM ids and names, one persona.
+#   ansible-playbook range-up.yml -e @ranges/imap-test.yml
+# Needs vault_imap_master_password (16+ characters) in the vault.
+mail_backend: imap
+range_bridge: vmbr3
+range_net: 10.79.0
+vm_prefix: ludius-imap-
+srv01_vmid: 130
+range_personas:
+  - { user: aberg, vmid: 131, ip: 10.79.0.21 }
+range_tls_ca: "{{ playbook_dir }}/build/imap-test/range-ca.crt"
+imap_password_file: /root/.ludius-imap-test
+office_kms_host: ""  # the KMS emulator listens on the main range only

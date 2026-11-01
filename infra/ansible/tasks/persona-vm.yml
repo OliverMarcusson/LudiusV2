@@ -1,6 +1,6 @@
 ---
 - name: Linked clone into the range pool, ludius-{{ p.user }}
-  ansible.builtin.command: qm clone {{ template_vmid }} {{ p.vmid }} --name ludius-{{ p.user }} --pool {{ range_pool }}
+  ansible.builtin.command: qm clone {{ template_vmid }} {{ p.vmid }} --name {{ vm_prefix }}{{ p.user }} --pool {{ range_pool }}
   when: (p.vmid | int) not in pve_vms
   changed_when: true
 
@@ -16,9 +16,9 @@
     that:
       - nic_cfg.args | default('') is search('vhost-vsock-pci,guest-cid=' ~ p.vmid ~ '( |$)')
       - nic_cfg.args | default('') is search('VGA.xres=1920') and nic_cfg.args | default('') is search('VGA.yres=1080')
-      - nic_cfg.name == 'ludius-' ~ p.user
+      - nic_cfg.name == vm_prefix ~ p.user
     fail_msg: >-
-      ludius-{{ p.user }} ({{ p.vmid }}) lacks vsock CID {{ p.vmid }} or the fixed display in its running config
+      {{ vm_prefix }}{{ p.user }} ({{ p.vmid }}) lacks vsock CID {{ p.vmid }} or the fixed display in its running config
       (pending changes on a running VM?); shut it down (qm shutdown {{ p.vmid }}) and rerun
 
 - name: Start the clone, ludius-{{ p.user }}

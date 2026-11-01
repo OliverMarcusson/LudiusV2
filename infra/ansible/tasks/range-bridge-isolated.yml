@@ -5,16 +5,16 @@
 - name: Range bridge drops are the first rules of mangle FORWARD, IPv4 and IPv6, read back
   ansible.builtin.shell: |
     set -euo pipefail
-    want="-A FORWARD -i {{ range_bridge }} -j DROP
-    -A FORWARD -o {{ range_bridge }} -j DROP"
+    # both drops in the leading run of DROP rules (the drops of another range bridge may sit there too)
+    lead() { $1 -t mangle -S FORWARD | sed 1d | awk '!/ -j DROP$/ {exit} {print}' | grep -cxE -e '-A FORWARD -(i|o) {{ range_bridge }} -j DROP' || true; }
     for t in iptables ip6tables; do
-      if [ "$($t -t mangle -S FORWARD | sed -n 2,3p | sort)" != "$want" ]; then
+      if [ "$(lead $t)" != 2 ]; then
         for d in -i -o; do while $t -t mangle -D FORWARD $d {{ range_bridge }} -j DROP 2>/dev/null; do :; done; done
         $t -t mangle -I FORWARD 1 -o {{ range_bridge }} -j DROP
         $t -t mangle -I FORWARD 1 -i {{ range_bridge }} -j DROP
         echo changed
       fi
-      if [ "$($t -t mangle -S FORWARD | sed -n 2,3p | sort)" != "$want" ]; then
+      if [ "$(lead $t)" != 2 ]; then
         echo "$t mangle FORWARD does not start with the {{ range_bridge }} drops" >&2; exit 1
       fi
     done

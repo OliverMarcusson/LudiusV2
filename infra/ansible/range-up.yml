@@ -56,7 +56,7 @@
         pve_vms: "{{ dict(resources.stdout | from_json | map(attribute='vmid') | zip(resources.stdout | from_json)) }}"
         owned: >-
           {{ [[template_vmid | int, 'ludius-win10-golden']] + range_servers
-             + (range_personas | map(attribute='vmid') | map('int') | zip(range_personas | map(attribute='user') | map('regex_replace', '^', 'ludius-')) | list) }}
+             + (range_personas | map(attribute='vmid') | map('int') | zip(range_personas | map(attribute='user') | map('regex_replace', '^', vm_prefix)) | list) }}
 
     - name: Every VM id we touch is ours (range pool, this node, expected name) or free
       ansible.builtin.assert:
@@ -229,7 +229,7 @@
   gather_facts: false
   tasks:
     - name: Observe through the host agent
-      ansible.builtin.command: "{{ observer_check_cmd }} --vm ludius-{{ item.user }} observe"
+      ansible.builtin.command: "{{ observer_check_cmd }} --vm {{ vm_prefix }}{{ item.user }} observe"
       loop: "{{ range_personas | selectattr('user', 'in', done_personas) | list }}"
       loop_control:
         label: "{{ item.user }}"

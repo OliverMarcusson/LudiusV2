@@ -1,13 +1,15 @@
-auto {{ range_bridge }}
-iface {{ range_bridge }} inet static
-    address {{ range_net }}.1/24
+{% for b in [{'bridge': range_bridge, 'net': range_net}] + extra_range_bridges %}
+auto {{ b.bridge }}
+iface {{ b.bridge }} inet static
+    address {{ b.net }}.1/24
     bridge-ports none
     bridge-stp off
     bridge-fd 0
     # mangle runs before filter, where Tailscale puts its own accepts first (tasks/range-bridge-isolated.yml)
-    post-up for t in iptables ip6tables; do for d in -i -o; do $t -t mangle -C FORWARD $d {{ range_bridge }} -j DROP 2>/dev/null || $t -t mangle -I FORWARD $d {{ range_bridge }} -j DROP; done; done
-    pre-down for t in iptables ip6tables; do for d in -i -o; do $t -t mangle -D FORWARD $d {{ range_bridge }} -j DROP 2>/dev/null || true; done; done
+    post-up for t in iptables ip6tables; do for d in -i -o; do $t -t mangle -C FORWARD $d {{ b.bridge }} -j DROP 2>/dev/null || $t -t mangle -I FORWARD $d {{ b.bridge }} -j DROP; done; done
+    pre-down for t in iptables ip6tables; do for d in -i -o; do $t -t mangle -D FORWARD $d {{ b.bridge }} -j DROP 2>/dev/null || true; done; done
 
+{% endfor %}
 auto {{ build_bridge }}
 iface {{ build_bridge }} inet static
     address 10.78.0.1/24
