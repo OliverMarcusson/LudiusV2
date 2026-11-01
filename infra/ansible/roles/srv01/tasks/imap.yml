@@ -2,6 +2,11 @@
 # Mail without Exchange or grommunio: Postfix accepts mail for the range domain only and hands it to Dovecot (LMTP);
 # Dovecot serves IMAPS. Personas log in with their range password; the controller reads as the Dovecot master user
 # (<address>*<master>) and delivers planned mails to Postfix on port 25.
+- name: Master password set (also when range-srv01.yml runs alone)
+  ansible.builtin.assert:
+    that: imap_master_password | length >= 16
+    fail_msg: mail_backend imap needs vault_imap_master_password (16+ characters)
+
 - name: Range CA path
   ansible.builtin.set_fact:
     srv01_ca: /etc/ludius-mail/ssl/ca.crt
