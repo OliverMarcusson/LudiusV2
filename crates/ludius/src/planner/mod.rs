@@ -31,7 +31,8 @@ pub const MULTILINE: [&str; 5] = ["body", "notes", "rows", "bullets", "bullets2"
 pub const WORK_DAY: (&str, &str) = ("08:00", "17:00");
 pub const MEETING_MINUTES: (i64, i64) = (15, 120);
 pub const MEETING_DAYS_AHEAD: i64 = 14;
-pub const REACTION_ONLY: [&str; 1] = ["chat.read_channel"];
+/// Read only when a chat message really came in: a planned read scripts a message nobody sent.
+pub const REACTION_ONLY: [&str; 2] = ["chat.read_channel", "chat.read"];
 pub(crate) fn re(pattern: &str) -> &'static Regex {
     static CACHE: OnceLock<std::sync::Mutex<BTreeMap<String, &'static Regex>>> = OnceLock::new();
     let mut m = CACHE.get_or_init(Default::default).lock().unwrap();

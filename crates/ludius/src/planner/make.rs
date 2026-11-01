@@ -30,8 +30,7 @@ The day's tasks, times and recipients are fixed; you give each one a concrete re
 company story, the persona's role and what really happened before, and write all content (file names, note \
 text, search queries, messages) in the persona's own style. Use plain ASCII only. Never mention the range, \
 training, Ludius, security tools or anything outside the fiction.";
-pub(crate) const GOSSIP: &str = "harmless office gossip about colleagues or the company (who is back from holiday, the new coffee machine, a \
-project running late, a rumour about the office move), never about anyone's misconduct, health, pay, relationships or job";
+pub(crate) const GOSSIP: &str = "harmless office gossip about colleagues or the company, built only on the company story's people, projects and events (their facts and dates exactly as the story gives them, never a new state or date that could contradict what colleagues say), never about anyone's misconduct, health, pay, relationships or job";
 const DM_PURPOSES: [&str; 2] = [
     "one line of small talk",
     "ask the colleague for something concrete the persona needs (a note, a file, a mail with a figure), saying what",
@@ -44,7 +43,7 @@ const SHOWN_EXISTING: usize = 80;
 /// Capabilities that can settle a follow-up ("" is a template without one).
 const SETTLES: [&str; 5] = ["", "file.write", "mail.send", "chat.dm", "calendar.invite"];
 const TO_SOMEONE: [&str; 5] = ["mail.send", "chat.dm", "chat.file", "chat.read", "calendar.invite"];
-const NEEDS_INBOX: [&str; 4] = ["mail.read", "mail.file", "mail.save", "mail.reply"];
+pub(crate) const NEEDS_INBOX: [&str; 4] = ["mail.read", "mail.file", "mail.save", "mail.reply"];
 const DERIVED: [&str; 1] = ["to_name"];
 
 /// Everything a day plan is written from.

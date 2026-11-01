@@ -215,7 +215,8 @@ pub fn prepare_file(task: &mut Task, policy: &Policy, narrative: &Path) -> Prepa
     (None, rec(json!({"mail_id": m.id, "sender": m.sender, "subject": m.subject, "msgid": m.msgid})))
 }
 
-/// (sender user, subject) of inbox mail a planner may refer to; since `day_ms` minus the recent window if given.
+/// (sender user, subject) of inbox mail a planner may refer to; if `day_ms` is given, delivered in the recent window up
+/// to that day (later mail is left over from an earlier run at a later range date).
 pub fn hints(inbox: Option<&[Message]>, owner: &str, people: &People, policy: &Policy, cls: &str, day_ms: Option<i64>) -> Vec<(String, String)> {
     let since = day_ms.map(|d| d - (RECENT_DAYS - 1) * DAY_MS).unwrap_or(0);
     inbox
@@ -225,7 +226,7 @@ pub fn hints(inbox: Option<&[Message]>, owner: &str, people: &People, policy: &P
             m.cls == cls
                 && !m.subject.is_empty()
                 && colleague(&m.sender, owner, people, policy).is_none()
-                && (since == 0 || m.delivery_ms >= since)
+                && day_ms.is_none_or(|d| since <= m.delivery_ms && m.delivery_ms < d + DAY_MS)
                 && !policy.mail_reserved(&m.sender, &m.subject, &m.body)
         })
         .map(|m| (m.sender.split('@').next().unwrap_or("").to_string(), m.subject.clone()))

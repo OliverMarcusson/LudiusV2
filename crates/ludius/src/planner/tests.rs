@@ -200,3 +200,15 @@ fn validate_rejects_collisions_and_repeats() {
     let got: Vec<usize> = validate(&items, &ctx).unwrap().into_iter().map(|(i, _)| i).collect();
     assert_eq!(got, vec![1, 2, 3, 4]);
 }
+
+#[test]
+fn validate_rejects_opening_a_mail_filed_earlier() {
+    setup();
+    let ctx = Context { templates: templates().unwrap(), colleagues: ["bek".to_string()].into(), inbox: [("bek".to_string(), "Lead times".to_string())].into(), ..Default::default() };
+    let mail = |t: &str, at: &str, extra: &[(&str, &str)]| item(t, at, &[&[("sender", "bek@ludius.internal"), ("subject", "Lead times")], extra].concat());
+    let items = [mail("outlook_file_mail", "09:00", &[("folder", "Suppliers")]), mail("outlook_read_mail", "14:40", &[])];
+    let got = validate(&items, &ctx).unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].0, 1);
+    assert!(got[0].1.contains("filed"), "{got:?}");
+}

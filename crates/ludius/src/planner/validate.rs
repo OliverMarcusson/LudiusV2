@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use anyhow::Result;
 
 use super::check::{asked_files, content_values, item_problem, meeting_day, owned_problem, recipient, sender, taken_names, targets, uses_own_file};
+use super::make::NEEDS_INBOX;
 use super::{PlanItem, Scenario};
 use crate::policy::Policy;
 use crate::tasks::{ATTACHABLE, Template};
@@ -64,13 +65,18 @@ pub fn validate(items: &[PlanItem], c: &Context) -> Result<Vec<(usize, String)>>
         });
         next(&|| ["mail.read", "mail.save", "mail.file"].contains(&cap).then(|| read_mail(it, &c.colleagues, &c.inbox, &items[..i])).flatten());
         next(&|| {
+            // a filed mail has left the Inbox, where the mail templates open it
+            let key = |x: &PlanItem| (account(x.value("sender").or(x.value("to")).map(String::as_str).unwrap_or("")), x.value("subject").cloned());
+            let filed = |x: &PlanItem| c.templates.get(&x.template).is_some_and(|t| t.cap() == "mail.file");
+            (NEEDS_INBOX.contains(&cap) && items[..i].iter().any(|x| filed(x) && key(x) == key(it))).then(|| "that mail is filed out of the Inbox earlier in the plan".into())
+        });
+        next(&|| {
             let t = t.filter(|t| uses_own_file(t))?;
             let mut owned = c.owned.clone();
             owned.extend(asked_files(it, items, &c.templates, &c.day));
             owned_problem(it, t, &owned, &c.day, items)
         });
         next(&|| (!it.handoff.is_empty() && !c.colleagues.contains(&it.handoff)).then(|| format!("handoff {:?} is not a colleague's account", it.handoff)));
-        next(&|| (!it.followup.is_empty() && cap == "chat.read").then(|| "reading the chat does not settle a follow-up: set followup on the asked work".into()));
         next(&|| (!it.followup.is_empty() && !c.followups.contains(&it.followup)).then(|| format!("followup {:?} is not an open follow-up", it.followup)));
         next(&|| items[..i].iter().any(|x| x.at == it.at && x.template == it.template).then(|| format!("another item is already {} at {}", it.template, it.at)));
         next(&|| (!it.followup.is_empty() && items[..i].iter().any(|x| x.followup == it.followup)).then(|| format!("followup {:?} is already scheduled", it.followup)));
