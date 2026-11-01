@@ -172,4 +172,9 @@ fn a_commit_is_an_allowlisted_click_or_the_subgoals_key() {
     assert!(steps::commits(&key(&send.keys[0]), send));
     assert!(!steps::commits(&key("Esc"), send));
     assert!(!steps::commits(&key(&send.keys[0]), &invite.subgoals["write_body"]), "no allowlist, no commit");
+    let win = |h: i64| ludius_proto::v1::Window { handle: h, ..Default::default() };
+    let snap = |hs: &[i64]| Snapshot { windows: hs.iter().map(|h| win(*h)).collect(), ..Default::default() };
+    assert!(steps::closed(Some(7), &snap(&[3])), "the dialog in front closed");
+    assert!(!steps::closed(Some(7), &snap(&[7, 9])), "Send to opened a submenu, Explorer still there");
+    assert!(!steps::closed(Some(7), &snap(&[])), "unreadable is not closed");
 }

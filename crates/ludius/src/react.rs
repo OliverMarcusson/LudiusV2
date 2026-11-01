@@ -455,9 +455,9 @@ impl<'r> Reactor<'r> {
             String::new()
         } else {
             let who: Vec<String> = friends.iter().zip(&gossip_to).map(|(u, a)| format!("{} ({a})", people[*u])).collect();
-            let story = Narrative::load(&self.narrative).map(|n| n.events.iter().map(|e| format!("{}: {}", e.date, e.what)).collect::<Vec<_>>().join("; ")).unwrap_or_default();
+            let story = Narrative::load(&self.narrative).map(|n| n.events.iter().map(|e| format!("{}: {}", e.date, e.what)).collect::<Vec<_>>().join("; ")).ok().filter(|s| !s.is_empty()).map(|s| format!(" Company story events: {s}.")).unwrap_or_default();
             format!(
-                " Optionally also one chat_direct_message passing the news on to one other colleague you are friendly with ({}): {}, in your own words, never a request, figure, file or anything private from the messages. Company story events: {story}.",
+                " Optionally also one chat_direct_message passing the news on to one other colleague you are friendly with ({}): {}, in your own words, never a request, figure, file or anything private from the messages.{story}",
                 who.join(", "),
                 crate::planner::make::GOSSIP
             )

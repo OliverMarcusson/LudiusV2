@@ -178,6 +178,7 @@ impl Runner<'_> {
             let v = view(&snap, task, sg, &self.policy);
             let all = if recovering { recovery_options(&v) } else { build_options(&v, task, sg, &self.policy)? };
             let here = fingerprint(&snap);
+            let front = foreground(&snap).map(|w| w.handle);
             let mut options: Vec<Opt> = all.iter().filter(|o| !dead.get(&here).is_some_and(|d| d.contains(&ident(o)))).cloned().collect();
             if options.is_empty() {
                 options = all;
@@ -249,7 +250,7 @@ impl Runner<'_> {
             let after = fingerprint(&snap);
             let (changed, revisit) = (after != here, seen.contains(&after));
             seen.insert(after);
-            committed = outside && changed && refused.is_none() && commits(&chosen, sg);
+            committed = outside && changed && refused.is_none() && commits(&chosen, sg) && closed(front, &snap);
             if chosen.kind == "type" {
                 asked = None; // typed text may not show in the element tree, so the same fingerprint can be a new answer
                 typed_ok = refused.is_none() && typed_landed(&snap, &chosen, sg);
@@ -344,7 +345,7 @@ impl Runner<'_> {
     }
 }
 
-/// A window of the task's app is on screen; an unreadable (windowless) snapshot counts as open, not closed.
+/// An allowlisted click or the subgoal's own key; a commit only once it also closed its window (see `closed`).
 pub(super) fn commits(o: &Opt, sg: &Subgoal) -> bool {
     match o.kind.as_str() {
         "click" => o.element.as_ref().is_some_and(|e| crate::policy::Policy::any_full(&sg.allow_destructive, &e.name.replace('&', ""))),
@@ -353,6 +354,13 @@ pub(super) fn commits(o: &Opt, sg: &Subgoal) -> bool {
     }
 }
 
+/// The window that was in front before the action is gone: a "Send to" that opens a submenu is not a commit, an OK that
+/// closes Move Items or a Send that closes the compose window is. An unreadable (windowless) snapshot is not closed.
+pub(super) fn closed(front: Option<i64>, snap: &Snapshot) -> bool {
+    !snap.windows.is_empty() && front.is_some_and(|h| !snap.windows.iter().chain(&snap.apps).any(|w| w.handle == h))
+}
+
+/// A window of the task's app is on screen; an unreadable (windowless) snapshot counts as open, not closed.
 pub(super) fn app_open(snap: &Snapshot, task: &Task) -> bool {
     snap.windows.is_empty() || snap.windows.iter().chain(&snap.apps).any(|w| task.template.processes.iter().any(|p| p.eq_ignore_ascii_case(&w.process_name)))
 }
