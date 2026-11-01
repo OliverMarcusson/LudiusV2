@@ -1,5 +1,5 @@
-//! Chat add-on: what the chat server holds (unread posts, a conversation, shared files, sent posts) and the
-//! pair reset. Backends are features: `mattermost`. Without one, every read is unknown (None), never empty.
+//! Chat add-on: what the chat server holds (unread posts, a conversation, shared files, sent posts), the pair
+//! reset, and a post as a narrative user without a VM (the manager). Backends are features: `mattermost`. Without one, every read is unknown (None), never empty.
 
 #[cfg(feature = "mattermost")]
 mod mattermost;
@@ -23,6 +23,9 @@ mod none {
         None
     }
     pub fn reset(_: &str, _: &str) -> Option<usize> {
+        None
+    }
+    pub fn post(_: &str, _: &str, _: &str, _: i64) -> Option<bool> {
         None
     }
 }

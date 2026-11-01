@@ -137,6 +137,12 @@
     mode: "0755"
   register: sso_code
 
+- name: Chat-post (the controller posts as a manager, who has no VM, over SSH)
+  ansible.builtin.copy:
+    src: chat-post.py
+    dest: /usr/local/sbin/chat-post
+    mode: "0755"
+
 - name: SSO shim service (loopback only, no privileges)
   ansible.builtin.copy:
     dest: /etc/systemd/system/chat-sso.service

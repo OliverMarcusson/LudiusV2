@@ -73,9 +73,10 @@ fn reactor<'r>(who: (&str, &str), narrative: PathBuf, log: &'r GroundTruth, llm:
         decider: None,
         taken: vec![],
         chat: true,
-        draft: Box::new(|_| Ok("Thanks Anna, that looks good to me.".into())),
+        draft: Box::new(|_, _| Ok("Thanks Anna, that looks good to me.".into())),
         send: Box::new(|_, _, _, _, _, _, _| false),
         inbox: Box::new(|_| None),
+        say: Box::new(|_, _, _, _| None),
     }
 }
 
@@ -351,5 +352,48 @@ fn manager_answers_a_mail_from_their_report_once() {
         let recs = records(&log);
         let decided = recs.iter().filter(|r| r["final"] == json!(true)).count();
         assert_eq!(decided, if yes.is_some() { 2 } else { 0 }, "{yes:?} {recs:?}");
+    }
+}
+
+#[test]
+fn manager_answers_report_chat_once() {
+    let day = "2026-11-02";
+    let today = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").unwrap().and_hms_opt(9, 0, 0).unwrap().and_utc().timestamp_millis();
+    let post = |id: &str, sender: &str, at: i64, channel: &str| Post { id: id.into(), sender: sender.into(), message: format!("msg {id}"), at, channel: channel.into() };
+    // yes: one message for both of today's DMs; no: none, final; down: nothing recorded as decided
+    for yes in [Some(0.9), Some(0.2), None] {
+        let dir = tmp(&format!("mchat{}", yes.map_or(0, |y| (y * 100.0) as i64)));
+        let narrative = world(&dir, &[("aberg", "Anna Berg"), ("fdevries", "Femke de Vries"), ("lnord", "Lars Nord")], &[]);
+        let mut n: Narrative = crate::tasks::load_yaml(&narrative).unwrap();
+        n.people[0].manager = "fdevries".into();
+        std::fs::write(&narrative, serde_yaml::to_string(&n).unwrap()).unwrap();
+        let log = GroundTruth::open(&dir.join("day.jsonl")).unwrap();
+        let mut r = reactor(("Anna Berg", "aberg"), narrative, &log, &Shared::default());
+        let unread = vec![
+            post("p1", "aberg", today, ""),
+            post("p2", "aberg", today + 5_000, ""),
+            post("old", "aberg", today - 86_400_000, ""),
+            post("other", "lnord", today, ""),
+            post("team", "aberg", today, "Ops"),
+        ];
+        r.poll = Box::new(move |u| (u == "fdevries").then(|| unread.clone()));
+        let said = Rc::new(RefCell::new(vec![]));
+        let s = said.clone();
+        r.say = Box::new(move |user, other, _, since| {
+            s.borrow_mut().push(format!("{user} {other} {since}"));
+            Some(true)
+        });
+        r.decider = Some(Box::new(move |_, _| {
+            let Some(y) = yes else { anyhow::bail!("down") };
+            Ok(Answers { answers: json!({"reply": {"type": "noul", "noul": y}}), cost: None })
+        }));
+        r.react_manager_chat(day).unwrap();
+        r.react_manager_chat(day).unwrap();
+        let want = if yes == Some(0.9) { vec![format!("fdevries aberg {}", today + 5_000)] } else { vec![] };
+        assert_eq!(*said.borrow(), want, "{yes:?}");
+        let recs = records(&log);
+        let decided: Vec<_> = recs.iter().filter(|r| r["final"] == json!(true)).map(|r| r["posts"].clone()).collect();
+        let want = if yes.is_some() { vec![json!(["p1", "p2"])] } else { vec![] };
+        assert_eq!(decided, want, "{yes:?} {recs:?}");
     }
 }

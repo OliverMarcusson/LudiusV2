@@ -189,6 +189,19 @@ pub fn posted(user: &str, r#where: &str, message: &str, since_ms: i64) -> Option
     query(POSTED_SQL, &[("u", user), ("c", c), ("s", &since), ("k", k), ("m", message.trim())])?.as_i64()
 }
 
+/// Post `message` as `user` in the direct chat with `other` (chat01's chat-post: the Mattermost API on loopback with
+/// `user`'s access token). Some(true) posted, Some(false) not; when the call's own answer is lost, whether `user` posted
+/// that text there since `since_ms` (the chat server's clock) decides; None = unknown.
+pub fn post(user: &str, other: &str, message: &str, since_ms: i64) -> Option<bool> {
+    if !user_ok(user) || !user_ok(other) || message.trim().is_empty() {
+        return Some(false);
+    }
+    if ssh(&format!("sudo /usr/local/sbin/chat-post {user} {other}"), message.trim(), 60).is_some_and(|o| !o.is_empty()) {
+        return Some(true);
+    }
+    posted(user, other, message, since_ms).map(|n| n > 0)
+}
+
 /// Soft-delete every post in the direct chat between `user` and `other` (mmctl); how many.
 pub fn reset(user: &str, other: &str) -> Option<usize> {
     static ID: OnceLock<Regex> = OnceLock::new();
