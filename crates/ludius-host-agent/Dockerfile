@@ -1,5 +1,5 @@
 # Build context: the repo root (docker build -f crates/ludius-host-agent/Dockerfile .)
-FROM rust:1-trixie AS build
+FROM docker.io/library/rust:1-trixie AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY proto proto
