@@ -298,6 +298,9 @@ pub fn ensure(runs: &Path, users: &[String], key: &str, model: Option<&str>, dat
     ensure_days(&generate, &world, &src.personas, &src, date)
 }
 
+/// The gap between personas' day starts in a warp, so their first apps do not all start at once.
+const START_STAGGER: std::time::Duration = std::time::Duration::from_secs(45);
+
 impl Days for Live {
     fn plan(&self, date: NaiveDate) -> BTreeMap<String, Result<DayPlan>> {
         ensure(&self.runs, &self.users, &self.key, self.model.as_deref(), date).into_iter().map(|(u, r)| (u, r.and_then(|p| crate::planner::load_plan(Path::new(&p.path), false)))).collect()
@@ -306,17 +309,19 @@ impl Days for Live {
     fn play(&self, plans: &BTreeMap<String, DayPlan>, canary: bool, sup: &mut Supervisor, stop: &AtomicBool) -> Result<Option<BTreeMap<String, Value>>> {
         self.rt.block_on(async {
             let client = crate::schedules::connect(&self.temporal, "default").await?;
-            let one = |plan: &DayPlan| {
+            let one = |(i, plan): (usize, &DayPlan)| {
                 let client = client.clone();
                 let plan = plan.clone();
                 async move {
+                    // staggered starts: 8 personas opening Outlook at once after the clock jump hung it on 7 (warp 2026-11-02)
+                    tokio::time::sleep(START_STAGGER * i as u32).await;
                     Ok::<Value, anyhow::Error>(match crate::schedules::play(&client, plan, self.tz, crate::runner::Clock::Compressed, canary).await? {
                         Ok(done) => json!(done.iter().map(|d| format!("{} {} {}", d.at, d.template, d.status)).collect::<Vec<_>>()),
                         Err(e) => json!(format!("failed: {e}")),
                     })
                 }
             };
-            let all = futures::future::join_all(plans.values().map(one));
+            let all = futures::future::join_all(plans.values().enumerate().map(one));
             tokio::pin!(all);
             let mut tick = 0u32;
             loop {
