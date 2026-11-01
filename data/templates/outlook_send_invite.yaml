@@ -55,7 +55,7 @@ subgoals:
     goal: "Type the agenda into the meeting's message body (below the times)"
     text: body
     unreadable_ok: true
-    done: {ask: "In the Outlook meeting invitation with subject \"{subject}\", is this complete agenda visible in the message body below the times: {body}?"}
+    done: {ask: "In the Outlook meeting invitation with subject \"{subject}\", has this agenda been typed into the message body below the times (a long agenda may run past the visible area, so its start is enough): {body}?"}
   send_shortcut:
     goal: "Send the meeting invitation with Alt+S"
     keys: [send]

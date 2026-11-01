@@ -140,7 +140,7 @@ impl Policy {
         pats.iter().any(|p| search(p, text, true))
     }
 
-    fn any_full(pats: &[String], text: &str) -> bool {
+    pub(crate) fn any_full(pats: &[String], text: &str) -> bool {
         pats.iter().any(|p| fullmatch(p, text, true))
     }
 

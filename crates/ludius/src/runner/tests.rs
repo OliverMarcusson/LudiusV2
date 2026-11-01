@@ -157,3 +157,19 @@ fn an_original_titled_re_is_not_the_reply() {
     snap.elements.push(Element { role: "button".into(), name: "Send".into(), ..Default::default() });
     assert_eq!(check(&snap, &mut task), Some(true), "the compose window");
 }
+
+#[test]
+fn a_commit_is_an_allowlisted_click_or_the_subgoals_key() {
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    unsafe { std::env::set_var("LUDIUS_DATA", &data) };
+    let file = crate::tasks::load_template(&data.join("templates/outlook_file_mail.yaml")).unwrap();
+    let invite = crate::tasks::load_template(&data.join("templates/outlook_send_invite.yaml")).unwrap();
+    let click = |name: &str| Opt { kind: "click".into(), element: Some(Element { name: name.into(), ..Default::default() }), ..Default::default() };
+    let key = |k: &str| Opt { kind: "key".into(), keys: k.into(), ..Default::default() };
+    let (mv, send) = (&file.subgoals["move"], &invite.subgoals["send_shortcut"]);
+    assert!(steps::commits(&click("OK"), mv));
+    assert!(!steps::commits(&click("Cancel"), mv));
+    assert!(steps::commits(&key(&send.keys[0]), send));
+    assert!(!steps::commits(&key("Esc"), send));
+    assert!(!steps::commits(&key(&send.keys[0]), &invite.subgoals["write_body"]), "no allowlist, no commit");
+}

@@ -15,6 +15,7 @@ use crate::policy::{OVERWRITE_REASON, overwrite_prompt};
 use crate::tasks::{RESERVED_RECIPIENT, added_baseline, check_done, declared_commits, preconditions, recipient_reserved, window_matches};
 
 type Res = (bool, i64, String);
+const AFTER_COMMIT: &str = "the outside check after the commit";
 
 fn failed(steps: i64, why: impl Into<String>) -> Result<Res> {
     Ok((false, steps, why.into()))
@@ -58,6 +59,8 @@ impl Runner<'_> {
         let ask = sg.done.as_ref().and_then(|d| d.ask.clone());
         let mut asked: Option<Fingerprint> = None;
         let had_app = app_open(&snap, task);
+        let outside = sg.done.as_ref().is_some_and(|d| d.outside());
+        let mut committed = false;
         while step < budget {
             step += 1;
             self.live = step;
@@ -89,6 +92,18 @@ impl Runner<'_> {
                 std::thread::sleep(BLOCKED_WAIT);
                 snap = self.observe(10000)?;
                 (step, waited, wait_why) = (step - 1, waited + w0.elapsed().as_secs_f64(), "the outside check".into());
+                continue;
+            }
+            if committed {
+                // The commit went through; only the outside check is left. Deciding more can undo or repeat it
+                // (warp8: eyilmaz minimised Outlook after sending, sdekker waited on the Move Items dialog OK had closed).
+                if wait_why != AFTER_COMMIT {
+                    self.log.write(json!({"event": "wait", "host_ms": now_ms(), "task": t, "subgoal": name, "step": step, "reason": AFTER_COMMIT}))?;
+                }
+                let w0 = Instant::now();
+                std::thread::sleep(BLOCKED_WAIT);
+                snap = self.observe(10000)?;
+                (step, waited, wait_why) = (step - 1, waited + w0.elapsed().as_secs_f64(), AFTER_COMMIT.into());
                 continue;
             }
             if let Some(fg) = foreground(&snap)
@@ -234,6 +249,7 @@ impl Runner<'_> {
             let after = fingerprint(&snap);
             let (changed, revisit) = (after != here, seen.contains(&after));
             seen.insert(after);
+            committed = outside && changed && refused.is_none() && commits(&chosen, sg);
             if chosen.kind == "type" {
                 asked = None; // typed text may not show in the element tree, so the same fingerprint can be a new answer
                 typed_ok = refused.is_none() && typed_landed(&snap, &chosen, sg);
@@ -329,6 +345,14 @@ impl Runner<'_> {
 }
 
 /// A window of the task's app is on screen; an unreadable (windowless) snapshot counts as open, not closed.
+pub(super) fn commits(o: &Opt, sg: &Subgoal) -> bool {
+    match o.kind.as_str() {
+        "click" => o.element.as_ref().is_some_and(|e| crate::policy::Policy::any_full(&sg.allow_destructive, &e.name.replace('&', ""))),
+        "key" => !sg.allow_destructive.is_empty() && sg.keys.contains(&o.keys),
+        _ => false,
+    }
+}
+
 pub(super) fn app_open(snap: &Snapshot, task: &Task) -> bool {
     snap.windows.is_empty() || snap.windows.iter().chain(&snap.apps).any(|w| task.template.processes.iter().any(|p| p.eq_ignore_ascii_case(&w.process_name)))
 }
