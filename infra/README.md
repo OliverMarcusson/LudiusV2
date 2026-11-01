@@ -7,7 +7,7 @@
 
 ## Proxmox range from a bare box
 
-The range mail server follows `mail_backend` in `group_vars/all/main.yml`: `exchange` (the default here: `range-exchange.yml`, two Windows Server VMs, below) or `grommunio` (`range-srv01.yml`, the Debian srv01 the Hyper-V test range also uses). The controller must match: `LUDIUS_MAIL_BACKEND=exchange` (see Controller settings below), unset for grommunio.
+The range mail server follows `mail_backend` in `group_vars/all/main.yml`: `exchange` (the default here: `range-exchange.yml`, two Windows Server VMs, below) `grommunio` (`range-srv01.yml`, the Debian srv01 the Hyper-V test range also uses), or `imap` (the same srv01 with Postfix + Dovecot instead of grommunio: mail only, no calendar; needs `vault_imap_master_password`, 16+ characters). The controller must match: `LUDIUS_MAIL_BACKEND=exchange` or `imap` (see Controller settings below), unset for grommunio.
 
 The Windows servers are installed from the ISO by Ansible, not Packer: two VMs that are never cloned, so a template buys nothing. srv01 is built by an Ansible role from the stock Debian 13 cloud image, not a Packer template. It is one VM that is never cloned, the cloud image needs no installer automation, and it is the same image and cloud-init path `hyperv/new-srv.ps1` already uses.
 
@@ -79,14 +79,14 @@ LUDIUS_SHARE_HOST=dc01                                   # team shares (narrativ
 
 ### Controller settings (IMAP backend)
 
-For a range without Exchange (Postfix + Dovecot; build the controller with `--features mail-imap`). Mail only: invites and responses read as unknown and `calendar.*` templates fail plan load. Reads log in to Dovecot as a master user (`<address>*<master>`), deliveries go to Postfix on port 25, which delivers only to the range domain.
+For a range without Exchange (Postfix + Dovecot; build the controller with `--features mail-imap`). Mail only: invites and responses read as unknown and `calendar.*` templates fail plan load. Reads log in to Dovecot as a master user (`<address>*<master>`), deliveries go to Postfix on port 25, which delivers only to the range domain (everything else bounces; `range-srv01.yml` proves it with a probe to `probe@example.com`). Personas log in with their range password (IMAPS 993, submission 587 with STARTTLS); colleagues have mailboxes but no log-in.
 
 ```sh
 LUDIUS_MAIL_BACKEND=imap
-LUDIUS_MAIL_DOMAIN=<range mail domain>
-LUDIUS_IMAP_HOST=<srv address>[:993]
-LUDIUS_IMAP_USER=<dovecot master user>
-LUDIUS_IMAP_PASSWORD_FILE=/root/.ludius-imap                # 0600
+LUDIUS_MAIL_DOMAIN=corp.ludius.test                         # mail_domain (the AD domain on srv01)
+LUDIUS_IMAP_HOST=10.77.0.11                                 # srv01 by address (the certificate covers it), port 993
+LUDIUS_IMAP_USER=ludius-master                              # imap_master_user
+LUDIUS_IMAP_PASSWORD_FILE=/root/.ludius-imap                # written by range-srv01.yml from the vault after its IMAPS probe, 0600
 LUDIUS_IMAP_CA=<checkout>/infra/ansible/build/range-ca.crt   # the default
-LUDIUS_SMTP_HOST=<srv address>[:25]                         # default: the IMAP host, port 25
+LUDIUS_SMTP_HOST=10.77.0.11                                 # default: the IMAP host; port 25
 ```

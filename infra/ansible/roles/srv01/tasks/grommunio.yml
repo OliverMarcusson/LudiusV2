@@ -1,4 +1,8 @@
 ---
+- name: Range CA path
+  ansible.builtin.set_fact:
+    srv01_ca: /etc/grommunio-common/ssl/ca.crt
+
 - name: Grommunio signing key
   ansible.builtin.shell: |
     set -o pipefail

@@ -16,14 +16,15 @@
           - personas | difference(people | map(attribute='user')) | length == 0
           - personas | difference(persona_files) | length == 0
           - personas | length <= login_mailbox_cap | int
-          - mail_backend in ['grommunio', 'exchange']
+          - mail_backend in ['grommunio', 'exchange', 'imap']
+          - mail_backend != 'imap' or imap_master_password | length >= 16
           - (people | map(attribute='user') | map('length') | min) + (user_password_suffix | length) >= 6
           - dc_admin_password is match('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}$')
           - range_admin_password | length >= 12
         fail_msg: >-
           unsafe or duplicate narrative people (user: lower case, at most 10 characters, so WS-<USER>01 fits a
           computer name), a persona outside the narrative or without data/personas/<user>.yaml, no persona,
-          more personas than {{ mail_backend }} log-in mailboxes ({{ login_mailbox_cap }}), an unknown mail_backend,
+          more personas than {{ mail_backend }} log-in mailboxes ({{ login_mailbox_cap }}), an unknown mail_backend (or imap without a 16+ character vault_imap_master_password),
           or a password Samba would refuse (<user><suffix> under 6, DC admin under 8 or without upper, lower and digit), or a bring-up password
           under 12 characters
 
@@ -78,9 +79,9 @@
           - pve_vms[template_vmid | int].pool | default('') == range_pool
         fail_msg: no template {{ template_vmid }} (ludius-win10-golden, pool {{ range_pool }}); run the Packer build first
 
-- name: Range mail server, grommunio (srv01)
+- name: Range mail server, grommunio or Postfix + Dovecot (srv01)
   ansible.builtin.import_playbook: range-srv01.yml
-  when: mail_backend == 'grommunio'
+  when: mail_backend in ['grommunio', 'imap']
 
 - name: Range mail server, Exchange (dc01, ex01)
   ansible.builtin.import_playbook: range-exchange.yml

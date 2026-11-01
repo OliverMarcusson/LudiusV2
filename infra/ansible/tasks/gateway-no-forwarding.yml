@@ -26,7 +26,7 @@
   failed_when: gw_win.rc != 0 or (gw_win.stdout | from_json).exitcode | default(1) != 0
 
 - name: Gateway does not forward (srv01)
-  when: mail_backend == 'grommunio'
+  when: mail_backend in ['grommunio', 'imap']
   block:
     - name: Forwarding off, persistent and live, every interface read back (srv01)
       ansible.builtin.shell: |

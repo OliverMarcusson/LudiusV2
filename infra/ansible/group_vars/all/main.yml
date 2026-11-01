@@ -46,10 +46,10 @@ team_channels: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).
 team_shares: "{{ (lookup('ansible.builtin.file', narrative_file) | from_yaml).shares | default({}) }}"
 range_tls_ca: "{{ playbook_dir }}/build/range-ca.crt"
 grommunio_login_mailboxes: 5
-mail_backend: exchange
+mail_backend: exchange  # exchange (dc01 + ex01), grommunio or imap (both: Debian srv01 with Samba AD)
 login_mailbox_cap: "{{ grommunio_login_mailboxes if mail_backend == 'grommunio' else 99 }}"
 range_servers: >-
-  {{ [[srv01_vmid | int, 'ludius-srv01']] if mail_backend == 'grommunio'
+  {{ [[srv01_vmid | int, 'ludius-srv01']] if mail_backend in ['grommunio', 'imap']
      else [[srv01_vmid | int, 'ludius-dc01'], [ex01_vmid | int, 'ludius-ex01'], [chat01_vmid | int, 'ludius-chat01']] }}
 ex01_vmid: 111
 winsrv_eval_min_days: 14
@@ -92,6 +92,10 @@ ews_user: ludiussvc
 ews_password: "{{ vault_ews_password | default('') }}"
 ews_scope_marker: ludius-noise
 ews_password_file: /root/.ludius-ews
+# mail_backend imap (Postfix + Dovecot on srv01): the controller reads mailboxes as this Dovecot master user.
+imap_master_user: ludius-master
+imap_master_password: "{{ vault_imap_master_password | default('') }}"
+imap_password_file: /root/.ludius-imap
 debian_image_url: https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
 debian_image_sums: https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS
 

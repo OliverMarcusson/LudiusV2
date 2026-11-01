@@ -151,8 +151,8 @@
   changed_when: false
   no_log: true
 
-- name: Grommunio
-  ansible.builtin.import_tasks: grommunio.yml
+- name: Mail server ({{ mail_backend }})
+  ansible.builtin.include_tasks: "{{ mail_backend }}.yml"
 
 - name: Outbound SMTP dropped
   ansible.builtin.copy:
@@ -175,15 +175,17 @@
     enabled: true
     state: "{{ 'restarted' if nft is changed else 'started' }}"
 
-- name: Checks (DNS SRV, Kerberos, no SMTP listener off loopback)
+- name: Checks (DNS SRV, Kerberos, and for grommunio no SMTP listener off loopback and Autodiscover)
   ansible.builtin.shell: |
     set -eo pipefail
     host -t SRV _ldap._tcp.{{ domain }} {{ srv01_ip }} | grep -q 'has SRV record'
     host -t A srv01.{{ domain }} {{ srv01_ip }} | grep -q '{{ srv01_ip }}'
     printf '%s' "$ADMINPASS" | kinit Administrator@{{ domain | upper }} >/dev/null && klist | grep -q krbtgt && kdestroy
+    {% if mail_backend == 'grommunio' %}
     if ss -lnt | awk 'NR>1 {print $4}' | grep -E ':(25|465|587)$' | grep -vE '^(127\.|\[::1\])'; then exit 1; fi
     test "$(curl -s --cacert /etc/grommunio-common/ssl/ca.crt -o /dev/null -w '%{http_code}' \
       --resolve mail.{{ domain }}:443:{{ srv01_ip }} https://mail.{{ domain }}/Autodiscover/Autodiscover.xml)" = 401
+    {% endif %}
   args:
     executable: /bin/bash
   environment:
@@ -193,6 +195,6 @@
 
 - name: Range TLS CA to the control node (clients trust it)
   ansible.builtin.fetch:
-    src: /etc/grommunio-common/ssl/ca.crt
+    src: "{{ srv01_ca }}"
     dest: "{{ range_tls_ca }}"
     flat: true

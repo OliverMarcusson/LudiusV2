@@ -1,0 +1,211 @@
+---
+# Mail without Exchange or grommunio: Postfix accepts mail for the range domain only and hands it to Dovecot (LMTP);
+# Dovecot serves IMAPS. Personas log in with their range password; the controller reads as the Dovecot master user
+# (<address>*<master>) and delivers planned mails to Postfix on port 25.
+- name: Range CA path
+  ansible.builtin.set_fact:
+    srv01_ca: /etc/ludius-mail/ssl/ca.crt
+
+- name: Postfix installs unconfigured
+  ansible.builtin.debconf:
+    name: postfix
+    question: postfix/main_mailer_type
+    value: No configuration
+    vtype: select
+
+- name: Postfix and Dovecot
+  ansible.builtin.apt:
+    name: [postfix, dovecot-imapd, dovecot-lmtpd]
+    update_cache: true
+
+- name: Range CA and server certificate
+  ansible.builtin.shell: |
+    set -e
+    SSL=/etc/ludius-mail/ssl
+    install -d -m 0755 $SSL
+    openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj '/O=Ludius Range/CN=Ludius Range CA' -keyout $SSL/ca.key -out $SSL/ca.crt 2>/dev/null
+    openssl req -newkey rsa:2048 -nodes -subj '/O=Ludius Range/CN=mail.{{ domain }}' -keyout $SSL/server.key -out /tmp/server.csr 2>/dev/null
+    printf 'subjectAltName=DNS:mail.{{ domain }},DNS:srv01.{{ domain }},DNS:{{ domain }},IP:{{ srv01_ip }}\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature,keyEncipherment\n' >/tmp/ext.cnf
+    openssl x509 -req -in /tmp/server.csr -CA $SSL/ca.crt -CAkey $SSL/ca.key -CAcreateserial -days 825 -sha256 -extfile /tmp/ext.cnf -out $SSL/server.crt 2>/dev/null
+    cat $SSL/server.crt $SSL/ca.crt >$SSL/chain.pem
+    chmod 0600 $SSL/ca.key $SSL/server.key
+  args:
+    creates: /etc/ludius-mail/ssl/chain.pem
+
+- name: Mail store owner
+  ansible.builtin.shell: |
+    getent group vmail >/dev/null || groupadd --system vmail
+    getent passwd vmail >/dev/null || useradd --system -g vmail -d /var/mail/vhosts -s /usr/sbin/nologin vmail
+    install -d -o vmail -g vmail -m 0750 /var/mail/vhosts
+  changed_when: false
+
+- name: Log-ins (personas use their range password, colleagues have none that works) and the controller's master user
+  ansible.builtin.copy:
+    dest: "/etc/dovecot/{{ item.file }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: dovecot
+    mode: "0640"
+  loop:
+    - file: users
+      content: |
+        {% for p in people %}
+        {{ p.user }}@{{ mail_domain }}:{{ ('{SHA512.HEX}' ~ ((p.user ~ user_password_suffix) | hash('sha512'))) if p.user in personas else '!' }}
+        {% endfor %}
+    - file: master-users
+      content: |
+        {{ imap_master_user }}:{SHA512.HEX}{{ imap_master_password | hash('sha512') }}
+  loop_control:
+    label: "{{ item.file }}"
+  register: dovecot_users
+  no_log: true
+
+- name: Dovecot config (IMAPS only, mail for the people above, SASL for Postfix submission)
+  ansible.builtin.copy:
+    dest: /etc/dovecot/dovecot.conf
+    mode: "0644"
+    content: |
+      dovecot_config_version = 2.4.1
+      dovecot_storage_version = 2.4.1
+      protocols = imap lmtp
+      listen = *
+      ssl = required
+      ssl_server_cert_file = /etc/ludius-mail/ssl/chain.pem
+      ssl_server_key_file = /etc/ludius-mail/ssl/server.key
+      auth_mechanisms = plain login
+      auth_master_user_separator = *
+      mail_driver = maildir
+      mail_home = /var/mail/vhosts/%{user | domain}/%{user | username}
+      mail_path = ~/Maildir
+      mail_uid = vmail
+      mail_gid = vmail
+      first_valid_uid = 100
+      passdb master {
+        driver = passwd-file
+        passwd_file_path = /etc/dovecot/master-users
+        master = yes
+        # then the user must exist below: a mailbox that is not there fails the log-in (unknown), never reads empty
+        result_success = continue
+      }
+      passdb users {
+        driver = passwd-file
+        passwd_file_path = /etc/dovecot/users
+      }
+      # Static: a user exists only if the passdb above has them (userdb_static_allow_all_users is off), LMTP included.
+      userdb static {
+        driver = static
+        fields {
+          uid = vmail
+          gid = vmail
+        }
+      }
+      namespace inbox {
+        inbox = yes
+        separator = /
+        mailbox Sent {
+          special_use = \Sent
+          auto = subscribe
+        }
+        mailbox Drafts {
+          special_use = \Drafts
+          auto = subscribe
+        }
+        mailbox Trash {
+          special_use = \Trash
+          auto = subscribe
+        }
+        mailbox Junk {
+          special_use = \Junk
+          auto = subscribe
+        }
+      }
+      service imap-login {
+        inet_listener imap {
+          port = 0
+        }
+      }
+      service lmtp {
+        unix_listener /var/spool/postfix/private/dovecot-lmtp {
+          user = postfix
+          group = postfix
+          mode = 0600
+        }
+      }
+      service auth {
+        unix_listener /var/spool/postfix/private/auth {
+          user = postfix
+          group = postfix
+          mode = 0600
+        }
+      }
+  register: dovecot_conf
+
+- name: Postfix delivers to the range domain only (everything else bounces), submission with SASL over TLS
+  ansible.builtin.shell: |
+    set -e
+    [ -f /etc/postfix/main.cf ] || : >/etc/postfix/main.cf
+    before=$(postconf -n; postconf -M; postconf -P)
+    postconf -e \
+      'myhostname = mail.{{ domain }}' 'mydomain = {{ domain }}' 'myorigin = $mydomain' 'mydestination =' \
+      'inet_interfaces = all' 'inet_protocols = ipv4' 'mynetworks = 127.0.0.0/8' 'relayhost =' \
+      'local_transport = error:local delivery is off' 'default_transport = error:outside the range' \
+      'relay_transport = error:outside the range' 'virtual_mailbox_domains = {{ mail_domain }}' \
+      'virtual_transport = lmtp:unix:private/dovecot-lmtp' 'smtpd_recipient_restrictions = reject_unauth_destination' \
+      'always_add_missing_headers = yes' 'smtpd_tls_security_level = may' \
+      'smtpd_tls_chain_files = /etc/ludius-mail/ssl/server.key /etc/ludius-mail/ssl/chain.pem' \
+      'compatibility_level = 3.6'
+    postconf -M 'submission/inet=submission inet n - y - - smtpd'
+    postconf -P 'submission/inet/syslog_name=postfix/submission' 'submission/inet/smtpd_tls_security_level=encrypt' \
+      'submission/inet/smtpd_sasl_auth_enable=yes' 'submission/inet/smtpd_sasl_type=dovecot' \
+      'submission/inet/smtpd_sasl_path=private/auth' \
+      'submission/inet/smtpd_recipient_restrictions=permit_sasl_authenticated,reject'
+    postfix check
+    after=$(postconf -n; postconf -M; postconf -P)
+    if [ "$before" != "$after" ]; then echo changed; fi
+  args:
+    executable: /bin/bash
+  register: postfix_conf
+  changed_when: "'changed' in postfix_conf.stdout"
+
+- name: Dovecot and Postfix
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: "{{ 'restarted' if (dovecot_users is changed or dovecot_conf is changed or postfix_conf is changed) else 'started' }}"
+  loop: [dovecot, postfix]
+
+- name: Range boundary (a mail to outside the range bounces, nothing is queued for it)
+  ansible.builtin.shell: |
+    set -eo pipefail
+    tag="ludius-probe-$(date +%s%N)@{{ domain }}"
+    printf 'Message-ID: <%s>\nSubject: probe\n\nprobe\n' "$tag" | /usr/sbin/sendmail -f '' probe@example.com
+    for i in $(seq 1 30); do
+      qid=$(journalctl --since '-10 min' --no-pager -o cat | grep -F "message-id=<$tag>" | sed -n 's/^\([0-9A-F]\+\): .*/\1/p' | head -1 || true)
+      log=$(journalctl --since '-10 min' --no-pager -o cat | grep -E "^${qid:-none}: to=" || true)
+      if [ -n "$qid" ] && grep -q 'status=bounced' <<<"$log"; then break; fi
+      sleep 1
+    done
+    grep -q 'to=<probe@example.com>.*status=bounced (outside the range)' <<<"$log"
+    ! grep -qE 'status=(sent|deferred)' <<<"$log"
+    ! postqueue -j | grep -qF "\"$qid\""
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: IMAPS (range CA), the master user reads a persona's mailbox, Sent is special-use
+  ansible.builtin.command:
+    argv: [curl, -sS, -K, "-", --cacert, "{{ srv01_ca }}", "imaps://{{ srv01_ip }}/", -X, 'LIST (SPECIAL-USE) "" "*"']
+    stdin: 'user = "{{ personas | first }}@{{ mail_domain }}*{{ imap_master_user }}:{{ imap_master_password }}"'
+  register: imap_probe
+  changed_when: false
+  failed_when: imap_probe.rc != 0 or '\Sent' not in imap_probe.stdout
+  no_log: true
+
+- name: Master password to the control node (the controller reads mail with it)
+  ansible.builtin.copy:
+    dest: "{{ imap_password_file }}"
+    content: "{{ imap_master_password }}\n"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  no_log: true
