@@ -199,6 +199,7 @@ impl Runner<'_> {
             json!({"choice": d.choice, "confidence": d.confidence, "top": d.top(3), "subgoal_done": d.subgoal_done, "off_track": d.off_track,
                    "cost": d.cost, "model": d.model, "image": image, "latency_ms": d.latency_ms, "retries_429": d.retries_429}),
         );
+        r.insert("observe".into(), json!({"ms": self.observe_ms, "settle_ms": snap.settle_ms, "elements": snap.elements.len(), "dropped": snap.dropped_elements}));
         r.insert("code_done".into(), json!(code_done));
         r.insert("result".into(), json!(result));
         self.log.write(Value::Object(r))

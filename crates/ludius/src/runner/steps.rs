@@ -56,6 +56,8 @@ impl Runner<'_> {
         let mut step: i64 = 0;
         let (mut waited, mut wait_why) = (0.0f64, String::new());
         let ask = sg.done.as_ref().and_then(|d| d.ask.clone());
+        let mut asked: Option<Fingerprint> = None;
+        let had_app = app_open(&snap, task);
         while step < budget {
             step += 1;
             self.live = step;
@@ -100,11 +102,23 @@ impl Runner<'_> {
                 step -= 1;
                 continue;
             }
+            // Ask once per screen: a wait or a no-change step leaves the answer as it was (warp8: 430 asks, 65% "not yet").
             if let Some(q) = &ask
-                && self.decider_says_done(task, name, q, &snap)?
+                && asked.as_ref() != Some(&fingerprint(&snap))
             {
-                self.log.write(json!({"event": "subgoal_done", "host_ms": now_ms(), "guest_ms": snap.guest_time_ms, "task": t, "subgoal": name, "by": "decider", "steps": step - 1}))?;
-                return Ok((true, step - 1, String::new()));
+                asked = Some(fingerprint(&snap));
+                if self.decider_says_done(task, name, q, &snap)? {
+                    self.log.write(json!({"event": "subgoal_done", "host_ms": now_ms(), "guest_ms": snap.guest_time_ms, "task": t, "subgoal": name, "by": "decider", "steps": step - 1}))?;
+                    return Ok((true, step - 1, String::new()));
+                }
+            }
+            if had_app && !app_open(&snap, task) {
+                std::thread::sleep(BLOCKED_WAIT);
+                snap = self.observe(10000)?;
+                if !app_open(&snap, task) {
+                    // No step brings it back inside this subgoal (warp8: aberg spent 6 min on an empty desktop).
+                    return failed(step - 1, "the task's app was closed");
+                }
             }
             if recipient_reserved(sg, task, &self.policy)? {
                 self.log.write(json!({"event": "blocked", "host_ms": now_ms(), "task": t, "subgoal": name, "reason": RESERVED_RECIPIENT}))?;
@@ -221,6 +235,7 @@ impl Runner<'_> {
             let (changed, revisit) = (after != here, seen.contains(&after));
             seen.insert(after);
             if chosen.kind == "type" {
+                asked = None; // typed text may not show in the element tree, so the same fingerprint can be a new answer
                 typed_ok = refused.is_none() && typed_landed(&snap, &chosen, sg);
             }
             pressed_ok = pressed_ok || (guarded && chosen.kind == "key" && sg.keys.contains(&chosen.keys));
@@ -311,6 +326,11 @@ impl Runner<'_> {
             _ => Ok(None),
         }
     }
+}
+
+/// A window of the task's app is on screen; an unreadable (windowless) snapshot counts as open, not closed.
+pub(super) fn app_open(snap: &Snapshot, task: &Task) -> bool {
+    snap.windows.is_empty() || snap.windows.iter().chain(&snap.apps).any(|w| task.template.processes.iter().any(|p| p.eq_ignore_ascii_case(&w.process_name)))
 }
 
 fn popup_over(sg: &Subgoal, snap: &Snapshot, task: &Task) -> Result<Option<String>> {

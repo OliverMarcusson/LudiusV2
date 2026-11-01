@@ -22,7 +22,7 @@ subgoals:
   open_message:
     goal: "In the Inbox, open the mail with the subject {subject} in its own window (double-click it)"
     keys: [Enter]
-    done: {window: {process: outlook.exe, title: '^{subject}\s*-\s*Message'}}
+    done: {window: {process: outlook.exe, title: '^(?:\w+:\s*)*{subject}\s*-\s*Message'}}
   reply_shortcut:
     goal: "Reply to the open mail with Ctrl+R"
     keys: [Ctrl+R]
@@ -44,7 +44,7 @@ subgoals:
   close_message:
     goal: "Close the original mail's window"
     keys: [Esc]
-    done: {window: {process: outlook.exe, title: '^{subject}\s*-\s*Message', absent: true}}
+    done: {window: {process: outlook.exe, title: '^(?:\w+:\s*)*{subject}\s*-\s*Message', absent: true}}
   close_outlook:
     goal: "Close Outlook"
     done: {window: {process: outlook.exe, absent: true}}

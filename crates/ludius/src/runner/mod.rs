@@ -207,6 +207,7 @@ pub struct Runner<'a> {
     live: i64,
     image: bool,
     focus_shared: bool,
+    observe_ms: u64,
 }
 
 impl<'a> Runner<'a> {
@@ -239,6 +240,7 @@ impl<'a> Runner<'a> {
             live: 0,
             image: std::env::var("LUDIUS_DECISION_IMAGE").as_deref() == Ok("1"),
             focus_shared: false,
+            observe_ms: 0,
         }
     }
 
@@ -249,7 +251,9 @@ impl<'a> Runner<'a> {
     }
 
     pub fn observe(&mut self, timeout_ms: u32) -> Result<Snapshot> {
+        let t = Instant::now();
         self.snap = self.agent.observe(true, 300, timeout_ms)?;
+        self.observe_ms = t.elapsed().as_millis() as u64;
         let display = (self.snap.screen_width, self.snap.screen_height, self.snap.dpi);
         if !self.snap.locked && display.0 > 0 && Some(display) != self.display {
             if self.display.is_some() {

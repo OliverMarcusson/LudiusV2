@@ -24,18 +24,18 @@ subgoals:
     keys: [open]
     steps: 20
     done:
-      window: {process: outlook.exe, title: '^{subject}\s*-\s*Message'}
+      window: {process: outlook.exe, title: '^(?:\w+:\s*)*{subject}\s*-\s*Message'}
       read: true
   open_message_click:
     goal: "In the Inbox, double-click the mail from {sender_name} with the subject {subject} to open it in its own window"
     steps: 20
     done:
-      window: {process: outlook.exe, title: '^{subject}\s*-\s*Message'}
+      window: {process: outlook.exe, title: '^(?:\w+:\s*)*{subject}\s*-\s*Message'}
       read: true
   close_message:
     goal: "Close the mail's window"
     keys: [close_item]
-    done: {window: {process: outlook.exe, title: '^{subject}\s*-\s*Message', absent: true}}
+    done: {window: {process: outlook.exe, title: '^(?:\w+:\s*)*{subject}\s*-\s*Message', absent: true}}
   close_outlook:
     goal: "Close Outlook"
     done: {window: {process: outlook.exe, absent: true}}

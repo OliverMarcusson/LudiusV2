@@ -118,3 +118,24 @@ fn near_tie_only_between_equivalent_options() {
     let picks: std::collections::BTreeSet<String> = (0..40).map(|_| r.choose(&d, &opts).unwrap().key).collect();
     assert_eq!(picks, ["o1".to_string(), "o2".to_string()].into());
 }
+
+#[test]
+fn reply_titles_and_a_closed_app() {
+    use ludius_proto::v1::Window;
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    unsafe { std::env::set_var("LUDIUS_DATA", &data) };
+    let t = crate::tasks::load_template(&data.join("templates/outlook_read_mail.yaml")).unwrap();
+    let mut inst = crate::tasks::TaskInstance { template: t.task.clone(), params: t.example.clone(), variant: Some(0), ..Default::default() };
+    inst.params.insert("subject".into(), "packaging receipts".into());
+    let task = Task::new(t, inst, &mut StdRng::seed_from_u64(0)).unwrap();
+    // The server's subject is normalized; Outlook's title keeps the reply prefix.
+    let check = task.template.subgoals["open_message_click"].done.as_ref().unwrap().window.clone().unwrap();
+    let w = |title: &str, p: &str| Window { title: title.into(), process_name: p.into(), ..Default::default() };
+    for (title, ok) in [("RE: packaging receipts - Message (HTML) ", true), ("packaging receipts - Message", true), ("RE: other packaging receipts - Message", false)] {
+        assert_eq!(crate::tasks::window_matches(&w(title, "OUTLOOK.EXE"), &check, &task).unwrap(), ok, "{title}");
+    }
+    let snap = |ws: Vec<Window>| Snapshot { windows: ws, ..Default::default() };
+    assert!(steps::app_open(&snap(vec![w("Inbox - Outlook", "OUTLOOK.EXE")]), &task));
+    assert!(!steps::app_open(&snap(vec![w("Program Manager", "explorer.exe")]), &task));
+    assert!(steps::app_open(&snap(vec![]), &task), "an unreadable screen is not a closed app");
+}
