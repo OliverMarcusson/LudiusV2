@@ -32,15 +32,15 @@ Add `OPENROUTER_API_KEY=...` to `.env`. The host must have Hyper-V socket servic
 
 ```powershell
 dotnet run --project host\agent                    # host agent
-cargo build --release -p ludius --bin ludius    # -> targetelease\ludius.exe; it reads .env and data\ from the checkout
+cargo build --release -p ludius --bin ludius    # -> target\release\ludius.exe (put it on PATH); it reads .env and data\ from the checkout
 ludius observe                                     # print the current element table
 ludius run data\instances\q3-call-notes.yaml --restore clean [--variant N] [--clock realtime]
 ludius canary [APP...]                             # one task per app as a smoke test
 
 ludius plan narrative --date 2026-10-26            # once per range -> runs/world/narrative.yaml
 ludius plan day --persona aberg --date 2026-10-27  # per persona and day -> runs/plans/<date>-<user>.yaml
-ludius day runs\plans6-10-27-aberg.yaml [--clock realtime|compressed]
-ludius timeline runs\days\*.jsonl --out runs	imeline.csv
+ludius day runs\plans\2026-10-27-aberg.yaml [--clock realtime|compressed]
+ludius timeline runs\days\*.jsonl --out runs\timeline.csv
 ```
 
 `ludius` with no arguments prints every command (range supervisor, warp, schedules, metrics, store).
@@ -53,7 +53,7 @@ A view-only web page with a 12 fps video feed of every range VM's desktop; a til
 
 ```powershell
 cd web\console; bun install; bun run build   # the host agent serves web/console/dist
-dotnet run --project hostgent              # then open http://127.0.0.1:7452
+dotnet run --project host\agent              # then open http://127.0.0.1:7452
 bun run dev                                    # development, proxies /api to the agent
 ```
 

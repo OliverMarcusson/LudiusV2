@@ -21,7 +21,7 @@ foreach ($p in $people) {
     $u, $n = $p -split '\|', 2
     if ($u -cnotmatch $userRe -or $n -notmatch "^\p{L}[\p{L}\p{M} .'-]*$") { throw "unsafe narrative person: $p" }
 }
-$personas = @((Get-ChildItem (Join-Path $root 'controller\data\personas') -Filter *.yaml).BaseName)
+$personas = @((Get-ChildItem (Join-Path $root 'data\personas') -Filter *.yaml).BaseName)
 foreach ($p in $personas) { if ($p -cnotmatch $userRe) { throw "unsafe persona name: $p" } }
 $addr = $cfg.LUDIUS_SRV_ADDRESS
 if (-not ($addr -match '^\d{1,3}(\.\d{1,3}){3}$' -and [Net.IPAddress]::TryParse($addr, [ref]$null))) { throw "bad LUDIUS_SRV_ADDRESS: $addr" }
