@@ -25,7 +25,7 @@ Four layers with one owner each. Code in the guest observes the screen and acts 
 
 &#91;embedded content: architecture · guest, host, decision and planning layers\]
 
-The guest observer and host agent are C#; the controller and planner are Python. The observer reads but never acts: all input flows back through the host agent's virtual keyboard and mouse, so artifacts match a human at the console.
+The guest observer is Rust, the host agent C#; the controller and planner are one Rust binary (`ludius`). The observer reads but never acts: all input flows back through the host agent's virtual keyboard and mouse, so artifacts match a human at the console.
 
 ## 3. Guest observer (Windows)
 
@@ -374,7 +374,7 @@ Every step is logged with host time and guest time, persona, window, element, ac
 
 ## 9. Tech stack, repository and CI
 
-C# where performance and Windows integration matter (guest observer, host agent); strictly typed Python where iteration speed matters (controller, planner, analysis).
+Rust for the guest observer, controller and planner; C# for the host agent; Python only for offline analysis.
 
 ### Stack
 
@@ -384,8 +384,8 @@ C# where performance and Windows integration matter (guest observer, host agent)
 | Settle detection | DXGI Desktop Duplication via Vortice.Windows |
 | Host agent | C# / .NET 9 on Linux (Proxmox) and Windows (Hyper-V) |
 | Wire protocol | gRPC + protobuf, bidirectional streams |
-| Controller, planner | Python 3.12+, asyncio, Pydantic, strict pyright |
-| Orchestration | Temporal (Python SDK): durable persona-day workflows, timers, retries |
+| Controller, planner | Rust (one `ludius` binary) |
+| Orchestration | Temporal (Rust SDK): durable persona-day workflows, timers, retries |
 | State, traces | PostgreSQL; screenshots in S3-compatible storage (MinIO) |
 | Visual fallback | Host-side ONNX Runtime detector + PaddleOCR |
 | Analysis | Plaso → DuckDB + Polars; LightGBM |
@@ -399,8 +399,7 @@ Check early whether FlaUI works under NativeAOT. If not, use CsWin32 with source
 proto/            gRPC schemas (observation, actions, agent control)
 crates/ludius-observer/  Rust – UIA snapshot, settle, vsock/hvsocket server (replaces the C# guest/observer/)
 host/agent/       C# – QMP and Hyper-V backends, channel relay, lifecycle
-controller/       Python – step loop, options, policy, failure ladder, clock adapters
-planner/          Python – narrative, day plans, content, template generation
+crates/ludius/    Rust – step loop, options, policy, failure ladder, clock adapters, planner (narrative, day plans, content), range supervisor
 analysis/         Python – Plaso ingest, coverage, survival, filterability
 infra/            Packer, Ansible, Temporal + Postgres deployment
 fixtures/         recorded observations for offline tests
@@ -408,7 +407,7 @@ fixtures/         recorded observations for offline tests
 
 ### CI
 
-- Python: uv (installs, lockfile), ruff (lint, format), pyright strict, pytest including fixture replay. No compile step.
+- Rust: `cargo test -p ludius` including fixture replay.
 - C#: build and test on every commit; NativeAOT publish only for release builds.
 - Contract tests against both hypervisors on merges to main; range test runs nightly in compressed mode.
 

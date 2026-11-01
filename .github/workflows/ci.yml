@@ -5,19 +5,13 @@ on:
   pull_request:
 
 jobs:
-  controller:
+  rust:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: controller
+    env:
+      CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - run: uv sync --locked
-      - run: uv run ruff check src tests
-      - run: uv run ruff format --check src tests
-      - run: uv run pyright
-      - run: uv run pytest -q
+      - run: cargo test -p ludius
 
   dotnet:
     runs-on: windows-latest

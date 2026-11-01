@@ -66,7 +66,7 @@ fn plan(items: Vec<PlanItem>) -> DayPlan {
 }
 
 pub(crate) fn log(name: &str) -> GroundTruth {
-    // SAFETY: tests only read LUDIUS_DATA and LUDIUS_APPS (the apps as in controller/tests/conftest.py), always set to the same values.
+    // SAFETY: tests only read LUDIUS_DATA and LUDIUS_APPS, always set to the same values.
     unsafe {
         std::env::set_var("LUDIUS_DATA", Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"));
         std::env::set_var("LUDIUS_APPS", "edge,excel,explorer,notepad,outlook,paint,powerpoint,powershell,wordpad");

@@ -17,7 +17,7 @@ pub fn dir() -> PathBuf {
     if let Some(d) = std::env::var_os("LUDIUS_INTRANET") {
         return PathBuf::from(d);
     }
-    let data = std::env::var_os("LUDIUS_DATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("controller").join("data"));
+    let data = std::env::var_os("LUDIUS_DATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("data"));
     data.join("intranet")
 }
 

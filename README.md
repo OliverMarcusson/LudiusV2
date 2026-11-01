@@ -11,7 +11,7 @@ Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrati
 | `proto/` | gRPC schemas: observation (guest channel) and host agent API |
 | `crates/ludius-observer/` | Rust observer (`uiprobe.exe`), replacing the C# `guest/observer/`: UIA3 snapshots, element table, hints, stable ids, cap, settle (UIA events + DXGI dirty rects), Hyper-V socket or vsock server. Read-only; writes nothing to disk |
 | `host/agent/` | C# host agent: gRPC on `127.0.0.1:7451`, Hyper-V WMI keyboard/mouse, observer relay, lifecycle, console frames |
-| `controller/` | Python: planner (narrative, day plans, content, near-duplicate check), day runner (clock modes, breaks, interruptions), Decisions client, options, policy, completion checks, step loop, session hygiene, unlock, failure ladder 1–8, ground truth and instructor timeline, CLI |
+| `crates/ludius/` | Rust `ludius` binary: planner (narrative, day plans, content, near-duplicate check), day runner (clock modes, breaks, interruptions), Decisions client, options, policy, completion checks, step loop, session hygiene, unlock, failure ladder, ground truth and instructor timeline, range supervisor, CLI |
 | `data/` | Templates (Notepad, Explorer, Edge), personas, hand-written task instances |
 | `web/console/` | Operator monitor: view-only desktop feeds of the range VMs (React, shadcn/ui), served by the host agent |
 | `fixtures/` | Recorded snapshots + console frames + expected choices, used for offline replay |
@@ -19,7 +19,7 @@ Built on local Hyper-V. An LLM planner (via OpenRouter) writes a company narrati
 
 ## Setup (Hyper-V)
 
-You need to be in Hyper-V Administrators, with .NET 10 SDK, uv and pwsh 7 installed.
+You need to be in Hyper-V Administrators, with .NET 10 SDK, Rust (cargo), uv (only for the ISO helpers) and pwsh 7 installed.
 
 ```powershell
 infra\hyperv\new-vm.ps1        # unattended Win10 Pro from ~\Downloads\win10.iso; credentials go to .env
@@ -32,18 +32,18 @@ Add `OPENROUTER_API_KEY=...` to `.env`. The host must have Hyper-V socket servic
 
 ```powershell
 dotnet run --project host\agent                    # host agent
-cd controller
-uv run ludius contract                             # pointer mapping + typing round trip
-uv run ludius observe                              # print the current element table
-uv run ludius run data\instances\q3-call-notes.yaml --restore clean [--variant N] [--clock realtime]
-uv run ludius observe --record NAME                # new fixture
-uv run ludius session lock|unlock|normalize
+cargo build --release -p ludius --bin ludius    # -> targetelease\ludius.exe; it reads .env and data\ from the checkout
+ludius observe                                     # print the current element table
+ludius run data\instances\q3-call-notes.yaml --restore clean [--variant N] [--clock realtime]
+ludius canary [APP...]                             # one task per app as a smoke test
 
-uv run ludius plan narrative --date 2026-10-26     # once per range -> runs/world/narrative.yaml
-uv run ludius plan day --date 2026-10-27           # per persona and day -> runs/plans/<date>-<user>.yaml
-uv run ludius day ..\runs\plans\2026-10-27-aberg.yaml --restore clean [--clock realtime|time-jump]
-uv run ludius timeline ..\runs\days\*.jsonl --out ..\runs\timeline.csv
+ludius plan narrative --date 2026-10-26            # once per range -> runs/world/narrative.yaml
+ludius plan day --persona aberg --date 2026-10-27  # per persona and day -> runs/plans/<date>-<user>.yaml
+ludius day runs\plans6-10-27-aberg.yaml [--clock realtime|compressed]
+ludius timeline runs\days\*.jsonl --out runs	imeline.csv
 ```
+
+`ludius` with no arguments prints every command (range supervisor, warp, schedules, metrics, store).
 
 Each run writes a ground-truth JSONL file to `runs/` (gitignored); days go to `runs/days/`, and the planner reads them back as world state.
 
@@ -70,10 +70,7 @@ The header also shows two OpenRouter counters, **Decision calls** (Decisions API
 ## Checks
 
 ```powershell
-cd controller
-uv run ruff check src tests; uv run ruff format --check src tests; uv run pyright; uv run pytest    # full: starts temporary Temporal, PostgreSQL and MinIO servers; skips any it cannot start
-uv run pytest -m "not service"    # offline: same suite minus the tests marked service, starts nothing
-$env:LUDIUS_LIVE_DECISION=1; uv run pytest -k decision_choice    # live Decisions replay on fixtures
+$env:CARGO_INCREMENTAL=0; cargo test -p ludius
 dotnet build Ludius.sln
 cd web\console; bun run lint; bun run build
 ```
