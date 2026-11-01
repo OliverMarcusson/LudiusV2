@@ -1,6 +1,6 @@
 # LudiusV2 agent instructions
 
-Read `Ludius – System Specification.md` first; it wins over this file. Coordination lives in the untracked `TASKS.md`.
+Read `Ludius – System Specification.md` first; it wins over this file. Backlog and coordination live on the Planka board LudiusV2 / Backlog (Planka MCP), not in `TASKS.md`: one card per item, a value label (Common, Uncommon, Rare, Epic, Legendary) and the matching area list. Untracked `TASKS.md` is only a scratch list for the current long run.
 
 ## Threat model (what safeguards defend against)
 
@@ -31,4 +31,4 @@ For UI validation, prefer dynamic checks (`done.ask` or `confirm`). Use static c
 
 - State the acceptance contract (above + the change's goal) in the review brief.
 - Blockers only for violations of the threat model, the spec or the done contract; batch them in one pass.
-- Re-checks cover the fixes and risks they introduce; other ideas go to `TASKS.md` as backlog, not into the blocking list.
+- Re-checks cover the fixes and risks they introduce; other ideas go to the Planka board as backlog cards, not into the blocking list.
