@@ -144,6 +144,12 @@ pub struct Reactor<'r> {
     pub taken: Vec<String>,
     /// The range has the chat add-on (LUDIUS_CHAT_HOST); mail reactions follow the mail backend.
     pub chat: bool,
+    /// The reply-text LLM: user prompt -> reply body (reply::SYSTEM).
+    pub draft: Box<dyn Fn(&str) -> Result<String> + 'r>,
+    /// Sends a mail inside the range (mail::deliver): (sender, sender name, to, to name, subject, body, msgid) -> sent.
+    pub send: Box<dyn Fn(&str, &str, &str, &str, &str, &str, &str) -> bool + 'r>,
+    /// Reads a user's Inbox, newest first (mail::newest); None = unreadable.
+    pub inbox: Box<dyn Fn(&str) -> Option<Vec<crate::mail::Message>> + 'r>,
 }
 
 impl<'r> Reactor<'r> {
@@ -161,6 +167,9 @@ impl<'r> Reactor<'r> {
             decider: None,
             taken: vec![],
             chat: cfg!(feature = "chat") && std::env::var("LUDIUS_CHAT_HOST").is_ok_and(|h| !h.is_empty()),
+            draft: Box::new(move |u| Ok(llm.json::<crate::reply::Draft>(crate::reply::SYSTEM, u, 0.8, 1)?.body.trim().replace('\r', ""))),
+            send: Box::new(crate::mail::deliver),
+            inbox: Box::new(|u| crate::mail::newest(u, "inbox")),
         }
     }
 
@@ -569,12 +578,14 @@ impl React for Reactor<'_> {
         }
         if crate::mail::available() {
             self.react_mail(day, at, run)?;
+            self.react_manager(day)?;
         }
         Ok(())
     }
 }
 
 mod mail;
+mod manager;
 
 #[cfg(all(test, feature = "chat"))] // the reactor offers chat templates only with the chat add-on
 mod tests;

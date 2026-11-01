@@ -73,6 +73,9 @@ fn reactor<'r>(who: (&str, &str), narrative: PathBuf, log: &'r GroundTruth, llm:
         decider: None,
         taken: vec![],
         chat: true,
+        draft: Box::new(|_| Ok("Thanks Anna, that looks good to me.".into())),
+        send: Box::new(|_, _, _, _, _, _, _| false),
+        inbox: Box::new(|_| None),
     }
 }
 
@@ -296,4 +299,57 @@ fn received_gossip_skips_the_gate_so_news_never_chains() {
     assert!(records(&log).iter().any(|r| r["skipped"] == "received gossip"));
     std::fs::write(dir.join("gossip.jsonl"), json!({"from": null, "to": "dkoster", "message": "x"}).to_string() + "\n").unwrap();
     assert!(r.heard_gossip(&[news]));
+}
+
+#[test]
+fn manager_answers_a_mail_from_their_report_once() {
+    let dom = crate::mail::domain();
+    let day = "2026-11-02";
+    let today = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").unwrap().and_hms_opt(9, 0, 0).unwrap().and_utc().timestamp_millis();
+    let mail = |sender: &str, subject: &str, msgid: &str, at: i64| crate::mail::Message {
+        sender: format!("{sender}@{dom}"),
+        subject: subject.into(),
+        msgid: msgid.into(),
+        delivery_ms: at,
+        cls: "IPM.Note".into(),
+        body: "Here is the dock list, can you check it?".into(),
+        ..Default::default()
+    };
+    // yes: one reply to the oldest mail of today from the report; no: none; down: none, tried again next slot
+    for yes in [Some(0.9), Some(0.2), None] {
+        let dir = tmp(&format!("manager{}", yes.map_or(0, |y| (y * 100.0) as i64)));
+        let narrative = world(&dir, &[("aberg", "Anna Berg"), ("fdevries", "Femke de Vries"), ("lnord", "Lars Nord")], &[]);
+        let mut n: Narrative = crate::tasks::load_yaml(&narrative).unwrap();
+        n.people[0].manager = "fdevries".into();
+        std::fs::write(&narrative, serde_yaml::to_string(&n).unwrap()).unwrap();
+        let log = GroundTruth::open(&dir.join("day.jsonl")).unwrap();
+        let mut r = reactor(("Anna Berg", "aberg"), narrative, &log, &Shared::default());
+        let box_ = vec![
+            mail("aberg", "dock list", "<b@x>", today + 60_000),
+            mail("aberg", "old one", "<a@x>", today - 86_400_000),
+            mail("lnord", "not mine", "<c@x>", today),
+            mail("aberg", "first today", "<d@x>", today),
+        ];
+        r.inbox = Box::new(move |u| (u == "fdevries").then(|| box_.clone()));
+        let sent = Rc::new(RefCell::new(vec![]));
+        let s = sent.clone();
+        r.send = Box::new(move |from, _, to, _, subject, _, msgid| {
+            s.borrow_mut().push(format!("{from} {to} {subject} {msgid}"));
+            true
+        });
+        r.decider = Some(Box::new(move |_, _| {
+            let Some(y) = yes else { anyhow::bail!("down") };
+            Ok(Answers { answers: json!({"reply": {"type": "noul", "noul": y}}), cost: None })
+        }));
+        r.react_manager(day).unwrap();
+        r.react_manager(day).unwrap();
+        let want = match yes {
+            Some(0.9) => vec![format!("fdevries@{dom} aberg@{dom} Re: first today <re.d@x>"), format!("fdevries@{dom} aberg@{dom} Re: dock list <re.b@x>")],
+            _ => vec![],
+        };
+        assert_eq!(*sent.borrow(), want, "{yes:?}");
+        let recs = records(&log);
+        let decided = recs.iter().filter(|r| r["final"] == json!(true)).count();
+        assert_eq!(decided, if yes.is_some() { 2 } else { 0 }, "{yes:?} {recs:?}");
+    }
 }

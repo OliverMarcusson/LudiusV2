@@ -1,6 +1,7 @@
 //! Mail reactions: before a slot the persona reads one new mail a colleague sent today and answers it when it
-//! asks something of them. Only unread mail is new: a mail read once (here or in a planned task) is not taken again. An unreadable Inbox is unknown: no reaction. The manager's request mails are not
-//! colleagues' mail; the nightly plan maps those.
+//! asks something of them. Only unread mail is new: a mail read once (here or in a planned task) is not taken again.
+//! An unreadable Inbox is unknown: no reaction. The manager's request mails are left to the nightly plan, which maps
+//! them; the manager's other mail (a reply, a note) is read like a colleague's.
 use std::collections::HashMap;
 
 use anyhow::Result;
@@ -37,13 +38,16 @@ impl Reactor<'_> {
             return Ok(());
         }
         let me = self.persona.user.clone();
-        let Some(inbox) = mail::newest(&me, "inbox") else { return self.write(json!({"event": "mail_notification", "unknown": true})) };
+        let Some(inbox) = (self.inbox)(&me) else { return self.write(json!({"event": "mail_notification", "unknown": true})) };
         let world = match Narrative::load(&self.narrative) {
             Ok(w) => w,
             Err(e) => return self.write(json!({"event": "mail_notification", "error": format!("narrative unreadable: {e}")})),
         };
-        // the manager's mails are requests: the nightly plan maps them, a reaction would answer them twice
-        let (people, colleagues) = (world.people_names(), &world.colleagues(&me) - &world.boss(&me));
+        // the manager's request mails are mapped by the nightly plan (a reaction would answer them twice); their other mail is read
+        let (people, colleagues) = (world.people_names(), &world.colleagues(&me) | &world.boss(&me));
+        let boss = world.boss(&me);
+        let root = crate::requests::root();
+        let request = |m: &mail::Message| !matches!(crate::requests::find(&m.msgid, &root), Ok(None));
         let since = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")?.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc().timestamp_millis();
         let (senders, tries) = self.mail_counts()?;
         let domain = format!("@{}", mail::domain());
@@ -60,6 +64,7 @@ impl Reactor<'_> {
                     && tries.get(&m.msgid).copied().unwrap_or(0) < ATTEMPTS
                     && senders.get(&user).copied().unwrap_or(0) < PER_SENDER
                     && !self.policy.mail_reserved(&m.sender, &m.subject, &m.body)
+                    && !(boss.contains(&user) && request(m))
             })
             .collect();
         new.sort_by_key(|m| m.delivery_ms);
