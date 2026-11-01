@@ -1,5 +1,5 @@
 //! Mail reactions: before a slot the persona reads one new mail a colleague sent today and answers it when it
-//! asks something of them. An unreadable Inbox is unknown: no reaction. The manager's request mails are not
+//! asks something of them. Only unread mail is new: a mail read once (here or in a planned task) is not taken again. An unreadable Inbox is unknown: no reaction. The manager's request mails are not
 //! colleagues' mail; the nightly plan maps those.
 use std::collections::HashMap;
 
@@ -23,8 +23,8 @@ impl Reactor<'_> {
     fn mail_counts(&self) -> Result<(HashMap<String, usize>, HashMap<String, usize>)> {
         let (mut senders, mut tries) = (HashMap::new(), HashMap::new());
         for r in self.records()? {
-            if r.get("event").and_then(Value::as_str) == Some("mail_notification") {
-                let s = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+            let s = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+            if s("event") == "mail_notification" && !s("msgid").is_empty() {
                 *senders.entry(s("sender")).or_default() += 1;
                 *tries.entry(s("msgid")).or_default() += 1;
             }
@@ -42,7 +42,8 @@ impl Reactor<'_> {
             Ok(w) => w,
             Err(e) => return self.write(json!({"event": "mail_notification", "error": format!("narrative unreadable: {e}")})),
         };
-        let (people, colleagues) = (world.people_names(), world.colleagues(&me));
+        // the manager's mails are requests: the nightly plan maps them, a reaction would answer them twice
+        let (people, colleagues) = (world.people_names(), &world.colleagues(&me) - &world.boss(&me));
         let since = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")?.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc().timestamp_millis();
         let (senders, tries) = self.mail_counts()?;
         let domain = format!("@{}", mail::domain());
@@ -51,6 +52,7 @@ impl Reactor<'_> {
             .filter(|m| {
                 let user = m.sender.strip_suffix(&domain).unwrap_or_default().to_string();
                 m.cls == "IPM.Note"
+                    && !m.read
                     && colleagues.contains(&user)
                     && !m.subject.trim().is_empty()
                     && !m.msgid.is_empty()

@@ -242,6 +242,10 @@ fn main() -> Result<()> {
         if check != "check" {
             bail!(USAGE);
         }
+        // an empty mail domain would make every address `user@`: no colleague passes, every mail task fails
+        if ludius::mail::domain().is_empty() {
+            bail!("LUDIUS_MAIL_DOMAIN is not set");
+        }
         match ludius::mail::newest(user, "inbox") {
             Some(m) => println!("{user}@{}: inbox read, {} newest", ludius::mail::domain(), m.len()),
             None => {
