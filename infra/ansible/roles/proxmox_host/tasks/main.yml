@@ -94,6 +94,8 @@
 - name: Apply bridges
   tags: [bridges]
   ansible.builtin.command: ifreload -a
+  environment:
+    PATH: /usr/sbin:/usr/bin:/sbin:/bin  # ifreload is system Python; an ansible venv first on PATH breaks it
   when: bridges is changed
   changed_when: true
 

@@ -9,7 +9,8 @@
       ansible.builtin.assert:
         that:
           - people | length >= 2
-          - people | map(attribute='user') | select('match', '^[a-z][a-z0-9._-]{0,9}$') | list | length == people | length
+          - people | map(attribute='user') | select('match', '^[a-z][a-z0-9._-]{0,19}$') | list | length == people | length
+          - personas | select('match', '^[a-z][a-z0-9._-]{0,9}$') | list | length == personas | length
           - people | map(attribute='name') | select('match', "^[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ .'-]*$") | list | length == people | length
           - people | map(attribute='user') | unique | length == people | length
           - personas | length >= 1
@@ -22,8 +23,8 @@
           - dc_admin_password is match('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}$')
           - range_admin_password | length >= 12
         fail_msg: >-
-          unsafe or duplicate narrative people (user: lower case, at most 10 characters, so WS-<USER>01 fits a
-          computer name), a persona outside the narrative or without data/personas/<user>.yaml, no persona,
+          unsafe or duplicate narrative people (user: lower case, at most 20 characters, a persona at most 10 so
+          WS-<USER>01 fits a computer name), a persona outside the narrative or without data/personas/<user>.yaml, no persona,
           more personas than {{ mail_backend }} log-in mailboxes ({{ login_mailbox_cap }}), an unknown mail_backend (or imap without a 16+ character vault_imap_master_password),
           or a password Samba would refuse (<user><suffix> under 6, DC admin under 8 or without upper, lower and digit), or a bring-up password
           under 12 characters
