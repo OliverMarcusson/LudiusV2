@@ -54,7 +54,7 @@ Comparing with `sha1sum` against a Windows checkout shows every file as changed 
 
 Run `infra/box/range-ops.sh preflight` from the checkout: it runs §2 and §3 below on the VMs of pool `ludius` (servers
 first; a member with `data/personas/<user>.yaml` is a persona), stops at the first failed check, and takes the snapshot
-only when every step passed. Each step is logged to `runs/ops.jsonl` and shown on the console's Status page. It does
+only when every step passed (every canary app `ok`; `unknown` fails too). Each step is logged to `runs/ops.jsonl` and shown on the console's Status page. It does
 not check evaluation time (below). The commands below are what it runs, for a step you need to redo by hand.
 
 ```bash

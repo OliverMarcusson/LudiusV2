@@ -41,10 +41,18 @@ clear_runs() {
 # Earlier runs' intranet downloads go to Downloads\earlier-runs-<ts> (moved, never deleted), or the task for them abandons.
 downloads() {
   local names; names=$(grep -rh "^files:" data/intranet | sed "s/^files: *//" | tr -d '\r' | tr "," "\n" | sed "s/^ *//;s/ *$//;s/'/''/g" | sort -u | paste -sd"|")
-  local r; r=$(qm guest exec "$1" --timeout 60 -- powershell -NoProfile -Command "\$d='C:/Users/$2/Downloads'; \$a=\"\$d/earlier-runs-$ts\"; \$n='$names'.Split('|'); @(Get-ChildItem -LiteralPath \$d -File | Where-Object { \$n -contains \$_.Name } | ForEach-Object { New-Item -ItemType Directory -Force \$a > \$null; Move-Item -LiteralPath \$_.FullName -Destination \$a; \$_.Name }).Count") || return 1
+  local r; r=$(qm guest exec "$1" --timeout 60 -- powershell -NoProfile -Command "\$ErrorActionPreference='Stop'; \$d='C:/Users/$2/Downloads'; \$a=\"\$d/earlier-runs-$ts\"; \$n='$names'.Split('|'); @(Get-ChildItem -LiteralPath \$d -File | Where-Object { \$n -contains \$_.Name } | ForEach-Object { New-Item -ItemType Directory -Force \$a > \$null; Move-Item -LiteralPath \$_.FullName -Destination \$a; \$_.Name }).Count") || return 1
   jq -e '.exitcode == 0' <<< "$r" > /dev/null || { jq -r '"exit \(.exitcode): \(."err-data" // "")"' <<< "$r"; return 1; }
   echo "moved $(jq -r '."out-data" // "0"' <<< "$r" | tr -d '\r\n') files"
 }
+# Only ok on every app counts: canary exits 0 on unknown (agent or LLM down), 1 only on drift.
+canary() {
+  local apps=(outlook word excel) r; r=$(./ludius-rs --vm "ludius-$1" canary --persona "$1" "${apps[@]}" 2>&1); local rc=$?
+  [ $rc = 0 ] && [ "$(grep -c "^  [a-z]*: ok (" <<< "$r")" = ${#apps[@]} ] && { echo "${#apps[@]} apps ok"; return 0; }
+  { grep "^  [a-z]*: " <<< "$r" | grep -v ": ok ("; tail -n1 <<< "$r"; } | head -n1; return 1
+}
+# The runbook's "agent and Temporal up".
+services() { local bad=""; for c in ludius-host-agent-1 ludius-temporal-1; do podman ps --format "{{.Names}} {{.Status}}" | grep -q "^$c Up" || bad+=" $c"; done; [ -z "$bad" ] && echo "agent, Temporal up" || { echo "down:$bad"; return 1; }; }
 snapshot() {
   for v in "${servers[@]}"; do qm snapshot "$v" "$snap" --vmstate 1 --description "warp, rollback after" > /dev/null 2>&1; done
   for p in "${personas[@]}"; do qm snapshot "${p%% *}" "$snap" --vmstate 1 --description "warp, rollback after" > /dev/null 2>&1 & done; wait
@@ -65,9 +73,10 @@ if [ "$kind" = preflight ]; then
   step "No ludius-rs running" idle || abort "No ludius-rs running"
   step "VMs running" running || abort "VMs running"
   step "No $snap snapshot yet" nosnap || abort "No $snap snapshot yet"
+  step "Agent and Temporal up" services || abort "Agent and Temporal up"
   step "Clear runs" clear_runs
   for p in "${personas[@]}"; do step "Downloads ${p#* }" downloads ${p} || failed=1; done
-  for p in "${personas[@]}"; do u=${p#* }; step "Canary $u" ./ludius-rs --vm "ludius-$u" canary --persona "$u" outlook word excel || failed=1; done
+  for p in "${personas[@]}"; do u=${p#* }; step "Canary $u" canary "$u" || failed=1; done
   [ $failed = 0 ] || abort Snapshot "skipped: fix the failed steps above, then rerun"
   step Snapshot snapshot || abort Snapshot
 else
