@@ -16,8 +16,10 @@ step() {
 }
 abort() { [ -z "${2:-}" ] || note "$1" failed "$2"; note end failed; echo "$kind stopped at $1" >&2; exit 1; }
 
-# The range is pool ludius minus its templates; a member with data/personas/<user>.yaml is a persona, the rest servers.
-mapfile -t members < <(pvesh get /pools/ludius --output-format json | jq -r '.members[] | select(.type == "qemu" and .template != 1) | "\(.vmid) \(.name)"')
+# The range is pool ludius minus its templates and the other ranges' VMs (vm_prefix in infra/ansible/ranges/*.yml);
+# a member with data/personas/<user>.yaml is a persona, the rest servers.
+others=$(awk '/^vm_prefix:/ { gsub(/["\r]/, "", $2); print $2 }' infra/ansible/ranges/*.yml 2>/dev/null | jq -Rsc 'split("\n") | map(select(. != ""))')
+mapfile -t members < <(pvesh get /pools/ludius --output-format json | jq -r --argjson o "$others" '.members[] | select(.type == "qemu" and .template != 1) | select(.name as $n | all($o[]; . as $p | $n | startswith($p) | not)) | "\(.vmid) \(.name)"')
 servers=(); personas=()   # "vmid user" pairs
 for m in "${members[@]}"; do u=${m#* ludius-}; [ -f "data/personas/$u.yaml" ] && personas+=("${m%% *} $u") || servers+=("${m%% *}"); done
 vms=("${servers[@]}"); for p in "${personas[@]}"; do vms+=("${p%% *}"); done
