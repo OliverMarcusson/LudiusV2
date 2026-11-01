@@ -10,9 +10,8 @@ Running a multi-day warp on the live range (sync, snapshot, launch, watch, roll 
 - [ ] Proxmox VE 8.x installed; `pveversion -v` and `qemu-system-x86_64 --version` (QEMU >= 7.1: `screendump` needs
       `format: png`).
 - [ ] `modprobe vhost_vsock && ls -l /dev/vhost-vsock` (vsock for the guest channel).
-- [ ] (Installed by `infra/box/install.sh`: unit `ludius-agent`, `/opt/ludius-agent`, loopback 7451/7452, Pool `ludius`; see `infra/box/`.)
 - [ ] Agent running: the compose service `host-agent` (`infra/box/`, Rust; the C# agent and its `ludius-agent` unit are retired).
-- [ ] Range pool: `pvesh create /pools --poolid ludius`, and `Proxmox:Pool=ludius` in the agent config. Without it
+- [ ] Range pool: `pvesh create /pools --poolid ludius`, and `PVE_POOL=ludius` for the host agent. Without it
       the agent refuses every VM. Only VMs in that pool on this node are touched (input, observation, lifecycle,
       clone sources); clones are created into it. Check: `ludius vm state` on a VM outside the pool is refused
       (PERMISSION_DENIED) and nothing in `/var/log/pve/tasks` names it.
