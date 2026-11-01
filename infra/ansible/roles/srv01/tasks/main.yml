@@ -74,6 +74,12 @@
     ADMINPASS: "{{ dc_admin_password }}"
   no_log: true
 
+- name: Resolved drop-in folder (the Debian 13 cloud image has none)
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    mode: "0755"
+
 - name: The server's own range-domain lookups go to Samba
   ansible.builtin.copy:
     dest: /etc/systemd/resolved.conf.d/samba.conf
