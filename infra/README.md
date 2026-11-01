@@ -76,3 +76,17 @@ LUDIUS_EWS_PASSWORD_FILE=/root/.ludius-ews               # written by range-exch
 LUDIUS_EWS_CA=<checkout>/infra/ansible/build/range-ca.crt
 LUDIUS_SHARE_HOST=dc01                                   # team shares (narrative shares) as personas type them; read at LUDIUS_SRV_HOST
 ```
+
+### Controller settings (IMAP backend)
+
+For a range without Exchange (Postfix + Dovecot; build the controller with `--features mail-imap`). Mail only: invites and responses read as unknown and `calendar.*` templates fail plan load. Reads log in to Dovecot as a master user (`<address>*<master>`), deliveries go to Postfix on port 25, which delivers only to the range domain.
+
+```sh
+LUDIUS_MAIL_BACKEND=imap
+LUDIUS_MAIL_DOMAIN=<range mail domain>
+LUDIUS_IMAP_HOST=<srv address>[:993]
+LUDIUS_IMAP_USER=<dovecot master user>
+LUDIUS_IMAP_PASSWORD_FILE=/root/.ludius-imap                # 0600
+LUDIUS_IMAP_CA=<checkout>/infra/ansible/build/range-ca.crt   # the default
+LUDIUS_SMTP_HOST=<srv address>[:25]                         # default: the IMAP host, port 25
+```

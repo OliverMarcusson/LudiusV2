@@ -7,12 +7,16 @@ publish.workspace = true
 [dependencies]
 base64 = { version = "0.23.1", optional = true }
 chrono = { version = "0.4", optional = true }
+mail-parser = { version = "0.11", optional = true }
 regex = "1.13.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "rustls"], optional = true }
 roxmltree = { version = "0.20", optional = true }
+rustls = { version = "0.23.46", default-features = false, features = ["std", "ring", "tls12"], optional = true }
 sha2 = { version = "0.10", optional = true }
 
 [features]
 default = ["ews"]
 # Exchange Web Services backend (impersonation). Without a backend, mail checks read as unknown.
 ews = ["dep:base64", "dep:chrono", "dep:reqwest", "dep:roxmltree", "dep:sha2"]
+# IMAPS reads as a Dovecot master user, SMTP deliveries to the range Postfix (LUDIUS_MAIL_BACKEND=imap). No calendar.
+imap = ["dep:base64", "dep:chrono", "dep:mail-parser", "dep:rustls", "dep:sha2"]

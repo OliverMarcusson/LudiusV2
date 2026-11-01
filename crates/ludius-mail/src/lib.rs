@@ -1,27 +1,33 @@
 //! Mail add-on: outcome checks (what a mailbox holds, read state, invites, responses) and planned
-//! deliveries. Backends are features: `ews` (Exchange). Without one, every read is unknown and nothing is sent.
+//! deliveries. Backends are features: `ews` (Exchange) and `imap` (IMAPS reads, SMTP deliveries; no calendar). Without one, every read is unknown and nothing is sent.
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 #[cfg(feature = "ews")]
 pub mod ews;
+#[cfg(feature = "imap")]
+pub mod imap;
 
-/// No backend compiled in: unknown, never empty; nothing is delivered.
-#[cfg(not(feature = "ews"))]
-mod ews {
-    use super::Message;
-    pub fn read_state(_: &str, _: u64, _: &str) -> Option<bool> {
-        None
-    }
-    pub fn msgids(_: &str, _: &str) -> Option<Vec<String>> {
-        None
-    }
-    pub fn query(_: &str, _: &str, _: Option<&str>, _: bool) -> Option<Vec<Message>> {
-        None
-    }
-    pub fn send(_: &str, _: &str, _: &str, _: &str, _: &str, _: &str, _: &str) -> bool {
-        false
+type Query = fn(&str, &str, Option<&str>, bool) -> Option<Vec<Message>>;
+
+/// The selected backend's calls.
+struct Backend {
+    read_state: fn(&str, u64, &str) -> Option<bool>,
+    msgids: fn(&str, &str) -> Option<Vec<String>>,
+    query: Query,
+    send: fn(&str, &str, &str, &str, &str, &str, &str) -> bool,
+}
+
+/// LUDIUS_MAIL_BACKEND, if compiled in: `exchange` (feature ews) or `imap` (feature imap). None: every read is
+/// unknown, never empty, and nothing is delivered.
+fn backend() -> Option<Backend> {
+    match std::env::var("LUDIUS_MAIL_BACKEND").unwrap_or_default().as_str() {
+        #[cfg(feature = "ews")]
+        "exchange" => Some(Backend { read_state: ews::read_state, msgids: ews::msgids, query: ews::query, send: ews::send }),
+        #[cfg(feature = "imap")]
+        "imap" => Some(Backend { read_state: imap::read_state, msgids: imap::msgids, query: imap::query, send: imap::send }),
+        _ => None,
     }
 }
 
@@ -48,7 +54,7 @@ pub struct Message {
     pub files: Vec<String>,
 }
 
-#[cfg(feature = "ews")]
+#[cfg(any(feature = "ews", feature = "imap"))]
 fn env(key: &str) -> String {
     std::env::var(key).unwrap_or_default()
 }
@@ -95,18 +101,14 @@ pub fn response_class(response: &str) -> Option<&'static str> {
 
 const RESPONSES: [&str; 2] = ["IPM.Schedule.Meeting.Resp.Pos", "IPM.Schedule.Meeting.Resp.Neg"];
 
-fn exchange() -> bool {
-    std::env::var("LUDIUS_MAIL_BACKEND").unwrap_or_else(|_| "grommunio".into()) == "exchange"
-}
-
 /// Whether this build and range read and deliver mail (a backend compiled in and selected); otherwise every read is unknown.
 pub fn available() -> bool {
-    cfg!(feature = "ews") && exchange()
+    backend().is_some()
 }
 
-/// Whether invites and responses can be checked (the Exchange backend only).
+/// Whether invites and responses can be checked (the Exchange backend only; IMAP has no calendar).
 pub fn calendar() -> bool {
-    cfg!(feature = "ews") && exchange()
+    cfg!(feature = "ews") && std::env::var("LUDIUS_MAIL_BACKEND").is_ok_and(|b| b == "exchange")
 }
 
 fn user_ok(user: &str) -> bool {
@@ -118,27 +120,27 @@ fn address(user: &str) -> String {
 }
 
 pub fn read_state(user: &str, message_id: u64, folder: &str) -> Option<bool> {
-    if !user_ok(user) || message_id == 0 || !exchange() {
-        // ponytail: the grommunio (Hyper-V) backend is not ported; it reads as unknown.
+    if !user_ok(user) || message_id == 0 {
         return None;
     }
-    ews::read_state(&address(user), message_id, folder)
+    (backend()?.read_state)(&address(user), message_id, folder)
 }
 
 pub fn placed(user: &str, msgid: &str, folder: &str) -> Option<(usize, usize)> {
-    if !user_ok(user) || msgid.is_empty() || !exchange() {
+    if !user_ok(user) || msgid.is_empty() {
         return None;
     }
-    let inbox = ews::msgids(&address(user), "inbox")?;
-    let there = ews::msgids(&address(user), folder)?;
+    let b = backend()?;
+    let inbox = (b.msgids)(&address(user), "inbox")?;
+    let there = (b.msgids)(&address(user), folder)?;
     Some((inbox.iter().filter(|m| *m == msgid).count(), there.iter().filter(|m| *m == msgid).count()))
 }
 
 fn query(user: &str, folder: &str, subject: Option<&str>, attachments: bool) -> Option<Vec<Message>> {
-    if !user_ok(user) || !exchange() {
+    if !user_ok(user) {
         return None;
     }
-    ews::query(&address(user), folder, subject, attachments)
+    (backend()?.query)(&address(user), folder, subject, attachments)
 }
 
 pub fn messages(user: &str, folder: &str, subject: &str, attachments: bool) -> Vec<Message> {
@@ -295,7 +297,7 @@ pub fn deliver(sender: &str, sender_name: &str, to: &str, to_name: &str, subject
     if have.iter().any(|m| m.msgid == msgid) {
         return true;
     }
-    exchange() && ews::send(&addrs[0], sender_name, &addrs[1], to_name, subject, body, msgid)
+    backend().is_some_and(|b| (b.send)(&addrs[0], sender_name, &addrs[1], to_name, subject, body, msgid))
 }
 
 #[cfg(test)]

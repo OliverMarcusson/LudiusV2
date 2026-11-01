@@ -49,6 +49,8 @@ chat = ["ludius-chat/mattermost"]
 intranet = ["dep:ludius-intranet"]
 # Mail backend (Exchange/EWS). Without it, mail and calendar checks read as unknown, mail.*/calendar.* templates fail plan load and planned mails are not delivered.
 mail = ["ludius-mail/ews"]
+# The IMAP/SMTP mail backend (LUDIUS_MAIL_BACKEND=imap): ranges without Exchange. Mail only, no calendar.
+mail-imap = ["ludius-mail/imap"]
 # SMB team shares (file.share checks with smbclient). Without it, share checks read as unknown and file.share templates fail plan load.
 share = ["dep:ludius-share"]
 # `ludius store`: mirror runs/ into PostgreSQL and screenshots into S3 (MinIO). Analysis only; nothing in a run depends on it.
