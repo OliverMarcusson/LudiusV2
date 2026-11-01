@@ -10,7 +10,9 @@
     imap_setup_ps: |
       $ErrorActionPreference = 'Stop'
       function Start-AsPersona($account, $arg) {
-        $a = New-ScheduledTaskAction -Execute 'C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE' -Argument $arg
+        $exe = @{ Execute = 'C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE' }
+        if ($arg) { $exe.Argument = $arg }
+        $a = New-ScheduledTaskAction @exe
         $p = New-ScheduledTaskPrincipal -UserId $account -LogonType Interactive -RunLevel Limited
         Register-ScheduledTask -TaskName LudiusOutlookSetup -Action $a -Principal $p -Force | Out-Null
         Start-ScheduledTask LudiusOutlookSetup
@@ -142,7 +144,7 @@
           param($account, $profiles)
           {{ imap_setup_ps }}
           Get-Process outlook -ErrorAction SilentlyContinue | Stop-Process -Force
-          Start-AsPersona $account ''
+          Start-AsPersona $account $null
         parameters:
           account: "{{ imap_account }}"
           profiles: "{{ imap_profiles }}"
