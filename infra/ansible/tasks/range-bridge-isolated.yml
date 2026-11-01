@@ -6,7 +6,7 @@
   ansible.builtin.shell: |
     set -euo pipefail
     # both drops in the leading run of DROP rules (the drops of another range bridge may sit there too)
-    lead() { $1 -t mangle -S FORWARD | sed 1d | awk '!/ -j DROP$/ {exit} {print}' | grep -cxE -e '-A FORWARD -(i|o) {{ range_bridge }} -j DROP' || true; }
+    lead() { $1 -t mangle -S FORWARD | sed 1d | awk '!/ -j DROP$/ {exit} {print}' | grep -xE -e '-A FORWARD -(i|o) {{ range_bridge }} -j DROP' | sort -u | wc -l; }
     for t in iptables ip6tables; do
       if [ "$(lead $t)" != 2 ]; then
         for d in -i -o; do while $t -t mangle -D FORWARD $d {{ range_bridge }} -j DROP 2>/dev/null; do :; done; done

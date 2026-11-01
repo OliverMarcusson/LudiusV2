@@ -77,6 +77,12 @@
     path: /etc/network/interfaces
     line: source /etc/network/interfaces.d/*
 
+- name: Bridge list is the host's (a range vars file such as ranges/imap-test.yml would drop the main bridge)
+  tags: [bridges]
+  ansible.builtin.assert:
+    that: range_bridge not in extra_range_bridges | map(attribute='bridge') and range_bridge != build_bridge
+    fail_msg: run proxmox-host.yml without a range vars file ({{ range_bridge }} is also in extra_range_bridges or the build bridge)
+
 - name: Range and build bridges
   tags: [bridges]
   ansible.builtin.template:
