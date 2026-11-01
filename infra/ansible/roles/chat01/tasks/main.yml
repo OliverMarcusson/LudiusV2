@@ -1,20 +1,10 @@
 ---
 - name: Packages
   ansible.builtin.apt:
-    name: [postgresql, nginx, libnginx-mod-http-auth-spnego, chrony, python3, curl]
+    name: [postgresql, nginx, chrony, python3, curl, openssl]
     update_cache: true
 
-- name: Kerberos realm for the keytab
-  ansible.builtin.copy:
-    dest: /etc/krb5.conf
-    mode: "0644"
-    content: |
-      [libdefaults]
-        default_realm = {{ domain | upper }}
-        dns_canonicalize_hostname = false
-        rdns = false
-
-- name: Clock follows dc01, stepping any offset (the range clock jumps)
+- name: Clock follows the range time source at srv01_ip, stepping any offset (the range clock jumps)
   ansible.builtin.copy:
     dest: /etc/chrony/chrony.conf
     mode: "0644"
@@ -153,12 +143,12 @@
     mode: "0644"
     content: |
       [Unit]
-      Description=Ludius chat SSO (Kerberos via nginx -> GitLab-style OAuth for Mattermost)
+      Description=Ludius chat SSO (client certificate via nginx -> GitLab-style OAuth for Mattermost)
 
       [Service]
       ExecStart=/usr/bin/python3 /usr/local/lib/chat-sso.py
-      Environment=REALM={{ domain | upper }} CLIENT_ID=ludius-chat USERS=/etc/ludius-chat/users.json
-      Environment=REDIRECT=http://{{ chat_host }}/signup/gitlab/complete
+      Environment=CLIENT_ID=ludius-chat USERS=/etc/ludius-chat/users.json
+      Environment=REDIRECT=https://{{ chat_host }}/signup/gitlab/complete
       LoadCredential=secret:/etc/ludius-chat/sso-secret
       DynamicUser=true
       Restart=always
@@ -179,14 +169,40 @@
   loop_control:
     label: "{{ item.name }}"
 
-- name: Keytab for the chat's HTTP principal (made on dc01)
-  ansible.builtin.copy:
-    src: "{{ chat_keytab }}"
-    dest: /etc/nginx/chat.keytab
-    owner: root
-    group: www-data
-    mode: "0640"
-  register: keytab
+- name: No Kerberos keytab left (sign-in is by client certificate)
+  ansible.builtin.file:
+    path: /etc/nginx/chat.keytab
+    state: absent
+
+- name: Chat CA, server certificate and one client certificate per person (made once, keys stay here)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077; mkdir -p /etc/ludius-chat/pki/clients; cd /etc/ludius-chat/pki
+    sign() { local f=$1; shift; openssl x509 -req -in "$f.csr" -CA ca.crt -CAkey ca.key -CAcreateserial -days 3650 -out "$f.crt" -extfile <(printf '%s\n' "$@" basicConstraints=CA:false); }
+    [ -f ca.crt ] || { openssl req -x509 -newkey rsa:3072 -nodes -keyout ca.key -out ca.crt -days 3650 -subj "/CN=Ludius chat CA" \
+      -addext basicConstraints=critical,CA:true -addext keyUsage=critical,keyCertSign,cRLSign; rm -f server.crt clients/*; echo changed; }
+    [ -f server.crt ] || { openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj "/CN={{ chat_host }}"
+      sign server subjectAltName=DNS:{{ chat_host }} extendedKeyUsage=serverAuth; echo changed; }
+    for u in {{ people | map(attribute='user') | join(' ') }}; do
+      [ -f "clients/$u.p12" ] && continue
+      openssl req -newkey rsa:2048 -nodes -keyout "clients/$u.key" -out "clients/$u.csr" -subj "/CN=$u"
+      sign "clients/$u" extendedKeyUsage=clientAuth
+      # 3DES/SHA1 so Windows 10's PFX import reads it
+      openssl pkcs12 -export -in "clients/$u.crt" -inkey "clients/$u.key" -out "clients/$u.p12" -passout pass: \
+        -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1
+      echo changed
+    done
+  args:
+    executable: /bin/bash
+  register: pki
+  changed_when: "'changed' in pki.stdout"
+
+- name: Chat CA and the personas' client certificates to the control node (personas trust and present them)
+  ansible.builtin.fetch:
+    src: /etc/ludius-chat/pki/{{ item }}
+    dest: "{{ chat_pki_dir }}/{{ item | basename }}"
+    flat: true
+  loop: "{{ ['ca.crt'] + range_personas | map(attribute='user') | map('regex_replace', '^', 'clients/') | map('regex_replace', '$', '.p12') | list }}"
 
 - name: Nginx site
   ansible.builtin.template:
@@ -197,7 +213,7 @@
 
 - name: Nginx config valid, reloaded on a change
   ansible.builtin.shell: nginx -t && systemctl reload-or-restart nginx
-  when: keytab is changed or site is changed
+  when: pki is changed or site is changed
   changed_when: true
 
 - name: Setup script
@@ -213,12 +229,16 @@
   register: setup
   changed_when: "'changed' in setup.stdout"
 
-- name: Checks (Mattermost through nginx, sign-in page offers only SSO, no password sign-in, Kerberos required)
+- name: Checks (Mattermost through nginx, sign-in page offers only SSO, no password sign-in, a client certificate required and accepted)
   ansible.builtin.shell: |
     set -euo pipefail
-    c=$(curl -s http://127.0.0.1/api/v4/config/client?format=old -H 'Host: {{ chat_host }}')
+    pki=/etc/ludius-chat/pki; at=(--resolve {{ chat_host }}:443:127.0.0.1 --cacert $pki/ca.crt)
+    c=$(curl -s "${at[@]}" 'https://{{ chat_host }}/api/v4/config/client?format=old')
     echo "$c" | python3 -c 'import json,sys; c=json.load(sys.stdin); sys.exit(not (c["EnableSignUpWithGitLab"] == "true" and c["EnableSignInWithEmail"] == "false" and c["EnableSignInWithUsername"] == "false"))'
-    test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/oauth/authorize -H 'Host: {{ chat_host }}')" = 401
+    test "$(curl -s -o /dev/null -w '%{http_code}' "${at[@]}" https://{{ chat_host }}/oauth/authorize)" = 401
+    # a valid certificate gets past nginx: the shim answers (403 without a client_id), not nginx's 401
+    u={{ people[0].user }}
+    test "$(curl -s -o /dev/null -w '%{http_code}' "${at[@]}" --cert $pki/clients/$u.crt --key $pki/clients/$u.key https://{{ chat_host }}/oauth/authorize)" = 403
     chronyc -n sources | grep -q '^\^\*'
   args:
     executable: /bin/bash

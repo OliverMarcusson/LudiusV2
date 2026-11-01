@@ -88,9 +88,9 @@
   ansible.builtin.import_playbook: range-exchange.yml
   when: mail_backend == 'exchange'
 
-- name: Range chat (chat01, needs dc01's keytab)
+- name: Range chat (chat01, its own CA; no AD or mail backend needed)
   ansible.builtin.import_playbook: range-chat.yml
-  when: mail_backend == 'exchange'
+  when: chat_enabled | bool
 
 - name: Persona clones
   hosts: localhost
@@ -131,6 +131,14 @@
         - name: Domain role
           ansible.builtin.include_role:
             name: domain
+
+        - name: Chat client (chat CA, the persona's certificate, Edge picks it)
+          when: chat_enabled | bool
+          ansible.builtin.include_role:
+            name: chat_client
+            apply:
+              tags: [chat]
+          tags: [chat]
 
         - name: Ux_noise role
           ansible.builtin.include_role:

@@ -3,18 +3,32 @@ map $http_upgrade $connection_upgrade {
     '' close;
 }
 
+# The client certificate's CN is the account (one certificate per person from chat01's own CA, no AD).
+map $ssl_client_s_dn $client_cn {
+    default "";
+    "~(^|,)CN=(?<cn>[a-z][a-z0-9._-]*)(,|$)" $cn;
+}
+
 server {
     listen 80 default_server;
     server_name {{ chat_host }};
+    return 301 https://{{ chat_host }}$request_uri;
+}
+
+server {
+    listen 443 ssl default_server;
+    server_name {{ chat_host }};
+    ssl_certificate /etc/ludius-chat/pki/server.crt;
+    ssl_certificate_key /etc/ludius-chat/pki/server.key;
+    ssl_client_certificate /etc/ludius-chat/pki/ca.crt;
+    ssl_verify_client optional;
     client_max_body_size 50M;
 
     location = /oauth/authorize {
-        auth_gss on;
-        auth_gss_realm {{ domain | upper }};
-        auth_gss_keytab /etc/nginx/chat.keytab;
-        auth_gss_service_name HTTP/{{ chat_host }};
-        auth_gss_allow_basic_fallback off;
-        proxy_set_header X-Remote-User $remote_user;
+        if ($ssl_client_verify != SUCCESS) {
+            return 401;
+        }
+        proxy_set_header X-Remote-User $client_cn;
         proxy_pass http://127.0.0.1:8070;
     }
 

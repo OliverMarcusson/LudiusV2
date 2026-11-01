@@ -53,16 +53,17 @@ grommunio_login_mailboxes: 5
 mail_backend: exchange  # exchange (dc01 + ex01), grommunio or imap (both: Debian srv01 with Samba AD)
 login_mailbox_cap: "{{ grommunio_login_mailboxes if mail_backend == 'grommunio' else 99 }}"
 range_servers: >-
-  {{ [[srv01_vmid | int, vm_prefix ~ 'srv01']] if mail_backend in ['grommunio', 'imap']
-     else [[srv01_vmid | int, 'ludius-dc01'], [ex01_vmid | int, 'ludius-ex01'], [chat01_vmid | int, 'ludius-chat01']] }}
+  {{ ([[srv01_vmid | int, vm_prefix ~ 'srv01']] if mail_backend in ['grommunio', 'imap']
+     else [[srv01_vmid | int, 'ludius-dc01'], [ex01_vmid | int, 'ludius-ex01']])
+     + ([[chat01_vmid | int, 'ludius-chat01']] if chat_enabled | bool else []) }}
 ex01_vmid: 111
 winsrv_eval_min_days: 14
 chat01_vmid: 112
 chat01_ip: "{{ range_net }}.13"
 chat01_build_mac: "BC:24:11:4C:55:13"
 chat_host: chat.{{ domain }}
-chat_svc_user: ludiuschat
-chat_keytab: "{{ playbook_dir }}/build/chat.keytab"
+chat_enabled: true  # chat add-on (chat01): sign-in by client certificate from chat01's CA, works on any mail backend
+chat_pki_dir: "{{ playbook_dir }}/build/chat"
 mattermost_url: https://releases.mattermost.com/10.11.25/mattermost-team-10.11.25-linux-amd64.tar.gz
 mattermost_sha256: 9ddd044a68c45dad8b18e21185c081f62f4a61b0fc2c9131c49f784c63420f8a
 winsrv_full_run: "{{ 'all' in ansible_run_tags }}"

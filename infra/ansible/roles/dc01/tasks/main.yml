@@ -172,10 +172,10 @@
     parameters:
       keep: "{{ intranet_pages.stdout | from_json | map(attribute='files') | flatten | unique }}"
 
-- name: Edge searches the range intranet and signs in to the chat, without SmartScreen (GPO)
+- name: Edge searches the range intranet, without SmartScreen (GPO)
   ansible.windows.win_powershell:
     script: |
-      param($url, $chat)
+      param($url)
       $Ansible.Changed = $false
       $name = 'Ludius Edge intranet'
       $key = 'HKLM\Software\Policies\Microsoft\Edge'
@@ -183,7 +183,7 @@
       $values = [ordered]@{
         DefaultSearchProviderEnabled = 1; DefaultSearchProviderName = 'Intranet'
         DefaultSearchProviderSearchURL = "$url/?q={searchTerms}"; NewTabPageLocation = "$url/"; HomepageLocation = "$url/"
-        AuthServerAllowlist = $chat; SmartScreenEnabled = 0
+        SmartScreenEnabled = 0
       }
       foreach ($n in $values.Keys) {
         $v = $values[$n]
@@ -201,58 +201,6 @@
       }
     parameters:
       url: "http://intranet.{{ domain }}"
-      chat: "{{ chat_host }}"
-
-- name: Chat keytab on the node
-  ansible.builtin.stat:
-    path: "{{ chat_keytab }}"
-  delegate_to: localhost
-  register: chat_keytab_node
-
-- name: Chat service account and keytab for HTTP/{{ chat_host }}
-  when: not chat_keytab_node.stat.exists
-  block:
-    - name: Account, AES tickets, ktpass
-      ansible.windows.win_powershell:
-        script: |
-          param($user, $spn, $realm, $out)
-          $ErrorActionPreference = 'Stop'
-          if (-not (Get-ADUser -Filter "SamAccountName -eq '$user'")) {
-            $b = New-Object byte[] 24; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)  # PowerShell 5.1
-            $pw = ConvertTo-SecureString ([Convert]::ToBase64String($b)) -AsPlainText -Force
-            New-ADUser -Name $user -SamAccountName $user -Description 'Ludius chat (Kerberos HTTP service)' `
-              -AccountPassword $pw -Enabled $true -PasswordNeverExpires $true -CannotChangePassword $true
-          }
-          Set-ADUser $user -Replace @{ 'msDS-SupportedEncryptionTypes' = 16 }  # AES256 only, the keytab's one key
-          $ErrorActionPreference = 'Continue'  # ktpass reports on stderr: under Stop, PowerShell 5.1 throws on its success line
-          $o = & ktpass -princ "$spn@$realm" -mapuser "$env:USERDOMAIN\$user" -mapOp set -crypto AES256-SHA1 `
-            -ptype KRB5_NT_PRINCIPAL +rndPass -out $out 2>&1
-          $ErrorActionPreference = 'Stop'
-          if ($LASTEXITCODE -ne 0) { throw "ktpass: $($o -join ' ')" }
-          if ((setspn -L $user | Out-String) -notmatch [regex]::Escape($spn)) { throw "$spn not on $user" }
-        parameters:
-          user: "{{ chat_svc_user }}"
-          spn: HTTP/{{ chat_host }}
-          realm: "{{ domain | upper }}"
-          out: C:\Windows\Temp\chat.keytab
-
-    - name: Keytab to the node (0600)
-      ansible.builtin.fetch:
-        src: C:\Windows\Temp\chat.keytab
-        dest: "{{ chat_keytab }}"
-        flat: true
-
-    - name: Keytab file mode on the node
-      ansible.builtin.file:
-        path: "{{ chat_keytab }}"
-        mode: "0600"
-      delegate_to: localhost
-
-  always:
-    - name: No keytab left on dc01
-      ansible.windows.win_file:
-        path: C:\Windows\Temp\chat.keytab
-        state: absent
 
 - name: Checks (SRV records, Kerberos KDC, time service, no forwarder, intranet answers)
   ansible.windows.win_powershell:

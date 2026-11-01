@@ -9,7 +9,6 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-REALM = os.environ["REALM"]
 CLIENT_ID = os.environ["CLIENT_ID"]
 REDIRECT = os.environ["REDIRECT"]
 SECRET = (Path(os.environ["CREDENTIALS_DIRECTORY"]) / "secret").read_text().strip()
@@ -39,9 +38,8 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlsplit(self.path)
         if url.path == "/oauth/authorize":
             q = dict(urllib.parse.parse_qsl(url.query))
-            name, _, realm = self.headers.get("X-Remote-User", "").partition("@")
-            user = name.lower()
-            if q.get("client_id") != CLIENT_ID or (realm and realm.upper() != REALM) or user not in USERS:
+            user = self.headers.get("X-Remote-User", "").lower()
+            if q.get("client_id") != CLIENT_ID or user not in USERS:
                 return self.send(403, {"error": "access_denied"})
             code = secrets.token_urlsafe(32)
             codes[code] = (user, time.monotonic())

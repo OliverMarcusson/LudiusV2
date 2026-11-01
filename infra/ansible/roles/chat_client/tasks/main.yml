@@ -1,0 +1,46 @@
+---
+# Chat sign-in without AD: the persona trusts chat01's CA, holds its own client certificate (CN = account) and Edge
+# presents it to the chat without asking. The chat's name comes from the hosts file, not the range DNS.
+- name: Chat CA and the persona's certificate on the clone
+  ansible.windows.win_copy:
+    src: "{{ chat_pki_dir }}/{{ item }}"
+    dest: C:\Windows\Temp\{{ item }}
+  loop: [ca.crt, "{{ persona }}.p12"]
+
+- name: Trust the chat CA
+  ansible.windows.win_certificate_store:
+    path: C:\Windows\Temp\ca.crt
+    store_location: LocalMachine
+    store_name: Root
+
+- name: The persona's client certificate in its own store (Edge reads CurrentUser\My)
+  ansible.windows.win_certificate_store:
+    path: C:\Windows\Temp\{{ persona }}.p12
+    store_location: CurrentUser
+    store_name: My
+    key_storage: user
+    key_exportable: false
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: "{{ domain_netbios }}\\{{ persona }}"
+  vars:
+    ansible_become_password: "{{ persona }}{{ user_password_suffix }}"
+  no_log: true
+
+- name: No certificate key left in Temp
+  ansible.windows.win_file:
+    path: C:\Windows\Temp\{{ persona }}.p12
+    state: absent
+
+- name: Chat name in the hosts file
+  community.windows.win_hosts:
+    canonical_name: "{{ chat_host }}"
+    ip_address: "{{ chat01_ip }}"
+    state: present
+
+- name: Edge presents the chat certificate without asking (local policy)
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Policies\Microsoft\Edge\AutoSelectCertificateForUrls
+    name: "1"
+    data: '{"pattern":"https://{{ chat_host }}","filter":{"ISSUER":{"CN":"Ludius chat CA"}}}'
+    type: string

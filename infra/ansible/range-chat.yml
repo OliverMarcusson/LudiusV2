@@ -8,13 +8,6 @@
     chat01_image: /var/lib/vz/template/ludius/debian-13-genericcloud-amd64.qcow2
     chat01_user_data: ludius-chat01-user.yaml
   tasks:
-    - name: Exchange range, and dc01's keytab for the chat (roles/dc01)
-      ansible.builtin.assert:
-        that:
-          - mail_backend == 'exchange'
-          - chat_keytab is file
-        fail_msg: range chat needs mail_backend exchange and {{ chat_keytab }} (run range-exchange.yml --tags dc01 first)
-
     - name: Node and VMs (range-up.yml already read them; alone, read here)
       when: pve_vms is not defined
       block:
@@ -120,7 +113,7 @@
         ansible_ssh_private_key_file: "{{ chat01_key }}"
         ansible_ssh_common_args: -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/ludius_known_hosts
 
-- name: Chat01 (Mattermost, Kerberos sign-in), uplink only while provisioning
+- name: Chat01 (Mattermost, client certificate sign-in), uplink only while provisioning
   hosts: localhost:chat01
   gather_facts: false
   tasks:

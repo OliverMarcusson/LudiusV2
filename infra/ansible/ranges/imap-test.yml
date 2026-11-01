@@ -11,4 +11,5 @@ range_personas:
   - { user: aberg, vmid: 131, ip: 10.79.0.21 }
 range_tls_ca: "{{ playbook_dir }}/build/imap-test/range-ca.crt"
 imap_password_file: /root/.ludius-imap-test
+chat_enabled: false  # chat01 is the main range's
 office_kms_host: ""  # the KMS emulator listens on the main range only
