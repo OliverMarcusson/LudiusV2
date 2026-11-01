@@ -8,7 +8,7 @@ How to run a multi-day test on the Proxmox range and leave it clean afterwards. 
 | What | Where |
 | --- | --- |
 | Host | `ssh root@95.216.39.232` (Proxmox) |
-| Code the range runs | `/root/src/LudiusV2.new`: a plain copy, **not a git repo**. `/root/src/LudiusV2` is older; don't use it |
+| Code the range runs | `/root/src/LudiusV2.new`: a plain copy, **not a git repo**. `/root/range-up.sh` runs the Ansible playbooks from it (collections in `infra/ansible/collections`, `vault.yml` linked to `/root/ludius-secrets`) |
 | Controller | `/root/src/LudiusV2.new/ludius-rs` (the Rust `ludius` binary; run it from `/root/src/LudiusV2.new`, it reads `.env` there and `data/`, `runs/` under it) |
 | Secrets | `/root/src/LudiusV2.new/.env`. Source it, never print it |
 | Run output | `/root/src/LudiusV2.new/runs` (counter, plans, days, range journals) |
