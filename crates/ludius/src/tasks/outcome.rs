@@ -217,7 +217,7 @@ pub fn file_baseline(task: &mut Task, policy: &crate::policy::Policy) -> Result<
         let (rel, dest) = (task.fmt(&c.path)?, task.fmt(c.share.as_deref().unwrap_or(""))?);
         let copy = share::unc(&dest, &leaf(&rel));
         if file_reserved(&owner, &rel, policy) || copy.is_empty() || policy.path_reserved(&copy) {
-            let shown = if copy.is_empty() { "(LUDIUS_SHARE_HOST unset)".to_string() } else { copy };
+            let shown = if copy.is_empty() { "(no share add-on or LUDIUS_SHARE_HOST unset)".to_string() } else { copy };
             return Ok(Some(format!("{rel} or its copy {shown}: scenario-reserved or unknown")));
         }
         let (f, s) = (guestfile::read(&owner, &rel), share::read(&dest, &leaf(&rel)));

@@ -5,6 +5,7 @@ fn setup() -> std::path::PathBuf {
     // SAFETY: tests only read LUDIUS_DATA and LUDIUS_APPS, always set to the same values.
     unsafe {
         std::env::set_var("LUDIUS_DATA", Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"));
+        std::env::set_var("LUDIUS_MAIL_BACKEND", "exchange");
         std::env::set_var("LUDIUS_APPS", "edge,excel,explorer,notepad,outlook,paint,powerpoint,powershell,wordpad");
     }
     let dir = std::env::temp_dir().join(format!("ludius-planner-{}-{:?}", std::process::id(), std::thread::current().id()));
@@ -202,6 +203,17 @@ fn validate_rejects_collisions_and_repeats() {
 }
 
 #[test]
+fn addons_gate_their_templates() {
+    setup();
+    assert_eq!(super::missing_addon("file.share").is_none(), cfg!(feature = "share"));
+    assert_eq!(super::missing_addon("chat.dm").is_none(), cfg!(feature = "chat"));
+    assert_eq!(super::missing_addon("mail.send").is_none(), cfg!(feature = "mail"));
+    assert_eq!(super::missing_addon("calendar.invite").is_none(), cfg!(feature = "mail"));
+    assert_eq!(super::missing_addon("file.edit"), None);
+}
+
+#[test]
+#[cfg(feature = "mail")]
 fn validate_rejects_opening_a_mail_filed_earlier() {
     setup();
     let ctx = Context { templates: templates().unwrap(), colleagues: ["bek".to_string()].into(), inbox: [("bek".to_string(), "Lead times".to_string())].into(), ..Default::default() };

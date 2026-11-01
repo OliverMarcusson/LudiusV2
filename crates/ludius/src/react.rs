@@ -564,5 +564,5 @@ impl React for Reactor<'_> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "chat"))] // the reactor offers chat templates only with the chat add-on
 mod tests;

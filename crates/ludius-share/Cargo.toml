@@ -1,0 +1,8 @@
+[package]
+name = "ludius-share"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rand = "0.10.3"

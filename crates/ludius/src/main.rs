@@ -203,6 +203,7 @@ fn main() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
+    #[cfg(feature = "intranet")]
     if args.first().is_some_and(|a| a == "intranet") {
         let [_, check, rest @ ..] = args.as_slice() else { bail!(USAGE) };
         if check != "check" || rest.len() > 1 {

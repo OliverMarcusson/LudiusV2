@@ -1535,6 +1535,7 @@ dependencies = [
  "ludius-intranet",
  "ludius-mail",
  "ludius-proto",
+ "ludius-share",
  "percent-encoding",
  "postgres",
  "rand 0.10.3",
@@ -1643,6 +1644,13 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+]
+
+[[package]]
+name = "ludius-share"
+version = "0.1.0"
+dependencies = [
+ "rand 0.10.3",
 ]
 
 [[package]]

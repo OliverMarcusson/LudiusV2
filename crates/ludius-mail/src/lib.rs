@@ -99,6 +99,16 @@ fn exchange() -> bool {
     std::env::var("LUDIUS_MAIL_BACKEND").unwrap_or_else(|_| "grommunio".into()) == "exchange"
 }
 
+/// Whether this build and range read and deliver mail (a backend compiled in and selected); otherwise every read is unknown.
+pub fn available() -> bool {
+    cfg!(feature = "ews") && exchange()
+}
+
+/// Whether invites and responses can be checked (the Exchange backend only).
+pub fn calendar() -> bool {
+    cfg!(feature = "ews") && exchange()
+}
+
 fn user_ok(user: &str) -> bool {
     !user.is_empty() && user.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }

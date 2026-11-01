@@ -146,13 +146,14 @@ pub fn installed(app: &str) -> bool {
 }
 
 /// The templates this persona may be planned: lookalikes only from their risk profile, installed apps,
-/// fallbacks only when the main app is missing, and every `$VAR` default set.
+/// fallbacks only when the main app is missing, the add-ons their checks need, and every `$VAR` default set.
 pub fn role_templates(templates: &BTreeMap<String, Template>, persona: &Persona) -> BTreeMap<String, Template> {
     templates
         .iter()
         .filter(|(k, t)| {
             (t.resembles.is_empty() || persona.risk_profile.contains(k))
                 && !REACTION_ONLY.contains(&t.cap())
+                && super::missing_addon(t.cap()).is_none()
                 && installed(&t.app)
                 && !(!t.fallback_for.is_empty() && installed(&t.fallback_for))
                 && t.defaults.values().filter_map(|v| v.strip_prefix('$')).all(|v| std::env::var(v).is_ok_and(|x| !x.is_empty()))

@@ -73,6 +73,9 @@ pub fn item_problem(it: &PlanItem, templates: &BTreeMap<String, Template>, polic
         Err(e) => return Ok(Some(e.to_string())),
     };
     let cap = t.cap();
+    if let Some(need) = super::missing_addon(cap) {
+        return Ok(Some(format!("{} needs {need}, which this range does not have", it.template)));
+    }
     let get = |k: &str| task.values.get(k).cloned().unwrap_or_default();
     if REACTION_ONLY.contains(&cap) {
         return Ok(Some(format!("{} is read by chat reactions only (their outcome check is the server's read marker)", it.template)));

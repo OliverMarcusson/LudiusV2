@@ -33,6 +33,19 @@ pub const MEETING_MINUTES: (i64, i64) = (15, 120);
 pub const MEETING_DAYS_AHEAD: i64 = 14;
 /// Read only when a chat message really came in: a planned read scripts a message nobody sent.
 pub const REACTION_ONLY: [&str; 2] = ["chat.read_channel", "chat.read"];
+/// The add-on a capability needs that this build or range lacks (chat.*, mail.*, calendar.*, file.share), if any.
+/// Such templates are never offered and fail plan load: their outcome checks could only read unknown.
+pub fn missing_addon(cap: &str) -> Option<&'static str> {
+    let (need, ok) = match cap.split('.').next().unwrap_or("") {
+        _ if cap == "file.share" => ("the share add-on (feature share)", cfg!(feature = "share")),
+        "chat" => ("the chat add-on (feature chat)", cfg!(feature = "chat")),
+        "mail" => ("a mail backend (feature mail, LUDIUS_MAIL_BACKEND)", crate::mail::available()),
+        "calendar" => ("a calendar backend (Exchange: feature mail, LUDIUS_MAIL_BACKEND=exchange)", crate::mail::calendar()),
+        _ => return None,
+    };
+    (!ok).then_some(need)
+}
+
 pub(crate) fn re(pattern: &str) -> &'static Regex {
     static CACHE: OnceLock<std::sync::Mutex<BTreeMap<String, &'static Regex>>> = OnceLock::new();
     let mut m = CACHE.get_or_init(Default::default).lock().unwrap();
