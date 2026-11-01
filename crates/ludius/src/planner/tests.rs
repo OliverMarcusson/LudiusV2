@@ -7,6 +7,7 @@ fn setup() -> std::path::PathBuf {
         std::env::set_var("LUDIUS_DATA", Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"));
         std::env::set_var("LUDIUS_MAIL_BACKEND", "exchange");
         std::env::set_var("LUDIUS_APPS", "edge,excel,explorer,notepad,outlook,paint,powerpoint,powershell,wordpad");
+        std::env::set_var("LUDIUS_SCENARIO", "none");
     }
     let dir = std::env::temp_dir().join(format!("ludius-planner-{}-{:?}", std::process::id(), std::thread::current().id()));
     let _ = std::fs::remove_dir_all(&dir);

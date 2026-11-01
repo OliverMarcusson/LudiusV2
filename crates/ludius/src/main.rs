@@ -257,7 +257,7 @@ fn main() -> Result<()> {
         }
         // ponytail: --record (fixture capture) is not ported; nothing reads fixtures/ any more.
         let res = HostAgent::new(&agent_addr, &vm)?.observe(true, 0, 0)?;
-        let s = res.snapshot.unwrap_or_default();
+        let s = res.snapshot.context("observer answered without a snapshot")?;
         println!("settled={} {}ms locked={} elements={} ui_access={}", s.settled, s.settle_ms, s.locked, s.elements.len(), res.hello.is_some_and(|h| h.ui_access));
         for w in &s.windows {
             println!("  window {} {} {:?}", w.kind().as_str_name().to_lowercase(), w.process_name, w.title);

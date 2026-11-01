@@ -240,7 +240,15 @@ fn failures(log: &Path) -> String {
 }
 
 pub fn summary(world: &World, users: &[String], day: NaiveDate, state_dir: &Path, env: &dyn Fn(&str) -> String) -> String {
-    let state: Value = std::fs::read_to_string(state_dir.join("state.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(json!({}));
+    // missing is no supervisor yet; unreadable is unknown, not "plan down"
+    let state: Option<Value> = match std::fs::read_to_string(state_dir.join("state.json")) {
+        Ok(s) => serde_json::from_str(&s).ok(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(json!({})),
+        Err(_) => None,
+    };
+    let Some(state) = state else {
+        return format!("range {day}  supervisor state unreadable ({})", state_dir.join("state.json").display());
+    };
     let workers = &state["workers"];
     let caps = CAPS[2..].iter().map(|k| Some(env(k)).filter(|v| !v.is_empty()).unwrap_or("-".into())).collect::<Vec<_>>().join("/");
     let pid = |w: &Value| w["pid"].as_u64().filter(|p| *p != 0);

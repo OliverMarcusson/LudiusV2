@@ -5,7 +5,7 @@ use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -122,12 +122,17 @@ impl Tracker {
     }
 
     pub fn step(&mut self) -> Result<Vec<Interaction>> {
-        let seen = self.seen.get_or_insert_with(|| {
-            self.recent = std::fs::read_to_string(&self.out).unwrap_or_default().lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
-            let ids = self.recent.iter().map(|i| i.id.clone()).collect();
+        if self.seen.is_none() {
+            // missing is a first run; unreadable must not read as empty, or every interaction is appended again
+            let text = match std::fs::read_to_string(&self.out) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                r => r.with_context(|| self.out.display().to_string())?,
+            };
+            self.recent = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+            self.seen = Some(self.recent.iter().map(|i| i.id.clone()).collect());
             self.recent = self.recent.split_off(self.recent.len().saturating_sub(20));
-            ids
-        });
+        }
+        let seen = self.seen.as_mut().unwrap();
         let users: HashSet<String> = self.personas.iter().cloned().collect();
         let sent = sent_requests(&self.requests_dir);
         let mut found = vec![];

@@ -187,7 +187,9 @@ mod win {
                 Ok(Err(e)) => A::Error(e),
                 Err(p) => A::Error(format!("panic: {}", p.downcast_ref::<&str>().copied().or(p.downcast_ref::<String>().map(String::as_str)).unwrap_or("?"))),
             };
-            watchdog::end(!matches!(body, A::Error(_)));
+            // A request this build doesn't know (empty body: a newer host) is answered with an error but is not a
+            // failed read, so it doesn't count toward the watchdog's restart.
+            watchdog::end(!matches!(body, A::Error(_)) || req.body.is_none());
             ObserverResponse { id: req.id, body: Some(body) }
         }
 

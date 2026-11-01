@@ -181,19 +181,20 @@ pub fn info(vm: i32, ac: i64) -> Option<Box<ContextInfo>> {
     unsafe { (a.context_info)(vm, ac, &mut *info) }.as_bool().then_some(info)
 }
 
-pub fn children(vm: i32, ac: i64, count: i32, visible_only: bool) -> Vec<i64> {
-    let Some(a) = API.get() else { return vec![] };
+/// The children of a context; None when the bridge could not list them (unknown, not childless).
+pub fn children(vm: i32, ac: i64, count: i32, visible_only: bool) -> Option<Vec<i64>> {
+    let a = API.get()?;
     if count <= 0 {
-        return vec![];
+        return Some(vec![]);
     }
     if !visible_only && count as usize <= MAX_VISIBLE_CHILDREN {
-        return (0..count).map(|i| unsafe { (a.child_at)(vm, ac, i) }).filter(|&c| c != 0).collect();
+        return Some((0..count).map(|i| unsafe { (a.child_at)(vm, ac, i) }).filter(|&c| c != 0).collect());
     }
     let mut v: Box<VisibleChildren> = unsafe { Box::new_zeroed().assume_init() };
     if !unsafe { (a.visible_children)(vm, ac, 0, &mut *v) }.as_bool() {
-        return vec![];
+        return None;
     }
-    v.children[..(v.count.max(0) as usize).min(MAX_VISIBLE_CHILDREN)].to_vec()
+    Some(v.children[..(v.count.max(0) as usize).min(MAX_VISIBLE_CHILDREN)].to_vec())
 }
 
 pub fn text_length(vm: i32, ac: i64) -> i32 {

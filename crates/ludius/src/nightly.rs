@@ -302,6 +302,8 @@ pub fn check_existing(world: &World, persona: &Persona, date: NaiveDate, src: &S
     let state = world_state::build(world, &n.events, &src.personas, date)?;
     let people = n.people_names();
     let inbox_mails = (src.inbox)(user);
+    // an unreadable Inbox is not an empty one: retry later instead of a final PlanConflict on hints it could not see
+    anyhow::ensure!(inbox_mails.is_some() || !mail::available(), "{user}: Inbox unreadable, the plan on disk is not checked");
     let inbox: BTreeSet<(String, String)> = reply::hints(inbox_mails.as_deref(), user, &people, &src.policy, "IPM.Note", Some(day_ms(date))).into_iter().collect();
     let invites = reply::hints(inbox_mails.as_deref(), user, &people, &src.policy, mail::MEETING_REQUEST, None).into_iter().collect();
     // a thread whose mail left the recent Inbox can no longer be answered; an unreadable Inbox keeps them all

@@ -317,7 +317,8 @@ impl Done {
         if let Some(f) = &self.file {
             f.validate()?;
         }
-        if self.ask.is_some() {
+        if let Some(q) = &self.ask {
+            ensure!(!q.trim().is_empty(), "done.ask: a question, or leave it out");
             ensure!(Done { ask: None, ..self.clone() } == Done::default(), "done.ask stands alone: the Decider's answer is the whole check");
         }
         Ok(())
@@ -404,6 +405,7 @@ impl Subgoal {
     pub fn validate(&self) -> Result<()> {
         ensure!(self.search.chars().count() <= 40 && self.search.chars().all(|c| (' '..='~').contains(&c)), "search {:?}: printable ASCII, at most 40", self.search);
         ensure!(self.keys.len() <= 16, "at most 16 keys");
+        ensure!(self.confirm.as_deref().is_none_or(|c| !c.trim().is_empty()), "confirm: a question, or leave it out");
         ensure!(matches!(self.caret.as_str(), "end" | "start" | "append"), "caret {:?}", self.caret);
         ensure!(
             !(self.text.as_deref().is_some_and(|t| !t.is_empty()) && !self.search.is_empty()),

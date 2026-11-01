@@ -202,6 +202,8 @@ struct Ctx<'a> {
     found: Vec<Raw>,
     keys: HashSet<String>,
     sparse_document: bool,
+    /// some of the tree could not be read: the window is reported incomplete, never as all there is
+    incomplete: bool,
 }
 
 impl Snapshotter {
@@ -312,7 +314,7 @@ impl Snapshotter {
                 return self.read_java(h, w, index, keys);
             }
             // A retry starts from the same keys, so its elements keep the keys the first pass would have given.
-            let mut cx = Ctx { w, index, found: vec![], keys: keys.clone(), sparse_document: false };
+            let mut cx = Ctx { w, index, found: vec![], keys: keys.clone(), sparse_document: false, incomplete: false };
             let r = unsafe { self.uia.ElementFromHandle(h).and_then(|e| e.BuildUpdatedCache(&self.cache)) }.and_then(|root| {
                 let framework = s(&root, UIA_FrameworkIdPropertyId);
                 let clip = R { x: cx.w.bounds.unwrap_or_default().x, ..rect_of(cx.w) };
@@ -459,17 +461,24 @@ impl Snapshotter {
 
     fn read_java(&mut self, h: HWND, w: &mut Window, index: u32, keys: &mut HashSet<String>) -> Vec<Raw> {
         w.framework_id = "Java".into();
-        let Some((vm, root)) = java::root(h) else { return vec![] };
-        let mut cx = Ctx { w, index, found: vec![], keys: std::mem::take(keys), sparse_document: false };
+        let Some((vm, root)) = java::root(h) else {
+            w.incomplete = true;
+            return vec![];
+        };
+        let mut cx = Ctx { w, index, found: vec![], keys: std::mem::take(keys), sparse_document: false, incomplete: false };
         let mut budget = 3000;
-        if let Some(info) = java::info(vm, root) {
-            let kids = java::children(vm, root, info.children_count, false);
-            let clip = rect_of(cx.w);
-            self.walk_java(vm, kids, "", "", clip, &mut cx, &mut budget);
+        match java::info(vm, root).and_then(|info| java::children(vm, root, info.children_count, false)) {
+            Some(kids) => {
+                let clip = rect_of(cx.w);
+                self.walk_java(vm, kids, "", "", clip, &mut cx, &mut budget);
+            }
+            None => cx.incomplete = true,
         }
         java::release(vm, root);
+        let (found, incomplete) = (cx.found, cx.incomplete || budget < 0);
         *keys = cx.keys;
-        cx.found
+        w.incomplete = incomplete;
+        found
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -500,7 +509,14 @@ impl Snapshotter {
             role = Some("list item");
         }
         let list_like = matches!(role, Some("list" | "table" | "tree"));
-        let grand = if role_en == "scroll bar" { vec![] } else { java::children(vm, c, info.children_count, list_like) };
+        let grand = if role_en == "scroll bar" {
+            vec![]
+        } else {
+            java::children(vm, c, info.children_count, list_like).unwrap_or_else(|| {
+                cx.incomplete = true;
+                vec![]
+            })
+        };
         if let Some(role) = role {
             let mut raw = self.describe_java(vm, c, &info, role, &states, path, bounds, last_text, sibling, cx);
             if list_like && !grand.is_empty() && (grand.len() as i32) < info.children_count {

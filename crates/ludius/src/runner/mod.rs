@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 use ludius_proto::v1::{Element, Snapshot};
 use rand::rngs::StdRng;
 use rand::{RngExt as _, SeedableRng};
@@ -104,7 +104,7 @@ impl Agent for HostAgent {
         HostAgent::ctrl_alt_del(self)
     }
     fn observe(&self, wait_settle: bool, quiet_ms: u32, timeout_ms: u32) -> Result<Snapshot> {
-        Ok(HostAgent::observe(self, wait_settle, quiet_ms, timeout_ms)?.snapshot.unwrap_or_default())
+        HostAgent::observe(self, wait_settle, quiet_ms, timeout_ms)?.snapshot.context("observer answered without a snapshot")
     }
     fn screenshot(&self) -> Result<Vec<u8>> {
         HostAgent::screenshot(self)

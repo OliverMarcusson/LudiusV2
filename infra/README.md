@@ -66,9 +66,10 @@ Measured on the rented box: Windows install to WinRM ~8 min, updates ~30 min (on
 
 ### Controller settings (Exchange backend)
 
-In the repo's `.env` on the node (gitignored):
+In the repo's `.env` on the node (gitignored). Every backend also needs `LUDIUS_SCENARIO`: the scenario file whose reserved paths, mailboxes and pages the personas keep off, or `none` for a range without a scenario. Unset, the controller refuses to start rather than reserve nothing.
 
 ```sh
+LUDIUS_SCENARIO=none                                     # or the scenario file
 LUDIUS_MAIL_BACKEND=exchange
 LUDIUS_EWS_URL=https://10.77.0.12/EWS/Exchange.asmx      # by address: the node has no range DNS; the certificate covers it
 LUDIUS_EWS_USER=ludiussvc@corp.ludius.test

@@ -15,7 +15,7 @@ const FILENAME_ROWS: usize = 6;
 const FILENAME_TEXT: usize = 80;
 
 pub fn image_reason(why: Option<&'static str>, snap: &Snapshot, forced: bool) -> Option<&'static str> {
-    let unreadable = foreground(snap).is_some_and(|w| w.no_tree || w.elevated_unreadable || w.unresponsive || pixels_window(w));
+    let unreadable = foreground(snap).is_some_and(|w| w.no_tree || w.elevated_unreadable || w.unresponsive || w.incomplete || pixels_window(w));
     why.or(if unreadable { Some("unreadable") } else if forced { Some("forced") } else { None })
 }
 

@@ -130,9 +130,11 @@ impl Policy {
     }
 
     pub fn from_env() -> Result<Self> {
-        match std::env::var("LUDIUS_SCENARIO").ok().filter(|p| !p.is_empty()) {
-            Some(p) => Self::load(Path::new(&p)),
-            None => Ok(Self::default()),
+        // fail closed: an unset scenario would silently reserve nothing; `none` says so on purpose
+        match std::env::var("LUDIUS_SCENARIO").ok().filter(|p| !p.is_empty()).as_deref() {
+            Some("none") => Ok(Self::default()),
+            Some(p) => Self::load(Path::new(p)),
+            None => anyhow::bail!("LUDIUS_SCENARIO is not set: the scenario file, or `none` for a range without a scenario"),
         }
     }
 

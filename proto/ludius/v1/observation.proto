@@ -54,6 +54,8 @@ message Window {
   bool unresponsive = 10;
   bool elevated_unreadable = 11;
   bool no_tree = 12;
+  // Only part of the tree was read (a child list failed, or the walk hit its node budget): what is missing is unknown, not absent.
+  bool incomplete = 13;
 }
 
 message Snapshot {
