@@ -1,4 +1,4 @@
-//! Chat reactions (port of react.py): before each slot the persona reads new chat posts and does what a coworker
+//! Chat and mail reactions (react/mail.rs). Chat (port of react.py): before each slot the persona reads new chat posts and does what a coworker
 //! would (a catalog task, a reply, at most one bit of passed-on news). Unreadable chat is unknown: no reaction.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -142,6 +142,8 @@ pub struct Reactor<'r> {
     pub talk: Talk<'r>,
     pub decider: Option<Ask<'r>>,
     pub taken: Vec<String>,
+    /// The range has the chat add-on (LUDIUS_CHAT_HOST); mail reactions follow the mail backend.
+    pub chat: bool,
 }
 
 impl<'r> Reactor<'r> {
@@ -158,6 +160,7 @@ impl<'r> Reactor<'r> {
             talk: Box::new(chat::conversation),
             decider: None,
             taken: vec![],
+            chat: cfg!(feature = "chat") && std::env::var("LUDIUS_CHAT_HOST").is_ok_and(|h| !h.is_empty()),
         }
     }
 
@@ -560,9 +563,18 @@ name), params (object with every listed parameter as a string), context (one sen
 
 impl React for Reactor<'_> {
     fn react(&mut self, day: &str, at: &str, run: &mut dyn FnMut(&PlanItem) -> Result<String>) -> Result<()> {
-        self.react_once(day, at, run)
+        // each part runs only on a range that has its backend; neither depends on the other
+        if self.chat {
+            self.react_once(day, at, run)?;
+        }
+        if crate::mail::available() {
+            self.react_mail(day, at, run)?;
+        }
+        Ok(())
     }
 }
+
+mod mail;
 
 #[cfg(all(test, feature = "chat"))] // the reactor offers chat templates only with the chat add-on
 mod tests;

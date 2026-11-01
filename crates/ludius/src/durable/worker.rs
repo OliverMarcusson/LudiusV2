@@ -187,7 +187,7 @@ fn day_thread(cfg: &Config, inp: &DayInput, ready: &mpsc::Sender<Result<()>>, jo
         let llm = |model_var: &str| LlmClient::new(&cfg.key, Some(std::env::var(model_var).as_deref().unwrap_or(DEFAULT_MODEL)));
         let planner = |on: bool| if on && !cfg.key.is_empty() { llm("LUDIUS_PLANNER_MODEL").map(Some) } else { Ok(None) };
         let planner = (planner(env("LUDIUS_ASSIST") != "0")?, planner(true)?);
-        let react = if cfg.key.is_empty() || env("LUDIUS_CHAT_HOST").is_empty() { None } else { Some((llm("LUDIUS_REACT_MODEL")?, DecisionsClient::new(&cfg.key, None, None)?)) };
+        let react = if cfg.key.is_empty() || (env("LUDIUS_CHAT_HOST").is_empty() && !crate::mail::available()) { None } else { Some((llm("LUDIUS_REACT_MODEL")?, DecisionsClient::new(&cfg.key, None, None)?)) };
         let digest = Sha256::digest(format!("{}/{user}/{}", cfg.vm, inp.plan.date));
         Ok((decider, log, planner, react, u32::from_be_bytes(digest[..4].try_into()?) as u64, crate::planner::templates()?, crate::policy::Policy::from_env()?))
     })();

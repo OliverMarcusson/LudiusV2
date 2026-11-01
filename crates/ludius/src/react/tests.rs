@@ -72,6 +72,7 @@ fn reactor<'r>(who: (&str, &str), narrative: PathBuf, log: &'r GroundTruth, llm:
         talk: Box::new(|_, _| None),
         decider: None,
         taken: vec![],
+        chat: true,
     }
 }
 
