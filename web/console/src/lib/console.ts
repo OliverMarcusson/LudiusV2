@@ -114,11 +114,22 @@ export interface RunStatus {
   plans?: number
   error?: string
   personas?: { user: string; status: "waiting" | "running" | "done" | "failed"; items: number; done: number }[]
+  ops?: RangeOps | null
+}
+export type OpStatus = "running" | "ok" | "failed"
+/** The last infra/box/range-ops.sh run: pre-flight before a warp, or rollback after it. */
+export interface RangeOps {
+  kind: "preflight" | "rollback"
+  at: number | null
+  status: OpStatus
+  summary: string
+  steps: { step: string; status: OpStatus; detail: string }[]
 }
 const PHASES = ["none", "planning", "preparing", "running", "finished", "stopped", "failed"]
 function parseRun(value: unknown): RunStatus {
   const r = object(value)
-  if (typeof r.phase !== "string" || !PHASES.includes(r.phase) || (r.personas !== undefined && !Array.isArray(r.personas)))
+  if (typeof r.phase !== "string" || !PHASES.includes(r.phase) || (r.personas !== undefined && !Array.isArray(r.personas)) ||
+    (r.ops != null && !Array.isArray(object(r.ops).steps)))
     throw new Error("Malformed run status")
   return r as unknown as RunStatus
 }

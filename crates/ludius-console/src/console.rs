@@ -343,11 +343,35 @@ fn parse_time(s: &str) -> Option<DateTime<FixedOffset>> {
         .map(|t| t.fixed_offset())
 }
 
-/// The warp journal: phase, day, the range clock now, and per-persona progress.
+/// The last `infra/box/range-ops.sh` run (pre-flight or rollback): each step's latest status, in order.
+fn ops(runs: &FsPath) -> Rd<Value> {
+    let Some(log) = lines(&runs.join("ops.jsonl"))? else { return Ok(Value::Null) };
+    let Some(i) = log.iter().rposition(|e| text(e, "step") == "begin") else { return Ok(Value::Null) };
+    let kind = text(&log[i], "event");
+    let mut steps: Vec<(String, String, String)> = vec![];
+    for e in log[i + 1..].iter().filter(|e| text(e, "event") == kind && matches!(text(e, "status"), "running" | "ok" | "failed")) {
+        let (step, status, detail) = (text(e, "step").to_string(), text(e, "status").to_string(), text(e, "detail").to_string());
+        match steps.iter_mut().find(|x| x.0 == step) {
+            Some(x) => (x.1, x.2) = (status, detail),
+            None => steps.push((step, status, detail)),
+        }
+    }
+    let status = steps.iter().position(|x| x.0 == "end").map_or("running".into(), |j| steps.remove(j).1);
+    Ok(json!({
+        "kind": if kind == "rollback" { "rollback" } else { "preflight" },
+        "at": parse_time(text(&log[i], "at")).map(|t| t.timestamp_millis()),
+        "status": status,
+        "summary": text(&log[i], "detail"),
+        "steps": steps.iter().map(|(step, status, detail)| json!({ "step": step, "status": status, "detail": detail })).collect::<Vec<_>>(),
+    }))
+}
+
+/// The warp journal: phase, day, the range clock now, and per-persona progress; plus the last pre-flight or rollback.
 pub fn run(runs: &FsPath, now: i64) -> Rd<Value> {
+    let ops = ops(runs)?;
     let journal = match lines(&runs.join("range").join("warp.jsonl"))? {
         Some(j) if !j.is_empty() => j,
-        _ => return Ok(json!({ "phase": "none" })),
+        _ => return Ok(json!({ "phase": "none", "ops": ops })),
     };
     let (mut phase, mut date, mut error) = ("none", String::new(), String::new());
     let mut logical: Option<String> = None;
@@ -447,7 +471,7 @@ pub fn run(runs: &FsPath, now: i64) -> Rd<Value> {
         }
         _ => 0,
     };
-    Ok(json!({ "phase": phase, "day": day, "date": date, "ageMs": (now - last).max(0), "clock": clock, "unplanned": unplanned, "plans": plans, "personas": personas, "error": error }))
+    Ok(json!({ "phase": phase, "day": day, "date": date, "ageMs": (now - last).max(0), "clock": clock, "unplanned": unplanned, "plans": plans, "personas": personas, "error": error, "ops": ops }))
 }
 
 // --- admission ----------------------------------------------------------------------------------
@@ -623,5 +647,22 @@ mod tests {
         assert_eq!(r["day"], 1);
         assert_eq!(r["personas"], json!([{ "user": "aberg", "status": "running", "items": 9, "done": 0 }]));
         assert_eq!(r["clock"]["offset"], 60);
+        assert_eq!(r["ops"], Value::Null);
+        // only the last ops run counts, each step at its latest status, the end line as the run's status
+        std::fs::write(
+            runs.join("ops.jsonl"),
+            "{\"at\":\"2026-10-30T20:00:00Z\",\"event\":\"preflight\",\"step\":\"begin\",\"status\":\"running\"}
+             {\"at\":\"2026-10-30T20:00:01Z\",\"event\":\"preflight\",\"step\":\"end\",\"status\":\"ok\"}
+             {\"at\":\"2026-10-31T09:00:00Z\",\"event\":\"rollback\",\"step\":\"begin\",\"status\":\"running\",\"detail\":\"3 servers\"}
+             {\"event\":\"rollback\",\"step\":\"idle\",\"status\":\"running\"}
+             {\"event\":\"rollback\",\"step\":\"idle\",\"status\":\"ok\"}
+             {\"event\":\"rollback\",\"step\":\"rollback\",\"status\":\"failed\",\"detail\":\"failed on: 121\"}
+             {\"event\":\"rollback\",\"step\":\"end\",\"status\":\"failed\"}
+",
+        )
+        .unwrap();
+        let o = &run(&runs, now_ms()).unwrap()["ops"];
+        assert_eq!((o["kind"].as_str(), o["status"].as_str(), o["summary"].as_str()), (Some("rollback"), Some("failed"), Some("3 servers")));
+        assert_eq!(o["steps"], json!([{ "step": "idle", "status": "ok", "detail": "" }, { "step": "rollback", "status": "failed", "detail": "failed on: 121" }]));
     }
 }

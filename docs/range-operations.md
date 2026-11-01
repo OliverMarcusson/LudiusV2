@@ -52,11 +52,16 @@ Comparing with `sha1sum` against a Windows checkout shows every file as changed 
 
 ## 2. Pre-flight
 
+Run `infra/box/range-ops.sh preflight` from the checkout: it runs §2 and §3 below on the VMs of pool `ludius` (servers
+first; a member with `data/personas/<user>.yaml` is a persona), stops at the first failed check, and takes the snapshot
+only when every step passed. Each step is logged to `runs/ops.jsonl` and shown on the console's Status page. It does
+not check evaluation time (below). The commands below are what it runs, for a step you need to redo by hand.
+
 ```bash
 ssh root@95.216.39.232 'cd /root/src/LudiusV2.new; ls runs runs/range; cat runs/openrouter-calls.json; pgrep -af "[l]udius-rs";  podman ps --format "{{.Names}} {{.Status}}"; for v in 110 111 112 121 122 123 124 125 126 127 128; do echo -n "$v $(qm status $v | cut -d" " -f2) snaps=$(qm listsnapshot $v | grep -vc current) | "; done; echo'
 ```
 
-Expect: no `ludius-rs` process, all 10 VMs running, no snapshots, agent and Temporal up.
+Expect: no `ludius-rs` process, all 11 VMs running, no `pre-warp` snapshot, agent and Temporal up.
 
 **Clear the last run and seed the counter.** A rolled-back run still leaves its files in `runs/`, and the next run
 reads them as real history. The worst offender is `runs/world/requests/`: the planner and the monitor treat
@@ -167,6 +172,10 @@ ssh root@95.216.39.232 'python3 /root/tally.py "/root/src/LudiusV2.new/runs/days
 ```
 
 ## 6. Roll back and clean up
+
+Run `infra/box/range-ops.sh rollback` once the warp has exited: it runs the steps below, logs them to `runs/ops.jsonl`
+for the Status page, and keeps the snapshot if anything before the last step failed. The archive goes to
+`/root/warp/runs-<ts>.tgz`.
 
 After the warp exits (check `warpN.out` for the reset):
 

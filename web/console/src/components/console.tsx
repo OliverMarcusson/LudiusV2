@@ -20,6 +20,7 @@ import {
   type Catalog,
   type Daybook,
   type Person,
+  type RangeOps,
   activityName,
   currentRun,
   dayLink,
@@ -296,9 +297,12 @@ function Status({ catalog }: { catalog: Catalog | null }) {
   if (!run) return <PageHeading title="Status" />;
   if (run.phase === "none")
     return (
-      <PageHeading title="Status">
-        No warp recorded yet. Start one with ludius range warp.
-      </PageHeading>
+      <div className="space-y-12">
+        <PageHeading title="Status">
+          No warp recorded yet. Start one with ludius range warp.
+        </PageHeading>
+        {run.ops && <Ops ops={run.ops} />}
+      </div>
     );
   return (
     <div className="space-y-12">
@@ -445,10 +449,50 @@ function Status({ catalog }: { catalog: Catalog | null }) {
           </ul>
         </Section>
       )}
+      {run.ops && <Ops ops={run.ops} />}
       <p className="text-xs text-muted-foreground">
         Last journal entry {Math.round((run.ageMs ?? 0) / 60_000)} min ago.
       </p>
     </div>
+  );
+}
+
+const OPS = {
+  preflight: { title: "Pre-flight", ok: "Ready: snapshots taken, the warp can start." },
+  rollback: { title: "Rollback", ok: "The range is back at its pre-warp snapshot, and the snapshot is dropped." },
+} as const;
+
+/** The last pre-flight or rollback (infra/box/range-ops.sh), one row per step in run order. */
+function Ops({ ops }: { ops: RangeOps }) {
+  const o = OPS[ops.kind] ?? OPS.preflight;
+  const at = ops.at ? new Date(ops.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : null;
+  return (
+    <Section title={o.title}>
+      <p className={cn("mb-4 text-sm", ops.status === "failed" ? "text-lost" : "text-muted-foreground")}>
+        {ops.status === "ok" ? o.ok : ops.status === "failed" ? "Stopped at a failed step; fix it and run it again." : "In progress."}
+        {at && ` Started ${at}`}
+        {ops.summary && ` for ${ops.summary}`}.
+      </p>
+      <ol className="divide-y rounded-lg border text-sm">
+        {ops.steps.map((s) => (
+          <li key={s.step} className="grid grid-cols-[1.25rem_10rem_1fr] items-baseline gap-3 px-4 py-2.5">
+            <span
+              aria-label={s.status}
+              className={cn(
+                "size-2.5 self-center rounded-full",
+                s.status === "ok" && "bg-foreground",
+                s.status === "failed" && "bg-lost",
+                s.status === "running" && "animate-pulse border border-foreground motion-reduce:animate-none",
+              )}
+            />
+            <span className="truncate font-medium">{s.step}</span>
+            <span className={cn("min-w-0 break-words text-muted-foreground", s.status === "failed" && "text-lost")}>
+              {s.detail || (s.status === "running" ? "Running" : "")}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </Section>
   );
 }
 
