@@ -56,6 +56,11 @@ impl Reactor<'_> {
         };
         let Some(boss) = world.boss(&me).into_iter().next() else { return Ok(()) };
         let Some(manager) = world.people.iter().find(|p| p.user == boss).cloned() else { return Ok(()) };
+        let dom = mail::domain();
+        // a scenario-reserved mailbox is never read or written as
+        if self.policy.reserved(&format!("{boss}@{dom}")) || self.policy.reserved(&format!("{me}@{dom}")) {
+            return Ok(());
+        }
         let (tries, sent) = self.manager_counts(EVENT)?;
         if sent >= PER_DAY {
             return Ok(());
