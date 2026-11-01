@@ -63,6 +63,10 @@ ssh root@95.216.39.232 'cd /root/src/LudiusV2.new; ls runs runs/range; cat runs/
 
 Expect: no `ludius-rs` process, all 11 VMs running, no `pre-warp` snapshot, agent and Temporal up.
 
+**One mail read.** `./ludius-rs mail check <first persona>` reads that persona's inbox through the selected mail
+backend and exits 1 when it can't. Outcome checks read the same way, so a broken backend (warp9: the EWS CA path)
+makes every mail outcome unknown; the pre-flight stops here instead.
+
 **Clear the last run and seed the counter.** A rolled-back run still leaves its files in `runs/`, and the next run
 reads them as real history. The worst offender is `runs/world/requests/`: the planner and the monitor treat
 manager requests from the old run as sent, but the rollback deleted those mails. Keep only

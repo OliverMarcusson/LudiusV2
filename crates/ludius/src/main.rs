@@ -29,6 +29,7 @@ const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--per
        ludius schedule create|describe|pause|unpause|delete --persona USER [--nightly] [--at HH:MM] [--timezone TZ] [--clock C] [--canary] [--unpause] [--temporal HOST:PORT]
        ludius [--vm VM] reservation [inspect|clear] [--confirm-vm VM --confirm-owner NS/WID] [--temporal HOST:PORT]
        ludius chat reset USER USER...
+       ludius mail check USER
        ludius metrics LOG... [--human LOG...] [--features CSV] [--timeline CSV [--before CSV] [--manifest JSON]]
        ludius timeline LOG.jsonl... [--out CSV]
        ludius store [--dsn DSN] [--s3 http://KEY:SECRET@host:port/bucket]   (defaults LUDIUS_PG, LUDIUS_S3)";
@@ -234,6 +235,21 @@ fn main() -> Result<()> {
             }
         }
         std::process::exit(i32::from(bad > 0));
+    }
+    if args.first().is_some_and(|a| a == "mail") {
+        // One inbox read through the selected backend: pre-flight proof that outcome checks can read (warp9: EWS CA path broken, every read unknown).
+        let [_, check, user] = args.as_slice() else { bail!(USAGE) };
+        if check != "check" {
+            bail!(USAGE);
+        }
+        match ludius::mail::newest(user, "inbox") {
+            Some(m) => println!("{user}@{}: inbox read, {} newest", ludius::mail::domain(), m.len()),
+            None => {
+                println!("{user}@{}: inbox unreadable (no mail backend, or the read failed)", ludius::mail::domain());
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
     }
     if args.first().is_some_and(|a| a == "observe") {
         if vm.is_empty() {

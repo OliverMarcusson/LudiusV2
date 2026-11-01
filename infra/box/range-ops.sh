@@ -74,6 +74,8 @@ if [ "$kind" = preflight ]; then
   step "VMs running" running || abort "VMs running"
   step "No $snap snapshot yet" nosnap || abort "No $snap snapshot yet"
   step "Agent and Temporal up" services || abort "Agent and Temporal up"
+  # One mail read: outcome checks read mail the same way (warp9 ran with every read unknown after the CA path broke).
+  step "Mail read" ./ludius-rs mail check "${personas[0]#* }" || abort "Mail read"
   step "Clear runs" clear_runs
   for p in "${personas[@]}"; do step "Downloads ${p#* }" downloads ${p} || failed=1; done
   for p in "${personas[@]}"; do u=${p#* }; step "Canary $u" canary "$u" || failed=1; done
