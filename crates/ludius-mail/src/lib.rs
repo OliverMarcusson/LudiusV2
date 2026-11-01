@@ -143,10 +143,6 @@ fn query(user: &str, folder: &str, subject: Option<&str>, attachments: bool) -> 
     (backend()?.query)(&address(user), folder, subject, attachments)
 }
 
-pub fn messages(user: &str, folder: &str, subject: &str, attachments: bool) -> Vec<Message> {
-    query(user, folder, Some(subject), attachments).unwrap_or_default()
-}
-
 pub fn matching(user: &str, folder: &str, subject: &str, attachments: bool) -> Option<Vec<Message>> {
     query(user, folder, Some(subject), attachments)
 }
@@ -210,14 +206,14 @@ pub fn delivered(
     before: Option<&Seen>,
     reply_to: &str,
     attachment: Option<&(String, String)>,
-) -> bool {
+) -> Option<bool> {
     let address = address.trim().to_lowercase();
     let (user, dom) = local(&address);
     let (me, my_dom) = local(sender);
     let want = letters(body);
-    let Some(seen) = before else { return false };
+    let seen = before?;
     if dom != domain() || my_dom != domain() || want.is_empty() || since_ms <= 0 {
-        return false;
+        return Some(false);
     }
     let sender_l = sender.to_lowercase();
     let ours = |m: &Message, u: &str, f: &str| {
@@ -231,22 +227,22 @@ pub fn delivered(
             && answers
             && attached
     };
-    if !messages(&user, folder, subject, attachment.is_some()).iter().any(|m| ours(m, &user, folder)) {
-        return false;
+    if !matching(&user, folder, subject, attachment.is_some())?.iter().any(|m| ours(m, &user, folder)) {
+        return Some(false);
     }
-    let sent: Vec<Message> = messages(&me, "sent", subject, false).into_iter().filter(|m| ours(m, &me, "sent")).collect();
-    !sent.is_empty() && sent.iter().all(|m| m.recipients == [address.clone()])
+    let sent: Vec<Message> = matching(&me, "sent", subject, false)?.into_iter().filter(|m| ours(m, &me, "sent")).collect();
+    Some(!sent.is_empty() && sent.iter().all(|m| m.recipients == [address.clone()]))
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn invited(address: &str, subject: &str, body: &str, organizer: &str, since_ms: i64, start_ms: i64, end_ms: i64, before: Option<&Seen>) -> bool {
+pub fn invited(address: &str, subject: &str, body: &str, organizer: &str, since_ms: i64, start_ms: i64, end_ms: i64, before: Option<&Seen>) -> Option<bool> {
     let (address, organizer) = (address.trim().to_lowercase(), organizer.trim().to_lowercase());
     let (user, dom) = local(&address);
     let (me, my_dom) = local(&organizer);
     let want = letters(body);
-    let Some(seen) = before else { return false };
+    let seen = before?;
     if dom != domain() || my_dom != domain() || user == me || since_ms <= 0 || start_ms >= end_ms || (!body.is_empty() && want.is_empty()) {
-        return false;
+        return Some(false);
     }
     let ours = |m: &Message, u: &str, f: &str| {
         let mut others: Vec<&String> = Vec::new();
@@ -257,7 +253,7 @@ pub fn invited(address: &str, subject: &str, body: &str, organizer: &str, since_
         }
         !seen.contains(&(u.to_string(), f.to_string(), m.id)) && (m.start_ms, m.end_ms) == (start_ms, end_ms) && others == [&address]
     };
-    let request = messages(&user, "inbox", subject, false).iter().any(|m| {
+    let request = matching(&user, "inbox", subject, false)?.iter().any(|m| {
         ours(m, &user, "inbox")
             && m.cls == MEETING_REQUEST
             && organizer == m.sender
@@ -265,25 +261,27 @@ pub fn invited(address: &str, subject: &str, body: &str, organizer: &str, since_
             && recent(m, since_ms)
             && letters(&m.body).contains(&want)
     });
-    request
-        && messages(&me, "calendar", subject, false).iter().any(|m| {
-            ours(m, &me, "calendar") && m.cls == APPOINTMENT && m.organizer == organizer && m.created_ms / MINUTE_MS >= since_ms / MINUTE_MS
-        })
+    if !request {
+        return Some(false);
+    }
+    Some(matching(&me, "calendar", subject, false)?.iter().any(|m| {
+        ours(m, &me, "calendar") && m.cls == APPOINTMENT && m.organizer == organizer && m.created_ms / MINUTE_MS >= since_ms / MINUTE_MS
+    }))
 }
 
-pub fn responded(address: &str, subject: &str, sender: &str, response: &str, since_ms: i64, before: Option<&Seen>) -> bool {
+pub fn responded(address: &str, subject: &str, sender: &str, response: &str, since_ms: i64, before: Option<&Seen>) -> Option<bool> {
     let (address, sender) = (address.trim().to_lowercase(), sender.trim().to_lowercase());
     let (user, dom) = local(&address);
-    let Some(seen) = before else { return false };
+    let seen = before?;
     if dom != domain() || local(&sender).1 != domain() || address == sender || since_ms <= 0 {
-        return false;
+        return Some(false);
     }
-    let new: Vec<String> = messages(&user, "inbox", subject, false)
+    let new: Vec<String> = matching(&user, "inbox", subject, false)?
         .into_iter()
         .filter(|m| !seen.contains(&(user.clone(), "inbox".into(), m.id)) && RESPONSES.contains(&m.cls.as_str()) && m.sender == sender && recent(m, since_ms))
         .map(|m| m.cls)
         .collect();
-    response_class(response).is_some_and(|c| new == [c])
+    Some(response_class(response).is_some_and(|c| new == [c]))
 }
 
 /// Deliver a planned mail inside the range (idempotent on msgid). Only within the mail domain.
@@ -316,7 +314,14 @@ mod tests {
     }
 
     #[test]
-    fn delivered_needs_a_baseline() {
-        assert!(!delivered("a@x", "inbox", "s", "b", "c@x", 1, false, None, "", None));
+    fn unreadable_is_unknown() {
+        // No baseline (it was unreadable) or no backend to read with: unknown, never "not delivered".
+        assert_eq!(delivered("a@x", "inbox", "s", "b", "c@x", 1, false, None, "", None), None);
+        assert_eq!(responded("a@x", "s", "c@x", "accept", 1, None), None);
+        if !available() {
+            let (seen, at) = (Seen::new(), |u: &str| format!("{u}@{}", domain()));
+            assert_eq!(delivered(&at("a"), "inbox", "s", "b", &at("c"), 1, false, Some(&seen), "", None), None);
+            assert_eq!(invited(&at("a"), "s", "", &at("c"), 1, 1, 2, Some(&seen)), None);
+        }
     }
 }

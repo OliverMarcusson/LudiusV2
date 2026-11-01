@@ -1,47 +1,62 @@
 //! Done checks outside the UI (mail, calendar, chat, files) and their baselines.
 use super::*;
 
+/// Every outside check passes. A check that could not read is unknown, not a pass and not a fail:
+/// it sets `task.outside_unknown` (unless another check failed), so a task that ends on it is
+/// recorded as unknown, never abandoned (warp9: 8 sent mails logged as abandoned while EWS was unreadable).
 pub(crate) fn outside_ok(done: &Done, task: &mut Task) -> Result<bool> {
+    let verdict = outside(done, task)?;
+    task.outside_unknown = verdict.is_none();
+    Ok(verdict == Some(true))
+}
+
+fn outside(done: &Done, task: &mut Task) -> Result<Option<bool>> {
+    let mut unknown = false;
+    let mut failed = |v: Option<bool>| {
+        unknown |= v.is_none();
+        v == Some(false)
+    };
     if let Some(c) = &done.mail
-        && !mail_ok(c, task)?
+        && failed(mail_ok(c, task)?)
     {
-        return Ok(false);
+        return Ok(Some(false));
     }
     if let Some(c) = &done.invite
-        && !invite_ok(c, task)?
+        && failed(invite_ok(c, task)?)
     {
-        return Ok(false);
+        return Ok(Some(false));
     }
     if let Some(c) = &done.response
-        && !response_ok(c, task)?
+        && failed(response_ok(c, task)?)
     {
-        return Ok(false);
+        return Ok(Some(false));
     }
     if let Some(c) = &done.file
         && !file_ok(c, task)?
     {
-        return Ok(false);
+        return Ok(Some(false));
     }
-    if done.read && !(task.read_id > 0 && !task.owner.is_empty() && mail::read_state(&task.owner, task.read_id, "inbox") == Some(true)) {
-        return Ok(false);
+    if done.read && failed(if task.read_id > 0 && !task.owner.is_empty() { mail::read_state(&task.owner, task.read_id, "inbox") } else { Some(false) }) {
+        return Ok(Some(false));
     }
     if done.filed {
         let folder = task.values.get("folder").cloned().unwrap_or_default();
-        if task.owner.is_empty() || mail::placed(&task.owner, &task.file_msgid, &folder) != Some((0, 1)) {
-            return Ok(false);
+        let placed = if task.owner.is_empty() { Some(false) } else { mail::placed(&task.owner, &task.file_msgid, &folder).map(|p| p == (0, 1)) };
+        if failed(placed) {
+            return Ok(Some(false));
         }
     }
     if let Some(c) = &done.chat_file
-        && !chat_file_ok(c, task)?
+        && failed(chat_file_ok(c, task)?)
     {
-        return Ok(false);
+        return Ok(Some(false));
     }
     if let Some(c) = &done.chat_post
-        && !chat_post_ok(c, task)?
+        && failed(chat_post_ok(c, task)?)
     {
-        return Ok(false);
+        return Ok(Some(false));
     }
-    Ok(true)
+    Ok(if unknown { None } else { Some(true) })
 }
 
 pub fn sha256_hex(data: &[u8]) -> String {
@@ -56,34 +71,37 @@ pub(crate) fn split_addr(a: &str) -> (String, String) {
     }
 }
 
-pub(crate) fn chat_file_ok(c: &ChatFileCheck, task: &Task) -> Result<bool> {
+pub(crate) fn chat_file_ok(c: &ChatFileCheck, task: &Task) -> Result<Option<bool>> {
     let (rel, to) = (task.fmt(&c.path)?, task.fmt(&c.to)?);
     let (user, dom) = split_addr(&to);
-    let Some(data) = task.sources_before.get(&rel) else { return Ok(false) };
+    let Some(data) = task.sources_before.get(&rel) else { return Ok(Some(false)) };
     if task.owner.is_empty() || dom != mail::domain() {
-        return Ok(false);
+        return Ok(Some(false));
     }
-    Ok(chat::shared(&task.owner, &user, &leaf(&rel), task.started_ms, c.posted) == Some(vec![sha256_hex(data)]))
+    Ok(chat::shared(&task.owner, &user, &leaf(&rel), task.started_ms, c.posted).map(|got| got == vec![sha256_hex(data)]))
 }
 
-pub(crate) fn chat_post_ok(c: &ChatPostCheck, task: &Task) -> Result<bool> {
+pub(crate) fn chat_post_ok(c: &ChatPostCheck, task: &Task) -> Result<Option<bool>> {
     let mut to = task.fmt(&c.to)?;
     if !to.starts_with('~') {
         let (u, d) = split_addr(&to);
         if d != mail::domain() {
-            return Ok(false);
+            return Ok(Some(false));
         }
         to = u;
     }
-    Ok(!task.owner.is_empty() && chat::posted(&task.owner, &to, &task.fmt(&c.message)?, task.started_ms).unwrap_or(0) > 0)
+    if task.owner.is_empty() {
+        return Ok(Some(false));
+    }
+    Ok(chat::posted(&task.owner, &to, &task.fmt(&c.message)?, task.started_ms).map(|n| n > 0))
 }
 
-pub(crate) fn mail_ok(c: &MailCheck, task: &Task) -> Result<bool> {
+pub(crate) fn mail_ok(c: &MailCheck, task: &Task) -> Result<Option<bool>> {
     let sender = if task.owner.is_empty() { String::new() } else { format!("{}@{}", task.owner, mail::domain()) };
     let mut attachment = None;
     if let Some(a) = &c.attachment {
         let rel = task.fmt(a)?;
-        let Some(data) = task.sources_before.get(&rel) else { return Ok(false) };
+        let Some(data) = task.sources_before.get(&rel) else { return Ok(Some(false)) };
         attachment = Some((casefold(&leaf(&rel)), sha256_hex(data)));
     }
     Ok(mail::delivered(
@@ -109,21 +127,23 @@ pub fn local_ms(date: &str, hhmm: &str, tz: &str) -> Result<i64> {
     Ok(t.timestamp_millis())
 }
 
-pub(crate) fn response_ok(c: &ResponseCheck, task: &Task) -> Result<bool> {
-    Ok(!task.owner.is_empty()
-        && mail::responded(
-            &task.fmt(&c.mailbox)?,
-            &task.fmt(&c.subject)?,
-            &format!("{}@{}", task.owner, mail::domain()),
-            &task.fmt(&c.response)?,
-            task.started_ms,
-            task.mail_before.as_ref(),
-        ))
+pub(crate) fn response_ok(c: &ResponseCheck, task: &Task) -> Result<Option<bool>> {
+    if task.owner.is_empty() {
+        return Ok(Some(false));
+    }
+    Ok(mail::responded(
+        &task.fmt(&c.mailbox)?,
+        &task.fmt(&c.subject)?,
+        &format!("{}@{}", task.owner, mail::domain()),
+        &task.fmt(&c.response)?,
+        task.started_ms,
+        task.mail_before.as_ref(),
+    ))
 }
 
-pub(crate) fn invite_ok(c: &InviteCheck, task: &Task) -> Result<bool> {
+pub(crate) fn invite_ok(c: &InviteCheck, task: &Task) -> Result<Option<bool>> {
     if task.owner.is_empty() {
-        return Ok(false);
+        return Ok(Some(false));
     }
     let date = task.fmt(&c.date)?;
     Ok(mail::invited(

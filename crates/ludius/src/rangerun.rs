@@ -267,7 +267,7 @@ pub fn summary(world: &World, users: &[String], day: NaiveDate, state_dir: &Path
                 Some("item_start") => current = format!("{} {}", crate::timeline::text(e.get("at")), crate::timeline::text(e.get("template"))),
                 Some("item_end") => {
                     current = "-".into();
-                    if e["status"] == "done" { done += 1 } else { abandoned += 1 }
+                    if e["status"] == "done" { done += 1 } else if e["status"] != "unknown" { abandoned += 1 }
                 }
                 Some("day_end") => current = "(day ended)".into(),
                 _ => {}

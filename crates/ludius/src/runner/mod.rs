@@ -373,6 +373,10 @@ impl<'a> Runner<'a> {
         }
         if (task.template.sends_mail() || task.template.cap() == "calendar.respond") && why.is_none() {
             task.mail_before = mail_baseline(task)?;
+            if task.mail_before.is_none() {
+                // Without a baseline the outcome can never be told from earlier mail: don't send what can't be checked.
+                why = Some("mail baseline unreadable".into());
+            }
         }
         if why.is_none() {
             why = requests::waiting(task, &requests::root());
@@ -397,6 +401,7 @@ impl<'a> Runner<'a> {
             self.steps = steps;
             let mut detours = 0;
             while !result.0
+                && !task.outside_unknown
                 && (result.2 == "step budget" || result.2.starts_with(STUCK))
                 && self.assist.is_some()
                 && detours < MAX_DETOURS
@@ -409,6 +414,13 @@ impl<'a> Runner<'a> {
                 result = self.subgoal(task, name, &sg, (i64::from(sg.steps) / 2 + 2).min(left), t0, detours < MAX_DETOURS, Some(&mut carry))?;
                 steps += result.1;
                 self.steps = steps;
+            }
+            if !result.0 && task.outside_unknown {
+                // The outside check could not read: the effect may well have happened, so neither abandon
+                // (discarding or retrying could undo or repeat it) nor claim it did not. Session hygiene cleans up.
+                let out = Outcome::new("unknown", steps, format!("{name}: {} (outside check unreadable)", result.2), done);
+                self.log.write(json!({"event": "task_end", "host_ms": now_ms(), "task": t, "status": out.status, "reason": out.reason, "steps": steps}))?;
+                return Ok(out);
             }
             if !result.0 {
                 self.abandon(task, &result.2)?;

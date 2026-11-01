@@ -56,6 +56,8 @@ pub struct Task {
     pub subgoal_names: Vec<String>,
     pub values: HashMap<String, String>,
     pub mail_before: Option<mail::Seen>,
+    /// The last outside check could not read (unknown) and no other check had failed.
+    pub outside_unknown: bool,
     pub files_absent: Option<BTreeSet<String>>,
     pub files_before: HashMap<String, Vec<String>>,
     pub sources_before: HashMap<String, Vec<u8>>,
@@ -162,6 +164,7 @@ impl Task {
             subgoal_names,
             values,
             mail_before: None,
+            outside_unknown: false,
             files_absent: None,
             files_before: HashMap::new(),
             sources_before: HashMap::new(),

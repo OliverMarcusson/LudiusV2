@@ -167,7 +167,7 @@ pub fn range_metrics(logs: &Logs) -> Value {
     }
     let steps: usize = logs.instances.iter().map(|i| i.steps.len()).sum();
     let rate = |n: usize, d: usize| round(n as f64 / d as f64, 3);
-    let failed = |xs: &[&Instance]| xs.iter().filter(|i| i.status != "done" && i.status != "open").count();
+    let failed = |xs: &[&Instance]| xs.iter().filter(|i| !matches!(i.status.as_str(), "done" | "open" | "unknown")).count();
     let per_hour = |n: usize, span: i64| if span != 0 { json!(round(n as f64 / (span as f64 / 3.6e6), 1)) } else { Value::Null };
     let total = steps + logs.orphans;
     json!({

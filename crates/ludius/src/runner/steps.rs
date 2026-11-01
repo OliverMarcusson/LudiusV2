@@ -37,6 +37,7 @@ impl Runner<'_> {
         let mut last_click: Option<Element> = None;
         let mut recovering = false;
         let mut dead: HashMap<Fingerprint, HashSet<(String, String)>> = HashMap::new();
+        task.outside_unknown = false;
         let mut snap = self.observe(5000)?;
         match carry.as_deref_mut() {
             Some(Some(c)) => {
