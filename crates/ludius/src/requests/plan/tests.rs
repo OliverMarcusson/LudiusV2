@@ -7,7 +7,7 @@ use crate::planner::PlanItem;
 use chrono::Duration;
 use serde_json::{Value, json};
 
-const BODY: &str = "Hi Anna,\ncould you put the lund accruals in a note \"lund accruals q4\" with the totals?\nThanks, Marcus";
+const BODY: &str = "Hi Anna,\ncan you mail me the lund accruals with the totals?\nThanks, Marcus";
 
 fn story() -> Narrative {
     let p = |name: &str, role: &str, dep: &str, user: &str, manager: &str| json!({"name": name, "role": role, "department": dep, "user": user, "manager": manager});
@@ -58,8 +58,7 @@ fn run(world: &World, templates: &BTreeMap<String, Template>, answer: Option<Ask
     let boss = n.people[0].clone();
     let briefs = BTreeMap::from([("aberg".to_string(), "- nothing".to_string())]);
     let inbox = BTreeMap::from([("aberg".to_string(), Some(inbox))]);
-    let existing = BTreeMap::from([("aberg".to_string(), vec![])]);
-    ensure(&mut |_| answer.take().ok_or_else(|| anyhow::anyhow!("no answer left")), &send, world, &n, &briefs, &personas(), templates, policy, date, &boss, &inbox, &existing).unwrap()
+    ensure(&mut |_| answer.take().ok_or_else(|| anyhow::anyhow!("no answer left")), &send, world, &n, &briefs, &personas(), templates, policy, date, &boss, &inbox).unwrap()
 }
 
 #[test]
@@ -79,7 +78,7 @@ fn requests_are_validated_sent_once_and_capped() {
         a[k] = v;
         a
     };
-    let bad = vec![with("to", "lnord".into()), with("body", BODY.replace('"', "").into()), with("include", json!(["budget"])), with("task", "edge_web_lookup".into()), with("subject", "RE: lund".into())];
+    let bad = vec![with("to", "lnord".into()), with("body", "Hi, totals?".into()), with("include", json!(["budget"])), with("task", "edge_web_lookup".into()), with("subject", "RE: lund".into())];
     let day = run(&w, &ts, Some(asks([bad, vec![ask(), with("subject", "second today".into())]].concat())), thu(), vec![], &policy, &sent);
     assert_eq!(day.requests.iter().map(|r| (r.subject.as_str(), r.status.as_deref())).collect::<Vec<_>>(), [("lund accruals note", Some("sent"))]);
     assert_eq!(day.rejects.len(), 6, "{:?}", day.rejects);
@@ -100,7 +99,7 @@ fn requests_are_validated_sent_once_and_capped() {
     let a: Ask = serde_json::from_value(with("heading", "x".into())).unwrap();
     let reserved = Policy { reserved_paths: vec!["aberg@".into()], ..Default::default() };
     let all = BTreeMap::from([("aberg".to_string(), ts.clone())]);
-    let why = problem(&a, &BTreeMap::from([("aberg".into(), 1)]), &all, &BTreeMap::new(), &story().people[0], &reserved, &BTreeMap::from([("aberg".into(), Some(BTreeSet::new()))]), &BTreeMap::from([("aberg".into(), vec![])]));
+    let why = problem(&a, &BTreeMap::from([("aberg".into(), 1)]), &all, &BTreeMap::new(), &story().people[0], &reserved, &BTreeMap::from([("aberg".into(), Some(BTreeSet::new()))]));
     assert_eq!(why.unwrap(), format!("{} is scenario-reserved", addr("aberg")));
 }
 
@@ -108,7 +107,7 @@ fn requests_are_validated_sent_once_and_capped() {
 fn a_recorded_request_is_checked_against_todays_policy() {
     let (w, ts) = setup("policy");
     let n = story();
-    let planned = plan(&mut |_| Ok(asks(vec![ask()])), &w, &n, &BTreeMap::new(), &personas(), &ts, &Policy::default(), thu(), &n.people[0], &BTreeMap::from([("aberg".into(), Some(vec![]))]), &BTreeMap::from([("aberg".into(), vec![])])).unwrap();
+    let planned = plan(&mut |_| Ok(asks(vec![ask()])), &w, &n, &BTreeMap::new(), &personas(), &ts, &Policy::default(), thu(), &n.people[0], &BTreeMap::from([("aberg".into(), Some(vec![]))])).unwrap();
     dump(&dir(&w.root).join("2026-10-29-mvellinga.yaml"), &planned, true).unwrap();
     let sent = Sent::default();
     let reserved = Policy { reserved_paths: vec!["aberg@".into()], ..Default::default() };
@@ -152,7 +151,7 @@ fn persona_maps_a_request_fail_closed() {
     items[0].params.insert("body".into(), "lund sums".into());
     assert!(planned(&items[0], &ts, &w.root).unwrap().starts_with("content lacks") && planned(&items[0], &ts, &w.root).unwrap().contains("totals"));
     items[0].params.insert("file_name".into(), "other".into());
-    assert!(planned(&items[0], &ts, &w.root).unwrap().contains("lund accruals q4"));
+    assert!(planned(&items[0], &ts, &w.root).unwrap().starts_with("content lacks"), "the persona names the file");
     for (choice, p) in [("none", 0.9), ("notepad_write_note", 0.4)] {
         assert!(candidates(&mut llm, &mut decider(choice, p), &w, anna, &boss, std::slice::from_ref(&m), &ts, thu(), &book).unwrap().0.is_empty());
         assert!(pending(&w, "aberg", &boss, Some(std::slice::from_ref(&m)), &Policy::default(), thu()).unwrap().is_empty());

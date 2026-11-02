@@ -131,10 +131,9 @@ pub fn generate_day(llm: &LlmClient, world: &World, persona: &Persona, src: &Sou
             let reports: Vec<&str> = src.personas.iter().map(|p| p.user.as_str()).filter(|u| *u == user || requests::manager_of(n, u).as_ref() == Ok(boss)).collect();
             let briefs = reports.iter().map(|u| (u.to_string(), world_state::brief(&state, u, date))).collect();
             let inboxes = reports.iter().map(|u| (u.to_string(), (src.inbox)(u))).collect();
-            let existing = reports.iter().map(|u| Ok((u.to_string(), world_state::existing_files(world, u)?))).collect::<Result<_>>()?;
             let send = |a: &str, b: &str, c: &str, d: &str, e: &str, f: &str, g: &str| mail::deliver(a, b, c, d, e, f, g);
             let day = shared.hold(&boss.user, || {
-                requests::ensure(&mut |u| llm.json::<Asks>(SYSTEM, u, 0.8, 1), &send, world, n, &briefs, &src.personas, &src.templates, &src.policy, date, boss, &inboxes, &existing)
+                requests::ensure(&mut |u| llm.json::<Asks>(SYSTEM, u, 0.8, 1), &send, world, n, &briefs, &src.personas, &src.templates, &src.policy, date, boss, &inboxes)
             })?;
             notes.extend(day.rejects.iter().map(|r| format!("requests by {}: {r}", boss.user)));
             notes.extend(day.requests.iter().map(|r| format!("requests by {}: {} to {} {}", boss.user, r.status.as_deref().unwrap_or("None"), r.to, reply::py_repr(&r.subject))));

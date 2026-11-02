@@ -74,7 +74,8 @@ pub fn candidates(llm: &mut dyn FnMut(&str) -> Result<Item>, decide: &mut dyn Fn
             "Employee: {}, {} ({}). Usual hours {}-{}. Style: {}\nDay: {} {}.\n\nMail from {} <{}>, subject {}:\n<<<\n{shown}\n>>>\n\n\
              Task: {}: {}\nColleagues' addresses: {}\n\n\
              Return JSON {{\"at\": \"HH:MM\", \"params\": {{{}}}, \"context\": \"...\"}}: at within the usual hours; \
-             params as strings, every one listed; use exactly the file name, recipient and subject the mail gives; \
+             params as strings, every one listed; use exactly the recipient and subject the mail gives; a file name: \
+             a short plain one the employee would pick (the mail's own, if it gives one); \
              write the content in the employee's style, and repeat verbatim the words the mail uses for each thing \
              it asks to be covered; context: one sentence, why now.{reply}",
             persona.name,

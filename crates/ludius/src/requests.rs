@@ -128,13 +128,14 @@ fn lacks(include: &[String], content: &str) -> Vec<String> {
 
 pub fn mismatch(ask: &Request, t: &Template, values: &std::collections::HashMap<String, String>) -> Option<String> {
     let manager = format!("{}@{}", ask.manager, mail::domain());
-    if delivery(t) && !ask.file_name.is_empty() {
+    // a delivery mails back the file its request's write made; older requests also named that file
+    if delivery(t) && (!ask.file_name.is_empty() || t.task != ask.task) {
         let name = get(values, "file_name");
         if get(values, "to").trim().to_lowercase() != manager {
             return Some(format!("to {:?}, the file goes back to {}", get(values, "to"), ask.manager));
         }
         let stem = name.rsplit_once('.').map_or("", |x| x.0);
-        return (crate::template::casefold(stem) != crate::template::casefold(&ask.file_name))
+        return (!ask.file_name.is_empty() && crate::template::casefold(stem) != crate::template::casefold(&ask.file_name))
             .then(|| format!("attaches {name:?}, asked for {:?}", ask.file_name));
     }
     if t.task != ask.task {
@@ -143,7 +144,7 @@ pub fn mismatch(ask: &Request, t: &Template, values: &std::collections::HashMap<
     let content = match t.cap() {
         "mail.reply" => return None,
         "file.write" => {
-            if crate::template::casefold(get(values, "file_name")) != crate::template::casefold(&ask.file_name) {
+            if !ask.file_name.is_empty() && crate::template::casefold(get(values, "file_name")) != crate::template::casefold(&ask.file_name) {
                 return Some(format!("file {:?}, asked for {:?}", get(values, "file_name"), ask.file_name));
             }
             // ponytail: template param order, where Python joins in values-dict order; differs only for an
