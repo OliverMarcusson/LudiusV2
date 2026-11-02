@@ -193,7 +193,7 @@
       [ -f "clients/$u.p12" ] && continue
       openssl req -newkey rsa:2048 -nodes -keyout "clients/$u.key" -out "clients/$u.csr" -subj "/CN=$u"
       sign "clients/$u" extendedKeyUsage=clientAuth
-      # 3DES/SHA1 so Windows 10's PFX import reads it
+      # 3DES and SHA1, so the PFX import of Windows 10 reads it
       openssl pkcs12 -export -in "clients/$u.crt" -inkey "clients/$u.key" -out "clients/$u.p12" -passout pass: \
         -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1
       echo changed
