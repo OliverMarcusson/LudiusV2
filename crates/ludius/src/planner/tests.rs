@@ -146,13 +146,14 @@ fn day_slots_are_seeded_and_spaced() {
         company: "Acme".into(),
         city: "Town".into(),
         summary: "s".into(),
-        people: vec![person(&persona.name, &persona.user), person("Bo Ek", "bek")],
+        // bek is the persona's manager, not a persona account: still a recipient
+        people: vec![Person { manager: "bek".into(), ..person(&persona.name, &persona.user) }, person("Bo Ek", "bek")],
         channels: Default::default(),
         shares: Default::default(),
         projects: vec![],
         events: vec![],
         revised: String::new(),
-        accounts: vec![persona.user.clone(), "bek".into()],
+        accounts: vec![persona.user.clone()],
         history: vec![],
     };
     let d = Day {
@@ -183,6 +184,7 @@ fn day_slots_are_seeded_and_spaced() {
     assert!((5..=8).contains(&work.len()), "{items:?}");
     assert!(work.windows(2).all(|w| w[1] - w[0] >= 15), "{items:?}");
     assert!(work.iter().all(|m| *m >= minutes(&persona.hours.0) + 10 && *m < minutes(&persona.hours.1) - 30));
+    assert!(items.iter().any(|it| it.params.contains_key("to")), "{items:?}");
     for it in items.iter().filter(|it| it.params.contains_key("to")) {
         assert_eq!(it.params["to"], format!("bek@{}", crate::mail::domain()));
     }

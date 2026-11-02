@@ -357,7 +357,8 @@ pub(crate) fn day_slots(d: &Day, templates: &BTreeMap<String, Template>, channel
         d,
         templates,
         rng,
-        colleagues: d.narrative.colleagues(&d.persona.user).into_iter().collect(),
+        // the manager is a range account too: mail and chat may go to them (react/manager.rs answers)
+        colleagues: d.narrative.colleagues(&d.persona.user).into_iter().chain(d.narrative.boss(&d.persona.user)).collect(),
         people,
         channels,
         shares: d.narrative.team_shares(&d.persona.user),
@@ -534,7 +535,7 @@ pub fn plan_day(llm: &LlmClient, d: &Day, templates: &BTreeMap<String, Template>
         })
         .collect();
     user += &lines.join("\n");
-    let colleagues = n.colleagues(&p.user);
+    let colleagues: BTreeSet<String> = n.colleagues(&p.user).into_iter().chain(n.boss(&p.user)).collect();
     if !colleagues.is_empty() {
         user += &format!(
             "\nMail: reply only with the given subject; a read or filed mail is one listed under Inbox on the mail server (sender is its sender's address, subject exactly as listed). Recipients are <account>@{}.",
