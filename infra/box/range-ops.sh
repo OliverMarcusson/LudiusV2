@@ -59,12 +59,14 @@ canary() {
 # The runbook's "agent and Temporal up".
 services() { local bad=""; for c in ludius-host-agent-1 ludius-temporal-1; do podman ps --format "{{.Names}} {{.Status}}" | grep -q "^$c Up" || bad+=" $c"; done; [ -z "$bad" ] && echo "agent, Temporal up" || { echo "down:$bad"; return 1; }; }
 snapshot() {
-  for v in "${servers[@]}"; do qm snapshot "$v" "$snap" --vmstate 1 --description "warp, rollback after" > /dev/null 2>&1; done
-  for p in "${personas[@]}"; do qm snapshot "${p%% *}" "$snap" --vmstate 1 --description "warp, rollback after" > /dev/null 2>&1 & done; wait
+  for v in "${vms[@]}"; do qm snapshot "$v" "$snap" --vmstate 1 --description "warp, rollback after" > /dev/null 2>&1 & done; wait
   local bad=""; for v in "${vms[@]}"; do has "$v" || bad+=" $v"; done
   [ -z "$bad" ] && echo "${#vms[@]} VMs" || { echo "missing on:$bad"; return 1; }
 }
-rollback() { local bad=""; for v in "${vms[@]}"; do qm rollback "$v" "$snap" > /dev/null 2>&1 || bad+=" $v"; done; [ -z "$bad" ] && echo "${#vms[@]} VMs" || { echo "failed on:$bad"; return 1; }; }
+rollback() {
+  local v bad=""; declare -A pid; for v in "${vms[@]}"; do qm rollback "$v" "$snap" > /dev/null 2>&1 & pid[$v]=$!; done
+  for v in "${vms[@]}"; do wait "${pid[$v]}" || bad+=" $v"; done; [ -z "$bad" ] && echo "${#vms[@]} VMs" || { echo "failed on:$bad"; return 1; }
+}
 # After a RAM rollback the observer's vsock listener is dead although uiprobe runs; restart it and wait for a settled snapshot.
 observer() {
   qm guest exec "$1" --timeout 30 -- powershell -NoProfile -Command "Stop-Process -Name uiprobe -Force -EA SilentlyContinue; Start-Sleep 2; Start-ScheduledTask -TaskName RangeAssist" > /dev/null || return 1
@@ -91,7 +93,7 @@ else
   mkdir -p /root/warp; step "Archive runs" tar czf "/root/warp/runs-$ts.tgz" --exclude=runs/ops.jsonl runs || failed=1
   step "Roll back" rollback || abort "Roll back"
   step "Clocks to real time" ./ludius-rs range unwarp || failed=1
-  for p in "${personas[@]}"; do step "Observer ${p#* }" observer ${p} || failed=1; done
+  each Observer observer || failed=1
   [ $failed = 0 ] || abort "Drop snapshot" "kept: fix the failed steps above, then qm delsnapshot <vm> $snap"
   step "Drop snapshot" delsnap || failed=1
 fi
