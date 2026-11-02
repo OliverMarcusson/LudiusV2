@@ -15,7 +15,7 @@
       ansible.builtin.assert:
         that:
           - mail_backend == 'exchange'
-          - people | map(attribute='user') | select('match', '^[a-z][a-z0-9._-]{0,9}$') | list | length == people | length
+          - people | map(attribute='user') | select('match', '^[a-z][a-z0-9._-]{0,19}$') | list | length == people | length
           - people | map(attribute='user') | unique | length == people | length
           - ews_user not in people | map(attribute='user')
           - dc_admin_password is match('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}$')
