@@ -4,7 +4,7 @@ capability: mail.file
 params: [sender, subject, folder]
 defaults: {sender_name: ""}
 about: "File a colleague's mail the persona is done with: move it from the Outlook Inbox into an Inbox subfolder, creating the folder if it is not there yet. sender: the address of the colleague who sent it (<user>@${MAIL_DOMAIN}); subject: that mail's exact subject, as listed in the inbox; folder: a short folder name for its topic or project (letters, digits, spaces)."
-example: {sender: mvellinga@${MAIL_DOMAIN}, subject: "Points for tomorrow's ERP cost policy review", folder: ERP cost policy}
+example: {sender: "mvellinga@${MAIL_DOMAIN}", subject: "Points for tomorrow's ERP cost policy review", folder: ERP cost policy}
 variants:
   - [open_outlook, select_mail, open_move, pick_folder, move, close_outlook]
 budget_steps: 40

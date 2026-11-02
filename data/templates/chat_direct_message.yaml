@@ -5,7 +5,7 @@ processes: [msedge.exe]
 params: [to, to_name, message]
 about: "Send one colleague a short direct message in the team chat: small talk, asking them for something you need (what and by when), or saying the work they asked for is done. to: the colleague's address <user>@${MAIL_DOMAIN}; message: one line, plain ASCII, under 200 characters."
 defaults: {app_query: edge, chat_url: "${CHAT_URL}"}
-example: {to: mvellinga@${MAIL_DOMAIN}, to_name: Marcus Vellinga, message: could you send me the lund freight figures for october by thursday}
+example: {to: "mvellinga@${MAIL_DOMAIN}", to_name: Marcus Vellinga, message: could you send me the lund freight figures for october by thursday}
 variants:
   - [open_edge_start, open_chat, open_conversation, write_message, send_message, close_edge]
   - [open_edge_taskbar, open_chat, open_conversation, write_message, send_message, close_edge]

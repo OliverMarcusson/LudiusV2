@@ -5,7 +5,7 @@ processes: [msedge.exe]
 params: [to, to_name]
 about: "Check the team chat for messages from one colleague (a request they sent, an answer): open the direct messages with them and read the newest. to: the colleague's address <user>@${MAIL_DOMAIN}."
 defaults: {app_query: edge, chat_url: "${CHAT_URL}"}
-example: {to: mvellinga@${MAIL_DOMAIN}, to_name: Marcus Vellinga}
+example: {to: "mvellinga@${MAIL_DOMAIN}", to_name: Marcus Vellinga}
 variants:
   - [open_edge_start, open_chat, open_conversation, read_newest, close_edge]
   - [open_edge_taskbar, open_chat, open_conversation, read_newest, close_edge]

@@ -5,7 +5,7 @@ processes: [outlook.exe]
 writes: ['Documents\{file_name}']
 params: [sender, subject, file_name]
 about: "Save a file a colleague sent as an attachment into Documents: open the mail in Outlook, save the attachment with Save As and close the mail. sender: the colleague's address (<user>@${MAIL_DOMAIN}); subject: that mail's exact subject, as listed in the inbox; file_name: the attachment's exact name with extension, as listed after 'attached:', not in Documents yet."
-example: {sender: mvellinga@${MAIL_DOMAIN}, subject: "Q3 figures", file_name: "Q3 figures.xlsx"}
+example: {sender: "mvellinga@${MAIL_DOMAIN}", subject: "Q3 figures", file_name: "Q3 figures.xlsx"}
 variants:
   - [open_outlook, open_message_click, save_as_menu, save_attachment, close_message, close_outlook]
 budget_steps: 50

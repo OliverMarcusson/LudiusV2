@@ -4,7 +4,7 @@ capability: mail.send
 processes: [outlook.exe, explorer.exe]
 params: [to, to_name, subject, body, file_name]
 about: "Mail one of the persona's own files (a Documents file under Own recent files; .docx, .xlsx, .pptx, .txt or .pdf) to one colleague as an attachment in Outlook. to: the colleague's address <user>@${MAIL_DOMAIN}; subject: one line; body: the mail text (ASCII, a few short lines); file_name: the file's name exactly, with its extension, without folder."
-example: {to: mvellinga@${MAIL_DOMAIN}, to_name: Marcus Vellinga, subject: q4 accruals sheet, body: "hi marcus\nthe accruals sheet is attached\n- anna", file_name: q4 accruals.xlsx}
+example: {to: "mvellinga@${MAIL_DOMAIN}", to_name: Marcus Vellinga, subject: q4 accruals sheet, body: "hi marcus\nthe accruals sheet is attached\n- anna", file_name: q4 accruals.xlsx}
 variants:
   - [open_explorer_keys, go_documents, show_extensions, select_file, copy_keys, close_explorer, open_outlook, new_message_shortcut, fill_to, fill_subject, write_body, paste_file, send_shortcut, close_outlook]
   - [open_explorer_keys, go_documents, show_extensions, select_file, copy_keys, close_explorer, open_outlook, new_message_ribbon, fill_to, fill_subject, write_body, paste_file, send_shortcut, close_outlook]

@@ -592,6 +592,13 @@ mod tests {
     }
 
     #[test]
+    fn shipped_templates_are_yaml_before_substitution() {
+        // the console reads data/templates raw: an unquoted ${MAIL_DOMAIN} in a {...} mapping 503s the Tasks page
+        let dir = FsPath::new(env!("CARGO_MANIFEST_DIR")).join("../../data/templates");
+        assert!(templates(&dir).is_ok());
+    }
+
+    #[test]
     fn dates_and_yaml_scalars() {
         assert!(valid_date("2027-02-03") && !valid_date("2027-2-03") && !valid_date("2027-02-30"));
         let d = tmp("yaml");

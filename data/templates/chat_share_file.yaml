@@ -5,7 +5,7 @@ processes: [msedge.exe]
 params: [to, to_name, file_name, message]
 about: "Send one colleague one of the persona's own files (a Documents file under Own recent files; .docx, .xlsx, .pptx, .txt or .pdf) in a direct message in the team chat, with one line about it. to: the colleague's address <user>@${MAIL_DOMAIN}; file_name: the file's name exactly, with its extension, without folder; message: one line, plain ASCII, under 200 characters."
 defaults: {app_query: edge, chat_url: "${CHAT_URL}"}
-example: {to: mvellinga@${MAIL_DOMAIN}, to_name: Marcus Vellinga, file_name: q4 accruals.xlsx, message: here is the accruals sheet you asked for}
+example: {to: "mvellinga@${MAIL_DOMAIN}", to_name: Marcus Vellinga, file_name: q4 accruals.xlsx, message: here is the accruals sheet you asked for}
 variants:
   - [open_edge_start, open_chat, open_conversation, open_upload, go_documents, select_file, upload_file, write_message, send_message, close_edge]
   - [open_edge_taskbar, open_chat, open_conversation, open_upload, go_documents, select_file, upload_file, write_message, send_message, close_edge]

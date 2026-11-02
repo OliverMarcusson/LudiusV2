@@ -3,7 +3,7 @@ app: outlook
 capability: calendar.respond
 params: [to, to_name, subject, response]
 about: "Accept or decline a colleague's meeting invitation in the Outlook Inbox; Outlook sends the answer to the organizer. to: the organizer's address (<user>@${MAIL_DOMAIN}); subject: the invitation's exact subject, as listed; response: accept or decline."
-example: {to: mvellinga@${MAIL_DOMAIN}, to_name: Marcus Vellinga, subject: lund accruals q4 review, response: accept}
+example: {to: "mvellinga@${MAIL_DOMAIN}", to_name: Marcus Vellinga, subject: lund accruals q4 review, response: accept}
 variants:
   - [open_outlook, open_invite, choose, send, close_outlook]
 budget_steps: 30
