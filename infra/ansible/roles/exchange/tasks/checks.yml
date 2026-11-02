@@ -46,7 +46,7 @@
       $deadline = (Get-Date).AddMinutes(5)
       do {
         Start-Sleep 10
-        $ev = @(Get-MessageTrackingLog -MessageId $id -Start (Get-Date).AddMinutes(-15) -ErrorAction SilentlyContinue)
+        $ev = @(Get-MessageTrackingLog -Start (Get-Date).AddMinutes(-15) -ResultSize Unlimited -ErrorAction SilentlyContinue | Where-Object MessageId -eq $id)
       } until (($ev.EventId -contains 'FAIL') -or (Get-Date) -gt $deadline)
       if ($ev.EventId -notcontains 'FAIL') { throw "probe not rejected: $($ev.EventId -join ',')" }
       $why = "$(($ev | Where-Object EventId -eq FAIL).RecipientStatus)"
