@@ -13,6 +13,14 @@
     store_location: LocalMachine
     store_name: Root
 
+- name: The persona may read its own certificate file (Windows\Temp is private to the writer)
+  ansible.windows.win_acl:
+    path: C:\Windows\Temp\{{ persona }}.p12
+    user: "{{ domain_netbios }}\\{{ persona }}"
+    rights: Read
+    type: allow
+    state: present
+
 - name: The persona's client certificate in its own store (Edge reads CurrentUser\My)
   ansible.windows.win_certificate_store:
     path: C:\Windows\Temp\{{ persona }}.p12
