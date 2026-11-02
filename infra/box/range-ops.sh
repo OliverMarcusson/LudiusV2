@@ -30,7 +30,8 @@ vms=("${servers[@]}"); for p in "${personas[@]}"; do vms+=("${p%% *}"); done
 note begin running "${#servers[@]} servers, ${#personas[@]} personas"
 
 # has VMID: the snapshot exists by its exact name (pre-warp-social is another one).
-has() { qm listsnapshot "$1" | grep -qE "(^|[ >])$snap( |\$)"; }
+# A snapshot left in snapstate prepare/delete (a failed take) is listed but cannot be rolled back to: not had.
+has() { local c; qm listsnapshot "$1" | grep -qE "(^|[ >])$snap( |\$)" && c=$(qm config "$1" --snapshot "$snap") && ! grep -q "^snapstate:" <<< "$c"; }
 idle() { ! pgrep -x ludius-rs > /dev/null || { pgrep -ax ludius-rs | head -n1; return 1; }; }
 running() { local bad=""; for v in "${vms[@]}"; do [ "$(qm status "$v" | cut -d' ' -f2)" = running ] || bad+=" $v"; done; [ -z "$bad" ] && echo "${#vms[@]} running" || { echo "not running:$bad"; return 1; }; }
 nosnap() { local bad=""; for v in "${vms[@]}"; do has "$v" && bad+=" $v"; done; [ -z "$bad" ] && echo "none" || { echo "$snap already on:$bad"; return 1; }; }
