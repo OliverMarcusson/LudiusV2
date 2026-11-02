@@ -242,7 +242,7 @@
     c=$(curl -s "${at[@]}" 'https://{{ chat_host }}/api/v4/config/client?format=old')
     echo "$c" | python3 -c 'import json,sys; c=json.load(sys.stdin); sys.exit(not (c["EnableSignUpWithGitLab"] == "true" and c["EnableSignInWithEmail"] == "false" and c["EnableSignInWithUsername"] == "false"))'
     test "$(curl -s -o /dev/null -w '%{http_code}' "${at[@]}" https://{{ chat_host }}/oauth/authorize)" = 401
-    # a valid certificate gets past nginx: the shim answers (403 without a client_id), not nginx's 401
+    # a valid certificate gets past nginx: the shim answers (403 without a client_id), not the 401 from nginx
     u={{ people[0].user }}
     test "$(curl -s -o /dev/null -w '%{http_code}' "${at[@]}" --cert $pki/clients/$u.crt --key $pki/clients/$u.key https://{{ chat_host }}/oauth/authorize)" = 403
     chronyc -n sources | grep -q '^\^\*'
