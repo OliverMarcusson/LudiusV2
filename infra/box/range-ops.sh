@@ -5,15 +5,18 @@
 # runs/ops.jsonl sits outside what pre-flight moves aside, so the log survives its own clearing step.
 set -u
 cd "$(dirname "$0")/../.."
-kind=${1:-}; snap=pre-warp; ts=$(date +%Y%m%d%H%M); log=runs/ops.jsonl; out=$(mktemp)
+kind=${1:-}; snap=pre-warp; ts=$(date +%Y%m%d%H%M); log=runs/ops.jsonl
 case $kind in preflight|rollback) ;; *) echo "usage: $0 preflight|rollback" >&2; exit 2 ;; esac
 
 note() { jq -nc --arg e "$kind" --arg s "$1" --arg st "$2" --arg d "${3:-}" '{at: (now | todate), event: $e, step: $s, status: $st, detail: $d}' >> "$log"; }
 # step NAME CMD...: run CMD, log running then ok/failed with the last output line, and pass its status on.
 step() {
-  local name=$1; shift; note "$name" running
-  if "$@" > "$out" 2>&1; then note "$name" ok "$(tail -n1 "$out" | cut -c1-300)"; else note "$name" failed "$(tail -n1 "$out" | cut -c1-300)"; return 1; fi
+  local name=$1 out rc=0; shift; out=$(mktemp); note "$name" running
+  if "$@" > "$out" 2>&1; then note "$name" ok "$(tail -n1 "$out" | cut -c1-300)"; else rc=1; note "$name" failed "$(tail -n1 "$out" | cut -c1-300)"; fi
+  rm -f "$out"; return $rc
 }
+# each NAME FN: FN "<vmid> <user>" for every persona at once (the warp drives them at once too), one step each; fails if any did.
+each() { local p pids=() rc=0; for p in "${personas[@]}"; do step "$1 ${p#* }" "$2" $p & pids+=($!); done; for p in "${pids[@]}"; do wait "$p" || rc=1; done; return $rc; }
 abort() { [ -z "${2:-}" ] || note "$1" failed "$2"; note end failed; echo "$kind stopped at $1" >&2; exit 1; }
 
 # The range is pool ludius minus its templates and the other ranges' VMs (vm_prefix in infra/ansible/ranges/*.yml);
@@ -49,7 +52,7 @@ downloads() {
 }
 # Only ok on every app counts: canary exits 0 on unknown (agent or LLM down), 1 only on drift.
 canary() {
-  local apps=(outlook word excel) r; r=$(./ludius-rs --vm "ludius-$1" canary --persona "$1" "${apps[@]}" 2>&1); local rc=$?
+  local apps=(outlook word excel) r; r=$(./ludius-rs --vm "ludius-$2" canary --persona "$2" "${apps[@]}" 2>&1); local rc=$?
   [ $rc = 0 ] && [ "$(grep -c "^  [a-z]*: ok (" <<< "$r")" = ${#apps[@]} ] && { echo "${#apps[@]} apps ok"; return 0; }
   { grep "^  [a-z]*: " <<< "$r" | grep -v ": ok ("; tail -n1 <<< "$r"; } | head -n1; return 1
 }
@@ -79,8 +82,8 @@ if [ "$kind" = preflight ]; then
   # One mail read: outcome checks read mail the same way (warp9 ran with every read unknown after the CA path broke).
   step "Mail read" ./ludius-rs mail check "${personas[0]#* }" || abort "Mail read"
   step "Clear runs" clear_runs
-  for p in "${personas[@]}"; do step "Downloads ${p#* }" downloads ${p} || failed=1; done
-  for p in "${personas[@]}"; do u=${p#* }; step "Canary $u" canary "$u" || failed=1; done
+  each Downloads downloads || failed=1
+  each Canary canary || failed=1
   [ $failed = 0 ] || abort Snapshot "skipped: fix the failed steps above, then rerun"
   step Snapshot snapshot || abort Snapshot
 else
@@ -92,6 +95,5 @@ else
   [ $failed = 0 ] || abort "Drop snapshot" "kept: fix the failed steps above, then qm delsnapshot <vm> $snap"
   step "Drop snapshot" delsnap || failed=1
 fi
-rm -f "$out"
 [ $failed = 0 ] && note end ok || note end failed
 exit $failed
