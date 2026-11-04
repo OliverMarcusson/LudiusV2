@@ -1,0 +1,53 @@
+---
+# Included at most twice by imap-profile.yml: the second try runs only when the first saw no log-in.
+# On a fresh range (pve1, 2026-11-04) one persona's first Outlook start never connected to srv01; the rerun passed.
+- name: Outlook started in the persona's session with the stored password (try {{ imap_try }} of 2)
+  ansible.windows.win_powershell:
+    script: |
+      param($account, $profiles)
+      {{ imap_setup_ps }}
+      Get-Process outlook -ErrorAction SilentlyContinue | Stop-Process -Force
+      Start-AsPersona $account $null
+    parameters:
+      account: "{{ imap_account }}"
+      profiles: "{{ imap_profiles }}"
+
+- name: Srv01 logs the persona's IMAP log-in from this machine
+  ansible.builtin.command: journalctl -u dovecot --since @{{ imap_since.stdout }} --no-pager -o cat
+  delegate_to: srv01
+  become: true
+  register: imap_login
+  changed_when: false
+  retries: 18
+  delay: 10
+  until: imap_login.stdout is search(imap_login_re)
+  failed_when: false
+  vars:
+    imap_login_re: "{{ 'Logged in: user=<' ~ (persona ~ '@' ~ mail_domain) | regex_escape ~ '>.*rip=' ~ imap_client_ip | regex_escape ~ ',' }}"
+
+- name: Log-in seen
+  ansible.builtin.set_fact:
+    imap_seen: "{{ imap_login.stdout is search('Logged in: user=<' ~ (persona ~ '@' ~ mail_domain) | regex_escape ~ '>.*rip=' ~ imap_client_ip | regex_escape ~ ',') }}"
+
+- name: What Outlook was doing when no log-in came
+  when: not imap_seen
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      $t = Get-ScheduledTaskInfo LudiusOutlookSetup -ErrorAction SilentlyContinue
+      @{
+        task_last_result = if ($t) { '0x{0:x}' -f $t.LastTaskResult } else { 'no task' }
+        outlook = @(Get-Process outlook -IncludeUserName -ErrorAction SilentlyContinue | ForEach-Object { "$($_.UserName): $($_.MainWindowTitle)" })
+      }
+  register: imap_evidence
+
+- name: No log-in on try {{ imap_try }}
+  when: not imap_seen
+  ansible.builtin.debug:
+    msg: "no IMAP log-in from {{ imap_client_ip }} within 3 min; Outlook: {{ imap_evidence.output | default('unknown') }}"
+
+- name: Outlook's IMAP log-in reached srv01
+  when: imap_try == 2
+  ansible.builtin.assert:
+    that: imap_seen
+    fail_msg: "no IMAP log-in from {{ imap_client_ip }} after an Outlook restart; Outlook: {{ imap_evidence.output | default('unknown') }}"

@@ -138,28 +138,12 @@
       register: imap_since
       changed_when: false
 
-    - name: Outlook started in the persona's session with the stored password
-      ansible.windows.win_powershell:
-        script: |
-          param($account, $profiles)
-          {{ imap_setup_ps }}
-          Get-Process outlook -ErrorAction SilentlyContinue | Stop-Process -Force
-          Start-AsPersona $account $null
-        parameters:
-          account: "{{ imap_account }}"
-          profiles: "{{ imap_profiles }}"
-
-    - name: Srv01 logs the persona's IMAP log-in from this machine
-      ansible.builtin.command: journalctl -u dovecot --since @{{ imap_since.stdout }} --no-pager -o cat
-      delegate_to: srv01
-      become: true
-      register: imap_login
-      changed_when: false
-      retries: 18
-      delay: 10
-      until: >-
-        imap_login.stdout is search('Logged in: user=<' ~ (persona ~ '@' ~ mail_domain) | regex_escape ~ '>.*rip='
-        ~ imap_client_ip | regex_escape ~ ',')
+    - name: Outlook started and its IMAP log-in seen (one restart, with evidence, if the first start never connects)
+      ansible.builtin.include_tasks: imap-login.yml
+      loop: [1, 2]
+      loop_control:
+        loop_var: imap_try
+      when: imap_try == 1 or not imap_seen
   always:
     - name: Outlook closed and the setup task removed
       ansible.windows.win_powershell:
