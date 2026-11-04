@@ -333,7 +333,7 @@ build {
 
   provisioner "shell-local" {
     only   = ["proxmox-clone.golden"]
-    inline = ["for i in $(seq 360); do qm status ${var.template_vmid} | grep -q stopped && exit 0; sleep 5; done; echo 'sysprep did not shut the VM down within 30 min' >&2; exit 1"]
+    inline = ["bash ${path.root}/sysprep-wait.sh ${var.template_vmid}"]
   }
 
   post-processor "shell-local" {

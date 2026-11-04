@@ -110,8 +110,15 @@
         - name: Gateway does not forward
           ansible.builtin.include_tasks: tasks/gateway-no-forwarding.yml
 
-        - name: Persona VM
+        - name: Persona VM (cloned and started; every clone boots while the next is cloned)
           ansible.builtin.include_tasks: tasks/persona-vm.yml
+          loop: "{{ range_personas }}"
+          loop_control:
+            loop_var: p
+            label: "{{ p.user }} {{ p.vmid }}"
+
+        - name: Persona VM bootstrap through the guest agent
+          ansible.builtin.include_tasks: tasks/persona-bootstrap.yml
           loop: "{{ range_personas }}"
           loop_control:
             loop_var: p

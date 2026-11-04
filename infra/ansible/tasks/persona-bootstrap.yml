@@ -1,0 +1,29 @@
+---
+# After every clone is started (persona-vm.yml), so their first boots overlap.
+- name: Range address, bring-up admin and WinRM through the guest agent
+  ansible.builtin.command:
+    argv: [qm, guest, exec, "{{ p.vmid }}", --pass-stdin, "1", --timeout, "120", --, powershell.exe, -NoProfile,
+           -NonInteractive, -EncodedCommand, "{{ lookup('ansible.builtin.template', 'bootstrap.ps1.j2') | b64encode(encoding='utf-16-le') }}"]
+    stdin: "{{ range_admin_password }}"
+  vars:
+    ip: "{{ p.ip }}"
+  register: boot
+  until: boot.rc == 0 and (boot.stdout | from_json).exitcode | default(1) == 0
+  retries: 60
+  delay: 20
+  changed_when: true
+  no_log: true
+
+- name: Persona in the inventory
+  ansible.builtin.add_host:
+    name: ludius-{{ p.user }}
+    groups: personas
+    ansible_host: "{{ p.ip }}"
+    persona: "{{ p.user }}"
+    computer_name: WS-{{ p.user | upper }}01
+    ansible_user: "{{ range_admin_user }}"
+    ansible_password: "{{ range_admin_password }}"
+    ansible_connection: winrm
+    ansible_winrm_transport: ntlm
+    ansible_port: 5985
+  no_log: true
