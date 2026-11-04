@@ -145,6 +145,7 @@ fn d_tz() -> String {
 
 pub const BASE_VMID: u32 = 8999;
 pub const TEMPLATE_VMID: u32 = 9000;
+const FAILED_BUILD: &str = "deletes the VM a failed earlier build of this image left (this node, our pool, the build's name, not a template)";
 const AGENT_UNIT: &str = "ludius-host-agent.service";
 const PERSONA_MB: u32 = 6144;
 
@@ -428,7 +429,7 @@ pub fn plan(spec: &Spec, l: &Layout) -> Vec<Step> {
             sh: Some(packer("base.proxmox-iso.base")),
             exists: Some(template(BASE_VMID)),
             creates: vec![format!("VM {BASE_VMID} ludius-win10-base (template)")],
-            irreversible: vec![],
+            irreversible: vec![FAILED_BUILD.into()],
             rerun: false,
         },
         Step {
@@ -437,7 +438,7 @@ pub fn plan(spec: &Spec, l: &Layout) -> Vec<Step> {
             sh: Some(packer("golden.proxmox-clone.golden")),
             exists: Some(template(TEMPLATE_VMID)),
             creates: vec![format!("VM {TEMPLATE_VMID} ludius-win10-golden (template)")],
-            irreversible: vec![],
+            irreversible: vec![FAILED_BUILD.into()],
             rerun: false,
         },
         Step {
