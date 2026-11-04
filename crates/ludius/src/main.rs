@@ -28,7 +28,7 @@ const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--per
        ludius day PLAN.yaml [--clock realtime|compressed] [--canary] [--temporal HOST:PORT] [--timezone TZ]
        ludius schedule create|describe|pause|unpause|delete --persona USER [--nightly] [--at HH:MM] [--timezone TZ] [--clock C] [--canary] [--unpause] [--temporal HOST:PORT]
        ludius [--vm VM] reservation [inspect|clear] [--confirm-vm VM --confirm-owner NS/WID] [--temporal HOST:PORT]
-       ludius chat reset USER USER...
+       ludius chat reset USER USER... | chat check USER
        ludius mail check USER
        ludius metrics LOG... [--human LOG...] [--features CSV] [--timeline CSV [--before CSV] [--manifest JSON]]
        ludius timeline LOG.jsonl... [--out CSV]
@@ -231,6 +231,19 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if args.first().is_some_and(|a| a == "chat") {
+        // One read of the user's unread posts: pre-flight proof that chat outcome checks can read (setup verify).
+        if let [_, check, user] = args.as_slice()
+            && check == "check"
+        {
+            match ludius::chat::unread(user) {
+                Some(p) => println!("{user}: chat read, {} unread", p.len()),
+                None => {
+                    println!("{user}: chat unreadable (no chat backend, or the read failed)");
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
         let [_, reset, users @ ..] = args.as_slice() else { bail!(USAGE) };
         let mut seen = std::collections::BTreeSet::new();
         let users: Vec<&String> = users.iter().filter(|u| seen.insert(u.as_str())).collect();
