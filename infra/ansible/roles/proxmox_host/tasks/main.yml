@@ -75,7 +75,7 @@
 - name: Packages the range needs on an installed node (ludius setup runs only the range-host tasks)
   tags: [range-host]
   ansible.builtin.apt:
-    name: [dnsmasq, iptables, xorriso]
+    name: [dnsmasq, iptables, xorriso, nmap, ldap-utils, smbclient, dnsutils]  # the last four: ludius setup discover
     update_cache: true
 
 - name: Network config includes interfaces.d
