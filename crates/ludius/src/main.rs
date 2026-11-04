@@ -510,6 +510,15 @@ fn main() -> Result<()> {
     let lifecycle = |op: Op| agent.lifecycle(op, "", "");
     let password = ludius::rangerun::password(&persona.user, &env);
     let session = Session::new(&agent, &log, password, Some(&lifecycle));
+    // A VM the agent shut down (an earlier ladder reboot, a stop) is started; the observer answers once Windows is up.
+    if agent.lifecycle(Op::State, "", "")? == "Off" {
+        agent.lifecycle(Op::Start, "", "")?;
+        let up = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        while session.observe(2000).is_err() {
+            anyhow::ensure!(std::time::Instant::now() < up, "{vm}: started, but its observer did not answer within 5 minutes");
+            std::thread::sleep(std::time::Duration::from_secs(3));
+        }
+    }
     if unlock_only {
         if !session.unlock()? {
             bail!("session did not unlock");
