@@ -479,7 +479,7 @@ pub fn plan(spec: &Spec, l: &Layout) -> Vec<Step> {
             what: format!("Controller settings -> {}", l.controller_env().display()),
             sh: None,
             exists: None,
-            creates: vec![format!("file {}", l.controller_env().display())],
+            creates: vec![format!("file {}", l.controller_env().display()), format!("file {} (persona password suffix, 0600)", secrets_dir().join(PERSONA_SUFFIX).display())],
             irreversible: vec![],
             rerun: true,
         },
