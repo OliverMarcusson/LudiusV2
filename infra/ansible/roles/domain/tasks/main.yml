@@ -47,6 +47,15 @@
     name: AutoLogonCount
     state: absent
 
+# Autologon is tried once per boot; on a fast host it ran a second before the NIC was up and failed with
+# 0xc000005e (no logon servers), leaving the logon screen (pve1, 2026-11-04). Wait for the network first.
+- name: Wait for the network at startup and logon (autologon reaches the DC)
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\CurrentVersion\Winlogon
+    name: SyncForegroundPolicy
+    data: 1
+    type: dword
+
 - name: Restart into the persona's session
   ansible.windows.win_reboot:
     reboot_timeout: 900
