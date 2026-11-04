@@ -583,25 +583,17 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
         shared("tools"),
         shared("vault"),
         Step {
-            id: "host",
-            what: format!("Host: discovery tools, vhost_vsock, virtio-win ISOs, pool {}, API token (no bridges: the range's are the operator's)", h.pool),
-            sh: Some(format!("{ANSIBLE} -i localhost, -c local proxmox-host.yml --tags adopt-host -e range_pool={}", h.pool)),
-            exists: None,
-            creates: vec![format!("pool {}", h.pool), "token root@pam!packer (/root/.ludius-packer-token)".into(), "virtio-win ISOs in /var/lib/vz/template/iso".into()],
-            irreversible: vec![],
-            rerun: true,
-        },
-        Step {
             id: "gate",
             what: format!("Boundary gate (hard stop): discover {} read-only, and {desktops} are Windows desktops on its bridge", spec.range.subnet),
             sh: Some(format!(
-                "set -e; ./ludius-rs setup discover --subnet {} --domain {} --out {dir}; \
+                "set -e; command -v nmap ldapsearch smbclient dig >/dev/null || apt-get install -y nmap ldap-utils smbclient dnsutils; \
+                 ./ludius-rs setup discover --subnet {} --domain {} --out {dir}; \
                  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); have={{v[\"name\"] for v in d[\"desktops\"]}}; miss=[n for n in sys.argv[2:] if n not in have]; \
                  miss and sys.exit(\"not Windows 10/11 desktops on the range bridge: \" + \" \".join(miss))' {discovery} {desktops}",
                 spec.range.subnet, spec.range.domain,
             )),
             exists: None,
-            creates: vec![format!("file {discovery}")],
+            creates: vec![format!("file {discovery}"), "node packages nmap, ldap-utils, smbclient, dnsutils when missing (read-only probes; on the node, not the range)".into()],
             irreversible: vec![],
             rerun: true,
         },
@@ -612,12 +604,21 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
                 "set -e; br=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"bridge\"])' {discovery}); \
                  for id in $(qm list | awk 'NR>1 {{print $1}}'); do qm config $id | grep -Eq \"^net[0-9]+:.*bridge=$br(,|$)\" || continue; \
                  if qm listsnapshot $id | grep -q ' {SNAPSHOT} '; then echo \"VM $id: {SNAPSHOT} exists, kept\"; \
-                 else qm snapshot $id {SNAPSHOT} --description 'ludius setup: the range before Ludius was deployed' && echo \"VM $id: {SNAPSHOT}\"; fi; done"
+                 else qm snapshot $id {SNAPSHOT} --description 'ludius setup: the range before Ludius was deployed' || exit 1; echo \"VM $id: {SNAPSHOT}\"; fi; done"
             )),
             exists: None,
             creates: vec![format!("snapshot {SNAPSHOT} on every VM on the range bridge (roll back: qm rollback <id> {SNAPSHOT})")],
             irreversible: vec![],
             rerun: false,
+        },
+        Step {
+            id: "host",
+            what: format!("Host: vhost_vsock, virtio-win ISOs, pool {}, API token (after the gate and the snapshot; no bridges: the range's are the operator's)", h.pool),
+            sh: Some(format!("{ANSIBLE} -i localhost, -c local proxmox-host.yml --tags adopt-host -e range_pool={}", h.pool)),
+            exists: None,
+            creates: vec![format!("pool {}", h.pool), "token root@pam!packer (/root/.ludius-packer-token)".into(), "virtio-win ISOs in /var/lib/vz/template/iso".into()],
+            irreversible: vec![],
+            rerun: true,
         },
         shared("personas"),
         shared("vars"),
@@ -642,11 +643,13 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
             exists: None,
             creates: vec![
                 format!("AD OU Ludius in {} with one account per narrative person", spec.range.domain),
+                "on the desktops: event log sizes, Netlogon DisablePasswordChange (machine password kept through clock warps), the base role's power, lock, first-run and Edge settings".into(),
                 format!("on {desktops}: observer in C:\\Program Files\\RangeAssist, its logon task, the range code-signing root, viosock driver, Office first-run settings, autologon as the persona"),
             ],
             irreversible: vec![
                 "Windows Update, Defender and automatic maintenance off on the desktops (the image settings Ludius runs with)".into(),
                 "WinRM is stopped and disabled on the desktops afterwards, also where it ran before".into(),
+                "an account already in OU Ludius (from an earlier run) gets its password reset to the persona password".into(),
                 "each desktop gets a vsock device and a fixed 1920x1080 standard display (QEMU args, vga std), applied with one power cycle".into(),
             ],
             rerun: true,
@@ -1299,7 +1302,7 @@ decider = { provider = "openrouter", model = "liquid/d1.1", key = "secret:openro
         let s = existing("", "").unwrap();
         assert!(s.servers().is_empty());
         let ids: Vec<&str> = plan(&s, &Layout { dir: PathBuf::from("/tmp/r") }).iter().map(|s| s.id).collect();
-        assert_eq!(ids, ["preflight", "tools", "vault", "host", "gate", "snapshot", "personas", "vars", "agent", "adopt", "controller", "verify"]);
+        assert_eq!(ids, ["preflight", "tools", "vault", "gate", "snapshot", "host", "personas", "vars", "agent", "adopt", "controller", "verify"]);
         assert_eq!(verify_apps(&s), ["word", "excel"], "no Outlook without mail");
         assert!(existing("backend = \"adopt\"", "backend = \"samba\"").is_err(), "AD must be adopted");
         assert!(existing("admin = \"secret:dc-admin\"", "admin = \"hunter2\"").is_err(), "inline admin password");

@@ -50,7 +50,6 @@
     - name: Adopted desktops
       ansible.builtin.set_fact:
         adopted: "{{ resolved.stdout | from_json }}"
-        bootstrapped: []
 
     # The observer reports over vsock (guest CID = VM id, the host agent checks it) and Ludius drives a fixed
     # 1920x1080 display, as on a range it builds. Both are VM hardware: they take effect with a power cycle.
@@ -97,18 +96,22 @@
         loop_var: p
         label: "{{ p.vm }}"
 
+    # A bootstrap that fails half-way may have opened bring-up access: the failure is recorded instead of failing
+    # localhost, so the last play still closes it on every desktop.
     - name: Bring-up admin and WinRM through the guest agent (the desktop's own network settings are kept)
-      ansible.builtin.include_tasks: tasks/persona-bootstrap.yml
-      vars:
-        bootstrap_network: false
-      loop: "{{ adopted }}"
-      loop_control:
-        loop_var: p
-        label: "{{ p.vm }} {{ p.vmid }}"
-
-    - name: Mark for teardown
-      ansible.builtin.set_fact:
-        bootstrapped: "{{ adopted | map(attribute='vmid') | list }}"
+      block:
+        - name: Bootstrap each desktop
+          ansible.builtin.include_tasks: tasks/persona-bootstrap.yml
+          vars:
+            bootstrap_network: false
+          loop: "{{ adopted }}"
+          loop_control:
+            loop_var: p
+            label: "{{ p.vm }} {{ p.vmid }}"
+      rescue:
+        - name: Record the failure (teardown still runs for every desktop)
+          ansible.builtin.set_fact:
+            bringup_failures: "{{ bringup_failures | default([]) + ['bootstrap: ' ~ (ansible_failed_result.msg | default('failed'))] }}"
 
 - name: Persona accounts in the adopted AD
   hosts: personas
@@ -290,8 +293,9 @@
           - groups['personas'] | map('extract', hostvars) | selectattr('persona_done', 'defined') | list | length == adopted | length
           - observed is not failed
           - closed_failures | default([]) | length == 0
+          - bringup_failures | default([]) | length == 0
         fail_msg: >-
-          adoption incomplete: personas done
+          adoption incomplete: {{ bringup_failures | default([]) }}; personas done
           {{ groups['personas'] | default([]) | map('extract', hostvars) | selectattr('persona_done', 'defined') | map(attribute='persona') | list }};
           observer check {{ 'failed' if observed is failed else 'ok' }}; desktops stopped because they could not be closed:
           {{ closed_failures | default([]) }}
