@@ -72,19 +72,39 @@
 - name: Still running the newest Proxmox kernel (proxmox-ve may have brought a newer one)
   ansible.builtin.include_tasks: reboot-if-needed.yml
 
+- name: Packages the range needs on an installed node (ludius setup runs only the range-host tasks)
+  tags: [range-host]
+  ansible.builtin.apt:
+    name: [dnsmasq, iptables, xorriso]
+    update_cache: true
+
 - name: Network config includes interfaces.d
+  tags: [range-host]
   ansible.builtin.lineinfile:
     path: /etc/network/interfaces
     line: source /etc/network/interfaces.d/*
 
 - name: Bridge list is the host's (a range vars file such as ranges/imap-test.yml would drop the main bridge)
-  tags: [bridges]
+  tags: [bridges, range-host]
   ansible.builtin.assert:
     that: range_bridge not in extra_range_bridges | map(attribute='bridge') and range_bridge != build_bridge
     fail_msg: run proxmox-host.yml without a range vars file ({{ range_bridge }} is also in extra_range_bridges or the build bridge)
 
+- name: Network config
+  tags: [bridges, range-host]
+  ansible.builtin.slurp:
+    src: /etc/network/interfaces
+  register: interfaces
+
+- name: Our bridges are not already defined in /etc/network/interfaces (never take over an existing bridge)
+  tags: [bridges, range-host]
+  ansible.builtin.assert:
+    that: (interfaces.content | b64decode) is not search('(?m)^\s*iface\s+' ~ item ~ '\s')
+    fail_msg: "{{ item }} is already defined in /etc/network/interfaces; pick another bridge in the range spec"
+  loop: "{{ [range_bridge, build_bridge] + extra_range_bridges | map(attribute='bridge') | list }}"
+
 - name: Range and build bridges
-  tags: [bridges]
+  tags: [bridges, range-host]
   ansible.builtin.template:
     src: ludius-bridges.j2
     dest: /etc/network/interfaces.d/ludius
@@ -92,7 +112,7 @@
   register: bridges
 
 - name: Apply bridges
-  tags: [bridges]
+  tags: [bridges, range-host]
   ansible.builtin.command: ifreload -a
   environment:
     PATH: /usr/sbin:/usr/bin:/sbin:/bin  # ifreload is system Python; an ansible venv first on PATH breaks it
@@ -100,6 +120,7 @@
   changed_when: true
 
 - name: DHCP on the build bridge only (no DNS service)
+  tags: [range-host]
   ansible.builtin.copy:
     dest: /etc/dnsmasq.d/ludius-build.conf
     content: |
@@ -113,6 +134,7 @@
   register: dnsmasq
 
 - name: Restart dnsmasq
+  tags: [range-host]
   ansible.builtin.systemd_service:
     name: dnsmasq
     enabled: true
@@ -120,32 +142,39 @@
   when: dnsmasq is changed
 
 - name: Vhost-vsock loaded now and at boot (guest channel)
+  tags: [range-host]
   community.general.modprobe:
     name: vhost_vsock
     persistent: present
 
-- name: Thin pool for linked clones
-  ansible.builtin.command: lvcreate --type thin-pool -l {{ thin_pool_extents }} -n data {{ thin_vg }}
-  args:
-    creates: /dev/{{ thin_vg }}/data
-
 - name: Storage list
+  tags: [range-host]
   ansible.builtin.command: pvesm status
   register: pvesm
   changed_when: false
 
+- name: Thin pool for linked clones (only when the storage does not exist yet)
+  tags: [range-host]
+  ansible.builtin.command: lvcreate --type thin-pool -l {{ thin_pool_extents }} -n data {{ thin_vg }}
+  args:
+    creates: /dev/{{ thin_vg }}/data
+  when: storage not in pvesm.stdout
+
 - name: Lvmthin storage {{ storage }}
+  tags: [range-host]
   ansible.builtin.command: pvesm add lvmthin {{ storage }} --vgname {{ thin_vg }} --thinpool data --content images,rootdir
   when: storage not in pvesm.stdout
   changed_when: true
 
 - name: Virtio-win ISO
+  tags: [range-host]
   ansible.builtin.get_url:
     url: "{{ virtio_win_iso_url }}"
     dest: /var/lib/vz/template/iso/virtio-win.iso
     mode: "0644"
 
 - name: Virtio-win ISO with viosock (golden image, infra/packer)
+  tags: [range-host]
   ansible.builtin.get_url:
     url: "{{ golden_virtio_iso_url }}"
     dest: /var/lib/vz/template/iso/{{ golden_virtio_iso_url | basename }}
@@ -153,31 +182,46 @@
     mode: "0644"
 
 - name: Windows ISO present
+  tags: [range-host]
   ansible.builtin.stat:
     path: /var/lib/vz/template/iso/win10.iso
   register: winiso
 
 - name: Windows ISO uploaded by the owner
+  tags: [range-host]
   ansible.builtin.assert:
     that: winiso.stat.exists
     fail_msg: copy the Windows 10 ISO to /var/lib/vz/template/iso/win10.iso (scp), then rerun
 
 - name: Range pool (the host agent's Proxmox:Pool)
+  tags: [range-host]
   ansible.builtin.command: pvesh get /pools/{{ range_pool }}
   register: pool
   changed_when: false
   failed_when: false
 
 - name: Create the range pool
+  tags: [range-host]
   ansible.builtin.command: pvesh create /pools --poolid {{ range_pool }} --comment "Ludius range - the only VMs the agent and playbooks touch"
   when: pool.rc != 0
   changed_when: true
 
-- name: Snippets on local storage (srv01's cloud-init user-data)
-  ansible.builtin.command: pvesm set local --content iso,vztmpl,backup,snippets
+- name: Local storage content types
+  tags: [range-host]
+  ansible.builtin.command: pvesh get /storage/local --output-format json
+  register: local_storage
   changed_when: false
 
+- name: Snippets on local storage (srv01's cloud-init user-data), keeping its other content types
+  tags: [range-host]
+  vars:
+    local_content: "{{ (local_storage.stdout | from_json).content.split(',') }}"
+  ansible.builtin.command: pvesm set local --content {{ (local_content + ['iso', 'vztmpl', 'backup', 'snippets']) | unique | join(',') }}
+  when: "'snippets' not in local_content"
+  changed_when: true
+
 - name: Packer API token
+  tags: [range-host]
   ansible.builtin.shell: |
     set -eo pipefail
     umask 077

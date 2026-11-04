@@ -32,6 +32,7 @@ pub mod revision;
 pub mod runner;
 pub mod schedules;
 pub mod session;
+pub mod setup;
 pub mod share;
 pub mod tasks;
 pub mod template;

@@ -1,0 +1,35 @@
+# Range spec for `ludius setup plan|apply` (docs/range-setup-design.html). Copy it to its own directory outside
+# the repo (e.g. /root/ranges/<name>/range.toml): state, manifest, personas and logs are written next to it.
+# Phase 1: a new range on a Proxmox node, run on the node as root from a checkout.
+
+[range]
+mode = "build"
+subnet = "10.77.0.0/24"            # a private /24; .1 is the host, servers .11-.13, personas .21+
+domain = "corp.example.test"
+hypervisor = { kind = "proxmox", storage = "local-lvm", bridge = "vmbr1", build_bridge = "vmbr2", pool = "ludius", vm_prefix = "ludius-", vmid_base = 100 }
+windows_iso_sha256 = "<sha256 of /var/lib/vz/template/iso/win10.iso>"
+scenario = "none"                  # or the absolute path of the scenario file
+
+[org]
+name = "Example Freight"
+industry = "freight forwarding"
+departments = ["Operations", "Finance", "Sales"]
+seed = 42
+
+[personas]
+count = 3                          # one new VM each
+# roles = ["one in finance", "two in operations"]
+# tz = "Europe/Stockholm"
+
+[addons.ad]
+backend = "samba"                  # samba (with mail imap|grommunio) | windows-dc (with mail exchange)
+
+[addons.mail]
+backend = "imap"                   # imap (Postfix + Dovecot) | grommunio (5 log-in mailboxes) | exchange
+
+[addons.chat]                      # Mattermost on chat01; leave the table out for no chat
+
+[ai]
+# keys are files in /etc/ludius/secrets (LUDIUS_SECRETS), never the key itself
+planner = { provider = "openrouter", model = "deepseek/deepseek-v4.1-flash", key = "secret:openrouter" }
+decider = { provider = "openrouter", model = "liquid/d1.1", key = "secret:openrouter" }

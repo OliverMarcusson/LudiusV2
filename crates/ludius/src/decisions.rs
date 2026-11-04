@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 
 use crate::calls;
 
+/// The default; LUDIUS_DECISIONS_URL points the Decider at another endpoint with the same API.
 pub const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
 const RATE_LIMIT_WAITS: [u64; 3] = [1, 2, 4];
 pub const MAX_OPTIONS: usize = 255;
@@ -224,7 +225,7 @@ impl DecisionsClient {
             .build()?;
         Ok(Self {
             model: model.unwrap_or_else(default_model),
-            endpoint: endpoint.unwrap_or(ENDPOINT).into(),
+            endpoint: endpoint.map(str::to_string).or_else(|| std::env::var("LUDIUS_DECISIONS_URL").ok()).unwrap_or_else(|| ENDPOINT.into()),
             key: api_key.into(),
             http,
         })

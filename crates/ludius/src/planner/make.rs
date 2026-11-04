@@ -124,15 +124,18 @@ pub fn catalog(templates: &BTreeMap<String, Template>, seed: &str) -> String {
     lines.join("\n")
 }
 
-pub fn make_narrative(llm: &LlmClient, personas: &[Persona], start: NaiveDate) -> Result<Narrative> {
+/// `brief`: the company as the range spec gives it (name, industry, departments), or empty to invent one.
+pub fn make_narrative(llm: &LlmClient, personas: &[Persona], start: NaiveDate, brief: &str) -> Result<Narrative> {
     let who: Vec<String> = personas.iter().map(|p| format!("- {} (account {}): {}, {}", p.name, p.user, p.role, p.department)).collect();
     let user = format!(
-        "Range start date: {}.\nThese employees are personas and must appear in people with their account as user:\n{}\n\n\
+        "{brief}{}Range start date: {}.\nThese employees are personas and must appear in people with their account as user:\n{}\n\n\
          Return JSON with keys company, city, summary (3-5 sentences), people (8-15 entries: name, role, department, user (a short \
          lower-case account for everyone), manager (the user of the person they report to; empty only for the head of the company; \
          every employee listed above reports to someone who is not one of them)), projects (3-6 short strings) and events (6-12 \
          entries: date YYYY-MM-DD within four weeks of the start, what). Include the routine (month-end close, team meetings) and a \
          few one-offs (an office move, a supplier change, a system migration).",
+        if brief.is_empty() { "" } else { "
+" },
         start.format("%Y-%m-%d"),
         who.join("\n")
     );

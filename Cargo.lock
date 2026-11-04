@@ -1565,6 +1565,7 @@ dependencies = [
  "temporalio-sdk",
  "temporalio-workflow",
  "tokio",
+ "toml",
  "tonic",
  "url",
  "zip",

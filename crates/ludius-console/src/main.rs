@@ -290,7 +290,7 @@ fn config() -> Result<Config, String> {
     let data = PathBuf::from(env("LUDIUS_DATA", "/etc/ludius/data"));
     Ok(Config {
         portraits: PathBuf::from(env("CONSOLE_PORTRAITS", &runs.join("portraits").to_string_lossy())),
-        personas: data.join("personas"),
+        personas: std::env::var_os("LUDIUS_PERSONAS").map(PathBuf::from).unwrap_or_else(|| data.join("personas")),
         templates: data.join("templates"),
         runs,
         include: Regex::new(&format!("(?i){}", env("CONSOLE_INCLUDE", "^ludius-"))).map_err(|e| e.to_string())?,

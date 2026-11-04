@@ -94,12 +94,9 @@ impl PlanActivities {
     }
 }
 
-/// data/personas/*.yaml, sorted by file name (cli.plan_sources).
+/// The persona files (paths::personas), sorted by file name (cli.plan_sources).
 pub fn personas() -> Result<Vec<crate::tasks::Persona>> {
-    let mut paths: Vec<_> = std::fs::read_dir(crate::paths::data().join("personas"))?.map(|e| e.map(|e| e.path())).collect::<std::io::Result<_>>()?;
-    paths.retain(|p| p.extension().is_some_and(|x| x == "yaml"));
-    paths.sort();
-    paths.iter().map(|p| crate::tasks::load_yaml(p)).collect()
+    crate::paths::yaml_files(&crate::paths::personas())?.iter().map(|p| crate::tasks::load_yaml(p)).collect()
 }
 
 #[activities]

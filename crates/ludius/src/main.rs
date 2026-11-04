@@ -32,6 +32,7 @@ const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--per
        ludius mail check USER
        ludius metrics LOG... [--human LOG...] [--features CSV] [--timeline CSV [--before CSV] [--manifest JSON]]
        ludius timeline LOG.jsonl... [--out CSV]
+       ludius setup plan|apply RANGE.toml
        ludius store [--dsn DSN] [--s3 http://KEY:SECRET@host:port/bucket]   (defaults LUDIUS_PG, LUDIUS_S3)";
 
 /// The checkout's .env fills variables the environment doesn't set.
@@ -44,6 +45,13 @@ fn load_env() {
         {
             unsafe { std::env::set_var(k.trim(), v.trim()) };
         }
+    }
+    // a range set up by `ludius setup` keeps the key in a file, not in .env
+    if std::env::var_os("OPENROUTER_API_KEY").is_none()
+        && let Ok(f) = std::env::var("OPENROUTER_KEY_FILE")
+        && let Ok(key) = std::fs::read_to_string(&f)
+    {
+        unsafe { std::env::set_var("OPENROUTER_API_KEY", key.trim()) };
     }
 }
 
@@ -58,6 +66,9 @@ fn planner_llm(key: &str) -> Result<LlmClient> {
 fn main() -> Result<()> {
     load_env();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "setup") {
+        return ludius::setup::main(&args[1..], &root());
+    }
     let mut flag = |name: &str| -> Result<Option<String>> {
         let Some(i) = args.iter().position(|a| a == name) else { return Ok(None) };
         if i + 1 >= args.len() {
@@ -71,7 +82,7 @@ fn main() -> Result<()> {
     let vm = flag("--vm")?.unwrap_or_else(|| env("LUDIUS_VM"));
     // a bare name is the persona file of that user (as the range supervisor passes it)
     let persona_flag = flag("--persona")?;
-    let persona_path = persona_flag.clone().or_else(|| Some(env("LUDIUS_PERSONA")).filter(|p| !p.is_empty())).map(|p| if p.ends_with(".yaml") { PathBuf::from(p) } else { data().join("personas").join(format!("{p}.yaml")) });
+    let persona_path = persona_flag.clone().or_else(|| Some(env("LUDIUS_PERSONA")).filter(|p| !p.is_empty())).map(|p| if p.ends_with(".yaml") { PathBuf::from(p) } else { ludius::paths::personas().join(format!("{p}.yaml")) });
     let persona_file = || persona_path.as_deref().context("--persona or LUDIUS_PERSONA is required");
     let clock_flag = flag("--clock")?;
     let clock: Clock = clock_flag.as_deref().unwrap_or("compressed").parse()?;
@@ -111,7 +122,7 @@ fn main() -> Result<()> {
         match args.get(1).map(String::as_str) {
             Some("narrative") => {
                 let llm = LlmClient::new(&key, Some(&planner_model()))?;
-                let n = ludius::planner::make_narrative(&llm, &ludius::nightly::worker::personas()?, date)?;
+                let n = ludius::planner::make_narrative(&llm, &ludius::nightly::worker::personas()?, date, "")?;
                 let path = ludius::planner::World::new(&runs()).save_narrative(&n)?;
                 println!("{} ({}): {} people, {} events -> {}\nplanner cost ${:.4}", n.company, n.city, n.people.len(), n.events.len(), path.display(), llm.cost.get());
             }
@@ -277,7 +288,7 @@ fn main() -> Result<()> {
         let (logs, human) = (paths(&args[1..cut]), paths(args.get(cut + 1..).unwrap_or_default()));
         let mut out = ludius::metrics::report(&logs, &human, features.as_deref().map(Path::new))?;
         if let Some(t) = timeline {
-            let mut files: Vec<PathBuf> = std::fs::read_dir(data().join("personas"))?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "yaml")).collect();
+            let mut files: Vec<PathBuf> = std::fs::read_dir(ludius::paths::personas())?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "yaml")).collect();
             files.sort();
             let personas = files.iter().map(|p| Ok(load_yaml::<Persona>(p)?.user)).collect::<Result<Vec<_>>>()?;
             out["artifacts"] = ludius::artifacts::report(Path::new(&t), &personas, &logs, manifest.as_deref().map(Path::new), before.as_deref().map(Path::new))?;
@@ -317,7 +328,7 @@ fn main() -> Result<()> {
             Some("unwarp") => std::process::exit(ludius::warp::unwarp(|| clock(false), &lease)),
             Some("sweep") => std::process::exit(ludius::warp::sweep(|| clock(false), &lease, None)?),
             Some("warp") => {
-                let why = rangerun::refusals(&users, &env, &data().join("personas"));
+                let why = rangerun::refusals(&users, &env, &ludius::paths::personas());
                 if !why.is_empty() {
                     eprintln!("range not started:
   {}", why.join("
@@ -353,7 +364,7 @@ fn main() -> Result<()> {
             }
             Some("status") => println!("{}", rangerun::summary(&ludius::planner::World::new(&runs()), &users, chrono::Utc::now().with_timezone(&tz).date_naive(), &state, &env)),
             Some("up") => {
-                let why = rangerun::refusals(&users, &env, &data().join("personas"));
+                let why = rangerun::refusals(&users, &env, &ludius::paths::personas());
                 if !why.is_empty() {
                     bail!("range not started:
   {}", why.join("

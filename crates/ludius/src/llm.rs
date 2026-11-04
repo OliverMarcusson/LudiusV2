@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::calls;
 
+/// The default; LUDIUS_PLANNER_URL points the planner at another OpenAI-compatible endpoint.
 pub const ENDPOINT: &str = "https://openrouter.ai/api/v1/chat/completions";
 pub const DEFAULT_MODEL: &str = "deepseek/deepseek-v4.1-flash-1017";
 
@@ -73,7 +74,8 @@ impl LlmClient {
     }
 
     pub fn post(&self, body: &Value) -> Result<Value> {
-        let r = self.http.post(ENDPOINT).bearer_auth(&self.key).header("X-Title", "Ludius planner").json(body).send()?;
+        let endpoint = std::env::var("LUDIUS_PLANNER_URL").unwrap_or_else(|_| ENDPOINT.into());
+        let r = self.http.post(&endpoint).bearer_auth(&self.key).header("X-Title", "Ludius planner").json(body).send()?;
         let status = r.status();
         let text = r.text()?;
         if status != 200 {

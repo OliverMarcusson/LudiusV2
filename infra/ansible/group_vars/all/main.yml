@@ -38,7 +38,9 @@ persona_cores: 4
 persona_memory_mb: 6144
 display_args: -global VGA.xres=1920 -global VGA.yres=1080
 personas: "{{ range_personas | map(attribute='user') | list }}"
-persona_files: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/../../data/personas/*.yaml') | map('basename') | map('splitext') | map('first') | list }}"
+# persona files: data/personas, or the range directory of `ludius setup`
+persona_dir: "{{ playbook_dir }}/../../data/personas"
+persona_files: "{{ query('ansible.builtin.fileglob', persona_dir ~ '/*.yaml') | map('basename') | map('splitext') | map('first') | list }}"
 range_admin_user: ludiusbringup
 range_admin_password: "{{ vault_range_admin_password }}"
 bringup_teardown: true

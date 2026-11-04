@@ -1,0 +1,927 @@
+//! `ludius setup plan|apply RANGE.toml`: build a range from a spec (docs/range-setup-design.html, phase 1).
+//!
+//! Phase 1 builds a new range on a Proxmox node, run on the node itself as root from a checkout: it orchestrates
+//! the existing infra/ (Ansible, Packer), it does not reimplement it. Everything range-specific lands next to the
+//! spec: `state.json` (finished steps, so an interrupted apply resumes), `manifest.jsonl` (what each step created,
+//! irreversible effects flagged), `ansible-vars.yml`, the generated `personas/` and narrative (`runs/`), `logs/`
+//! and `controller.env`.
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use anyhow::{Context, Result, bail, ensure};
+use rand::{RngExt as _, SeedableRng};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::llm::{Check, LlmClient};
+use crate::tasks::Persona;
+
+// --- spec -------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Spec {
+    pub range: Range,
+    pub org: Org,
+    pub personas: Personas,
+    #[serde(default)]
+    pub addons: Addons,
+    pub ai: Ai,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Range {
+    pub mode: String,
+    pub subnet: String,
+    pub domain: String,
+    pub hypervisor: Hypervisor,
+    /// sha256 of /var/lib/vz/template/iso/win10.iso (Packer never builds an unchecked ISO).
+    pub windows_iso_sha256: String,
+    /// The scenario file whose reserved resources the personas keep off, or "none".
+    #[serde(default = "d_none")]
+    pub scenario: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Hypervisor {
+    pub kind: String,
+    #[serde(default = "d_storage")]
+    pub storage: String,
+    #[serde(default = "d_bridge")]
+    pub bridge: String,
+    #[serde(default = "d_build_bridge")]
+    pub build_bridge: String,
+    #[serde(default = "d_pool")]
+    pub pool: String,
+    #[serde(default = "d_prefix")]
+    pub vm_prefix: String,
+    /// Servers get base+10.., personas base+21..
+    #[serde(default = "d_vmid_base")]
+    pub vmid_base: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Org {
+    pub name: String,
+    pub industry: String,
+    pub departments: Vec<String>,
+    #[serde(default)]
+    pub seed: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Personas {
+    pub count: u32,
+    /// Optional role mix hints for the generator ("2 in finance, 1 in sales").
+    #[serde(default)]
+    pub roles: Vec<String>,
+    #[serde(default = "d_tz")]
+    pub tz: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Addons {
+    pub ad: Option<Addon>,
+    pub mail: Option<Addon>,
+    pub chat: Option<Addon>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Addon {
+    #[serde(default)]
+    pub backend: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ai {
+    pub planner: Model,
+    pub decider: Model,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Model {
+    pub provider: String,
+    pub model: String,
+    #[serde(default)]
+    pub url: String,
+    /// "secret:<name>": the file <secrets>/<name>. Never the key itself.
+    #[serde(default)]
+    pub key: String,
+}
+
+fn d_none() -> String {
+    "none".into()
+}
+fn d_storage() -> String {
+    "local-lvm".into()
+}
+fn d_bridge() -> String {
+    "vmbr1".into()
+}
+fn d_build_bridge() -> String {
+    "vmbr2".into()
+}
+fn d_pool() -> String {
+    "ludius".into()
+}
+fn d_prefix() -> String {
+    "ludius-".into()
+}
+fn d_vmid_base() -> u32 {
+    100
+}
+fn d_tz() -> String {
+    "Europe/Stockholm".into()
+}
+
+pub const BASE_VMID: u32 = 8999;
+pub const TEMPLATE_VMID: u32 = 9000;
+const PERSONA_MB: u32 = 6144;
+
+fn re(p: &str) -> Regex {
+    Regex::new(p).expect("static regex")
+}
+
+/// Where setup keeps secrets on the node: LUDIUS_SECRETS, else /etc/ludius/secrets.
+pub fn secrets_dir() -> PathBuf {
+    std::env::var_os("LUDIUS_SECRETS").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/etc/ludius/secrets"))
+}
+
+impl Spec {
+    pub fn load(path: &Path) -> Result<Self> {
+        let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
+        let spec: Spec = toml::from_str(&text).with_context(|| path.display().to_string())?;
+        spec.validate()?;
+        Ok(spec)
+    }
+
+    /// The first three octets of the /24 range subnet (Ansible's range_net).
+    pub fn range_net(&self) -> &str {
+        self.range.subnet.strip_suffix(".0/24").unwrap_or("")
+    }
+
+    pub fn ad(&self) -> &str {
+        self.addons.ad.as_ref().map_or("", |a| a.backend.as_str())
+    }
+
+    pub fn mail(&self) -> &str {
+        self.addons.mail.as_ref().map_or("", |a| a.backend.as_str())
+    }
+
+    pub fn chat(&self) -> bool {
+        self.addons.chat.is_some()
+    }
+
+    /// (user index -> vmid, ip)
+    pub fn persona_slot(&self, i: u32) -> (u32, String) {
+        (self.range.hypervisor.vmid_base + 21 + i, format!("{}.{}", self.range_net(), 21 + i))
+    }
+
+    /// Range servers as (vmid, name, MB).
+    pub fn servers(&self) -> Vec<(u32, String, u32)> {
+        let (b, p) = (self.range.hypervisor.vmid_base, &self.range.hypervisor.vm_prefix);
+        let mut s = if self.mail() == "exchange" {
+            vec![(b + 10, "ludius-dc01".to_string(), 4096), (b + 11, "ludius-ex01".to_string(), 16384)]
+        } else {
+            vec![(b + 10, format!("{p}srv01"), 3072)]
+        };
+        if self.chat() {
+            s.push((b + 12, "ludius-chat01".into(), 4096));
+        }
+        s
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let r = &self.range;
+        let h = &r.hypervisor;
+        ensure!(r.mode == "build", "range.mode {:?}: phase 1 builds new ranges only (\"build\"); deploying into an existing range comes with discovery", r.mode);
+        ensure!(h.kind == "proxmox", "range.hypervisor.kind {:?}: phase 1 drives Proxmox only", h.kind);
+        let caps = re(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.0/24$").captures(&r.subnet).with_context(|| format!("range.subnet {:?}: a /24 such as 10.77.0.0/24", r.subnet))?;
+        let o: Vec<u32> = (1..=3).map(|i| caps[i].parse().unwrap_or(999)).collect();
+        ensure!(o.iter().all(|x| *x <= 255), "range.subnet {:?}: not an IPv4 network", r.subnet);
+        let private = o[0] == 10 || (o[0] == 172 && (16..32).contains(&o[1])) || (o[0] == 192 && o[1] == 168);
+        ensure!(private, "range.subnet {:?}: must be private (10/8, 172.16/12, 192.168/16): the range never routes out", r.subnet);
+        ensure!(o[..2] != [10, 78], "range.subnet {:?}: 10.78.0.0/24 is the NAT build bridge", r.subnet);
+        ensure!(re(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$").is_match(&r.domain), "range.domain {:?}: lower-case DNS name with a dot", r.domain);
+        ensure!(re(r"^[0-9a-f]{64}$").is_match(&r.windows_iso_sha256), "range.windows_iso_sha256: 64 lower-case hex characters");
+        ensure!(r.scenario == "none" || Path::new(&r.scenario).is_absolute(), "range.scenario: \"none\" or an absolute path to the scenario file");
+        ensure!(re(r"^vmbr\d+$").is_match(&h.bridge) && re(r"^vmbr\d+$").is_match(&h.build_bridge) && h.bridge != h.build_bridge, "range.hypervisor bridge/build_bridge: two different vmbrN names");
+        ensure!(re(r"^[A-Za-z0-9_-]+$").is_match(&h.storage) && re(r"^[A-Za-z0-9_-]+$").is_match(&h.pool), "range.hypervisor storage/pool: plain Proxmox ids");
+        ensure!(re(r"^[a-z0-9-]+$").is_match(&h.vm_prefix), "range.hypervisor.vm_prefix: lower-case letters, digits and dashes");
+        ensure!((100..=900).contains(&h.vmid_base), "range.hypervisor.vmid_base: 100-900");
+
+        let n = self.personas.count;
+        ensure!(n >= 1, "personas.count: at least one");
+        ensure!(n <= 78, "personas.count: at most 78 (addresses .21-.99)");
+        ensure!(h.vmid_base + 21 + n <= 999, "personas.count {n}: VM ids past 999 with vmid_base {}", h.vmid_base);
+        ensure!(self.personas.tz.parse::<chrono_tz::Tz>().is_ok(), "personas.tz {:?}: an IANA time zone", self.personas.tz);
+        ensure!(!self.org.name.trim().is_empty() && !self.org.industry.trim().is_empty(), "org.name and org.industry are required");
+        ensure!(!self.org.departments.is_empty(), "org.departments: at least one");
+
+        match (self.ad(), self.mail()) {
+            ("samba", "imap" | "grommunio") | ("windows-dc", "exchange") => {}
+            (_, "exchange") => bail!("addons.mail exchange needs addons.ad backend \"windows-dc\" (Exchange does not run against Samba AD)"),
+            ("", _) | (_, "") => bail!(
+                "phase 1 needs addons.ad and addons.mail: a workgroup range or AD without mail is not scripted yet (infra/ansible builds AD and mail on the same server)"
+            ),
+            (ad, mail) => bail!("addons.ad {ad:?} with addons.mail {mail:?}: supported are samba + imap|grommunio and windows-dc + exchange"),
+        }
+        ensure!(self.mail() != "grommunio" || n <= 5, "personas.count {n}: grommunio's community licence has 5 log-in mailboxes");
+        if let Some(c) = &self.addons.chat {
+            ensure!(c.backend.is_empty() || c.backend == "mattermost", "addons.chat.backend {:?}: mattermost", c.backend);
+        }
+
+        for (what, m) in [("planner", &self.ai.planner), ("decider", &self.ai.decider)] {
+            ensure!(!m.model.trim().is_empty(), "ai.{what}.model is required");
+            match m.provider.as_str() {
+                "openrouter" => ensure!(m.url.is_empty(), "ai.{what}: url is only for provider \"custom\""),
+                "custom" => ensure!(m.url.starts_with("https://") || m.url.starts_with("http://"), "ai.{what}.url: the endpoint URL"),
+                p => bail!("ai.{what}.provider {p:?}: openrouter or custom"),
+            }
+            ensure!(re(r"^secret:[A-Za-z0-9_.-]+$").is_match(&m.key), "ai.{what}.key: \"secret:<name>\" (the key lives in {}/<name>)", secrets_dir().display());
+        }
+        // ponytail: the controller reads one key (OPENROUTER_API_KEY) for both; separate keys need a second variable there
+        ensure!(self.ai.planner.key == self.ai.decider.key, "ai.planner.key and ai.decider.key must be the same secret for now (the controller reads one key)");
+        Ok(())
+    }
+
+    fn people_hash(&self) -> String {
+        hash(&serde_json::to_vec(&(&self.org, &self.personas)).unwrap_or_default())
+    }
+}
+
+fn hash(b: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(b))
+}
+
+// --- plan -------------------------------------------------------------------------------------
+
+pub struct Step {
+    pub id: &'static str,
+    pub what: String,
+    /// Shell run from the checkout (bash -o pipefail); None for the steps setup does itself.
+    pub sh: Option<String>,
+    /// When this succeeds the step's result already exists (e.g. a template built earlier): not re-run.
+    pub exists: Option<String>,
+    pub creates: Vec<String>,
+    pub irreversible: Vec<String>,
+    /// Re-run when the spec changed since it finished (idempotent playbooks and files from the spec).
+    pub rerun: bool,
+}
+
+pub struct Layout {
+    pub dir: PathBuf,
+}
+
+impl Layout {
+    pub fn new(spec_path: &Path) -> Self {
+        Self { dir: std::path::absolute(spec_path).ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from(".")) }
+    }
+    pub fn state(&self) -> PathBuf {
+        self.dir.join("state.json")
+    }
+    pub fn manifest(&self) -> PathBuf {
+        self.dir.join("manifest.jsonl")
+    }
+    pub fn vars(&self) -> PathBuf {
+        self.dir.join("ansible-vars.yml")
+    }
+    pub fn personas(&self) -> PathBuf {
+        self.dir.join("personas")
+    }
+    pub fn runs(&self) -> PathBuf {
+        self.dir.join("runs")
+    }
+    pub fn narrative(&self) -> PathBuf {
+        self.runs().join("world").join("narrative.yaml")
+    }
+    pub fn logs(&self) -> PathBuf {
+        self.dir.join("logs")
+    }
+    pub fn controller_env(&self) -> PathBuf {
+        self.dir.join("controller.env")
+    }
+}
+
+const ANSIBLE: &str = "cd infra/ansible && ansible-playbook";
+
+pub fn plan(spec: &Spec, l: &Layout) -> Vec<Step> {
+    let h = &spec.range.hypervisor;
+    let vars = l.vars().display().to_string();
+    let n = spec.personas.count;
+    let persona_ids: Vec<String> = (0..n).map(|i| spec.persona_slot(i).0.to_string()).collect();
+    let packer = |only: &str| {
+        format!(
+            "packer init infra/packer && packer build -only={only} -on-error=abort -var proxmox_node=$(hostname) -var proxmox_token=$(cat /root/.ludius-packer-token) \
+             -var iso_checksum={} -var storage={} -var range_pool={} -var build_bridge={} infra/packer",
+            spec.range.windows_iso_sha256, h.storage, h.pool, h.build_bridge
+        )
+    };
+    let template = |id: u32| format!("qm config {id} 2>/dev/null | grep -q '^template: 1'");
+    let mut servers: Vec<String> = spec.servers().iter().map(|(id, name, _)| format!("VM {id} {name}")).collect();
+    servers.extend((0..n).map(|i| format!("VM {} (persona clone)", spec.persona_slot(i).0)));
+    vec![
+        Step {
+            id: "preflight",
+            what: "Proxmox node, root, Windows ISO, signed observer, AI key, ludius-rs in the checkout".into(),
+            sh: Some(format!(
+                "set -e; pveversion; test \"$(id -u)\" = 0 || {{ echo 'run setup as root on the node'; exit 1; }}; \
+                 test -f /var/lib/vz/template/iso/win10.iso || {{ echo 'copy the Windows 10 ISO to /var/lib/vz/template/iso/win10.iso'; exit 1; }}; \
+                 test -f out/observer/uiprobe.exe -a -f secrets/range-root-ca.cer || {{ echo 'out/observer/uiprobe.exe and secrets/range-root-ca.cer missing: pwsh infra/packer/observer-artifacts.ps1 on the desktop, then copy them'; exit 1; }}; \
+                 test -x ./ludius-rs || {{ echo './ludius-rs missing in the checkout (range-up checks each observer with it)'; exit 1; }}; \
+                 test -s {} || {{ echo 'AI key file missing'; exit 1; }}; \
+                 command -v packer || {{ echo 'install packer: https://developer.hashicorp.com/packer/install'; exit 1; }}",
+                key_path(&spec.ai.planner.key).display()
+            )),
+            exists: None,
+            creates: vec![],
+            irreversible: vec![],
+            rerun: true,
+        },
+        Step {
+            id: "tools",
+            what: "Ansible in ~/ansible (venv) and the collections in infra/ansible/collections".into(),
+            sh: Some(
+                "set -e; test -x ~/ansible/bin/ansible-playbook || { dpkg -s python3-venv >/dev/null 2>&1 || apt-get install -y python3-venv; \
+                 python3 -m venv ~/ansible && ~/ansible/bin/pip install ansible-core pywinrm; }; \
+                 cd infra/ansible && ansible-galaxy collection install -r requirements.yml -p collections"
+                    .into(),
+            ),
+            exists: None,
+            creates: vec!["dir ~/ansible (venv)".into(), "dir infra/ansible/collections".into()],
+            irreversible: vec![],
+            rerun: false,
+        },
+        Step {
+            id: "vault",
+            what: format!("Ansible vault with generated range passwords, its password in {}", secrets_dir().join("ansible-vault").display()),
+            sh: None,
+            exists: None,
+            creates: vec!["file infra/ansible/group_vars/all/vault.yml".into(), format!("file {}", secrets_dir().join("ansible-vault").display())],
+            irreversible: vec!["the generated passwords exist only in the vault: losing the vault password file loses them".into()],
+            rerun: false,
+        },
+        Step {
+            id: "personas",
+            what: format!("{n} personas and the company narrative from the planner ({}), kept for every later run", spec.ai.planner.model),
+            sh: None,
+            exists: None,
+            creates: vec![format!("dir {}", l.personas().display()), format!("file {}", l.narrative().display())],
+            irreversible: vec![],
+            rerun: false,
+        },
+        Step {
+            id: "vars",
+            what: format!("Ansible variables from the spec -> {vars}"),
+            sh: None,
+            exists: None,
+            creates: vec![format!("file {vars}")],
+            irreversible: vec![],
+            rerun: true,
+        },
+        Step {
+            id: "host",
+            what: format!("Host: bridges {} (isolated) and {} (NAT build), DHCP on the build bridge, vhost_vsock, ISOs, pool {}, Packer token", h.bridge, h.build_bridge, h.pool),
+            sh: Some(format!("{ANSIBLE} -i localhost, -c local proxmox-host.yml --tags range-host -e @{vars}")),
+            exists: None,
+            creates: vec![
+                format!("bridge {}", h.bridge),
+                format!("bridge {}", h.build_bridge),
+                "file /etc/network/interfaces.d/ludius".into(),
+                "file /etc/dnsmasq.d/ludius-build.conf".into(),
+                format!("pool {}", h.pool),
+                "token root@pam!packer (/root/.ludius-packer-token)".into(),
+            ],
+            irreversible: vec![],
+            rerun: true,
+        },
+        Step {
+            id: "image-base",
+            what: format!("Packer stage 1: Windows 10 install and updates -> template {BASE_VMID} (~40 min)"),
+            sh: Some(packer("base.proxmox-iso.base")),
+            exists: Some(template(BASE_VMID)),
+            creates: vec![format!("VM {BASE_VMID} ludius-win10-base (template)")],
+            irreversible: vec![],
+            rerun: false,
+        },
+        Step {
+            id: "image-golden",
+            what: format!("Packer stage 2: Office, observer, settings, sysprep -> template {TEMPLATE_VMID}"),
+            sh: Some(packer("golden.proxmox-clone.golden")),
+            exists: Some(template(TEMPLATE_VMID)),
+            creates: vec![format!("VM {TEMPLATE_VMID} ludius-win10-golden (template)")],
+            irreversible: vec![],
+            rerun: false,
+        },
+        Step {
+            id: "range",
+            what: format!("range-up.yml: {} (AD {}, mail {}){}, persona clones {}", spec.servers().iter().map(|s| s.1.as_str()).collect::<Vec<_>>().join(", "), spec.ad(), spec.mail(), if spec.chat() { ", chat" } else { "" }, persona_ids.join(" ")),
+            sh: Some(format!("{ANSIBLE} range-up.yml -e @{vars}")),
+            exists: None,
+            creates: servers,
+            irreversible: if spec.mail() == "exchange" { vec!["Windows Server evaluation activation (online, once per server)".into()] } else { vec![] },
+            rerun: true,
+        },
+        Step {
+            id: "controller",
+            what: format!("Controller settings -> {}", l.controller_env().display()),
+            sh: None,
+            exists: None,
+            creates: vec![format!("file {}", l.controller_env().display())],
+            irreversible: vec![],
+            rerun: true,
+        },
+    ]
+}
+
+fn key_path(r: &str) -> PathBuf {
+    secrets_dir().join(r.strip_prefix("secret:").unwrap_or(r))
+}
+
+// --- state and manifest -----------------------------------------------------------------------
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct State {
+    pub spec_sha256: String,
+    pub people_sha256: String,
+    pub done: Vec<String>,
+}
+
+impl State {
+    pub fn load(l: &Layout) -> Result<Self> {
+        match std::fs::read_to_string(l.state()) {
+            Ok(t) => serde_json::from_str(&t).with_context(|| l.state().display().to_string()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn save(&self, l: &Layout) -> Result<()> {
+        let tmp = l.state().with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
+        std::fs::rename(&tmp, l.state())?;
+        Ok(())
+    }
+
+    /// Reconcile with the spec: a changed spec re-runs the `rerun` steps; changed people refuse (personas exist).
+    pub fn reconcile(&mut self, spec: &Spec, spec_text: &[u8], steps: &[Step]) -> Result<Vec<String>> {
+        let (sh, ph) = (hash(spec_text), spec.people_hash());
+        if !self.people_sha256.is_empty() && self.people_sha256 != ph && self.done.iter().any(|d| d == "personas") {
+            bail!("[org] or [personas] changed after the personas were generated; start a new range directory instead (the generated people stay with this one)");
+        }
+        let mut reset = vec![];
+        if !self.spec_sha256.is_empty() && self.spec_sha256 != sh {
+            for s in steps.iter().filter(|s| s.rerun) {
+                if let Some(i) = self.done.iter().position(|d| d == s.id) {
+                    reset.push(self.done.remove(i));
+                }
+            }
+        }
+        self.spec_sha256 = sh;
+        self.people_sha256 = ph;
+        Ok(reset)
+    }
+}
+
+fn record(l: &Layout, s: &Step, adopted: bool) -> Result<()> {
+    use std::io::Write;
+    let line = serde_json::json!({
+        "at": chrono::Local::now().to_rfc3339(),
+        "step": s.id,
+        "adopted": adopted,
+        "creates": if adopted { vec![] } else { s.creates.clone() },
+        "irreversible": if adopted { vec![] } else { s.irreversible.clone() },
+    });
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(l.manifest())?;
+    writeln!(f, "{line}")?;
+    Ok(())
+}
+
+// --- printing ---------------------------------------------------------------------------------
+
+pub fn describe(spec: &Spec, l: &Layout, steps: &[Step], state: &State) -> String {
+    let n = spec.personas.count;
+    let servers = spec.servers();
+    let mb: u32 = servers.iter().map(|s| s.2).sum::<u32>() + n * PERSONA_MB;
+    let (first, last) = (spec.persona_slot(0), spec.persona_slot(n - 1));
+    let mut out = format!(
+        "range {} ({}, {}): {} on {}, domain {}\n  servers: {}\n  personas: {n}, VMs {}-{} at {}-{}, generated by the planner at apply\n  RAM ~{} GB while running; first build ~4-5 h (Windows updates and Office dominate)\n",
+        l.dir.display(),
+        spec.range.mode,
+        spec.range.hypervisor.kind,
+        spec.range.subnet,
+        spec.range.hypervisor.bridge,
+        spec.range.domain,
+        servers.iter().map(|(id, name, mb)| format!("{name} ({id}, {} GB)", mb / 1024)).collect::<Vec<_>>().join(", "),
+        first.0,
+        last.0,
+        first.1,
+        last.1,
+        mb.div_ceil(1024),
+    );
+    out.push_str("steps:\n");
+    for s in steps {
+        let mark = if state.done.iter().any(|d| d == s.id) { "done" } else { "todo" };
+        out.push_str(&format!("  [{mark}] {:<12} {}\n", s.id, s.what));
+        for i in &s.irreversible {
+            out.push_str(&format!("                      irreversible: {i}\n"));
+        }
+    }
+    out
+}
+
+// --- apply ------------------------------------------------------------------------------------
+
+pub fn apply(spec_path: &Path, root: &Path) -> Result<()> {
+    let spec_text = std::fs::read(spec_path).with_context(|| spec_path.display().to_string())?;
+    let spec = Spec::load(spec_path)?;
+    let l = Layout::new(spec_path);
+    let steps = plan(&spec, &l);
+    let mut state = State::load(&l)?;
+    for id in state.reconcile(&spec, &spec_text, &steps)? {
+        println!("spec changed: {id} runs again");
+    }
+    state.save(&l)?;
+    print!("{}", describe(&spec, &l, &steps, &state));
+    std::fs::create_dir_all(l.logs())?;
+
+    // children: Ansible from its venv, the vault password from the secrets dir, a one-off Packer build admin
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    let path = format!("{home}/ansible/bin:{}", std::env::var("PATH").unwrap_or_default());
+    let vault_pass = std::env::var("ANSIBLE_VAULT_PASSWORD_FILE").unwrap_or_else(|_| secrets_dir().join("ansible-vault").display().to_string());
+    let build_admin = password(24);
+
+    for s in &steps {
+        if state.done.iter().any(|d| d == s.id) {
+            continue;
+        }
+        println!("\n== {} : {}", s.id, s.what);
+        let adopted = match &s.exists {
+            Some(probe) => Command::new("bash").args(["-c", probe]).current_dir(root).status().is_ok_and(|st| st.success()),
+            None => false,
+        };
+        if adopted {
+            println!("   already there, adopted");
+        } else if let Some(sh) = &s.sh {
+            let log = l.logs().join(format!("{}.log", s.id));
+            println!("   $ {sh}\n   log: {}", log.display());
+            let st = Command::new("bash")
+                .args(["-o", "pipefail", "-c", &format!("({sh}) 2>&1 | tee -a {}", shell_quote(&log.display().to_string()))])
+                .current_dir(root)
+                .env("PATH", &path)
+                .env("LUDIUS_ROOT", root)
+                .env("ANSIBLE_VAULT_PASSWORD_FILE", &vault_pass)
+                .env("PKR_VAR_admin_password", &build_admin)
+                .status()
+                .with_context(|| format!("{}: bash", s.id))?;
+            ensure!(st.success(), "step {} failed ({st}); see {}. Fix it and run apply again: finished steps are kept", s.id, log.display());
+        } else {
+            match s.id {
+                "vault" => vault(root, &vault_pass, &path)?,
+                "personas" => personas(&spec, &l)?,
+                "vars" => std::fs::write(l.vars(), ansible_vars(&spec, &l)?)?,
+                "controller" => std::fs::write(l.controller_env(), controller_env(&spec, &l, root))?,
+                other => bail!("no runner for step {other}"),
+            }
+        }
+        record(&l, s, adopted)?;
+        state.done.push(s.id.into());
+        state.save(&l)?;
+    }
+    println!("\nrange applied. Controller settings: {} (add them to the checkout's .env)", l.controller_env().display());
+    Ok(())
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// Alphanumeric with upper, lower and digit (Samba, Exchange and the vault example all accept it).
+pub fn password(len: usize) -> String {
+    const A: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let mut rng = rand::rngs::StdRng::from_rng(&mut rand::rng());
+    loop {
+        let p: String = (0..len).map(|_| A[rng.random_range(0..A.len())] as char).collect();
+        if p.chars().any(|c| c.is_ascii_uppercase()) && p.chars().any(|c| c.is_ascii_lowercase()) && p.chars().any(|c| c.is_ascii_digit()) {
+            return p;
+        }
+    }
+}
+
+fn write_secret(path: &Path, value: &str) -> Result<()> {
+    if let Some(d) = path.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    use std::io::Write;
+    o.open(path).with_context(|| path.display().to_string())?.write_all(value.as_bytes())?;
+    Ok(())
+}
+
+/// group_vars/all/vault.yml: kept when it exists (it may hold the owner's Office key); otherwise generated and encrypted.
+fn vault(root: &Path, vault_pass: &str, path: &str) -> Result<()> {
+    let pass = Path::new(vault_pass);
+    let vault = root.join("infra/ansible/group_vars/all/vault.yml");
+    if vault.exists() {
+        ensure!(pass.exists(), "{} exists but the vault password file {} does not: set ANSIBLE_VAULT_PASSWORD_FILE", vault.display(), pass.display());
+        println!("   {} exists, kept", vault.display());
+        return Ok(());
+    }
+    if !pass.exists() {
+        write_secret(pass, &password(32))?;
+    }
+    let body = format!(
+        "vault_range_admin_password: {}\nvault_dc_admin_password: {}\nvault_grommunio_admin_password: {}\nvault_user_password_suffix: {}\n\
+         vault_office_pidkey: \"\"\nvault_office_kms_host: \"\"\nvault_ews_password: {}\nvault_imap_master_password: {}\n",
+        password(20),
+        password(20),
+        password(20),
+        password(8),
+        password(20),
+        password(24)
+    );
+    write_secret(&vault, &body)?;
+    let st = Command::new("ansible-vault").args(["encrypt", "--vault-password-file", vault_pass]).arg(&vault).env("PATH", path).status().context("ansible-vault")?;
+    if !st.success() {
+        let _ = std::fs::remove_file(&vault); // never leave the passwords in plain text
+        bail!("ansible-vault encrypt failed ({st})");
+    }
+    Ok(())
+}
+
+// --- personas ---------------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct Generated {
+    personas: Vec<GenPersona>,
+}
+
+#[derive(Deserialize)]
+struct GenPersona {
+    name: String,
+    user: String,
+    role: String,
+    department: String,
+    hours: (String, String),
+    style: String,
+}
+
+impl Check for Generated {
+    fn check(&self) -> Result<()> {
+        let user = re(r"^[a-z][a-z0-9]{1,9}$");
+        let hhmm = re(r"^([01][0-9]|2[0-3]):[0-5][0-9]$");
+        let name = re(r"^[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ .'-]*$");
+        let mut seen = std::collections::BTreeSet::new();
+        for p in &self.personas {
+            ensure!(user.is_match(&p.user), "user {:?}: 2-10 lower-case letters or digits, starting with a letter", p.user);
+            ensure!(seen.insert(&p.user), "user {:?} twice", p.user);
+            ensure!(name.is_match(&p.name), "name {:?}: letters, spaces, dots, apostrophes, dashes", p.name);
+            ensure!(hhmm.is_match(&p.hours.0) && hhmm.is_match(&p.hours.1) && p.hours.0 < p.hours.1, "hours {:?}: [\"HH:MM\", \"HH:MM\"], start before end", p.hours);
+            ensure!(!p.role.trim().is_empty() && !p.department.trim().is_empty(), "{}: role and department are required", p.user);
+        }
+        Ok(())
+    }
+}
+
+const PERSONA_SYSTEM: &str = "You invent the employees of a fictional, ordinary company for a cyber-defence training range. \
+They must read as mundane and plausible office workers. No real people, no security staff.";
+
+fn brief(spec: &Spec) -> String {
+    format!("Company: {} ({}). Departments: {}.", spec.org.name, spec.org.industry, spec.org.departments.join(", "))
+}
+
+fn personas(spec: &Spec, l: &Layout) -> Result<()> {
+    let key = std::fs::read_to_string(key_path(&spec.ai.planner.key)).with_context(|| format!("AI key {}", spec.ai.planner.key))?;
+    let llm = LlmClient::new(key.trim(), Some(&spec.ai.planner.model))?;
+    let n = spec.personas.count as usize;
+    std::fs::create_dir_all(l.personas())?;
+    let mut have: Vec<Persona> = crate::paths::yaml_files(&l.personas())?.iter().map(|p| crate::tasks::load_yaml(p)).collect::<Result<_>>()?;
+    if have.is_empty() {
+        let roles = if spec.personas.roles.is_empty() { String::new() } else { format!(" Role mix: {}.", spec.personas.roles.join("; ")) };
+        let user = format!(
+            "{} Variety seed: {}.{roles}\nReturn JSON {{\"personas\": [...]}} with exactly {n} desk workers who use Windows, Outlook, Word and Excel daily. \
+             Each: name (first and last), user (account: first initial + last name, lower case, 2-10 letters or digits), role (job title), \
+             department (one of the departments), hours ([\"HH:MM\", \"HH:MM\"] working day), style (2-3 sentences: how they write notes and mails, \
+             how they name files, one work habit).",
+            brief(spec),
+            spec.org.seed
+        );
+        let g: Generated = llm.json(PERSONA_SYSTEM, &user, 0.9, 3)?;
+        ensure!(g.personas.len() >= n, "the planner returned {} personas, {n} asked", g.personas.len());
+        let mut rng = rand::rngs::StdRng::seed_from_u64(spec.org.seed);
+        for p in g.personas.into_iter().take(n) {
+            let persona = Persona {
+                name: p.name,
+                user: p.user,
+                role: p.role,
+                department: p.department,
+                hours: p.hours,
+                style: p.style,
+                typing_mean_ms: rng.random_range(110..=170),
+                typing_jitter_ms: rng.random_range(50..=80),
+                think_mean_s: f64::from(rng.random_range(12..=25_u32)) / 10.0,
+                pointer_ms: (rng.random_range(180..=240), rng.random_range(480..=620)),
+                risk_profile: vec![],
+                tz: spec.personas.tz.clone(),
+            };
+            std::fs::write(l.personas().join(format!("{}.yaml", persona.user)), serde_yaml::to_string(&persona)?)?;
+            println!("   {} ({}): {}, {}", persona.name, persona.user, persona.role, persona.department);
+            have.push(persona);
+        }
+    } else {
+        println!("   {} personas already generated, kept", have.len());
+    }
+    ensure!(have.len() == n, "{} has {} personas, the spec asks {n}", l.personas().display(), have.len());
+    if !l.narrative().exists() {
+        let n = crate::planner::make_narrative(&llm, &have, chrono::Local::now().date_naive(), &brief(spec))?;
+        let path = crate::planner::World::new(&l.runs()).save_narrative(&n)?;
+        println!("   {} ({}): {} people -> {}", n.company, n.city, n.people.len(), path.display());
+    }
+    println!("   planner cost ${:.4}", llm.cost.get());
+    Ok(())
+}
+
+// --- generated files --------------------------------------------------------------------------
+
+pub fn ansible_vars(spec: &Spec, l: &Layout) -> Result<String> {
+    let h = &spec.range.hypervisor;
+    let users: Vec<String> = crate::paths::yaml_files(&l.personas())?.iter().filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).collect();
+    ensure!(users.len() == spec.personas.count as usize, "{}: {} persona files, the spec asks {}", l.personas().display(), users.len(), spec.personas.count);
+    let b = h.vmid_base;
+    let personas: Vec<serde_json::Value> = users
+        .iter()
+        .enumerate()
+        .map(|(i, u)| {
+            let (vmid, ip) = spec.persona_slot(i as u32);
+            serde_json::json!({"user": u, "vmid": vmid, "ip": ip})
+        })
+        .collect();
+    let v = serde_json::json!({
+        "domain": spec.range.domain,
+        "mail_backend": spec.mail(),
+        "chat_enabled": spec.chat(),
+        "range_bridge": h.bridge,
+        "build_bridge": h.build_bridge,
+        "extra_range_bridges": [],
+        "range_net": spec.range_net(),
+        "range_pool": h.pool,
+        "storage": h.storage,
+        "vm_prefix": h.vm_prefix,
+        "template_vmid": TEMPLATE_VMID,
+        "srv01_vmid": b + 10,
+        "ex01_vmid": b + 11,
+        "chat01_vmid": b + 12,
+        "range_personas": personas,
+        "persona_dir": l.personas().display().to_string(),
+        "narrative_file": l.narrative().display().to_string(),
+    });
+    Ok(format!("# generated by ludius setup from {}; edit the spec, not this file\n{}", l.dir.join("range.toml").display(), serde_yaml::to_string(&v)?))
+}
+
+pub fn controller_env(spec: &Spec, l: &Layout, root: &Path) -> String {
+    let mut e = vec![
+        format!("LUDIUS_SCENARIO={}", spec.range.scenario),
+        format!("LUDIUS_RANGE_DOMAIN={}", spec.range.domain),
+        format!("LUDIUS_RUNS={}", l.runs().display()),
+        format!("LUDIUS_PERSONAS={}", l.personas().display()),
+        format!("OPENROUTER_KEY_FILE={}", key_path(&spec.ai.planner.key).display()),
+        format!("LUDIUS_PLANNER_MODEL={}", spec.ai.planner.model),
+        format!("LUDIUS_DECISION_MODEL={}", spec.ai.decider.model),
+    ];
+    if spec.ai.planner.provider == "custom" {
+        e.push(format!("LUDIUS_PLANNER_URL={}", spec.ai.planner.url));
+    }
+    if spec.ai.decider.provider == "custom" {
+        e.push(format!("LUDIUS_DECISIONS_URL={}", spec.ai.decider.url));
+    }
+    let net = spec.range_net();
+    let ca = root.join("infra/ansible/build/range-ca.crt").display().to_string();
+    match spec.mail() {
+        "exchange" => e.extend([
+            "LUDIUS_MAIL_BACKEND=exchange".into(),
+            "LUDIUS_MAIL_DOMAIN=ludius.internal".into(),
+            format!("LUDIUS_EWS_URL=https://{net}.12/EWS/Exchange.asmx"),
+            format!("LUDIUS_EWS_USER=ludiussvc@{}", spec.range.domain),
+            "LUDIUS_EWS_PASSWORD_FILE=/root/.ludius-ews".into(),
+            format!("LUDIUS_EWS_CA={ca}"),
+            "LUDIUS_SHARE_HOST=dc01".into(),
+        ]),
+        "imap" => e.extend([
+            "LUDIUS_MAIL_BACKEND=imap".into(),
+            format!("LUDIUS_MAIL_DOMAIN={}", spec.range.domain),
+            format!("LUDIUS_IMAP_HOST={net}.11"),
+            "LUDIUS_IMAP_USER=ludius-master".into(),
+            "LUDIUS_IMAP_PASSWORD_FILE=/root/.ludius-imap".into(),
+            format!("LUDIUS_IMAP_CA={ca}"),
+        ]),
+        _ => e.push(format!("LUDIUS_MAIL_DOMAIN={}", spec.range.domain)),
+    }
+    if spec.chat() {
+        e.push(format!("LUDIUS_CHAT_URL=chat.{}", spec.range.domain));
+    }
+    format!("# generated by ludius setup; add to the checkout's .env\n{}\n", e.join("\n"))
+}
+
+pub fn main(args: &[String], root: &Path) -> Result<()> {
+    const USAGE: &str = "usage: ludius setup plan|apply RANGE.toml";
+    let (Some(cmd), Some(path)) = (args.first(), args.get(1)) else { bail!(USAGE) };
+    let path = Path::new(path);
+    match cmd.as_str() {
+        "plan" => {
+            let spec = Spec::load(path)?;
+            let l = Layout::new(path);
+            let steps = plan(&spec, &l);
+            let mut state = State::load(&l)?;
+            let reset = state.reconcile(&spec, &std::fs::read(path)?, &steps)?;
+            print!("{}", describe(&spec, &l, &steps, &state));
+            if !reset.is_empty() {
+                println!("spec changed since the last apply: {} run again", reset.join(", "));
+            }
+            Ok(())
+        }
+        "apply" => apply(path, root),
+        _ => bail!(USAGE),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SPEC: &str = r#"
+[range]
+mode = "build"
+subnet = "10.80.0.0/24"
+domain = "corp.example.test"
+hypervisor = { kind = "proxmox", vmid_base = 200 }
+windows_iso_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[org]
+name = "Example Freight"
+industry = "freight forwarding"
+departments = ["Operations", "Finance"]
+
+[personas]
+count = 3
+
+[addons.ad]
+backend = "samba"
+[addons.mail]
+backend = "imap"
+[addons.chat]
+
+[ai]
+planner = { provider = "openrouter", model = "deepseek/deepseek-v4.1-flash", key = "secret:openrouter" }
+decider = { provider = "openrouter", model = "liquid/d1.1", key = "secret:openrouter" }
+"#;
+
+    fn spec(edit: &str, with: &str) -> Result<Spec> {
+        let s: Spec = toml::from_str(&SPEC.replace(edit, with))?;
+        s.validate().map(|()| s)
+    }
+
+    #[test]
+    fn validates_and_lays_out() {
+        let s = spec("", "").unwrap();
+        assert_eq!(s.range_net(), "10.80.0");
+        assert_eq!(s.persona_slot(0), (221, "10.80.0.21".into()));
+        assert_eq!(s.servers().iter().map(|x| x.0).collect::<Vec<_>>(), vec![210, 212]);
+        assert!(spec("10.80.0.0/24", "8.8.8.0/24").is_err(), "public subnet");
+        assert!(spec("10.80.0.0/24", "10.78.0.0/24").is_err(), "build bridge subnet");
+        assert!(spec(r#"backend = "imap""#, r#"backend = "exchange""#).is_err(), "exchange on samba");
+        assert!(spec("[addons.ad]\nbackend = \"samba\"", "").is_err(), "no AD");
+        assert!(spec("count = 3", "count = 0").is_err());
+        assert!(spec(r#"backend = "imap""#, r#"backend = "grommunio""#).is_ok());
+        let six_grommunio = SPEC.replace("count = 3", "count = 6").replace(r#"backend = "imap""#, r#"backend = "grommunio""#);
+        assert!(toml::from_str::<Spec>(&six_grommunio).unwrap().validate().is_err(), "grommunio licence cap");
+        assert!(spec(r#"key = "secret:openrouter" }"#, r#"key = "sk-or-v1-abc" }"#).is_err(), "inline key");
+        assert!(spec("mode = \"build\"", "mode = \"build\"\nbogus = 1").is_err(), "unknown field");
+    }
+
+    #[test]
+    fn state_resets_rerun_steps_and_guards_people() {
+        let s = spec("", "").unwrap();
+        let l = Layout { dir: PathBuf::from("/tmp/r") };
+        let steps = plan(&s, &l);
+        let mut st = State::default();
+        st.reconcile(&s, b"v1", &steps).unwrap();
+        st.done = steps.iter().map(|s| s.id.to_string()).collect();
+        let reset = st.reconcile(&s, b"v2", &steps).unwrap();
+        assert!(reset.contains(&"range".to_string()) && !reset.contains(&"personas".to_string()) && !reset.contains(&"image-base".to_string()));
+        let mut other = s.clone();
+        other.personas.count = 4;
+        assert!(st.reconcile(&other, b"v3", &steps).is_err(), "people changed after generation");
+    }
+}
