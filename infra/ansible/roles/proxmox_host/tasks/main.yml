@@ -90,17 +90,20 @@
     that: range_bridge not in extra_range_bridges | map(attribute='bridge') and range_bridge != build_bridge
     fail_msg: run proxmox-host.yml without a range vars file ({{ range_bridge }} is also in extra_range_bridges or the build bridge)
 
-- name: Network config
+- name: Our bridges are ours or free (never take over a bridge the node defines or runs elsewhere)
   tags: [bridges, range-host]
-  ansible.builtin.slurp:
-    src: /etc/network/interfaces
-  register: interfaces
-
-- name: Our bridges are not already defined in /etc/network/interfaces (never take over an existing bridge)
-  tags: [bridges, range-host]
-  ansible.builtin.assert:
-    that: (interfaces.content | b64decode) is not search('(?m)^\s*iface\s+' ~ item ~ '\s')
-    fail_msg: "{{ item }} is already defined in /etc/network/interfaces; pick another bridge in the range spec"
+  ansible.builtin.shell: |
+    set -u
+    b={{ item }}
+    grep -qsE "^\s*iface\s+$b(\s|$)" /etc/network/interfaces.d/ludius && exit 0
+    if grep -lsE "^\s*iface\s+$b(\s|$)" /etc/network/interfaces /etc/network/interfaces.d/*; then
+      echo "$b is defined in the file above; pick another bridge in the range spec"; exit 1
+    fi
+    if ip link show "$b" >/dev/null 2>&1; then echo "$b exists on the node; pick another bridge in the range spec"; exit 1; fi
+    exit 0
+  args:
+    executable: /bin/bash
+  changed_when: false
   loop: "{{ [range_bridge, build_bridge] + extra_range_bridges | map(attribute='bridge') | list }}"
 
 - name: Range and build bridges

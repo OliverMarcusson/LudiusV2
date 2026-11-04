@@ -492,15 +492,15 @@ impl State {
     }
 }
 
-fn record(l: &Layout, s: &Step, adopted: bool) -> Result<()> {
+/// One manifest line per step event: "started" (with what the step may create; the playbooks are idempotent, so
+/// some of it may already have existed), then "done" or "failed"; or "adopted" (the result existed, nothing ran).
+fn record(l: &Layout, s: &Step, event: &str) -> Result<()> {
     use std::io::Write;
-    let line = serde_json::json!({
-        "at": chrono::Local::now().to_rfc3339(),
-        "step": s.id,
-        "adopted": adopted,
-        "creates": if adopted { vec![] } else { s.creates.clone() },
-        "irreversible": if adopted { vec![] } else { s.irreversible.clone() },
-    });
+    let mut line = serde_json::json!({"at": chrono::Local::now().to_rfc3339(), "step": s.id, "event": event});
+    if event == "started" {
+        line["may_create"] = serde_json::json!(s.creates);
+        line["irreversible"] = serde_json::json!(s.irreversible);
+    }
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(l.manifest())?;
     writeln!(f, "{line}")?;
     Ok(())
@@ -558,7 +558,16 @@ pub fn apply(spec_path: &Path, root: &Path) -> Result<()> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     let path = format!("{home}/ansible/bin:{}", std::env::var("PATH").unwrap_or_default());
     let vault_pass = std::env::var("ANSIBLE_VAULT_PASSWORD_FILE").unwrap_or_else(|_| secrets_dir().join("ansible-vault").display().to_string());
-    let build_admin = password(24);
+    // the base template keeps the build admin until stage 2 disables it: a resumed apply must reuse it
+    let build_admin_file = secrets_dir().join("packer-build-admin");
+    if !build_admin_file.exists() {
+        write_secret(&build_admin_file, &password(24))?;
+    }
+    let build_admin = std::fs::read_to_string(&build_admin_file)?.trim().to_string();
+    // persona and narrative generation below call the planner from this process
+    if spec.ai.planner.provider == "custom" {
+        unsafe { std::env::set_var("LUDIUS_PLANNER_URL", &spec.ai.planner.url) };
+    }
 
     for s in &steps {
         if state.done.iter().any(|d| d == s.id) {
@@ -569,36 +578,51 @@ pub fn apply(spec_path: &Path, root: &Path) -> Result<()> {
             Some(probe) => Command::new("bash").args(["-c", probe]).current_dir(root).status().is_ok_and(|st| st.success()),
             None => false,
         };
-        if adopted {
+        // the start record comes first, so a step that fails half-way still leaves what it may have created
+        record(&l, s, if adopted { "adopted" } else { "started" })?;
+        let ran = if adopted {
             println!("   already there, adopted");
-        } else if let Some(sh) = &s.sh {
-            let log = l.logs().join(format!("{}.log", s.id));
-            println!("   $ {sh}\n   log: {}", log.display());
-            let st = Command::new("bash")
-                .args(["-o", "pipefail", "-c", &format!("({sh}) 2>&1 | tee -a {}", shell_quote(&log.display().to_string()))])
-                .current_dir(root)
-                .env("PATH", &path)
-                .env("LUDIUS_ROOT", root)
-                .env("ANSIBLE_VAULT_PASSWORD_FILE", &vault_pass)
-                .env("PKR_VAR_admin_password", &build_admin)
-                .status()
-                .with_context(|| format!("{}: bash", s.id))?;
-            ensure!(st.success(), "step {} failed ({st}); see {}. Fix it and run apply again: finished steps are kept", s.id, log.display());
+            Ok(())
         } else {
-            match s.id {
-                "vault" => vault(root, &vault_pass, &path)?,
-                "personas" => personas(&spec, &l)?,
-                "vars" => std::fs::write(l.vars(), ansible_vars(&spec, &l)?)?,
-                "controller" => std::fs::write(l.controller_env(), controller_env(&spec, &l, root))?,
-                other => bail!("no runner for step {other}"),
-            }
+            run_step(s, &spec, &l, root, &path, &vault_pass, &build_admin)
+        };
+        if let Err(e) = ran {
+            record(&l, s, "failed")?;
+            return Err(e);
         }
-        record(&l, s, adopted)?;
+        if !adopted {
+            record(&l, s, "done")?;
+        }
         state.done.push(s.id.into());
         state.save(&l)?;
     }
     println!("\nrange applied. Controller settings: {} (add them to the checkout's .env)", l.controller_env().display());
     Ok(())
+}
+
+fn run_step(s: &Step, spec: &Spec, l: &Layout, root: &Path, path: &str, vault_pass: &str, build_admin: &str) -> Result<()> {
+    if let Some(sh) = &s.sh {
+        let log = l.logs().join(format!("{}.log", s.id));
+        println!("   $ {sh}\n   log: {}", log.display());
+        let st = Command::new("bash")
+            .args(["-o", "pipefail", "-c", &format!("({sh}) 2>&1 | tee -a {}", shell_quote(&log.display().to_string()))])
+            .current_dir(root)
+            .env("PATH", path)
+            .env("LUDIUS_ROOT", root)
+            .env("ANSIBLE_VAULT_PASSWORD_FILE", vault_pass)
+            .env("PKR_VAR_admin_password", build_admin)
+            .status()
+            .with_context(|| format!("{}: bash", s.id))?;
+        ensure!(st.success(), "step {} failed ({st}); see {}. Fix it and run apply again: finished steps are kept", s.id, log.display());
+        return Ok(());
+    }
+    match s.id {
+        "vault" => vault(root, vault_pass, path),
+        "personas" => personas(spec, l),
+        "vars" => Ok(std::fs::write(l.vars(), ansible_vars(spec, l)?)?),
+        "controller" => Ok(std::fs::write(l.controller_env(), controller_env(spec, l, root))?),
+        other => bail!("no runner for step {other}"),
+    }
 }
 
 fn shell_quote(s: &str) -> String {
