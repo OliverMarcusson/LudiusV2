@@ -6,8 +6,8 @@ about: "Reply in Outlook to a colleague's mail in the Inbox. to: the address of 
 defaults: {subject: ""}
 example: {to: "mvellinga@${MAIL_DOMAIN}", to_name: Marcus Vellinga, subject: ""}
 variants:
-  - [open_outlook, open_message, reply_shortcut, write_reply, send_shortcut, close_message, close_outlook]
-  - [open_outlook, open_message, reply_button, write_reply, send_shortcut, close_message, close_outlook]
+  - [open_outlook, open_message, reply_shortcut, fill_to, write_reply, send_shortcut, close_message, close_outlook]
+  - [open_outlook, open_message, reply_button, fill_to, write_reply, send_shortcut, close_message, close_outlook]
 budget_steps: 40
 budget_minutes: 8
 on_abandon: close_without_saving
@@ -30,6 +30,14 @@ subgoals:
   reply_button:
     goal: "Reply to the open mail with the Reply button on its Message tab"
     done: {window: {process: outlook.exe, title: '^RE: {subject}\s*-\s*Message'}, element: {role: button, name: '^Send$'}}
+  fill_to:
+    goal: "Replace the reply's To recipient with {to}, even if the original mail shows an older display name"
+    text: to
+    field: '^To$'
+    replace: true
+    in_window: {process: outlook.exe, title: '^RE: {subject}\s*-\s*Message'}
+    steps: 8
+    done: {typed: true}
   write_reply:
     goal: "Type the reply at the top of the message body, above the quoted mail"
     text: body
