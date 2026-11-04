@@ -145,6 +145,7 @@ fn d_tz() -> String {
 
 pub const BASE_VMID: u32 = 8999;
 pub const TEMPLATE_VMID: u32 = 9000;
+const AGENT_UNIT: &str = "ludius-host-agent.service";
 const PERSONA_MB: u32 = 6144;
 
 fn re(p: &str) -> Regex {
@@ -421,6 +422,30 @@ pub fn plan(spec: &Spec, l: &Layout) -> Vec<Step> {
             creates: vec![format!("VM {TEMPLATE_VMID} ludius-win10-golden (template)")],
             irreversible: vec![],
             rerun: false,
+        },
+        Step {
+            id: "agent",
+            what: format!("Host agent as systemd unit {AGENT_UNIT} (pool {}, range servers exempt from the running cap)", h.pool),
+            sh: Some(format!(
+                "set -e; test -x target/release/ludius-host-agent || {{ echo 'build it first: cargo build --release -p ludius-host-agent'; exit 1; }}; \
+                 install -d -m 700 {sec} /var/lib/ludius/agent-scratch; umask 077; \
+                 printf 'root@pam!packer=%s' \"$(cat /root/.ludius-packer-token)\" > {sec}/pve-token; \
+                 printf 'PVE_NODE=%s\\nPVE_POOL={pool}\\nPVE_CAP_EXEMPT={exempt}\\nAGENT_MAX_RUNNING={max}\\nAGENT_LISTEN=127.0.0.1:7451\\nPVE_TOKEN_FILE={sec}/pve-token\\nAGENT_SCRATCH_DIR=/var/lib/ludius/agent-scratch\\n' \"$(hostname)\" > /etc/ludius/host-agent.env; \
+                 printf '[Unit]\\nDescription=Ludius host agent (ludius setup)\\nAfter=pve-cluster.service\\n[Service]\\nEnvironmentFile=/etc/ludius/host-agent.env\\nExecStart=%s/target/release/ludius-host-agent\\nRestart=on-failure\\n[Install]\\nWantedBy=multi-user.target\\n' \"$PWD\" > /etc/systemd/system/{AGENT_UNIT}; \
+                 systemctl daemon-reload; systemctl enable {AGENT_UNIT}; systemctl restart {AGENT_UNIT}; sleep 3; systemctl is-active {AGENT_UNIT}",
+                sec = secrets_dir().display(),
+                pool = h.pool,
+                exempt = spec.servers().iter().map(|(id, name, _)| format!("{id}:{name}")).collect::<Vec<_>>().join(","),
+                max = n + spec.servers().len() as u32,
+            )),
+            exists: None,
+            creates: vec![
+                format!("systemd unit /etc/systemd/system/{AGENT_UNIT}"),
+                "file /etc/ludius/host-agent.env".into(),
+                format!("file {}/pve-token (the Packer API token, root@pam!packer)", secrets_dir().display()),
+            ],
+            irreversible: vec![],
+            rerun: true,
         },
         Step {
             id: "range",
