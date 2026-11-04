@@ -13,7 +13,9 @@ use crate::Post;
 /// Posts the conversation view shows before the unread ones.
 pub const TALK: usize = 12;
 
-const UNREAD_SQL: &str = "select coalesce(json_agg(row_to_json(t)), '[]') from (
+// null (unreadable) for a user Mattermost does not have: a missing account is not an empty inbox
+const UNREAD_SQL: &str = "select case when exists (select 1 from users where username = :'u' and deleteat = 0)
+  then coalesce(json_agg(row_to_json(t)), '[]') end from (
   select p.id, s.username as sender, p.createat, p.message,
     case when c.type = 'P' then c.displayname else '' end as channel
   from channels c join channelmembers m on m.channelid = c.id join users u on u.id = m.userid
