@@ -206,10 +206,12 @@ fn main() -> Result<()> {
         };
         let rt = tokio::runtime::Runtime::new()?;
         let status = |ns: &str, wid: &str| {
-            rt.block_on(tokio::time::timeout(std::time::Duration::from_secs(30), async {
-                let client = ludius::schedules::connect(&temporal_addr, ns).await?;
-                Ok(client.get_workflow_handle::<temporalio_client::UntypedWorkflow>(wid).describe(Default::default()).await?.status())
-            }))?
+            rt.block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                    let client = ludius::schedules::connect(&temporal_addr, ns).await?;
+                    Ok(client.get_workflow_handle::<temporalio_client::UntypedWorkflow>(wid).describe(Default::default()).await?.status())
+                }).await
+            })?
         };
         let out = ludius::schedules::reconcile(&runs().join("locks").join(format!("{vm}.lock")), &status, confirm)?;
         println!("{}", serde_json::to_string_pretty(&out)?);
@@ -288,7 +290,7 @@ fn main() -> Result<()> {
         let s = res.snapshot.context("observer answered without a snapshot")?;
         println!("settled={} {}ms locked={} elements={} ui_access={}", s.settled, s.settle_ms, s.locked, s.elements.len(), res.hello.is_some_and(|h| h.ui_access));
         for w in &s.windows {
-            println!("  window {} {} {:?}", w.kind().as_str_name().to_lowercase(), w.process_name, w.title);
+            println!("  window {} {} {:?} no_tree={} incomplete={} unresponsive={} elevated_unreadable={} read_error={:?}", w.kind().as_str_name().to_lowercase(), w.process_name, w.title, w.no_tree, w.incomplete, w.unresponsive, w.elevated_unreadable, w.read_error);
         }
         for e in s.elements.iter().take(limit) {
             println!("  {}", ludius::options::describe(e));

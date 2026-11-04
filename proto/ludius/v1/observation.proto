@@ -56,6 +56,8 @@ message Window {
   bool no_tree = 12;
   // Only part of the tree was read (a child list failed, or the walk hit its node budget): what is missing is unknown, not absent.
   bool incomplete = 13;
+  // The failed UIA operation and HRESULT; diagnostics only, never proof of an empty window.
+  string read_error = 14;
 }
 
 message Snapshot {

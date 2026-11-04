@@ -315,12 +315,20 @@ impl Snapshotter {
             }
             // A retry starts from the same keys, so its elements keep the keys the first pass would have given.
             let mut cx = Ctx { w, index, found: vec![], keys: keys.clone(), sparse_document: false, incomplete: false };
-            let r = unsafe { self.uia.ElementFromHandle(h).and_then(|e| e.BuildUpdatedCache(&self.cache)) }.and_then(|root| {
+            let mut stage = "ElementFromHandle";
+            let r = unsafe { self.uia.ElementFromHandle(h) }.and_then(|e| {
+                stage = "BuildUpdatedCache";
+                unsafe { e.BuildUpdatedCache(&self.cache) }
+            }).and_then(|root| {
+                stage = "walk";
                 let framework = s(&root, UIA_FrameworkIdPropertyId);
                 let clip = R { x: cx.w.bounds.unwrap_or_default().x, ..rect_of(cx.w) };
                 self.walk(&root, "", clip, false, None, &mut cx).map(|()| framework)
             });
             let (found, sparse, new_keys) = (cx.found, cx.sparse_document, cx.keys);
+            if let Err(e) = &r {
+                w.read_error = format!("{stage}: {}", e.code());
+            }
             match r {
                 Ok(framework) => {
                     w.framework_id = framework;
@@ -331,9 +339,9 @@ impl Snapshotter {
                     }
                 }
                 Err(e) if e.code() == UIA_E_TIMEOUT => w.unresponsive = true,
-                Err(e) if e.code() == UIA_E_ELEMENTNOTAVAILABLE || e.code() == E_INVALIDARG => {}
+                Err(e) if e.code() == UIA_E_ELEMENTNOTAVAILABLE || e.code() == E_INVALIDARG => w.incomplete = true,
                 Err(e) if e.code() == E_ACCESSDENIED => w.elevated_unreadable = true,
-                Err(_) => w.elevated_unreadable = true,
+                Err(_) => w.incomplete = true,
             }
             *keys = new_keys;
             return found;
