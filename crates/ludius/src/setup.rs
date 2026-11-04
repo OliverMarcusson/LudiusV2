@@ -349,12 +349,13 @@ pub fn plan(spec: &Spec, l: &Layout) -> Vec<Step> {
     vec![
         Step {
             id: "preflight",
-            what: "Proxmox node, root, Windows ISO, signed observer, AI key, ludius-rs in the checkout".into(),
+            what: "Proxmox node, root, Windows ISO, signed observer, AI key, ludius-rs and the host agent built in the checkout".into(),
             sh: Some(format!(
                 "set -e; pveversion; test \"$(id -u)\" = 0 || {{ echo 'run setup as root on the node'; exit 1; }}; \
                  test -f /var/lib/vz/template/iso/win10.iso || {{ echo 'copy the Windows 10 ISO to /var/lib/vz/template/iso/win10.iso'; exit 1; }}; \
                  test -f out/observer/uiprobe.exe -a -f secrets/range-root-ca.cer || {{ echo 'out/observer/uiprobe.exe and secrets/range-root-ca.cer missing: pwsh infra/packer/observer-artifacts.ps1 on the desktop, then copy them'; exit 1; }}; \
                  test -x ./ludius-rs || {{ echo './ludius-rs missing in the checkout (range-up checks each observer with it)'; exit 1; }}; \
+                 test -x target/release/ludius-host-agent || {{ echo 'host agent not built: cargo build --release -p ludius-host-agent'; exit 1; }}; \
                  test -s {} || {{ echo 'AI key file missing'; exit 1; }}; \
                  command -v packer || {{ echo 'install packer: https://developer.hashicorp.com/packer/install'; exit 1; }}",
                 key_path(&spec.ai.planner.key).display()
