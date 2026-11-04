@@ -418,7 +418,7 @@ impl Subgoal {
     }
 }
 
-pub const RECIPIENT: &str = r"^({to}|{to_name}|{to_name} <{to}>);?\s*$";
+pub const RECIPIENT: &str = r"^({to}|{to_name}|[^;<>,\r\n]+ <{to}>);?\s*$";
 pub const CAPABILITIES: [&str; 21] = [
     "mail.send", "mail.reply", "mail.read", "mail.save", "mail.file", "calendar.invite", "calendar.respond", "file.move",
     "file.write", "file.edit", "file.reuse", "file.export", "file.recycle", "file.share", "file.organize", "file.download",

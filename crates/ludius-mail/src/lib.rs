@@ -191,7 +191,9 @@ pub fn present(address: &str, folder: &str, subject: &str, sender: &str, mine: &
 }
 
 fn recent(m: &Message, since_ms: i64) -> bool {
-    m.submit_ms >= since_ms && m.delivery_ms / MINUTE_MS >= since_ms / MINUTE_MS && m.submit_ms <= m.delivery_ms + MINUTE_MS
+    // Outlook can retain a draft's delivery timestamp across a range-clock jump.
+    // Callers also require an item absent from their successful before-task baseline.
+    m.submit_ms >= since_ms
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -301,6 +303,13 @@ pub fn deliver(sender: &str, sender_name: &str, to: &str, to_name: &str, subject
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delivery_time_can_precede_submission_in_a_warp() {
+        let m = Message { submit_ms: 1_793_860_519_000, delivery_ms: 1_793_859_468_000, ..Default::default() };
+        assert!(recent(&m, m.submit_ms - 60_000));
+        assert!(!recent(&m, m.submit_ms + 1));
+    }
 
     #[test]
     fn letters_fold() {

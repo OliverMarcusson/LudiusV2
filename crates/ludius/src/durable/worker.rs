@@ -209,6 +209,7 @@ fn day_thread(cfg: &Config, inp: &DayInput, ready: &mpsc::Sender<Result<()>>, jo
     let mut reactor = react.as_ref().map(|(llm, d)| {
         let mut r = crate::react::Reactor::new(cfg.persona.clone(), templates.clone(), policy.clone(), llm, cfg.runs.join("world").join("narrative.yaml"), &log).with_decider(d);
         r.existing = Box::new(|| crate::world_state::existing_files(&world, &user));
+        crate::day::React::reserve(&mut r, &inp.plan);
         r
     });
     let mut day = DayRunner::new(templates, &log, inp.clock, seed);

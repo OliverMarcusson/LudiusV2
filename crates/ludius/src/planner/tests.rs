@@ -156,7 +156,7 @@ fn day_slots_are_seeded_and_spaced() {
         accounts: vec![persona.user.clone()],
         history: vec![],
     };
-    let d = Day {
+    let mut d = Day {
         narrative: &narrative,
         persona: &persona,
         date: chrono::NaiveDate::from_ymd_opt(2026, 10, 28).unwrap(),
@@ -168,6 +168,7 @@ fn day_slots_are_seeded_and_spaced() {
         existing: vec![],
         mail_threads: Default::default(),
         inbox: Default::default(),
+        replyable: Default::default(),
         owned: Default::default(),
         invites: Default::default(),
         unread: Default::default(),
@@ -188,6 +189,14 @@ fn day_slots_are_seeded_and_spaced() {
     for it in items.iter().filter(|it| it.params.contains_key("to")) {
         assert_eq!(it.params["to"], format!("bek@{}", crate::mail::domain()));
     }
+    let replies = ts.into_iter().filter(|(_, t)| t.cap() == "mail.reply").collect();
+    let key = ("bek".to_string(), "Lead times".to_string());
+    d.inbox.insert(key.clone());
+    let no_reply = make::day_slots(&d, &replies, vec![], &Default::default(), &Default::default(), &[]).unwrap();
+    assert!(no_reply.iter().all(|it| it.template == BREAK));
+    d.replyable.insert(key);
+    let one_reply = make::day_slots(&d, &replies, vec![], &Default::default(), &Default::default(), &[]).unwrap();
+    assert_eq!(one_reply.iter().filter(|it| it.template != BREAK).count(), usize::from(cfg!(feature = "mail")));
 }
 
 #[test]

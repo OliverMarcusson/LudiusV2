@@ -51,12 +51,18 @@ impl Reactor<'_> {
         let since = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")?.and_hms_opt(0, 0, 0).unwrap_or_default().and_utc().timestamp_millis();
         let (senders, tries) = self.mail_counts()?;
         let domain = format!("@{}", mail::domain());
+        let mut subjects = HashMap::new();
+        for m in &inbox {
+            *subjects.entry(m.subject.clone()).or_insert(0) += 1;
+        }
         let mut new: Vec<_> = inbox
             .into_iter()
             .filter(|m| {
                 let user = m.sender.strip_suffix(&domain).unwrap_or_default().to_string();
                 m.cls == "IPM.Note"
                     && !m.read
+                    && subjects.get(&m.subject) == Some(&1)
+                    && !self.planned_mail.contains(&m.subject)
                     && colleagues.contains(&user)
                     && !m.subject.trim().is_empty()
                     && !m.msgid.is_empty()

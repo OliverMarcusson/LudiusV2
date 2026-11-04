@@ -185,6 +185,7 @@ pub fn generate_day(llm: &LlmClient, world: &World, persona: &Persona, src: &Sou
     let existing = world_state::existing_files(world, user)?;
     let owned = owned_files(&world.root, user, &date.format("%Y-%m-%d").to_string())?;
     let inbox: BTreeSet<(String, String)> = inbox.into_iter().collect();
+    let replyable = mails.iter().filter(|m| inbox.contains(&(account(&m.sender), m.subject.clone())) && reply::unanswered(m, mail::matching(user, "sent", &m.subject, false).as_deref())).map(|m| (account(&m.sender), m.subject.clone())).collect();
     let invites: BTreeSet<(String, String)> = invites.into_iter().collect();
     let d = planner::Day {
         narrative: n,
@@ -198,6 +199,7 @@ pub fn generate_day(llm: &LlmClient, world: &World, persona: &Persona, src: &Sou
         existing: existing.clone(),
         mail_threads: threads.clone(),
         inbox: inbox.clone(),
+        replyable,
         owned: owned.clone(),
         invites: invites.clone(),
         unread: unread.clone(),

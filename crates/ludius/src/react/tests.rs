@@ -72,6 +72,7 @@ fn reactor<'r>(who: (&str, &str), narrative: PathBuf, log: &'r GroundTruth, llm:
         talk: Box::new(|_, _| None),
         decider: None,
         taken: vec![],
+        planned_mail: BTreeSet::new(),
         chat: true,
         draft: Box::new(|_, _| Ok("Thanks Anna, that looks good to me.".into())),
         send: Box::new(|_, _, _, _, _, _, _| false),
@@ -97,6 +98,35 @@ fn slot(reactor: &mut Reactor, log: &GroundTruth, desk: &mut Fake) -> Vec<crate:
     let mut day = DayRunner::new(templates().unwrap(), log, Clock::Compressed, 0);
     day.reactor = Some(reactor);
     day.slot(desk, d(), &note("10:00", false), &mut vec![], None).unwrap()
+}
+
+#[test]
+fn mail_reactions_leave_planned_and_ambiguous_subjects_alone() {
+    let dir = tmp("reserved-mail");
+    let narrative = world(&dir, &[("aberg", "Anna Berg"), ("lnord", "Lars Nord")], &[]);
+    let mut n: Narrative = crate::tasks::load_yaml(&narrative).unwrap();
+    n.accounts = vec!["aberg".into(), "lnord".into()];
+    std::fs::write(&narrative, serde_yaml::to_string(&n).unwrap()).unwrap();
+    let log = GroundTruth::open(&dir.join("day.jsonl")).unwrap();
+    let mut r = reactor(("Anna Berg", "aberg"), narrative, &log, &Shared::default());
+    let day = "2026-11-02";
+    let today = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").unwrap().and_hms_opt(9, 0, 0).unwrap().and_utc().timestamp_millis();
+    let mail = crate::mail::Message { sender: format!("lnord@{}", crate::mail::domain()), subject: "stock".into(), msgid: "<stock>".into(), cls: "IPM.Note".into(), delivery_ms: today, ..Default::default() };
+    let inbox = mail.clone();
+    r.inbox = Box::new(move |_| Some(vec![inbox.clone()]));
+    let planned = PlanItem { at: "15:00".into(), template: "outlook_read_mail".into(), params: [("subject".into(), "stock".into())].into(), ..Default::default() };
+    r.reserve(&crate::planner::DayPlan { persona: "aberg".into(), date: day.into(), items: vec![planned] });
+    let mut ran = vec![];
+    r.react_mail(day, "10:00", &mut |it| { ran.push(it.template.clone()); Ok("done".into()) }).unwrap();
+    assert!(ran.is_empty());
+    r.planned_mail.clear();
+    let inbox = mail.clone();
+    r.inbox = Box::new(move |_| Some(vec![inbox.clone(), inbox.clone()]));
+    r.react_mail(day, "11:00", &mut |it| { ran.push(it.template.clone()); Ok("done".into()) }).unwrap();
+    assert!(ran.is_empty());
+    r.inbox = Box::new(move |_| Some(vec![mail.clone()]));
+    r.react_mail(day, "12:00", &mut |it| { ran.push(it.template.clone()); Ok("done".into()) }).unwrap();
+    assert_eq!(ran, vec!["outlook_read_mail"]);
 }
 
 #[test]

@@ -253,6 +253,15 @@ mod tests {
     }
 
     #[test]
+    fn recipient_address_survives_a_stale_display_name() {
+        let re = RECIPIENT.replace("{to}", &crate::template::escape("sdekker@example.test")).replace("{to_name}", &crate::template::escape("Mattias Eklund"));
+        assert!(fullmatch(&re, "Sofia Dekker <sdekker@example.test>; \r", true));
+        for wrong in ["Sofia Dekker", "Sofia <other@example.test>", "Sofia <sdekker@exampleXtest>", "other@example.test; Sofia <sdekker@example.test>", "Other, Sofia <sdekker@example.test>"] {
+            assert!(!fullmatch(&re, wrong, true), "{wrong}");
+        }
+    }
+
+    #[test]
     fn file_check_rules() {
         let ok = FileCheck { path: "Documents\\a.txt".into(), paragraphs: Some("x".into()), ..Default::default() };
         assert!(ok.validate().is_ok());

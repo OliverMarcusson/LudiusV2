@@ -73,6 +73,7 @@ pub struct ItemResult {
 
 /// Chat reactions due before a slot (react.Reactor); `run` runs one reaction item and returns its status.
 pub trait React {
+    fn reserve(&mut self, _plan: &DayPlan) {}
     fn react(&mut self, day: &str, at: &str, run: &mut dyn FnMut(&PlanItem) -> Result<String>) -> Result<()>;
 }
 
@@ -156,7 +157,10 @@ impl<'r> DayRunner<'r> {
         Ok(self.results.clone())
     }
 
-    pub fn start(&self, plan: &DayPlan) -> Result<()> {
+    pub fn start(&mut self, plan: &DayPlan) -> Result<()> {
+        if let Some(reactor) = self.reactor.as_mut() {
+            reactor.reserve(plan);
+        }
         self.log.write(json!({"event": "day_start", "host_ms": now_ms(), "persona": plan.persona, "date": plan.date, "clock": clock_name(self.clock), "items": plan.items.len()}))
     }
 

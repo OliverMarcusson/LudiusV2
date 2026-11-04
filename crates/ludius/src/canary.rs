@@ -35,6 +35,10 @@ pub fn pick(templates: &BTreeMap<String, Template>, admission: &serde_yaml::Valu
             out.insert(p.app.clone(), (p, 0));
         }
     }
+    for (t, _) in out.values_mut() {
+        t.budget_steps = t.budget_steps.min(12);
+        t.budget_minutes = t.budget_minutes.min(1.5);
+    }
     out
 }
 
@@ -43,7 +47,7 @@ pub fn open_probe(t: &Template) -> Option<Template> {
     let v = t.variants.first()?;
     let (first, last) = (v.first()?, v.last()?);
     let w = t.subgoals.get(last)?.done.as_ref()?.window.as_ref()?;
-    if !t.subgoals.get(first)?.launch || !w.absent || w.process.as_deref().unwrap_or_default().is_empty() || w.class_name.as_deref().is_some_and(|c| !c.is_empty()) {
+    if !t.subgoals.get(first)?.launch || !w.absent || w.process.as_deref().unwrap_or_default().is_empty() {
         return None;
     }
     let subgoals: IndexMap<_, _> = [first, last].into_iter().map(|k| (k.clone(), t.subgoals[k].clone())).collect();
@@ -141,6 +145,9 @@ mod tests {
         let picked = pick(&templates, &serde_yaml::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap());
         assert_eq!((picked["notepad"].0.task.as_str(), picked["notepad"].1), ("notepad_write_note", 1));
         assert!(picked.values().filter(|(t, _)| t.task.ends_with("_open_probe")).all(|(t, _)| t.writes.is_empty() && t.variants[0].len() == 2));
+        let explorer = open_probe(&templates["explorer_new_folder"]).unwrap();
+        assert_eq!(explorer.subgoals.values().last().unwrap().done.as_ref().unwrap().window.as_ref().unwrap().class_name.as_deref(), Some("CabinetWClass"));
+        assert!(picked.values().all(|(t, _)| t.budget_steps <= 12 && t.budget_minutes <= 1.5));
         assert_eq!((judge(&["failed".into(), "done".into()]), judge(&["error".into(), "error".into()]), judge(&["error".into(), "failed".into()])), ("ok", "unknown", "drift"));
 
         let calls = Calls::default();

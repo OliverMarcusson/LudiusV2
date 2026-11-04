@@ -470,7 +470,7 @@ pub fn run(runs: &FsPath, now: i64) -> Rd<Value> {
                 }).unwrap_or_default(),
             };
             let items = run.first().and_then(|x| x.get("items")).and_then(Value::as_i64).unwrap_or(0);
-            Ok(json!({ "user": user, "status": status, "detail": detail, "items": items, "done": run.iter().filter(|x| text(x, "event") == "item_end").count() }))
+            Ok(json!({ "user": user, "status": status, "detail": detail, "items": items, "done": run.iter().filter(|x| text(x, "event") == "item_end" && text(x, "status") == "done").count() }))
         })
         .collect::<Rd<_>>()?;
     if phase == "preparing" && personas.iter().any(|p| matches!(p["status"].as_str(), Some("running" | "blocked" | "done" | "failed"))) {
@@ -684,6 +684,8 @@ mod tests {
         let mut journal = std::fs::OpenOptions::new().append(true).open(runs.join("range/warp.jsonl")).unwrap();
         writeln!(journal, "{{\"event\":\"no_plan\",\"persona\":\"pvanloon\",\"error\":\"items[0].params.body: expected string\"}}").unwrap();
         let mut recording = std::fs::OpenOptions::new().append(true).open(runs.join("days/2027-02-02-aberg.jsonl")).unwrap();
+        writeln!(recording, "{{\"event\":\"item_end\",\"status\":\"done\"}}\n{{\"event\":\"item_end\",\"status\":\"abandoned\"}}").unwrap();
+        assert_eq!(run(&runs, now_ms()).unwrap()["personas"][0]["done"], 1);
         writeln!(recording, "{{\"event\":\"wait\",\"reason\":\"foreground unreadable: Outlook\"}}").unwrap();
         let r = run(&runs, now_ms()).unwrap();
         assert_eq!(r["personas"][0]["status"], "blocked");

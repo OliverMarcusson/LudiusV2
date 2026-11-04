@@ -85,7 +85,7 @@ pub fn pick(owner: &str, to: &str, subject: &str, now_ms: i64, people: &People, 
         let (Some(sent), Some(same)) = (mail::matching(owner, "sent", &m.subject, false), mail::matching(owner, "inbox", &m.subject, false)) else {
             return Err("sent items or inbox unreadable on the server".into());
         };
-        if sent.iter().any(|s| s.in_reply_to == m.msgid) {
+        if !unanswered(&m, Some(&sent)) {
             skipped.push(format!("{} already answered", m.id));
             continue;
         }
@@ -219,18 +219,28 @@ pub fn prepare_file(task: &mut Task, policy: &Policy, narrative: &Path) -> Prepa
 /// to that day (later mail is left over from an earlier run at a later range date).
 pub fn hints(inbox: Option<&[Message]>, owner: &str, people: &People, policy: &Policy, cls: &str, day_ms: Option<i64>) -> Vec<(String, String)> {
     let since = day_ms.map(|d| d - (RECENT_DAYS - 1) * DAY_MS).unwrap_or(0);
+    let mut subjects = BTreeMap::new();
+    for m in inbox.unwrap_or_default() {
+        *subjects.entry(m.subject.as_str()).or_insert(0) += 1;
+    }
     inbox
         .unwrap_or_default()
         .iter()
         .filter(|m| {
             m.cls == cls
                 && !m.subject.is_empty()
+                && subjects.get(m.subject.as_str()) == Some(&1)
                 && colleague(&m.sender, owner, people, policy).is_none()
                 && day_ms.is_none_or(|d| since <= m.delivery_ms && m.delivery_ms < d + DAY_MS)
                 && !policy.mail_reserved(&m.sender, &m.subject, &m.body)
         })
         .map(|m| (m.sender.split('@').next().unwrap_or("").to_string(), m.subject.clone()))
         .collect()
+}
+
+/// Unknown Sent Items cannot establish that a mail is still waiting for an answer.
+pub fn unanswered(m: &Message, sent: Option<&[Message]>) -> bool {
+    !m.msgid.is_empty() && sent.is_some_and(|sent| !sent.iter().any(|s| s.in_reply_to == m.msgid))
 }
 
 pub fn problem(text: &str, people: &People, policy: &Policy) -> Option<String> {
@@ -357,6 +367,18 @@ pub fn py_repr(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ambiguous_subjects_are_not_planning_candidates() {
+        let sender = format!("ceo@{}", mail::domain());
+        let people = [("ceo".into(), "Anna Berg".into())].into();
+        let m = Message { sender, subject: "receipts".into(), msgid: "<original>".into(), cls: "IPM.Note".into(), ..Default::default() };
+        assert_eq!(hints(Some(&[m.clone()]), "worker", &people, &Policy::default(), "IPM.Note", None).len(), 1);
+        assert!(hints(Some(&[m.clone(), m.clone()]), "worker", &people, &Policy::default(), "IPM.Note", None).is_empty());
+        assert!(unanswered(&m, Some(&[])));
+        assert!(!unanswered(&m, None));
+        assert!(!unanswered(&m, Some(&[Message { in_reply_to: m.msgid.clone(), ..Default::default() }])));
+    }
 
     #[test]
     fn reply_problems() {

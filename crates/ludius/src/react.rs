@@ -142,6 +142,7 @@ pub struct Reactor<'r> {
     pub talk: Talk<'r>,
     pub decider: Option<Ask<'r>>,
     pub taken: Vec<String>,
+    pub planned_mail: BTreeSet<String>,
     /// The range has the chat add-on (LUDIUS_CHAT_HOST); mail reactions follow the mail backend.
     pub chat: bool,
     /// The reply-text LLM: (system, user prompt) -> reply body.
@@ -168,6 +169,7 @@ impl<'r> Reactor<'r> {
             talk: Box::new(chat::conversation),
             decider: None,
             taken: vec![],
+            planned_mail: BTreeSet::new(),
             chat: cfg!(feature = "chat") && std::env::var("LUDIUS_CHAT_HOST").is_ok_and(|h| !h.is_empty()),
             draft: Box::new(move |s, u| Ok(llm.json::<crate::reply::Draft>(s, u, 0.8, 1)?.body.trim().replace('\r', ""))),
             send: Box::new(crate::mail::deliver),
@@ -574,6 +576,10 @@ name), params (object with every listed parameter as a string), context (one sen
 }
 
 impl React for Reactor<'_> {
+    fn reserve(&mut self, plan: &crate::planner::DayPlan) {
+        self.planned_mail = plan.items.iter().filter(|it| self.templates.get(&it.template).is_some_and(|t| t.cap().starts_with("mail."))).filter_map(|it| it.params.get("subject").cloned()).collect();
+    }
+
     fn react(&mut self, day: &str, at: &str, run: &mut dyn FnMut(&PlanItem) -> Result<String>) -> Result<()> {
         // each part runs only on a range that has its backend; neither depends on the other
         if self.chat {

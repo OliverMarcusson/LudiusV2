@@ -61,6 +61,8 @@ pub struct Day<'a> {
     pub existing: Vec<String>,
     pub mail_threads: BTreeMap<String, (String, String)>,
     pub inbox: BTreeSet<(String, String)>,
+    /// Unambiguous inbox mail with no reply in successfully read Sent Items.
+    pub replyable: BTreeSet<(String, String)>,
     pub owned: BTreeMap<String, String>,
     pub invites: BTreeSet<(String, String)>,
     pub unread: BTreeSet<(String, String)>,
@@ -228,6 +230,7 @@ struct Slots<'a> {
     channels: Vec<String>,
     shares: Vec<String>,
     mails: Vec<(String, String)>,
+    replies: Vec<(String, String)>,
     saves: Vec<((String, String), String)>,
     fresh: Vec<(String, String)>,
     downloads: bool,
@@ -283,7 +286,7 @@ impl Slots<'_> {
         match cap.as_str() {
             c if TO_SOMEONE.contains(&c) => it = self.to(it, None),
             "mail.reply" => {
-                if let Some((u, subject)) = self.mails.choose(&mut self.rng).cloned() {
+                if let Some((u, subject)) = self.replies.pop() {
                     it = self.to(it, Some(&u));
                     it.params.insert("subject".into(), subject);
                 }
@@ -325,6 +328,7 @@ impl Slots<'_> {
             && (!TO_SOMEONE.contains(&cap) || !self.colleagues.is_empty())
             && (!NEEDS_INBOX.contains(&cap) || !self.mails.is_empty())
             && (cap != "mail.read" || !self.fresh.is_empty())
+            && (cap != "mail.reply" || !self.replies.is_empty())
             && (cap != "mail.save" || !self.saves.is_empty())
             && (cap != "chat.post" || !self.channels.is_empty())
             && (cap != "file.share" || !self.shares.is_empty())
@@ -355,6 +359,7 @@ pub(crate) fn day_slots(d: &Day, templates: &BTreeMap<String, Template>, channel
         }
     }
     let fresh = shuffled(&d.unread.intersection(&d.inbox).cloned().collect::<Vec<_>>(), &mut rng);
+    let replies = shuffled(&d.replyable.intersection(&d.inbox).cloned().collect::<Vec<_>>(), &mut rng);
     let people = d.narrative.people_names();
     let mut s = Slots {
         d,
@@ -366,6 +371,7 @@ pub(crate) fn day_slots(d: &Day, templates: &BTreeMap<String, Template>, channel
         channels,
         shares: d.narrative.team_shares(&d.persona.user),
         mails,
+        replies,
         saves,
         fresh,
         downloads: !super::downloads(&d.policy).is_empty(),
@@ -381,9 +387,11 @@ pub(crate) fn day_slots(d: &Day, templates: &BTreeMap<String, Template>, channel
     for (f, about) in &d.followups {
         let mut it = if let Some((u, subject)) = d.mail_threads.get(f) {
             let Some(reply) = s.of("mail.reply").first().cloned() else { continue };
-            if !d.inbox.contains(&(u.clone(), subject.clone())) {
+            let key = (u.clone(), subject.clone());
+            if !s.replies.contains(&key) {
                 continue;
             }
+            s.replies.retain(|m| m != &key);
             let mut it = s.to(PlanItem { at: "00:00".into(), template: reply, context: about.clone(), ..Default::default() }, Some(u));
             it.params.insert("subject".into(), subject.clone());
             it
@@ -445,6 +453,9 @@ pub(crate) fn day_slots(d: &Day, templates: &BTreeMap<String, Template>, channel
     while !pool.is_empty() && first.len() + rest.len() + late.len() < want {
         let Ok(w) = WeightedIndex::new(pool.iter().map(|(_, w)| *w)) else { break };
         let (k, _) = pool.remove(s.rng.sample(&w));
+        if !s.eligible(&k, &templates[&k]) {
+            continue;
+        }
         let why = match templates[&k].cap() {
             "chat.dm" => DM_PURPOSES.choose(&mut s.rng).unwrap().to_string(),
             "chat.post" => "small talk".into(),
