@@ -3,6 +3,7 @@ $s = Get-ItemProperty HKLM:\SYSTEM\Setup
 if ($s.SystemSetupInProgress -or $s.OOBEInProgress) { exit 3 }
 $pw = [Console]::In.ReadToEnd().Trim()
 if ($pw.Length -lt 12) { exit 5 }
+{% if bootstrap_network | default(true) %}
 $n = Get-NetAdapter -Physical | Where-Object Status -eq Up | Select-Object -First 1
 if (-not $n) { exit 4 }
 if (-not (Get-NetIPAddress -InterfaceIndex $n.ifIndex -IPAddress {{ ip }} -ErrorAction SilentlyContinue)) {
@@ -17,6 +18,7 @@ if (@($gw).Count -ne 1 -or $gw.NextHop -ne '{{ srv01_ip }}') {
     New-NetRoute -InterfaceIndex $n.ifIndex -DestinationPrefix 0.0.0.0/0 -NextHop {{ srv01_ip }} | Out-Null
 }
 Set-DnsClientServerAddress -InterfaceIndex $n.ifIndex -ServerAddresses {{ srv01_ip }}
+{% endif %}
 $sp = ConvertTo-SecureString $pw -AsPlainText -Force
 $u = '{{ range_admin_user }}'
 if (Get-LocalUser $u -ErrorAction SilentlyContinue) { Set-LocalUser $u -Password $sp; Enable-LocalUser $u }

@@ -1,16 +1,18 @@
 ---
 - name: Range TLS CA (the mail server's)
+  when: range_ca | default(true)
   ansible.windows.win_copy:
     src: "{{ range_tls_ca }}"
     dest: C:\Windows\Temp\range-ca.crt
 
 - name: Trust the range TLS CA
+  when: range_ca | default(true)
   ansible.windows.win_certificate_store:
     path: C:\Windows\Temp\range-ca.crt
     store_location: LocalMachine
     store_name: Root
 
-- name: Join corp.ludius.test as {{ computer_name }}
+- name: Join {{ domain }} as {{ computer_name }} (an adopted desktop keeps its name)
   microsoft.ad.membership:
     dns_domain_name: "{{ domain }}"
     hostname: "{{ computer_name }}"

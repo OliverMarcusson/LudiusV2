@@ -20,7 +20,7 @@
     groups: personas
     ansible_host: "{{ p.ip }}"
     persona: "{{ p.user }}"
-    computer_name: WS-{{ p.user | upper }}01
+    computer_name: "{{ p.computer_name | default('WS-' ~ p.user | upper ~ '01') }}"
     ansible_user: "{{ range_admin_user }}"
     ansible_password: "{{ range_admin_password }}"
     ansible_connection: winrm

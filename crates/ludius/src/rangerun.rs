@@ -32,8 +32,9 @@ pub fn vmids(path: &Path) -> Result<Vec<(String, u32)>> {
     v["range_personas"].as_array().context("range_personas")?.iter().map(|p| p["user"].as_str().zip(id(p)).map(|(u, v)| (u.to_string(), v)).context("range_personas[].user/vmid")).collect()
 }
 
+/// The persona's VM: LUDIUS_VM_<USER> (a range Ludius adopted keeps its own VM names), else ludius-<user>.
 pub fn vm_of(user: &str) -> String {
-    format!("ludius-{user}")
+    std::env::var(format!("LUDIUS_VM_{}", user.to_uppercase())).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| format!("ludius-{user}"))
 }
 
 /// The persona's unlock password: LUDIUS_PERSONA_PASSWORD_<USER>, else user + the suffix in

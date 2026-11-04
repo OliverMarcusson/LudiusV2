@@ -37,7 +37,8 @@ pub struct Range {
     pub subnet: String,
     pub domain: String,
     pub hypervisor: Hypervisor,
-    /// sha256 of /var/lib/vz/template/iso/win10.iso (Packer never builds an unchecked ISO).
+    /// sha256 of /var/lib/vz/template/iso/win10.iso (Packer never builds an unchecked ISO). Build ranges only.
+    #[serde(default)]
     pub windows_iso_sha256: String,
     /// The scenario file whose reserved resources the personas keep off, or "none".
     #[serde(default = "d_none")]
@@ -76,7 +77,12 @@ pub struct Org {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Personas {
+    /// Build ranges: one new VM each. Existing ranges: the number of `desktops`.
+    #[serde(default)]
     pub count: u32,
+    /// Existing ranges: the Proxmox names of the desktops that get a persona, one each, in persona order.
+    #[serde(default)]
+    pub desktops: Vec<String>,
     /// Optional role mix hints for the generator ("2 in finance, 1 in sales").
     #[serde(default)]
     pub roles: Vec<String>,
@@ -97,6 +103,9 @@ pub struct Addons {
 pub struct Addon {
     #[serde(default)]
     pub backend: String,
+    /// AD backend "adopt": "secret:<name>", the file holding the domain Administrator's password.
+    #[serde(default)]
+    pub admin: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,7 +170,10 @@ pub fn secrets_dir() -> PathBuf {
 impl Spec {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
-        let spec: Spec = toml::from_str(&text).with_context(|| path.display().to_string())?;
+        let mut spec: Spec = toml::from_str(&text).with_context(|| path.display().to_string())?;
+        if spec.existing() && spec.personas.count == 0 {
+            spec.personas.count = spec.personas.desktops.len() as u32;
+        }
         spec.validate()?;
         Ok(spec)
     }
@@ -169,6 +181,11 @@ impl Spec {
     /// The first three octets of the /24 range subnet (Ansible's range_net).
     pub fn range_net(&self) -> &str {
         self.range.subnet.strip_suffix(".0/24").unwrap_or("")
+    }
+
+    /// Deploy into a range Ludius didn't build: no VMs created, the chosen desktops and the AD are adopted.
+    pub fn existing(&self) -> bool {
+        self.range.mode == "existing"
     }
 
     pub fn ad(&self) -> &str {
@@ -190,6 +207,9 @@ impl Spec {
 
     /// Range servers as (vmid, name, MB).
     pub fn servers(&self) -> Vec<(u32, String, u32)> {
+        if self.existing() {
+            return vec![];
+        }
         let (b, p) = (self.range.hypervisor.vmid_base, &self.range.hypervisor.vm_prefix);
         let mut s = if self.mail() == "exchange" {
             vec![(b + 10, "ludius-dc01".to_string(), 4096), (b + 11, "ludius-ex01".to_string(), 16384)]
@@ -205,7 +225,7 @@ impl Spec {
     pub fn validate(&self) -> Result<()> {
         let r = &self.range;
         let h = &r.hypervisor;
-        ensure!(r.mode == "build", "range.mode {:?}: phase 1 builds new ranges only (\"build\"); deploying into an existing range comes with discovery", r.mode);
+        ensure!(r.mode == "build" || r.mode == "existing", "range.mode {:?}: \"build\" (a new range) or \"existing\" (deploy into a range Ludius didn't build)", r.mode);
         ensure!(h.kind == "proxmox", "range.hypervisor.kind {:?}: phase 1 drives Proxmox only", h.kind);
         let caps = re(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.0/24$").captures(&r.subnet).with_context(|| format!("range.subnet {:?}: a /24 such as 10.77.0.0/24", r.subnet))?;
         let o: Vec<u32> = (1..=3).map(|i| caps[i].parse().unwrap_or(999)).collect();
@@ -214,7 +234,7 @@ impl Spec {
         ensure!(private, "range.subnet {:?}: must be private (10/8, 172.16/12, 192.168/16): the range never routes out", r.subnet);
         ensure!(o[..2] != [10, 78], "range.subnet {:?}: 10.78.0.0/24 is the NAT build bridge", r.subnet);
         ensure!(re(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$").is_match(&r.domain), "range.domain {:?}: lower-case DNS name with a dot", r.domain);
-        ensure!(re(r"^[0-9a-f]{64}$").is_match(&r.windows_iso_sha256), "range.windows_iso_sha256: 64 lower-case hex characters");
+        ensure!(self.existing() || re(r"^[0-9a-f]{64}$").is_match(&r.windows_iso_sha256), "range.windows_iso_sha256: 64 lower-case hex characters");
         ensure!(r.scenario == "none" || Path::new(&r.scenario).is_absolute(), "range.scenario: \"none\" or an absolute path to the scenario file");
         ensure!(re(r"^vmbr\d+$").is_match(&h.bridge) && re(r"^vmbr\d+$").is_match(&h.build_bridge) && h.bridge != h.build_bridge, "range.hypervisor bridge/build_bridge: two different vmbrN names");
         ensure!(re(r"^[A-Za-z0-9_-]+$").is_match(&h.storage) && re(r"^[A-Za-z0-9_-]+$").is_match(&h.pool), "range.hypervisor storage/pool: plain Proxmox ids");
@@ -223,23 +243,35 @@ impl Spec {
 
         let n = self.personas.count;
         ensure!(n >= 1, "personas.count: at least one");
-        ensure!(n <= 78, "personas.count: at most 78 (addresses .21-.99)");
-        ensure!(h.vmid_base + 21 + n <= 999, "personas.count {n}: VM ids past 999 with vmid_base {}", h.vmid_base);
         ensure!(self.personas.tz.parse::<chrono_tz::Tz>().is_ok(), "personas.tz {:?}: an IANA time zone", self.personas.tz);
         ensure!(!self.org.name.trim().is_empty() && !self.org.industry.trim().is_empty(), "org.name and org.industry are required");
         ensure!(!self.org.departments.is_empty(), "org.departments: at least one");
-
-        match (self.ad(), self.mail()) {
-            ("samba", "imap" | "grommunio") | ("windows-dc", "exchange") => {}
-            (_, "exchange") => bail!("addons.mail exchange needs addons.ad backend \"windows-dc\" (Exchange does not run against Samba AD)"),
-            ("", _) | (_, "") => bail!(
-                "phase 1 needs addons.ad and addons.mail: a workgroup range or AD without mail is not scripted yet (infra/ansible builds AD and mail on the same server)"
-            ),
-            (ad, mail) => bail!("addons.ad {ad:?} with addons.mail {mail:?}: supported are samba + imap|grommunio and windows-dc + exchange"),
-        }
-        ensure!(self.mail() != "grommunio" || n <= 5, "personas.count {n}: grommunio's community licence has 5 log-in mailboxes");
-        if let Some(c) = &self.addons.chat {
-            ensure!(c.backend.is_empty() || c.backend == "mattermost", "addons.chat.backend {:?}: mattermost", c.backend);
+        if self.existing() {
+            let d = &self.personas.desktops;
+            ensure!(n as usize == d.len(), "personas.count {n}: an existing range has one persona per entry in personas.desktops ({}); leave count out", d.len());
+            ensure!(d.iter().all(|v| re(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$").is_match(v)), "personas.desktops: Proxmox VM names");
+            ensure!(d.iter().collect::<std::collections::BTreeSet<_>>().len() == d.len(), "personas.desktops: a desktop twice");
+            let ad = self.addons.ad.as_ref().context("addons.ad: an existing range needs backend = \"adopt\" (its domain gets the persona accounts)")?;
+            ensure!(ad.backend == "adopt", "addons.ad.backend {:?}: an existing range adopts its AD (\"adopt\")", ad.backend);
+            ensure!(re(r"^secret:[A-Za-z0-9_.-]+$").is_match(&ad.admin), "addons.ad.admin: \"secret:<name>\", the domain Administrator's password in {}/<name>", secrets_dir().display());
+            // ponytail: adopting mail and chat comes next; until then the range runs Office without mail
+            ensure!(self.addons.mail.is_none() && self.addons.chat.is_none(), "addons.mail and addons.chat: adopting them in an existing range is not scripted yet; leave them out");
+        } else {
+            ensure!(self.personas.desktops.is_empty(), "personas.desktops: only for range.mode \"existing\"");
+            ensure!(n <= 78, "personas.count: at most 78 (addresses .21-.99)");
+            ensure!(h.vmid_base + 21 + n <= 999, "personas.count {n}: VM ids past 999 with vmid_base {}", h.vmid_base);
+            match (self.ad(), self.mail()) {
+                ("samba", "imap" | "grommunio") | ("windows-dc", "exchange") => {}
+                (_, "exchange") => bail!("addons.mail exchange needs addons.ad backend \"windows-dc\" (Exchange does not run against Samba AD)"),
+                ("", _) | (_, "") => bail!(
+                    "phase 1 needs addons.ad and addons.mail: a workgroup range or AD without mail is not scripted yet (infra/ansible builds AD and mail on the same server)"
+                ),
+                (ad, mail) => bail!("addons.ad {ad:?} with addons.mail {mail:?}: supported are samba + imap|grommunio and windows-dc + exchange"),
+            }
+            ensure!(self.mail() != "grommunio" || n <= 5, "personas.count {n}: grommunio's community licence has 5 log-in mailboxes");
+            if let Some(c) = &self.addons.chat {
+                ensure!(c.backend.is_empty() || c.backend == "mattermost", "addons.chat.backend {:?}: mattermost", c.backend);
+            }
         }
 
         for (what, m) in [("planner", &self.ai.planner), ("decider", &self.ai.decider)] {
@@ -267,6 +299,7 @@ fn hash(b: &[u8]) -> String {
 
 // --- plan -------------------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub struct Step {
     pub id: &'static str,
     pub what: String,
@@ -317,6 +350,24 @@ impl Layout {
 const ANSIBLE: &str = "cd infra/ansible && ansible-playbook";
 
 pub fn plan(spec: &Spec, l: &Layout) -> Vec<Step> {
+    let build = plan_build(spec, l);
+    if spec.existing() { plan_existing(spec, l, &build) } else { build }
+}
+
+fn agent_sh(spec: &Spec, exempt: &str, max: u32) -> String {
+    format!(
+        "set -e; test -x target/release/ludius-host-agent || {{ echo 'build it first: cargo build --release -p ludius-host-agent'; exit 1; }}; \
+         install -d -m 700 {sec} /var/lib/ludius/agent-scratch; umask 077; \
+         printf 'root@pam!packer=%s' \"$(cat /root/.ludius-packer-token)\" > {sec}/pve-token; \
+         printf 'PVE_NODE=%s\\nPVE_POOL={pool}\\nPVE_CAP_EXEMPT={exempt}\\nAGENT_MAX_RUNNING={max}\\nAGENT_LISTEN=127.0.0.1:7451\\nPVE_TOKEN_FILE={sec}/pve-token\\nAGENT_SCRATCH_DIR=/var/lib/ludius/agent-scratch\\n' \"$(hostname)\" > /etc/ludius/host-agent.env; \
+         printf '[Unit]\\nDescription=Ludius host agent (ludius setup)\\nAfter=pve-cluster.service\\n[Service]\\nEnvironmentFile=/etc/ludius/host-agent.env\\nExecStart=%s/target/release/ludius-host-agent\\nRestart=on-failure\\n[Install]\\nWantedBy=multi-user.target\\n' \"$PWD\" > /etc/systemd/system/{AGENT_UNIT}; \
+         systemctl daemon-reload; systemctl enable {AGENT_UNIT}; systemctl restart {AGENT_UNIT}; sleep 3; systemctl is-active {AGENT_UNIT}",
+        sec = secrets_dir().display(),
+        pool = spec.range.hypervisor.pool,
+    )
+}
+
+fn plan_build(spec: &Spec, l: &Layout) -> Vec<Step> {
     let h = &spec.range.hypervisor;
     let vars = l.vars().display().to_string();
     let n = spec.personas.count;
@@ -445,18 +496,7 @@ pub fn plan(spec: &Spec, l: &Layout) -> Vec<Step> {
         Step {
             id: "agent",
             what: format!("Host agent as systemd unit {AGENT_UNIT} (pool {}, range servers exempt from the running cap)", h.pool),
-            sh: Some(format!(
-                "set -e; test -x target/release/ludius-host-agent || {{ echo 'build it first: cargo build --release -p ludius-host-agent'; exit 1; }}; \
-                 install -d -m 700 {sec} /var/lib/ludius/agent-scratch; umask 077; \
-                 printf 'root@pam!packer=%s' \"$(cat /root/.ludius-packer-token)\" > {sec}/pve-token; \
-                 printf 'PVE_NODE=%s\\nPVE_POOL={pool}\\nPVE_CAP_EXEMPT={exempt}\\nAGENT_MAX_RUNNING={max}\\nAGENT_LISTEN=127.0.0.1:7451\\nPVE_TOKEN_FILE={sec}/pve-token\\nAGENT_SCRATCH_DIR=/var/lib/ludius/agent-scratch\\n' \"$(hostname)\" > /etc/ludius/host-agent.env; \
-                 printf '[Unit]\\nDescription=Ludius host agent (ludius setup)\\nAfter=pve-cluster.service\\n[Service]\\nEnvironmentFile=/etc/ludius/host-agent.env\\nExecStart=%s/target/release/ludius-host-agent\\nRestart=on-failure\\n[Install]\\nWantedBy=multi-user.target\\n' \"$PWD\" > /etc/systemd/system/{AGENT_UNIT}; \
-                 systemctl daemon-reload; systemctl enable {AGENT_UNIT}; systemctl restart {AGENT_UNIT}; sleep 3; systemctl is-active {AGENT_UNIT}",
-                sec = secrets_dir().display(),
-                pool = h.pool,
-                exempt = spec.servers().iter().map(|(id, name, _)| format!("{id}:{name}")).collect::<Vec<_>>().join(","),
-                max = n + spec.servers().len() as u32,
-            )),
+            sh: Some(agent_sh(spec, &spec.servers().iter().map(|(id, name, _)| format!("{id}:{name}")).collect::<Vec<_>>().join(","), n + spec.servers().len() as u32)),
             exists: None,
             creates: vec![
                 format!("systemd unit /etc/systemd/system/{AGENT_UNIT}"),
@@ -487,8 +527,12 @@ pub fn plan(spec: &Spec, l: &Layout) -> Vec<Step> {
         Step {
             id: "verify",
             what: format!(
-                "Ready check: {} read for the first persona, then one drift canary per persona (outlook, word, excel; {VERIFY_DECISIONS} decisions at most)",
-                [Some("mail"), spec.chat().then_some("chat")].into_iter().flatten().collect::<Vec<_>>().join(" and ")
+                "Ready check: {}one drift canary per persona ({}; {VERIFY_DECISIONS} decisions at most)",
+                match [(!spec.mail().is_empty()).then_some("mail"), spec.chat().then_some("chat")].into_iter().flatten().collect::<Vec<_>>().join(" and ") {
+                    reads if reads.is_empty() => String::new(),
+                    reads => format!("{reads} read for the first persona, then "),
+                },
+                verify_apps(spec).join(", ")
             ),
             sh: Some(verify_sh(spec, l)),
             exists: None,
@@ -499,20 +543,140 @@ pub fn plan(spec: &Spec, l: &Layout) -> Vec<Step> {
     ]
 }
 
+const SNAPSHOT: &str = "ludius-before-setup";
+
+/// Deploy into a range Ludius didn't build: the boundary gate first, a snapshot of every range VM before the first
+/// change, then personas on the chosen desktops and accounts in the adopted AD. Creates no VMs.
+fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
+    let h = &spec.range.hypervisor;
+    let vars = l.vars().display().to_string();
+    let dir = l.dir.display().to_string();
+    let discovery = format!("{dir}/discovery.json");
+    let desktops = spec.personas.desktops.join(" ");
+    let admin = key_path(&spec.addons.ad.as_ref().map(|a| a.admin.clone()).unwrap_or_default());
+    let shared = |id: &str| build.iter().find(|s| s.id == id).cloned().expect("build plan step");
+    // the desktops' VM ids on this node, by name (qm list is node-local); a missing or ambiguous name stops the step
+    let ids = format!(
+        "ids=; for n in {desktops}; do i=$(qm list | awk -v n=\"$n\" 'NR>1 && $2==n {{print $1}}'); \
+         [ \"$(echo \"$i\" | grep -c .)\" = 1 ] || {{ echo \"desktop $n: not exactly one VM of that name on this node\"; exit 1; }}; ids=\"$ids${{ids:+,}}$i\"; done; "
+    );
+    vec![
+        Step {
+            id: "preflight",
+            what: "Proxmox node, root, signed observer, AI key, domain admin secret, ludius-rs and the host agent built in the checkout".into(),
+            sh: Some(format!(
+                "set -e; pveversion; test \"$(id -u)\" = 0 || {{ echo 'run setup as root on the node'; exit 1; }}; \
+                 test -f out/observer/uiprobe.exe -a -f secrets/range-root-ca.cer || {{ echo 'out/observer/uiprobe.exe and secrets/range-root-ca.cer missing: pwsh infra/packer/observer-artifacts.ps1 on the desktop, then copy them'; exit 1; }}; \
+                 test -x ./ludius-rs || {{ echo './ludius-rs missing in the checkout'; exit 1; }}; \
+                 test -x target/release/ludius-host-agent || {{ echo 'host agent not built: cargo build --release -p ludius-host-agent'; exit 1; }}; \
+                 test -s {key} || {{ echo 'AI key file missing'; exit 1; }}; {checks}\
+                 test -s {admin} || {{ echo 'the domain Administrator password file {admin} is missing (addons.ad.admin)'; exit 1; }}",
+                key = key_path(&spec.ai.planner.key).display(),
+                checks = key_checks(spec),
+                admin = admin.display(),
+            )),
+            exists: None,
+            creates: vec![],
+            irreversible: vec![],
+            rerun: true,
+        },
+        shared("tools"),
+        shared("vault"),
+        Step {
+            id: "host",
+            what: format!("Host: discovery tools, vhost_vsock, virtio-win ISOs, pool {}, API token (no bridges: the range's are the operator's)", h.pool),
+            sh: Some(format!("{ANSIBLE} -i localhost, -c local proxmox-host.yml --tags adopt-host -e range_pool={}", h.pool)),
+            exists: None,
+            creates: vec![format!("pool {}", h.pool), "token root@pam!packer (/root/.ludius-packer-token)".into(), "virtio-win ISOs in /var/lib/vz/template/iso".into()],
+            irreversible: vec![],
+            rerun: true,
+        },
+        Step {
+            id: "gate",
+            what: format!("Boundary gate (hard stop): discover {} read-only, and {desktops} are Windows desktops on its bridge", spec.range.subnet),
+            sh: Some(format!(
+                "set -e; ./ludius-rs setup discover --subnet {} --domain {} --out {dir}; \
+                 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); have={{v[\"name\"] for v in d[\"desktops\"]}}; miss=[n for n in sys.argv[2:] if n not in have]; \
+                 miss and sys.exit(\"not Windows 10/11 desktops on the range bridge: \" + \" \".join(miss))' {discovery} {desktops}",
+                spec.range.subnet, spec.range.domain,
+            )),
+            exists: None,
+            creates: vec![format!("file {discovery}")],
+            irreversible: vec![],
+            rerun: true,
+        },
+        Step {
+            id: "snapshot",
+            what: format!("Snapshot {SNAPSHOT} of every VM on the range bridge, before the first change"),
+            sh: Some(format!(
+                "set -e; br=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"bridge\"])' {discovery}); \
+                 for id in $(qm list | awk 'NR>1 {{print $1}}'); do qm config $id | grep -Eq \"^net[0-9]+:.*bridge=$br(,|$)\" || continue; \
+                 if qm listsnapshot $id | grep -q ' {SNAPSHOT} '; then echo \"VM $id: {SNAPSHOT} exists, kept\"; \
+                 else qm snapshot $id {SNAPSHOT} --description 'ludius setup: the range before Ludius was deployed' && echo \"VM $id: {SNAPSHOT}\"; fi; done"
+            )),
+            exists: None,
+            creates: vec![format!("snapshot {SNAPSHOT} on every VM on the range bridge (roll back: qm rollback <id> {SNAPSHOT})")],
+            irreversible: vec![],
+            rerun: false,
+        },
+        shared("personas"),
+        shared("vars"),
+        Step {
+            id: "agent",
+            what: format!("Desktops {desktops} into pool {}, host agent as systemd unit {AGENT_UNIT}", h.pool),
+            sh: Some(format!("set -e; {ids}pvesh set /pools/{} --vms \"$ids\"; echo \"pool {}: $ids\"; {}", h.pool, h.pool, agent_sh(spec, "", spec.personas.count))),
+            exists: None,
+            creates: vec![
+                format!("pool {} membership of {desktops} (the host agent acts only on its pool)", h.pool),
+                format!("systemd unit /etc/systemd/system/{AGENT_UNIT}"),
+                "file /etc/ludius/host-agent.env".into(),
+                format!("file {}/pve-token", secrets_dir().display()),
+            ],
+            irreversible: vec![],
+            rerun: true,
+        },
+        Step {
+            id: "adopt",
+            what: format!("range-adopt.yml: persona accounts in OU Ludius of {}, then on {desktops}: observer, settings, autologon", spec.range.domain),
+            sh: Some(format!("{ANSIBLE} range-adopt.yml -e @{vars}")),
+            exists: None,
+            creates: vec![
+                format!("AD OU Ludius in {} with one account per narrative person", spec.range.domain),
+                format!("on {desktops}: observer in C:\\Program Files\\RangeAssist, its logon task, the range code-signing root, viosock driver, Office first-run settings, autologon as the persona"),
+            ],
+            irreversible: vec![
+                "Windows Update, Defender and automatic maintenance off on the desktops (the image settings Ludius runs with)".into(),
+                "WinRM is stopped and disabled on the desktops afterwards, also where it ran before".into(),
+                "each desktop gets a vsock device and a fixed 1920x1080 standard display (QEMU args, vga std), applied with one power cycle".into(),
+            ],
+            rerun: true,
+        },
+        shared("controller"),
+        shared("verify"),
+    ]
+}
+
 const VERIFY_DECISIONS: u32 = 1000;
 const VERIFY_APPS: [&str; 3] = ["outlook", "word", "excel"];
 
 /// The range is ready only when every active add-on's outcome reads work and every persona finishes its canaries
 /// (done contract: evidence outside the UI). `canary` exits 0 on unknown too, so only "ok" on every app counts.
+/// Outlook only with a mail add-on: without a mail server it opens its account wizard, which is no drift.
+fn verify_apps(spec: &Spec) -> Vec<&'static str> {
+    VERIFY_APPS.into_iter().filter(|a| *a != "outlook" || !spec.mail().is_empty()).collect()
+}
+
 fn verify_sh(spec: &Spec, l: &Layout) -> String {
-    let apps = VERIFY_APPS.join(" ");
+    let apps = verify_apps(spec).join(" ");
     let chat = if spec.chat() { "./ludius-rs chat check \"$first\" || fail=1; " } else { "" };
+    let mail = if spec.mail().is_empty() { "" } else { "./ludius-rs mail check \"$first\" || fail=1; " };
     format!(
         r#"set -a; . {env}; set +a; export LUDIUS_CAP_DECISION={VERIFY_DECISIONS} LUDIUS_CAP_LLM=100; fail=0
 users=$(ls {personas} | sed -n 's/\.yaml$//p'); first=$(echo "$users" | head -n1)
-./ludius-rs mail check "$first" || fail=1; {chat}
+{mail}{chat}
 for u in $users; do
-  r=$(./ludius-rs --vm {prefix}$u canary --persona $u {apps} 2>&1); rc=$?; echo "$r"
+  v=LUDIUS_VM_${{u^^}}; vm=${{!v:-{prefix}$u}}
+  r=$(./ludius-rs --vm "$vm" canary --persona $u {apps} 2>&1); rc=$?; echo "$r"
   ok=$(grep -c '^  [a-z]*: ok (' <<< "$r")
   if [ $rc = 0 ] && [ "$ok" = {n} ]; then echo "canary $u: {n} apps ok"; else echo "canary $u: $ok of {n} apps ok"; fail=1; fi
 done
@@ -520,7 +684,7 @@ exit $fail"#,
         env = l.controller_env().display(),
         personas = l.personas().display(),
         prefix = spec.range.hypervisor.vm_prefix,
-        n = VERIFY_APPS.len(),
+        n = verify_apps(spec).len(),
     )
 }
 
@@ -614,6 +778,17 @@ fn record(l: &Layout, s: &Step, event: &str) -> Result<()> {
 
 pub fn describe(spec: &Spec, l: &Layout, steps: &[Step], state: &State) -> String {
     let n = spec.personas.count;
+    if spec.existing() {
+        let head = format!(
+            "range {} (existing, {}): {}, domain {} (adopted)\n  personas: {n}, one on each of {}, generated by the planner at apply\n  creates no VMs; snapshots every range VM first\n",
+            l.dir.display(),
+            spec.range.hypervisor.kind,
+            spec.range.subnet,
+            spec.range.domain,
+            spec.personas.desktops.join(", "),
+        );
+        return head + &steps_text(steps, state);
+    }
     let servers = spec.servers();
     let mb: u32 = servers.iter().map(|s| s.2).sum::<u32>() + n * PERSONA_MB;
     let (first, last) = (spec.persona_slot(0), spec.persona_slot(n - 1));
@@ -632,7 +807,12 @@ pub fn describe(spec: &Spec, l: &Layout, steps: &[Step], state: &State) -> Strin
         last.1,
         mb.div_ceil(1024),
     );
-    out.push_str("steps:\n");
+    out.push_str(&steps_text(steps, state));
+    out
+}
+
+fn steps_text(steps: &[Step], state: &State) -> String {
+    let mut out = String::from("steps:\n");
     for s in steps {
         let mark = if state.done.iter().any(|d| d == s.id) { "done" } else { "todo" };
         out.push_str(&format!("  [{mark}] {:<12} {}\n", s.id, s.what));
@@ -915,10 +1095,31 @@ fn personas(spec: &Spec, l: &Layout) -> Result<()> {
 
 // --- generated files --------------------------------------------------------------------------
 
+/// The generated personas' users in file order; an existing range's desktops are given out in this order.
+fn persona_users(l: &Layout) -> Result<Vec<String>> {
+    Ok(crate::paths::yaml_files(&l.personas())?.iter().filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).collect())
+}
+
 pub fn ansible_vars(spec: &Spec, l: &Layout) -> Result<String> {
     let h = &spec.range.hypervisor;
-    let users: Vec<String> = crate::paths::yaml_files(&l.personas())?.iter().filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).collect();
+    let users = persona_users(l)?;
     ensure!(users.len() == spec.personas.count as usize, "{}: {} persona files, the spec asks {}", l.personas().display(), users.len(), spec.personas.count);
+    if spec.existing() {
+        let personas: Vec<serde_json::Value> = users.iter().zip(&spec.personas.desktops).map(|(u, vm)| serde_json::json!({"user": u, "vm": vm})).collect();
+        let v = serde_json::json!({
+            "domain": spec.range.domain,
+            "mail_backend": "",
+            "chat_enabled": false,
+            "range_pool": h.pool,
+            "range_net": spec.range_net(),
+            "range_personas": personas,
+            "discovery_file": l.dir.join("discovery.json").display().to_string(),
+            "dc_admin_file": key_path(&spec.addons.ad.as_ref().map(|a| a.admin.clone()).unwrap_or_default()).display().to_string(),
+            "persona_dir": l.personas().display().to_string(),
+            "narrative_file": l.narrative().display().to_string(),
+        });
+        return Ok(format!("# generated by ludius setup from {}; edit the spec, not this file\n{}", l.dir.join("range.toml").display(), serde_yaml::to_string(&v)?));
+    }
     let b = h.vmid_base;
     let personas: Vec<serde_json::Value> = users
         .iter()
@@ -966,6 +1167,11 @@ pub fn controller_env(spec: &Spec, l: &Layout, root: &Path) -> String {
     }
     if spec.ai.decider.provider == "custom" {
         e.push(format!("LUDIUS_DECISIONS_URL={}", spec.ai.decider.url));
+    }
+    if spec.existing() {
+        // the adopted desktops keep their names; rangerun::vm_of reads these
+        let users = persona_users(l).unwrap_or_default();
+        e.extend(users.iter().zip(&spec.personas.desktops).map(|(u, vm)| format!("LUDIUS_VM_{}={vm}", u.to_uppercase())));
     }
     let net = spec.range_net();
     let ca = root.join("infra/ansible/build/range-ca.crt").display().to_string();
@@ -1075,6 +1281,31 @@ decider = { provider = "openrouter", model = "liquid/d1.1", key = "secret:openro
         assert!(toml::from_str::<Spec>(&six_grommunio).unwrap().validate().is_err(), "grommunio licence cap");
         assert!(spec(r#"key = "secret:openrouter" }"#, r#"key = "sk-or-v1-abc" }"#).is_err(), "inline key");
         assert!(spec("mode = \"build\"", "mode = \"build\"\nbogus = 1").is_err(), "unknown field");
+    }
+
+    #[test]
+    fn existing_range_adopts_and_gates_first() {
+        let existing = |edit: &str, with: &str| -> Result<Spec> {
+            let text = SPEC
+                .replace("mode = \"build\"", "mode = \"existing\"")
+                .replace("count = 3", "desktops = [\"ws-a\", \"ws-b\"]")
+                .replace("backend = \"samba\"", "backend = \"adopt\"\nadmin = \"secret:dc-admin\"")
+                .replace("[addons.mail]\nbackend = \"imap\"\n[addons.chat]\n", "")
+                .replace(edit, with);
+            let mut s: Spec = toml::from_str(&text)?;
+            s.personas.count = s.personas.desktops.len() as u32; // as Spec::load does
+            s.validate().map(|()| s)
+        };
+        let s = existing("", "").unwrap();
+        assert!(s.servers().is_empty());
+        let ids: Vec<&str> = plan(&s, &Layout { dir: PathBuf::from("/tmp/r") }).iter().map(|s| s.id).collect();
+        assert_eq!(ids, ["preflight", "tools", "vault", "host", "gate", "snapshot", "personas", "vars", "agent", "adopt", "controller", "verify"]);
+        assert_eq!(verify_apps(&s), ["word", "excel"], "no Outlook without mail");
+        assert!(existing("backend = \"adopt\"", "backend = \"samba\"").is_err(), "AD must be adopted");
+        assert!(existing("admin = \"secret:dc-admin\"", "admin = \"hunter2\"").is_err(), "inline admin password");
+        assert!(existing("\"ws-b\"", "\"ws-a\"").is_err(), "desktop twice");
+        assert!(existing("[ai]", "[addons.mail]\nbackend = \"imap\"\n[ai]").is_err(), "mail not adoptable yet");
+        assert!(spec("count = 3", "count = 3\ndesktops = [\"ws-a\"]").is_err(), "desktops only for existing");
     }
 
     #[test]

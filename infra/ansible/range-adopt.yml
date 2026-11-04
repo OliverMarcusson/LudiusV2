@@ -1,0 +1,297 @@
+---
+# ludius setup, range.mode "existing": personas on desktops Ludius didn't build, accounts in the AD it adopts.
+# Creates no VMs. Setup ran the boundary gate and snapshotted every range VM before this; the desktops are in
+# range_pool (setup's agent step), so nothing outside the chosen desktops is touched here.
+- name: Adopted desktops
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [always]
+  vars:
+    virtio_iso: virtio-win-0.1.302.iso
+  tasks:
+    - name: Narrative people and personas are safe to use
+      ansible.builtin.assert:
+        that:
+          - people | length >= 2
+          - people | map(attribute='user') | select('match', '^[a-z][a-z0-9._-]{0,19}$') | list | length == people | length
+          - people | map(attribute='name') | select('match', "^[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ .'-]*$") | list | length == people | length
+          - people | map(attribute='user') | unique | length == people | length
+          - range_personas | map(attribute='user') | difference(people | map(attribute='user')) | length == 0
+          - range_admin_password | length >= 12
+        fail_msg: unsafe or duplicate narrative people, a persona outside the narrative, or a bring-up password under 12 characters
+
+    - name: Each desktop's VM id (this node, range pool), range address and computer name (Proxmox and its guest agent)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json, socket, subprocess, sys
+            net, pool, ps = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+            run = lambda *a: json.loads(subprocess.check_output(a))
+            vms, node, out = run('pvesh', 'get', '/cluster/resources', '--type', 'vm', '--output-format', 'json'), socket.gethostname(), []
+            for p in ps:
+                m = [v for v in vms if v.get('name') == p['vm'] and v.get('node') == node and not v.get('template')]
+                if len(m) != 1: sys.exit(f"{p['vm']}: not exactly one VM of that name on {node}")
+                if m[0].get('pool') != pool: sys.exit(f"{p['vm']}: not in pool {pool} (setup's agent step adds it)")
+                vid = m[0]['vmid']
+                ips = [a['ip-address'] for i in run('qm', 'guest', 'cmd', str(vid), 'network-get-interfaces')
+                       for a in i.get('ip-addresses', []) if a.get('ip-address-type') == 'ipv4' and a['ip-address'].startswith(net + '.')]
+                if len(ips) != 1: sys.exit(f"{p['vm']}: {len(ips)} addresses in {net}.0/24, one expected")
+                out.append(dict(p, vmid=vid, ip=ips[0], computer_name=run('qm', 'guest', 'cmd', str(vid), 'get-host-name')['host-name']))
+            print(json.dumps(out))
+          - "{{ range_net }}"
+          - "{{ range_pool }}"
+          - "{{ range_personas | to_json }}"
+      register: resolved
+      changed_when: false
+
+    - name: Adopted desktops
+      ansible.builtin.set_fact:
+        adopted: "{{ resolved.stdout | from_json }}"
+        bootstrapped: []
+
+    # The observer reports over vsock (guest CID = VM id, the host agent checks it) and Ludius drives a fixed
+    # 1920x1080 display, as on a range it builds. Both are VM hardware: they take effect with a power cycle.
+    - name: Vsock device and fixed display in the running config (power cycle when they are added)
+      ansible.builtin.shell: |
+        set -eo pipefail
+        want="-device vhost-vsock-pci,guest-cid={{ p.vmid }} {{ display_args }}"
+        cur=$(qm config {{ p.vmid }} --current 1 | sed -n 's/^args: //p')
+        vga=$(qm config {{ p.vmid }} --current 1 | sed -n 's/^vga: //p')
+        if [ "$cur" = "$want" ] && [ "$vga" = std ]; then echo kept; exit 0; fi
+        if [ -n "$cur" ] && [ "$cur" != "$want" ]; then echo "VM {{ p.vmid }} has its own QEMU args ($cur); refusing to replace them"; exit 1; fi
+        qm set {{ p.vmid }} --args "$want" --vga std >/dev/null
+        qm shutdown {{ p.vmid }} --timeout 300 || qm stop {{ p.vmid }}
+        qm start {{ p.vmid }}
+        echo cycled
+      args:
+        executable: /bin/bash
+      register: hw
+      changed_when: "'cycled' in hw.stdout"
+      loop: "{{ adopted }}"
+      loop_control:
+        loop_var: p
+        label: "{{ p.vm }}"
+
+    # After the power cycle: Proxmox queues scsi5 into the boot order, and a cycle would make it a boot device it
+    # then refuses to unplug; the queued boot change is reverted at once.
+    - name: Virtio-win ISO with viosock on a free scsi5 (hot-plugged; IDE would wait for a power cycle; detached at the end)
+      ansible.builtin.shell: |
+        set -eo pipefail
+        cur=$(qm config {{ p.vmid }} | sed -n 's/^scsi5: //p')
+        case "$cur" in
+          "") qm set {{ p.vmid }} --scsi5 local:iso/{{ virtio_iso }},media=cdrom >/dev/null
+              if qm pending {{ p.vmid }} | grep -q '^new boot: '; then qm set {{ p.vmid }} --revert boot; fi
+              echo attached ;;
+          local:iso/{{ virtio_iso }},*) echo kept ;;
+          *) echo "scsi5 is in use ($cur)"; exit 1 ;;
+        esac
+      args:
+        executable: /bin/bash
+      register: iso
+      changed_when: "'attached' in iso.stdout"
+      loop: "{{ adopted }}"
+      loop_control:
+        loop_var: p
+        label: "{{ p.vm }}"
+
+    - name: Bring-up admin and WinRM through the guest agent (the desktop's own network settings are kept)
+      ansible.builtin.include_tasks: tasks/persona-bootstrap.yml
+      vars:
+        bootstrap_network: false
+      loop: "{{ adopted }}"
+      loop_control:
+        loop_var: p
+        label: "{{ p.vm }} {{ p.vmid }}"
+
+    - name: Mark for teardown
+      ansible.builtin.set_fact:
+        bootstrapped: "{{ adopted | map(attribute='vmid') | list }}"
+
+- name: Persona accounts in the adopted AD
+  hosts: personas
+  gather_facts: false
+  vars:
+    dc_admin_password: "{{ lookup('ansible.builtin.file', dc_admin_file) }}"
+  tasks:
+    - name: OU Ludius and one account per narrative person (an account outside OU Ludius is never touched)
+      run_once: true
+      ansible.windows.win_powershell:
+        script: |
+          param($domain, $pw, $people, $suffix)
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          $dn = ($domain.Split('.') | ForEach-Object { "DC=$_" }) -join ','
+          $auth = [DirectoryServices.AuthenticationTypes]'Secure,Sealing,Signing'
+          $entry = { param($path) New-Object DirectoryServices.DirectoryEntry("LDAP://$domain/$path", "Administrator@$domain", $pw, $auth) }
+          $root = & $entry $dn
+          $null = $root.RefreshCache()
+          $ou = & $entry "OU=Ludius,$dn"
+          try { $null = $ou.RefreshCache() } catch {
+            $ou = $root.Children.Add('OU=Ludius', 'organizationalUnit'); $ou.CommitChanges(); $Ansible.Changed = $true
+          }
+          foreach ($p in $people) {
+            $u = $p.user
+            $r = (New-Object DirectoryServices.DirectorySearcher($root, "(sAMAccountName=$u)")).FindOne()
+            if ($r) {
+              if ($r.Path -notmatch ',OU=Ludius,') { throw "$u already exists outside OU=Ludius ($($r.Path)); refusing to take over that account" }
+              $e = $r.GetDirectoryEntry()
+            } else {
+              $first, $last = $p.name -split ' ', 2
+              $e = $ou.Children.Add("CN=$u", 'user')
+              $e.Properties['sAMAccountName'].Value = $u
+              $e.Properties['userPrincipalName'].Value = "$u@$domain"
+              $e.Properties['displayName'].Value = $p.name
+              $e.Properties['givenName'].Value = $first
+              if ($last) { $e.Properties['sn'].Value = $last }
+              $e.Properties['mail'].Value = "$u@$domain"
+              $e.CommitChanges(); $Ansible.Changed = $true
+            }
+            $e.Invoke('SetPassword', "$u$suffix")
+            $e.Properties['userAccountControl'].Value = 0x10200  # normal account, password never expires
+            $e.CommitChanges()
+          }
+        parameters:
+          domain: "{{ domain }}"
+          pw: "{{ dc_admin_password }}"
+          people: "{{ people }}"
+          suffix: "{{ user_password_suffix }}"
+      no_log: true
+
+- name: Persona desktops
+  hosts: personas
+  gather_facts: false
+  vars:
+    dc_admin_password: "{{ lookup('ansible.builtin.file', dc_admin_file) }}"
+    range_ca: false
+  tasks:
+    - name: Office (Outlook, Word, Excel) is installed; on an existing range it is the operator's
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $miss = 'OUTLOOK.EXE', 'WINWORD.EXE', 'EXCEL.EXE' | Where-Object { -not (Test-Path "C:\Program Files\Microsoft Office\root\Office16\$_") }
+          if ($miss) { throw "Office 2016 or later (64-bit, Click-to-Run) is missing here: $($miss -join ', '). Install it, then run apply again" }
+
+    - name: The domain's NetBIOS name, from this member
+      ansible.windows.win_powershell:
+        script: |
+          param($domain)
+          $Ansible.Changed = $false
+          $d = Get-CimInstance Win32_NTDomain | Where-Object DnsForestName -eq $domain | Select-Object -First 1
+          if (-not $d) { throw "this desktop is not a member of $domain" }
+          $d.DomainName
+        parameters:
+          domain: "{{ domain }}"
+      register: netbios
+
+    - name: NetBIOS name
+      ansible.builtin.set_fact:
+        domain_netbios: "{{ netbios.output[0] }}"
+
+    - name: Image settings Ludius runs with (base, event logs, viosock, Office first run)
+      ansible.builtin.include_role:
+        name: "{{ item.role }}"
+        tasks_from: "{{ item.tasks | default('main') }}"
+      loop:
+        - { role: base }
+        - { role: eventlogs }
+        - { role: hypervisor }
+        - { role: apps, tasks: settings }
+        - { role: observer }
+      loop_control:
+        label: "{{ item.role }}"
+
+    - name: Domain role (already a member; autologon as the persona)
+      ansible.builtin.include_role:
+        name: domain
+
+    - name: Observer logon task
+      ansible.builtin.include_role:
+        name: observer
+        tasks_from: persona
+
+    - name: Log on again (the observer starts at logon)
+      ansible.windows.win_reboot:
+        reboot_timeout: 900
+
+    - name: Observer process in the persona's session
+      ansible.windows.win_powershell:
+        script: |
+          param($p)
+          $Ansible.Changed = $false
+          $o = Get-Process uiprobe -IncludeUserName -ErrorAction SilentlyContinue | Where-Object UserName -eq $p
+          if (-not $o) { throw "no observer for $p yet" }
+        parameters:
+          p: "{{ domain_netbios }}\\{{ persona }}"
+      register: obs
+      retries: 20
+      delay: 15
+      until: obs is succeeded
+
+    - name: Persona done
+      ansible.builtin.set_fact:
+        persona_done: true
+
+- name: Observer channel, bring-up access off, ISO detached, verdict
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Bring-up admin and WinRM off on every desktop (else the VM is stopped)
+      ansible.builtin.include_tasks: tasks/persona-teardown.yml
+      loop: "{{ adopted }}"
+      loop_control:
+        loop_var: p
+        label: "{{ p.vm }} {{ p.vmid }}"
+
+    # Eject first; Windows may still hold the drive (hot-unplug "still busy in guest"), then it comes out with a
+    # power cycle. The observer check below runs after it, so it proves the channel on the final boot.
+    - name: Virtio-win ISO detached (out of the boot order; a power cycle when Windows holds the drive)
+      ansible.builtin.shell: |
+        set -eo pipefail
+        qm config {{ p.vmid }} | grep -q '^scsi5: ' || { echo absent; exit 0; }
+        boot=$(qm config {{ p.vmid }} | sed -n 's/^boot: //p' | sed -E 's/;scsi5//; s/scsi5;//')
+        [ -z "$boot" ] || qm set {{ p.vmid }} --boot "$boot" >/dev/null
+        qm set {{ p.vmid }} --scsi5 none,media=cdrom >/dev/null
+        if ! qm set {{ p.vmid }} --delete scsi5 >/dev/null 2>&1; then
+          qm shutdown {{ p.vmid }} --timeout 300 || qm stop {{ p.vmid }}
+          qm set {{ p.vmid }} --revert scsi5 >/dev/null 2>&1 || true
+          qm set {{ p.vmid }} --delete scsi5 >/dev/null
+          qm start {{ p.vmid }}
+          echo cycled
+        fi
+        ! qm config {{ p.vmid }} --current 1 | grep -q '^scsi5: '
+      args:
+        executable: /bin/bash
+      loop: "{{ adopted }}"
+      loop_control:
+        loop_var: p
+        label: "{{ p.vm }}"
+      changed_when: true
+
+    - name: Observe through the host agent
+      ansible.builtin.command: "{{ observer_check_cmd }} --vm {{ item.vm }} observe"
+      loop: "{{ adopted | selectattr('user', 'in', done_personas) | list }}"
+      loop_control:
+        label: "{{ item.user }} on {{ item.vm }}"
+      vars:
+        done_personas: "{{ groups['personas'] | default([]) | map('extract', hostvars) | selectattr('persona_done', 'defined') | map(attribute='persona') | list }}"
+      register: observed
+      retries: 20
+      delay: 15
+      until: observed.rc == 0
+      changed_when: false
+      ignore_errors: true
+
+    - name: Every persona came up, its observer answers, and bring-up access is closed
+      ansible.builtin.assert:
+        that:
+          - groups['personas'] | map('extract', hostvars) | selectattr('persona_done', 'defined') | list | length == adopted | length
+          - observed is not failed
+          - closed_failures | default([]) | length == 0
+        fail_msg: >-
+          adoption incomplete: personas done
+          {{ groups['personas'] | default([]) | map('extract', hostvars) | selectattr('persona_done', 'defined') | map(attribute='persona') | list }};
+          observer check {{ 'failed' if observed is failed else 'ok' }}; desktops stopped because they could not be closed:
+          {{ closed_failures | default([]) }}
