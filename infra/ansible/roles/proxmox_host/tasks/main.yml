@@ -96,13 +96,17 @@
     set -u
     b={{ item }}
     grep -qsE "^\s*iface\s+$b(\s|$)" /etc/network/interfaces.d/ludius && exit 0
-    if grep -lsE "^\s*iface\s+$b(\s|$)" /etc/network/interfaces /etc/network/interfaces.d/*; then
-      echo "$b is defined in the file above; pick another bridge in the range spec"; exit 1
+    # ifquery follows every source/source-directory line, wherever the node keeps its config
+    defined=$(ifquery --list --all) || { echo "ifquery failed: can't tell which bridges the node defines"; exit 1; }
+    if grep -qx "$b" <<<"$defined"; then
+      echo "$b is defined in the node's network config; pick another bridge in the range spec"; exit 1
     fi
     if ip link show "$b" >/dev/null 2>&1; then echo "$b exists on the node; pick another bridge in the range spec"; exit 1; fi
     exit 0
   args:
     executable: /bin/bash
+  environment:
+    PATH: /usr/sbin:/usr/bin:/sbin:/bin  # ifquery is system Python, like ifreload below
   changed_when: false
   loop: "{{ [range_bridge, build_bridge] + extra_range_bridges | map(attribute='bridge') | list }}"
 
