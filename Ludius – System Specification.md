@@ -46,7 +46,7 @@ The observer is a single long-running, read-only process in each persona's inter
 
 ### Snapshot method
 
-- One `FindAllBuildCache` per window with a `CacheRequest` for all needed properties and patterns, filtered on `IsControlElement` and `IsOffscreen = false`.
+- Rebuild each window with shallow UIA cache requests for the element and its immediate children, including all needed properties and patterns, filtered on `IsControlElement` and `IsOffscreen = false`. Whole-subtree requests can fail with a malformed cache response in Outlook. Bound traversal to 3,000 nodes, 64 levels and two seconds between UIA calls; report a truncated or failed read as incomplete, with its reason. Individual calls remain bounded by the UIA transaction timeout.
 - `ConnectionTimeout` and `TransactionTimeout` set, so a hung app becomes an `unresponsive` window instead of a frozen observer.
 - UIA events (focus, structure, window opened/closed, menu opened, name/value changes) only trigger snapshots and settle detection. The table is always rebuilt, never patched from events.
 

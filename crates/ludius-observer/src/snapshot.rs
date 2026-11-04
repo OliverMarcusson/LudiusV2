@@ -4,7 +4,7 @@ use crate::{java, native, watchdog};
 use ludius_proto::v1::{Element, Snapshot, Window, window::Kind};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicIsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use windows::Win32::Foundation::{E_ACCESSDENIED, E_INVALIDARG, E_POINTER, HWND, POINT};
 use windows::Win32::System::Variant::*;
 use windows::Win32::UI::Accessibility::*;
@@ -204,6 +204,8 @@ struct Ctx<'a> {
     sparse_document: bool,
     /// some of the tree could not be read: the window is reported incomplete, never as all there is
     incomplete: bool,
+    started: Instant,
+    nodes: usize,
 }
 
 impl Snapshotter {
@@ -213,7 +215,9 @@ impl Snapshotter {
             for p in PROPS {
                 cache.AddProperty(*p)?;
             }
-            cache.SetTreeScope(TreeScope_Subtree)?;
+            // Cache one level at a time. Outlook's left navigation provider can return a malformed
+            // whole-subtree response; shallow requests also let us bound the walk between calls.
+            cache.SetTreeScope(TreeScope(TreeScope_Element.0 | TreeScope_Children.0))?;
             let onscreen = uia.CreatePropertyCondition(UIA_IsOffscreenPropertyId, &VARIANT::from(false))?;
             cache.SetTreeFilter(&uia.CreateAndCondition(&uia.ControlViewCondition()?, &onscreen)?)?;
         }
@@ -314,7 +318,7 @@ impl Snapshotter {
                 return self.read_java(h, w, index, keys);
             }
             // A retry starts from the same keys, so its elements keep the keys the first pass would have given.
-            let mut cx = Ctx { w, index, found: vec![], keys: keys.clone(), sparse_document: false, incomplete: false };
+            let mut cx = Ctx { w, index, found: vec![], keys: keys.clone(), sparse_document: false, incomplete: false, started: Instant::now(), nodes: 0 };
             let mut stage = "ElementFromHandle";
             let r = unsafe { self.uia.ElementFromHandle(h) }.and_then(|e| {
                 stage = "BuildUpdatedCache";
@@ -325,9 +329,13 @@ impl Snapshotter {
                 let clip = R { x: cx.w.bounds.unwrap_or_default().x, ..rect_of(cx.w) };
                 self.walk(&root, "", clip, false, None, &mut cx).map(|()| framework)
             });
-            let (found, sparse, new_keys) = (cx.found, cx.sparse_document, cx.keys);
+            let (found, sparse, new_keys, incomplete) = (cx.found, cx.sparse_document, cx.keys, cx.incomplete);
+            w.incomplete = incomplete;
+            w.read_error.clear();
             if let Err(e) = &r {
-                w.read_error = format!("{stage}: {}", e.code());
+                w.read_error = format!("{stage}: {e}");
+            } else if incomplete {
+                w.read_error = "UIA tree read budget reached".into();
             }
             match r {
                 Ok(framework) => {
@@ -349,8 +357,19 @@ impl Snapshotter {
     }
 
     fn walk(&mut self, e: &El, path: &str, clip: R, in_list: bool, content: Option<R>, cx: &mut Ctx) -> windows::core::Result<()> {
+        if path.matches('/').count() >= 64 {
+            cx.incomplete = true;
+            return Ok(());
+        }
         let mut last_text = String::new();
-        for (sibling, c) in kids(e)?.iter().enumerate() {
+        for (sibling, child) in kids(e)?.iter().enumerate() {
+            if cx.nodes >= 3000 || cx.started.elapsed() >= Duration::from_secs(2) {
+                cx.incomplete = true;
+                return Ok(());
+            }
+            cx.nodes += 1;
+            let cached = unsafe { child.BuildUpdatedCache(&self.cache) }?;
+            let c = &cached;
             let role = role(c);
             let row = in_list || (content.is_some() && role != "header");
             let row_clip = match content {
@@ -473,7 +492,7 @@ impl Snapshotter {
             w.incomplete = true;
             return vec![];
         };
-        let mut cx = Ctx { w, index, found: vec![], keys: std::mem::take(keys), sparse_document: false, incomplete: false };
+        let mut cx = Ctx { w, index, found: vec![], keys: std::mem::take(keys), sparse_document: false, incomplete: false, started: Instant::now(), nodes: 0 };
         let mut budget = 3000;
         match java::info(vm, root).and_then(|info| java::children(vm, root, info.children_count, false)) {
             Some(kids) => {
