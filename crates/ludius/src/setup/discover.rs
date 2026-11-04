@@ -118,6 +118,21 @@ fn dig(server: Ipv4Addr, kind: &str, name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// A records of `name`, or why they can't be known. NOERROR and NXDOMAIN are answers; a timeout, SERVFAIL or
+/// REFUSED is not (unreadable stays unknown).
+fn resolve_a(server: Ipv4Addr, name: &str) -> std::result::Result<Vec<Ipv4Addr>, String> {
+    let out = run(&["dig", "+time=3", "+tries=1", "+noall", "+comments", "+answer", &format!("@{server}"), "A", name]).ok_or_else(|| format!("no DNS answer from {server}"))?;
+    let status = out.lines().find_map(|l| l.split("status: ").nth(1)).and_then(|s| s.split(',').next()).unwrap_or("?").to_string();
+    match status.as_str() {
+        "NXDOMAIN" => Ok(vec![]),
+        "NOERROR" => Ok(out.lines().filter(|l| !l.starts_with(';')).filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            (f.get(3) == Some(&"A")).then(|| f.get(4)?.parse().ok()).flatten()
+        }).collect()),
+        s => Err(format!("DNS status {s} from {server}")),
+    }
+}
+
 /// One SMTP RCPT to an address outside the range domain: the gate passes only on a 5xx refusal. Never sends DATA.
 fn smtp_refuses_outside(ip: Ipv4Addr, port: u16, domain: &str) -> (bool, String) {
     let attempt = || -> Result<(bool, String)> {
@@ -380,13 +395,30 @@ pub fn main(args: &[String]) -> Result<()> {
     // Every host DNS names for mail must be one of them: a named mail host that is filtered or closed to the node,
     // or outside the subnet, is unknown, and unknown fails. (Desktops' default firewalls filter 25, so a filtered
     // port alone is no mail server.)
-    let mut named: Vec<String> = mx.iter().filter_map(|m| m.split_whitespace().nth(1)).map(String::from).collect();
-    named.extend(auto_targets.iter().cloned());
-    named.push(format!("mail.{domain}."));
-    named.sort();
-    named.dedup();
-    for name in &named {
-        let addrs: Vec<Ipv4Addr> = dns.first().map(|s| dig(*s, "A", name)).unwrap_or_default().iter().filter_map(|a| a.parse().ok()).collect();
+    // Without a DNS server the node can reach, the mail hosts the range's machines use are unknown.
+    // ponytail: a workgroup range with no DNS in the subnet fails here too; give such ranges a declared mail host if one shows up.
+    if dns.is_empty() {
+        r.check(&format!("a DNS server in {subnet} answers (to learn the mail hosts of {domain})"), false, "no host with port 53 open to the node");
+    }
+    // MX and autodiscover targets must resolve; mail.DOMAIN is only a guess, so NXDOMAIN is fine for it.
+    let mut named: Vec<(String, bool)> = mx.iter().filter_map(|m| m.split_whitespace().nth(1)).map(|n| (n.to_string(), true)).collect();
+    named.extend(auto_targets.iter().map(|n| (n.clone(), true)));
+    named.push((format!("mail.{domain}."), false));
+    named.sort_by(|x, y| x.0.cmp(&y.0).then(y.1.cmp(&x.1))); // per name, the required entry first
+    named.dedup_by(|b, a| a.0 == b.0); // keeps the first: required wins over the guess
+    for (name, required) in &named {
+        let addrs = match dns.first() {
+            Some(s) => resolve_a(*s, name),
+            None if *required => Err(format!("no DNS server in {subnet} to resolve it")),
+            None => Ok(vec![]),
+        };
+        let addrs = match addrs.and_then(|a| if a.is_empty() && *required { Err("named for mail but has no address".to_string()) } else { Ok(a) }) {
+            Ok(a) => a,
+            Err(e) => {
+                r.check(&format!("mail host {name} resolved"), false, format!("{e}: can't show where its mail goes"));
+                continue;
+            }
+        };
         for a in addrs {
             if !(subnet.contains(a) && smtp.iter().any(|s| s.0 == a && s.1 == 25)) {
                 let why = if subnet.contains(a) { "port 25 not open to the node: can't show it refuses outside delivery".to_string() } else { format!("{a} is outside {subnet}") };
