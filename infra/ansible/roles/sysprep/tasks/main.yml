@@ -1,4 +1,16 @@
 ---
+# Windows Update can install Store apps (Copilot, 2026-11) for the build user only; sysprep /generalize then
+# refuses with 0x80073cf2. Remove every Store app that is installed but not provisioned for all users.
+- name: No per-user Store apps that sysprep would refuse
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $provisioned = @(Get-AppxProvisionedPackage -Online | ForEach-Object DisplayName)
+      $stray = @(Get-AppxPackage -AllUsers | Where-Object { $_.SignatureKind -eq 'Store' -and -not $_.NonRemovable -and -not $_.IsFramework -and $provisioned -notcontains $_.Name })
+      foreach ($p in $stray) { Remove-AppxPackage -Package $p.PackageFullName -AllUsers }
+      $Ansible.Changed = $stray.Count -gt 0
+      $stray | ForEach-Object Name
+
 - name: Clones' answer file
   ansible.windows.win_copy:
     src: unattend.xml

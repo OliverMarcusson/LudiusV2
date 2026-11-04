@@ -320,11 +320,27 @@ pub fn plan(spec: &Spec, l: &Layout) -> Vec<Step> {
     let vars = l.vars().display().to_string();
     let n = spec.personas.count;
     let persona_ids: Vec<String> = (0..n).map(|i| spec.persona_slot(i).0.to_string()).collect();
-    let packer = |only: &str| {
+    // A failed earlier build leaves its VM (-on-error=abort); remove it only when it is ours: this node, our pool,
+    // the build's name, not a template. Anything else under that id stops the step.
+    let clean = |id: u32, name: &str| {
         format!(
-            "packer init infra/packer && packer build -only={only} -on-error=abort -var proxmox_node=$(hostname) -var proxmox_token=$(cat /root/.ludius-packer-token) \
+            "python3 -c 'import json,socket,subprocess,sys; r=[v for v in json.loads(subprocess.check_output([\"pvesh\",\"get\",\"/cluster/resources\",\"--type\",\"vm\",\"--output-format\",\"json\"])) if v[\"vmid\"]=={id}]; \
+             sys.exit(0 if not r else 3 if (r[0].get(\"pool\")==\"{pool}\" and r[0].get(\"name\")==\"{name}\" and r[0].get(\"node\")==socket.gethostname() and not r[0].get(\"template\")) else 4)'; \
+             case $? in 0) ;; 3) echo 'removing VM {id} ({name}) left by a failed earlier build'; qm stop {id} --skiplock 1 >/dev/null 2>&1 || true; qm destroy {id} --purge 1 ;; \
+             *) echo 'VM {id} exists and is not a failed {name} build in pool {pool} on this node; refusing'; exit 1 ;; esac; ",
+            pool = h.pool
+        )
+    };
+    let packer = |only: &str| {
+        let (id, name) = if only.starts_with("base") { (BASE_VMID, "ludius-win10-base") } else { (TEMPLATE_VMID, "ludius-win10-golden") };
+        format!(
+            "{}packer init infra/packer && packer build -only={only} -on-error=abort -var proxmox_node=$(hostname) -var proxmox_token=$(cat /root/.ludius-packer-token) \
              -var iso_checksum={} -var storage={} -var range_pool={} -var build_bridge={} infra/packer",
-            spec.range.windows_iso_sha256, h.storage, h.pool, h.build_bridge
+            clean(id, name),
+            spec.range.windows_iso_sha256,
+            h.storage,
+            h.pool,
+            h.build_bridge
         )
     };
     let template = |id: u32| format!("qm config {id} 2>/dev/null | grep -q '^template: 1'");
