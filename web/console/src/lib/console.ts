@@ -104,6 +104,16 @@ function parseDay(value: unknown): Daybook {
   return r as unknown as Daybook
 }
 export type RunPhase = "none" | "planning" | "preparing" | "running" | "finished" | "stopped" | "failed"
+export interface RunPersona {
+  user: string
+  status: "waiting" | "running" | "done" | "failed" | "blocked" | "unplanned" | "stopped"
+  detail?: string
+  items: number
+  done: number
+}
+export function personaStatus(p: RunPersona): string {
+  return ({ waiting: "Waiting", running: "Working", done: "Day finished", failed: "Day failed", blocked: "Blocked", unplanned: "No plan", stopped: "Stopped" })[p.status]
+}
 export interface RunStatus {
   phase: RunPhase
   day?: number
@@ -113,7 +123,7 @@ export interface RunStatus {
   unplanned?: string[]
   plans?: number
   error?: string
-  personas?: { user: string; status: "waiting" | "running" | "done" | "failed"; items: number; done: number }[]
+  personas?: RunPersona[]
   ops?: RangeOps | null
 }
 export type OpStatus = "running" | "ok" | "failed"

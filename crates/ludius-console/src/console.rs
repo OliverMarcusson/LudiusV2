@@ -377,6 +377,7 @@ pub fn run(runs: &FsPath, now: i64) -> Rd<Value> {
     let mut logical: Option<String> = None;
     let (mut set_at, mut last, mut day, mut planned) = (0i64, 0i64, 0, false);
     let (mut users, mut unplanned): (Vec<String>, Vec<String>) = (vec![], vec![]);
+    let mut plan_errors: HashMap<String, String> = HashMap::new();
     let mut results: HashMap<String, (&str, i64)> = HashMap::new();
     for e in &journal {
         last = parse_time(text(e, "at")).map_or(0, |t| t.timestamp_millis());
@@ -394,10 +395,16 @@ pub fn run(runs: &FsPath, now: i64) -> Rd<Value> {
                     day += 1;
                     users.clear();
                     unplanned.clear();
+                    plan_errors.clear();
                     results.clear();
                 }
             }
-            "no_plan" if USER.is_match(persona) => unplanned.push(persona.into()),
+            "no_plan" if USER.is_match(persona) => {
+                if !unplanned.iter().any(|u| u == persona) {
+                    unplanned.push(persona.into());
+                }
+                plan_errors.insert(persona.into(), text(e, "error").into());
+            }
             "planned" => {
                 date = if valid_date(text(e, "date")) { text(e, "date").into() } else { String::new() };
                 users = e
@@ -424,6 +431,7 @@ pub fn run(runs: &FsPath, now: i64) -> Rd<Value> {
             _ => {}
         }
     }
+    users.extend(unplanned.iter().filter(|u| !users.contains(u)).cloned().collect::<Vec<_>>());
     let personas: Vec<Value> = users
         .iter()
         .map(|user| {
@@ -437,18 +445,35 @@ pub fn run(runs: &FsPath, now: i64) -> Rd<Value> {
             };
             let started = run.first().and_then(|x| x.get("host_ms")).and_then(Value::as_i64).unwrap_or(0);
             let has = |ev: &str| run.iter().any(|x| text(x, "event") == ev);
+            let activity = run.iter().rev().find(|x| matches!(text(x, "event"), "wait" | "blocked" | "step" | "task_start" | "task_end" | "subgoal_done" | "item_start" | "item_end" | "break"));
+            let blocked = activity.is_some_and(|e| text(e, "event") == "blocked" || (text(e, "event") == "wait" && text(e, "reason").starts_with("foreground unreadable:")));
             let status = match results.get(user) {
+                _ if plan_errors.contains_key(user) => "unplanned",
                 Some((s, at)) if started <= *at => *s,
                 _ if has("day_aborted") => "failed",
                 _ if has("day_end") => "done",
+                _ if matches!(phase, "stopped" | "failed" | "finished") => "stopped",
+                _ if blocked => "blocked",
+                _ if activity.is_some_and(|e| text(e, "event") == "wait") => "waiting",
                 _ if !run.is_empty() => "running",
                 _ => "waiting",
             };
+            let detail = match status {
+                "unplanned" => plan_errors.get(user).cloned().unwrap_or_default(),
+                "done" => "Day finished".into(),
+                "stopped" => "Stopped before the day finished".into(),
+                "blocked" | "waiting" => activity.map(|e| text(e, "reason").to_string()).unwrap_or_default(),
+                _ => activity.map(|e| {
+                    let task = text(e, "task");
+                    let task = if task.is_empty() { text(e, "template") } else { task };
+                    format!("{} {}", task, text(e, "subgoal")).trim().to_string()
+                }).unwrap_or_default(),
+            };
             let items = run.first().and_then(|x| x.get("items")).and_then(Value::as_i64).unwrap_or(0);
-            Ok(json!({ "user": user, "status": status, "items": items, "done": run.iter().filter(|x| text(x, "event") == "item_end").count() }))
+            Ok(json!({ "user": user, "status": status, "detail": detail, "items": items, "done": run.iter().filter(|x| text(x, "event") == "item_end").count() }))
         })
         .collect::<Rd<_>>()?;
-    if phase == "preparing" && personas.iter().any(|p| p["status"] != "waiting") {
+    if phase == "preparing" && personas.iter().any(|p| matches!(p["status"].as_str(), Some("running" | "blocked" | "done" | "failed"))) {
         phase = "running";
     }
     let active = matches!(phase, "planning" | "preparing" | "running");
@@ -652,9 +677,22 @@ mod tests {
         let r = run(&runs, now_ms()).unwrap();
         assert_eq!(r["phase"], "running");
         assert_eq!(r["day"], 1);
-        assert_eq!(r["personas"], json!([{ "user": "aberg", "status": "running", "items": 9, "done": 0 }]));
+        assert_eq!(r["personas"], json!([{ "user": "aberg", "status": "running", "detail": "", "items": 9, "done": 0 }]));
         assert_eq!(r["clock"]["offset"], 60);
         assert_eq!(r["ops"], Value::Null);
+        use std::io::Write as _;
+        let mut journal = std::fs::OpenOptions::new().append(true).open(runs.join("range/warp.jsonl")).unwrap();
+        writeln!(journal, "{{\"event\":\"no_plan\",\"persona\":\"pvanloon\",\"error\":\"items[0].params.body: expected string\"}}").unwrap();
+        let mut recording = std::fs::OpenOptions::new().append(true).open(runs.join("days/2027-02-02-aberg.jsonl")).unwrap();
+        writeln!(recording, "{{\"event\":\"wait\",\"reason\":\"foreground unreadable: Outlook\"}}").unwrap();
+        let r = run(&runs, now_ms()).unwrap();
+        assert_eq!(r["personas"][0]["status"], "blocked");
+        assert_eq!(r["personas"][1]["status"], "unplanned");
+        assert!(r["personas"][1]["detail"].as_str().unwrap().contains("expected string"));
+        writeln!(journal, "{{\"event\":\"interrupted\"}}").unwrap();
+        assert_eq!(run(&runs, now_ms()).unwrap()["personas"][0]["status"], "stopped");
+        writeln!(recording, "{{\"event\":\"day_end\"}}").unwrap();
+        assert_eq!(run(&runs, now_ms()).unwrap()["personas"][0]["status"], "done");
         // only the last ops run counts, each step at its latest status, the end line as the run's status
         std::fs::write(
             runs.join("ops.jsonl"),

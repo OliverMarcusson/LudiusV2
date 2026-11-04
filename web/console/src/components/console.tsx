@@ -28,6 +28,7 @@ import {
   itemRecord,
   latestDay,
   personLink,
+  personaStatus,
   useCatalog,
   useDaybook,
   useRun,
@@ -423,18 +424,14 @@ function Status({ catalog }: { catalog: Catalog | null }) {
                       {names.get(p.user)?.name ?? p.user}
                     </span>
                     <span className="text-muted-foreground tabular-nums">
-                      {p.status === "waiting"
-                        ? "Waiting"
-                        : p.status === "failed"
-                          ? "Failed"
-                          : `${p.done} / ${p.items}`}
+                      {personaStatus(p)}{p.items > 0 && ` · ${p.done} / ${p.items}`}
                     </span>
                   </div>
                   <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
                     <motion.div
                       className={cn(
                         "h-full rounded-full",
-                        p.status === "failed" ? "bg-lost" : "bg-foreground",
+                        ["failed", "blocked", "unplanned"].includes(p.status) ? "bg-lost" : "bg-foreground",
                       )}
                       initial={false}
                       animate={{
@@ -443,6 +440,7 @@ function Status({ catalog }: { catalog: Catalog | null }) {
                       transition={{ duration: 0.6, ease: "easeOut" }}
                     />
                   </div>
+                  {p.detail && <p className="mt-1 break-words text-xs text-muted-foreground">{p.detail}</p>}
                 </div>
               </motion.li>
             ))}

@@ -62,6 +62,7 @@ impl Runner<'_> {
         let had_app = app_open(&snap, task);
         let outside = sg.done.as_ref().is_some_and(|d| d.outside());
         let mut committed = false;
+        let mut unreadable_reads = 0;
         while step < budget {
             step += 1;
             self.live = step;
@@ -83,7 +84,7 @@ impl Runner<'_> {
                 return failed(step - 1, "blocked: elevation required");
             }
             let code_done = check_done(sg.done.as_ref(), &snap, task, typed_ok, true, pressed_ok, clicked_ok, last_click.as_ref())?;
-            if code_done == Some(true) {
+            if code_done == Some(true) && (outside || unreadable_foreground(&snap).is_none()) {
                 self.log.write(json!({"event": "subgoal_done", "host_ms": now_ms(), "guest_ms": snap.guest_time_ms, "task": t, "subgoal": name, "by": "code", "steps": step - 1}))?;
                 return Ok((true, step - 1, String::new()));
             }
@@ -107,17 +108,21 @@ impl Runner<'_> {
                 (step, waited, wait_why) = (step - 1, waited + w0.elapsed().as_secs_f64(), AFTER_COMMIT.into());
                 continue;
             }
-            if let Some(fg) = foreground(&snap)
-                && fg.unresponsive
-            {
-                // A hung app buffers keys and replays them later; wait for it like a person would.
-                // The task's time budget bounds the wait, not WAIT_CAP_S: a busy Outlook can take minutes.
-                self.log.write(json!({"event": "wait", "host_ms": now_ms(), "task": t, "subgoal": name, "step": step, "reason": format!("'{}' is not responding", fg.title)}))?;
+            if let Some(reason) = unreadable_foreground(&snap) {
+                // Never let taskbar controls stand in for an unreadable app. Two fresh reads tolerate
+                // transient startup failures; exhausting them abandons without an LLM detour.
+                unreadable_reads += 1;
+                if unreadable_reads >= UNREADABLE_READS {
+                    self.log.write(json!({"event": "blocked", "host_ms": now_ms(), "task": t, "subgoal": name, "reason": reason}))?;
+                    return failed(step - 1, reason);
+                }
+                self.log.write(json!({"event": "wait", "host_ms": now_ms(), "task": t, "subgoal": name, "step": step, "reason": reason}))?;
                 std::thread::sleep(HUNG_WAIT);
                 snap = self.observe(10000)?;
                 step -= 1;
                 continue;
             }
+            unreadable_reads = 0;
             // Ask once per screen: a wait or a no-change step leaves the answer as it was (warp8: 430 asks, 65% "not yet").
             if let Some(q) = &ask
                 && asked.as_ref() != Some(&fingerprint(&snap))

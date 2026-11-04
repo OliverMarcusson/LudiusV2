@@ -20,7 +20,7 @@ import {
   useVms
 } from "@/lib/feeds"
 import { cn } from "@/lib/utils"
-import { type Catalog, dayLink, activityName, personLink } from "@/lib/console"
+import { type Catalog, dayLink, activityName, personLink, useRun } from "@/lib/console"
 
 const COLUMNS = ["1", "2", "3", "4"] as const
 const GRID: Record<string, string> = {
@@ -215,6 +215,7 @@ export default function LiveMonitor({ catalog }: { catalog: Catalog | null }) {
   const now = useNow()
   const calls = useCalls()
   const admission = useAdmission()
+  const run = useRun()
   const interactions = useInteractions()
   const lit = useInteractionAlerts(interactions.data ?? undefined, now)
   const [paused, setPaused] = useState(false)
@@ -315,6 +316,7 @@ export default function LiveMonitor({ catalog }: { catalog: Catalog | null }) {
             >
               <Feed
                 vm={focusVm}
+                persona={run.data?.personas?.find((p) => vmOf(p.user) === focusVm.name)}
                 now={now}
                 paused={paused}
                 maxWidth={1280}
@@ -374,6 +376,7 @@ export default function LiveMonitor({ catalog }: { catalog: Catalog | null }) {
                   >
                     <Feed
                       vm={vm}
+                      persona={run.data?.personas?.find((p) => vmOf(p.user) === vm.name)}
                       now={now}
                       paused={paused}
                       maxWidth={960}

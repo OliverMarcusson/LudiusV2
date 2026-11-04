@@ -529,6 +529,7 @@ pub fn plan_day(llm: &LlmClient, d: &Day, templates: &BTreeMap<String, Template>
         user += &names.iter().map(|n| format!("- {n}")).collect::<Vec<_>>().join("\n");
     }
     user += "\n\nReturn JSON {\"items\": [...]} with exactly these items, one each, same at and template: params (object with every listed parameter as a string; keep every given value exactly) and context (one sentence: why the persona does this now, following the given purpose).\n";
+    user += "Every params and content value must be a JSON string, never an array or object. For body, notes, rows, bullets and bullets2, encode multiple lines inside one string with \\n (for example, \"body\": \"First line\\nSecond line\").\n";
     let lines: Vec<String> = work
         .iter()
         .map(|it| {
@@ -588,13 +589,13 @@ pub fn plan_day(llm: &LlmClient, d: &Day, templates: &BTreeMap<String, Template>
         invites: d.invites.clone(),
     };
 
-    let mut items = merge(llm.json(PLAN_SYSTEM, &user, 0.9, 2)?)?;
+    let mut items = merge(llm.json(PLAN_SYSTEM, &user, 0.9, 3)?)?;
     let mut rejects = validate(&items, &ctx)?;
     let have: BTreeSet<(&str, &str)> = items.iter().map(|it| (it.at.as_str(), it.template.as_str())).collect();
     let unwritten: Vec<String> = work.iter().filter(|it| !have.contains(&(it.at.as_str(), it.template.as_str()))).map(|it| format!("- {} {} is missing", it.at, it.template)).collect();
     if !rejects.is_empty() || !unwritten.is_empty() {
         let fix: Vec<String> = rejects.iter().map(|(i, why)| format!("- item {i} ({} at {}): {why}", items[*i].template, items[*i].at)).chain(unwritten).collect();
-        items = merge(llm.json(PLAN_SYSTEM, &format!("{user}\n\nThese items were rejected; return the full corrected item list:\n{}", fix.join("\n")), 0.9, 2)?)?;
+        items = merge(llm.json(PLAN_SYSTEM, &format!("{user}\n\nThese items were rejected; return the full corrected item list:\n{}", fix.join("\n")), 0.9, 3)?)?;
         rejects = validate(&items, &ctx)?;
     }
     let bad: BTreeSet<usize> = rejects.iter().map(|(i, _)| *i).collect();

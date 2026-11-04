@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
-use ludius_proto::v1::{Element, Snapshot};
+use ludius_proto::v1::{Element, Snapshot, window::Kind};
 use rand::rngs::StdRng;
 use rand::{RngExt as _, SeedableRng};
 use serde_json::{Map, Value, json};
@@ -37,6 +37,7 @@ const BLOCKED_WAIT: Duration = Duration::from_millis(1500);
 const SLOW_KEY_WAIT: Duration = Duration::from_secs(4);
 const WAIT_CAP_S: f64 = 90.0;
 const HUNG_WAIT: Duration = Duration::from_secs(5);
+const UNREADABLE_READS: u32 = 3;
 pub const LAUNCH_REASON: &str = "the launch query goes into the Start search box only";
 pub const REPLACE_REASON: &str = "replacing text needs a target field that holds the keyboard focus";
 
@@ -158,11 +159,24 @@ impl Outcome {
 pub struct Fingerprint(Vec<(String, i32)>, String, Vec<(String, String, bool, bool)>);
 
 pub fn fingerprint(s: &Snapshot) -> Fingerprint {
+    let app_foreground = s.windows.iter().any(|w| w.kind() == Kind::Foreground);
+    let relevant = |i: usize| !app_foreground || s.windows.get(i).is_none_or(|w| w.kind() != Kind::Shell);
     Fingerprint(
-        s.windows.iter().map(|w| (w.title.clone(), w.kind)).collect(),
-        s.elements.iter().find(|e| e.focused).map(|e| e.key.clone()).unwrap_or_default(),
-        s.elements.iter().map(|e| (e.key.clone(), e.value.clone(), e.selected, e.expanded)).collect(),
+        s.windows.iter().enumerate().filter(|(i, _)| relevant(*i)).map(|(_, w)| (w.title.clone(), w.kind)).collect(),
+        s.elements.iter().filter(|e| relevant(e.window as usize)).find(|e| e.focused).map(|e| e.key.clone()).unwrap_or_default(),
+        s.elements.iter().filter(|e| relevant(e.window as usize)).map(|e| (e.key.clone(), e.value.clone(), e.selected, e.expanded)).collect(),
     )
+}
+
+fn unreadable_foreground(s: &Snapshot) -> Option<String> {
+    let (i, w) = s.windows.iter().enumerate().find(|(_, w)| w.kind() == Kind::Foreground)?;
+    if pixels_window(w) {
+        return None;
+    }
+    let empty = !s.elements.iter().any(|e| e.window as usize == i);
+    (w.unresponsive || w.elevated_unreadable || w.no_tree || (w.incomplete && empty)).then(|| {
+        format!("foreground unreadable: {} (unresponsive={}, access_denied={}, no_tree={}, incomplete={}, {})", w.title, w.unresponsive, w.elevated_unreadable, w.no_tree, w.incomplete, w.read_error)
+    })
 }
 
 pub(crate) use crate::options::fg as foreground;

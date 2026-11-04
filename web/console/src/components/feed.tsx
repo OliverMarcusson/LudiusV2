@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { STALE_MS, age, frameWidth, useStream, type Vm } from "@/lib/feeds"
+import { personaStatus, type RunPersona } from "@/lib/console"
 
 type Health = "live" | "stale" | "lost" | "idle"
 
@@ -32,12 +33,14 @@ export function Feed({
   paused,
   maxWidth,
   large = false,
+  persona,
 }: {
   vm: Vm
   now: number
   paused: boolean
   maxWidth: number
   large?: boolean
+  persona?: RunPersona
 }) {
   const box = useRef<HTMLDivElement>(null)
   const [cssWidth, setCssWidth] = useState(0)
@@ -169,6 +172,13 @@ export function Feed({
           </span>
         </span>
       </figcaption>
+      {persona && (
+        <p className="break-words text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{personaStatus(persona)}</span>
+          {persona.items > 0 && ` · ${persona.done} / ${persona.items}`}
+          {persona.detail && !["done", "stopped"].includes(persona.status) && ` · ${persona.detail}`}
+        </p>
+      )}
     </figure>
   )
 }

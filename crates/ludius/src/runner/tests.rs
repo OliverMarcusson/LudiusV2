@@ -9,6 +9,7 @@ use crate::options::Opt;
 
 #[derive(Default)]
 struct Fake {
+    snapshot: RefCell<Option<Snapshot>>,
     size: Cell<(i32, i32)>,
     pos: Cell<(i32, i32)>,
     offset: Cell<i32>,
@@ -40,6 +41,9 @@ impl Agent for Fake {
         Ok(0)
     }
     fn observe(&self, _: bool, _: u32, _: u32) -> Result<Snapshot> {
+        if let Some(s) = &*self.snapshot.borrow() {
+            return Ok(s.clone());
+        }
         let ((w, h), (x, y)) = (self.size.get(), self.pos.get());
         Ok(Snapshot { screen_width: w, screen_height: h, dpi: 96, cursor_x: x, cursor_y: y, ..Default::default() })
     }
@@ -63,6 +67,47 @@ fn runner<'a>(agent: &'a Fake, log: &'a GroundTruth) -> Runner<'a> {
 
 fn log() -> GroundTruth {
     GroundTruth::open(&std::env::temp_dir().join(format!("ludius-runner-{}-{:?}.jsonl", std::process::id(), std::thread::current().id()))).unwrap()
+}
+
+#[test]
+fn background_shell_clock_is_not_task_progress() {
+    use ludius_proto::v1::{Window, window::Kind};
+    let mut snap = Snapshot {
+        windows: vec![Window { title: "Inbox - Outlook".into(), kind: Kind::Foreground as i32, ..Default::default() }, Window { kind: Kind::Shell as i32, ..Default::default() }],
+        elements: vec![Element { key: "mail".into(), window: 0, ..Default::default() }, Element { key: "clock-14:30".into(), window: 1, ..Default::default() }],
+        ..Default::default()
+    };
+    let before = fingerprint(&snap);
+    snap.elements[1].key = "clock-14:31".into();
+    assert_eq!(before, fingerprint(&snap));
+    snap.elements[0].selected = true;
+    assert_ne!(before, fingerprint(&snap));
+    // The shell is relevant when it is the foreground, including Start search.
+    snap.windows[0].kind = Kind::Shell as i32;
+    snap.windows[1].kind = Kind::Foreground as i32;
+    let before = fingerprint(&snap);
+    snap.elements[1].value = "outlook".into();
+    assert_ne!(before, fingerprint(&snap));
+}
+
+#[test]
+fn unreadable_launch_does_not_pass_on_its_title_or_ask_for_blind_actions() {
+    use ludius_proto::v1::{Window, window::Kind};
+    let (agent, log) = (Fake::default(), log());
+    *agent.snapshot.borrow_mut() = Some(Snapshot {
+        windows: vec![Window { title: "Inbox - Outlook".into(), process_name: "OUTLOOK.EXE".into(), kind: Kind::Foreground as i32, no_tree: true, incomplete: true, read_error: "BuildUpdatedCache: E_FAIL".into(), ..Default::default() }],
+        ..Default::default()
+    });
+    let data = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let t = crate::tasks::load_template(&data.join("templates/outlook_read_mail.yaml")).unwrap();
+    let inst = crate::tasks::TaskInstance { template: t.task.clone(), params: t.example.clone(), variant: Some(0), ..Default::default() };
+    let mut task = Task::new(t, inst, &mut StdRng::seed_from_u64(0)).unwrap();
+    let sg = task.subgoal("open_outlook").unwrap();
+    let result = runner(&agent, &log).subgoal_steps(&mut task, "open_outlook", &sg, 8, Instant::now(), true, None).unwrap();
+    assert!(!result.0);
+    assert_eq!(result.1, 0);
+    assert!(result.2.starts_with("foreground unreadable:"));
+    assert!(agent.chords.borrow().is_empty());
 }
 
 #[test]

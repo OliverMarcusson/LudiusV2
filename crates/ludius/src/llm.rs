@@ -31,6 +31,14 @@ fn strip_fence(t: &str) -> &str {
     t.strip_suffix("```").unwrap_or(t).trim_end()
 }
 
+fn validated<M: DeserializeOwned + Check>(text: &str) -> Result<M> {
+    let mut decoder = serde_json::Deserializer::from_str(strip_fence(text));
+    let model: M = serde_path_to_error::deserialize(&mut decoder)?;
+    decoder.end()?;
+    model.check()?;
+    Ok(model)
+}
+
 impl LlmClient {
     pub fn new(api_key: &str, model: Option<&str>) -> Result<Self> {
         if api_key.is_empty() {
@@ -50,7 +58,7 @@ impl LlmClient {
         ];
         for attempt in 0..attempts {
             let text = self.complete(&messages, temperature)?;
-            let got = serde_json::from_str::<M>(strip_fence(&text)).map_err(anyhow::Error::from).and_then(|m| m.check().map(|()| m));
+            let got = validated::<M>(&text);
             match got {
                 Ok(m) => return Ok(m),
                 Err(e) if attempt == attempts - 1 => bail!("invalid {}: {e}", std::any::type_name::<M>()),
@@ -89,6 +97,22 @@ impl LlmClient {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_writer_content_names_the_field_for_correction() {
+        #[derive(serde::Deserialize)]
+        struct Draft { items: Vec<crate::planner::PlanItem> }
+        impl Check for Draft {}
+        let bad = r#"{"items":[{"at":"09:00","template":"word_short_document","params":{"body":["first","second"]}}]}"#;
+        let error = validated::<Draft>(bad).err().unwrap().to_string();
+        assert!(error.contains("items[0].params.body"), "{error}");
+        assert!(error.contains("expected a string"), "{error}");
+        let corrected = bad.replace(r#"["first","second"]"#, r#""first\nsecond""#);
+        assert_eq!(validated::<Draft>(&corrected).unwrap().items[0].params["body"], "first\nsecond");
+        assert!(validated::<Draft>(&format!("{corrected} garbage")).is_err());
+    }
+
     #[test]
     fn fence() {
         assert_eq!(super::strip_fence("```json\n{\"a\":1}\n```"), "{\"a\":1}");

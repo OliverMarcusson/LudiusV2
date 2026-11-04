@@ -23,6 +23,7 @@ const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--per
        ludius [--agent ADDR] range unwarp|sweep
        ludius [--agent ADDR] [--vm VM] canary [APP...] [--persona P.yaml] [--model M] [--restore CHECKPOINT]
        ludius [--agent ADDR] [--vm VM] observe [--limit N]
+       ludius [--agent ADDR] [--vm VM] unlock [--persona USER|P.yaml]
        ludius intranet check [DIR]
        ludius plan narrative|day [--persona USER] [--date YYYY-MM-DD] [--model M]
        ludius day PLAN.yaml [--clock realtime|compressed] [--canary] [--temporal HOST:PORT] [--timezone TZ]
@@ -461,9 +462,11 @@ fn main() -> Result<()> {
         let cfg = ludius::durable::worker::Config { runs: runs(), persona, vm, agent: agent_addr, key: env("OPENROUTER_API_KEY"), model };
         return tokio::runtime::Runtime::new()?.block_on(ludius::durable::worker::serve(&address, "default", cfg));
     }
+    let unlock_only = args.as_slice() == ["unlock"];
     let (task_path, apps) = match args.as_slice() {
         [c, t] if c == "run" => (Some(t.clone()), vec![]),
         [c, apps @ ..] if c == "canary" => (None, apps.to_vec()),
+        [c] if c == "unlock" => (None, vec![]),
         _ => bail!(USAGE),
     };
     if vm.is_empty() {
@@ -507,6 +510,13 @@ fn main() -> Result<()> {
     let lifecycle = |op: Op| agent.lifecycle(op, "", "");
     let password = std::env::var(format!("LUDIUS_PERSONA_PASSWORD_{}", persona.user.to_uppercase())).ok().filter(|p| !p.is_empty()).unwrap_or_else(|| env("LUDIUS_PERSONA_PASSWORD"));
     let session = Session::new(&agent, &log, password, Some(&lifecycle));
+    if unlock_only {
+        if !session.unlock()? {
+            bail!("session did not unlock");
+        }
+        println!("{vm}: session unlocked");
+        return Ok(());
+    }
     if let Some(cp) = restore {
         // ponytail: Hyper-V only; Proxmox's observer restart after a RAM rollback is not ported.
         agent.lifecycle(Op::Restore, &cp, "")?;
