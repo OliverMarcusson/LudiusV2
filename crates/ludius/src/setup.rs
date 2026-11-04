@@ -700,7 +700,10 @@ fn run_step(s: &Step, spec: &Spec, l: &Layout, root: &Path, path: &str, vault_pa
         "vault" => vault(root, vault_pass, path),
         "personas" => personas(spec, l),
         "vars" => Ok(std::fs::write(l.vars(), ansible_vars(spec, l)?)?),
-        "controller" => Ok(std::fs::write(l.controller_env(), controller_env(spec, l, root))?),
+        "controller" => {
+            persona_suffix(root, vault_pass, path)?;
+            Ok(std::fs::write(l.controller_env(), controller_env(spec, l, root))?)
+        }
         other => bail!("no runner for step {other}"),
     }
 }
@@ -764,6 +767,25 @@ fn vault(root: &Path, vault_pass: &str, path: &str) -> Result<()> {
     }
     Ok(())
 }
+
+/// The persona password suffix from the vault into secrets (0600): the canary and day runs unlock with user + suffix,
+/// so no password goes into controller.env.
+fn persona_suffix(root: &Path, vault_pass: &str, path: &str) -> Result<()> {
+    let out = Command::new("ansible-vault")
+        .args(["view", "--vault-password-file", vault_pass])
+        .arg(root.join("infra/ansible/group_vars/all/vault.yml"))
+        .env("PATH", path)
+        .output()
+        .context("ansible-vault view")?;
+    ensure!(out.status.success(), "ansible-vault view failed ({})", out.status);
+    let v: serde_yaml::Value = serde_yaml::from_slice(&out.stdout)?;
+    let suffix = v["vault_user_password_suffix"].as_str().context("vault_user_password_suffix missing from the vault")?;
+    let file = secrets_dir().join(PERSONA_SUFFIX);
+    let _ = std::fs::remove_file(&file); // a rerun replaces it (the vault may have been regenerated)
+    write_secret(&file, suffix)
+}
+
+const PERSONA_SUFFIX: &str = "persona-password-suffix";
 
 // --- personas ---------------------------------------------------------------------------------
 
@@ -901,6 +923,7 @@ pub fn controller_env(spec: &Spec, l: &Layout, root: &Path) -> String {
         format!("LUDIUS_RUNS={}", l.runs().display()),
         format!("LUDIUS_PERSONAS={}", l.personas().display()),
         format!("OPENROUTER_KEY_FILE={}", key_path(&spec.ai.planner.key).display()),
+        format!("LUDIUS_PERSONA_PASSWORD_SUFFIX_FILE={}", secrets_dir().join(PERSONA_SUFFIX).display()),
         format!("LUDIUS_PLANNER_MODEL={}", spec.ai.planner.model),
         format!("LUDIUS_DECISION_MODEL={}", spec.ai.decider.model),
     ];

@@ -198,7 +198,7 @@ fn day_thread(cfg: &Config, inp: &DayInput, ready: &mpsc::Sender<Result<()>>, jo
             return;
         }
     };
-    let password = std::env::var(format!("LUDIUS_PERSONA_PASSWORD_{}", user.to_uppercase())).ok().filter(|p| !p.is_empty()).unwrap_or_else(|| env("LUDIUS_PERSONA_PASSWORD"));
+    let password = crate::rangerun::password(&user, &env);
     let lifecycle = |op| agent.lifecycle(op, "", "");
     let session = Session::new(&agent, &log, password, Some(&lifecycle));
     let assist = planner.0.map(|llm| Assist { llm });

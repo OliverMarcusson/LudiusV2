@@ -508,7 +508,7 @@ fn main() -> Result<()> {
     };
     let log = GroundTruth::open(&log_path)?;
     let lifecycle = |op: Op| agent.lifecycle(op, "", "");
-    let password = std::env::var(format!("LUDIUS_PERSONA_PASSWORD_{}", persona.user.to_uppercase())).ok().filter(|p| !p.is_empty()).unwrap_or_else(|| env("LUDIUS_PERSONA_PASSWORD"));
+    let password = ludius::rangerun::password(&persona.user, &env);
     let session = Session::new(&agent, &log, password, Some(&lifecycle));
     if unlock_only {
         if !session.unlock()? {

@@ -36,8 +36,17 @@ pub fn vm_of(user: &str) -> String {
     format!("ludius-{user}")
 }
 
+/// The persona's unlock password: LUDIUS_PERSONA_PASSWORD_<USER>, else user + the suffix in
+/// LUDIUS_PERSONA_PASSWORD_SUFFIX_FILE (a `ludius setup` range: the domain role's user + vault suffix), else LUDIUS_PERSONA_PASSWORD.
 pub fn password(user: &str, env: &dyn Fn(&str) -> String) -> String {
-    Some(env(&format!("LUDIUS_PERSONA_PASSWORD_{}", user.to_uppercase()))).filter(|p| !p.is_empty()).unwrap_or_else(|| env("LUDIUS_PERSONA_PASSWORD"))
+    let own = env(&format!("LUDIUS_PERSONA_PASSWORD_{}", user.to_uppercase()));
+    if !own.is_empty() {
+        return own;
+    }
+    match std::fs::read_to_string(env("LUDIUS_PERSONA_PASSWORD_SUFFIX_FILE")) {
+        Ok(s) if !s.trim().is_empty() => format!("{user}{}", s.trim()),
+        _ => env("LUDIUS_PERSONA_PASSWORD"),
+    }
 }
 
 pub fn refusals(users: &[String], env: &dyn Fn(&str) -> String, persona_files: &Path) -> Vec<String> {
