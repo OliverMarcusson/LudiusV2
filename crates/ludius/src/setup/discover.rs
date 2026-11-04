@@ -175,10 +175,8 @@ fn bridge_vms(bridge: &str) -> Result<Vec<(u64, String, String, Vec<String>)>> {
         if v["template"].as_u64() == Some(1) {
             continue;
         }
-        let cfg: Value = match run(&["pvesh", "get", &format!("/nodes/{node}/qemu/{id}/config"), "--output-format", "json"]) {
-            Some(c) => serde_json::from_str(&c)?,
-            None => continue,
-        };
+        // a VM whose config can't be read could be multi-homed: the whole inventory is unreadable then
+        let cfg: Value = serde_json::from_str(&run(&["pvesh", "get", &format!("/nodes/{node}/qemu/{id}/config"), "--output-format", "json"]).with_context(|| format!("config of VM {id} unreadable"))?)?;
         let bridges: Vec<String> = cfg
             .as_object()
             .into_iter()
@@ -208,16 +206,44 @@ pub fn is_desktop(os: &str) -> bool {
 
 /// No route out of the range bridge: no physical port in it, the node doesn't route it (forwarding off, or our
 /// mangle drops for both directions), and no VM on it has a NIC on another bridge.
-fn no_route_out(r: &mut Report, bridge: &str, vms: &[(u64, String, String, Vec<String>)]) {
-    let ports: Vec<String> = std::fs::read_dir(format!("/sys/class/net/{bridge}/brif"))
-        .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
-        .unwrap_or_default();
-    let physical: Vec<&String> = ports.iter().filter(|p| std::path::Path::new(&format!("/sys/class/net/{p}/device")).exists()).collect();
-    r.check(
-        &format!("{bridge} has no physical port"),
-        physical.is_empty(),
-        if physical.is_empty() { format!("ports: {}", if ports.is_empty() { "none".into() } else { ports.join(", ") }) } else { format!("physical ports: {}", physical.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", ")) },
-    );
+/// The bridge's ports, or why they can't be read (not a bridge, an unreadable entry).
+fn bridge_ports(bridge: &str) -> Result<Vec<String>> {
+    ensure!(std::fs::metadata(format!("/sys/class/net/{bridge}/bridge"))?.is_dir(), "{bridge} is not a bridge");
+    std::fs::read_dir(format!("/sys/class/net/{bridge}/brif"))?.map(|e| Ok(e?.file_name().to_string_lossy().into_owned())).collect()
+}
+
+/// A bridge port Ludius can account for: a VM NIC (tapNNNiK) or the PVE firewall's veth (fwprNNNpK) of a VM in
+/// `ids`. Anything else (a physical NIC, bond, VLAN, other veth) could carry traffic out and fails the gate.
+pub fn vm_port(port: &str, ids: &[u64]) -> bool {
+    let id = |rest: &str, sep: char| {
+        let (n, k) = rest.split_once(sep)?;
+        (!k.is_empty() && k.chars().all(|c| c.is_ascii_digit())).then_some(())?;
+        n.parse::<u64>().ok()
+    };
+    port.strip_prefix("tap").and_then(|r| id(r, 'i')).or_else(|| port.strip_prefix("fwpr").and_then(|r| id(r, 'p'))).is_some_and(|n| ids.contains(&n))
+}
+
+fn no_route_out(r: &mut Report, bridge: &str, vms: Option<&[(u64, String, String, Vec<String>)]>) {
+    let Some(vms) = vms else {
+        r.check("the range's VM inventory was read", false, "Proxmox VM list or a VM config unreadable: can't account for the bridge's ports or multi-homed VMs");
+        return;
+    };
+    let ids: Vec<u64> = vms.iter().map(|v| v.0).collect();
+    match bridge_ports(bridge) {
+        Ok(ports) => {
+            let other: Vec<&String> = ports.iter().filter(|p| !vm_port(p, &ids)).collect();
+            r.check(
+                &format!("{bridge} has only the NICs of its VMs"),
+                other.is_empty(),
+                if other.is_empty() {
+                    format!("ports: {}", if ports.is_empty() { "none".into() } else { ports.join(", ") })
+                } else {
+                    format!("other ports (physical, bond, VLAN or veth?): {}", other.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(", "))
+                },
+            );
+        }
+        Err(e) => r.check(&format!("{bridge} ports read"), false, format!("{e:#}")),
+    }
     let forwarding = |f: &str| std::fs::read_to_string(f).map(|s| s.trim() == "1").unwrap_or(true);
     let v4 = forwarding("/proc/sys/net/ipv4/ip_forward");
     let v6 = forwarding("/proc/sys/net/ipv6/conf/all/forwarding");
@@ -263,12 +289,13 @@ pub fn main(args: &[String]) -> Result<()> {
 
     println!("\nservices:");
     let dns: Vec<Ipv4Addr> = has(53).collect();
-    let (mut dcs, mut mx) = (vec![], vec![]);
+    let (mut dcs, mut mx, mut auto_targets) = (vec![], vec![], vec![]);
     for s in &dns {
         dcs = dig(*s, "SRV", &format!("_ldap._tcp.dc._msdcs.{domain}"));
         mx = dig(*s, "MX", &domain);
         if !dcs.is_empty() || !mx.is_empty() {
             let auto = dig(*s, "SRV", &format!("_autodiscover._tcp.{domain}"));
+            auto_targets = auto.iter().filter_map(|a| a.split_whitespace().nth(3)).map(String::from).collect();
             if !auto.is_empty() {
                 r.fact("Autodiscover", auto.join(", "), format!("SRV _autodiscover._tcp.{domain} @{s}"));
             }
@@ -317,7 +344,8 @@ pub fn main(args: &[String]) -> Result<()> {
             if !ports.contains(&port) {
                 continue;
             }
-            if let Some(page) = run(&["curl", "-skL", "-m", "10", &format!("{scheme}://{ip}/")]) {
+            // no -L: a redirect could point outside the subnet
+            if let Some(page) = run(&["curl", "-sk", "--max-redirs", "0", "-m", "10", &format!("{scheme}://{ip}/")]) {
                 let lower = page.to_lowercase();
                 if let Some(t) = lower.find("<title>").and_then(|i| lower[i + 7..].find("</title>").map(|j| page[i + 7..i + 7 + j].trim().to_string())) {
                     r.fact(&format!("web on {ip}"), t, format!("{scheme}://{ip}/ title"));
@@ -328,15 +356,13 @@ pub fn main(args: &[String]) -> Result<()> {
 
     println!("\nhypervisor:");
     let bridge = range_bridge(subnet);
-    let vms = match &bridge {
-        Some(b) => bridge_vms(b).unwrap_or_else(|e| {
-            println!("  ✘ Proxmox VMs: {e}");
-            vec![]
-        }),
-        None => vec![],
+    // None: the VM inventory could not be read, which fails the gate below
+    let vms: Option<Vec<_>> = match &bridge {
+        Some(b) => bridge_vms(b).map_err(|e| println!("  ✘ Proxmox VMs unreadable: {e:#}")).ok(),
+        None => None,
     };
     let mut desktops = vec![];
-    for (id, name, status, _) in &vms {
+    for (id, name, status, _) in vms.iter().flatten() {
         let os = if status == "running" { guest_os(*id) } else { None };
         let kind = match &os {
             Some(o) if is_desktop(o) => {
@@ -351,15 +377,32 @@ pub fn main(args: &[String]) -> Result<()> {
 
     println!("\nboundary gate (hard stop):");
     let smtp: Vec<(Ipv4Addr, u16)> = hosts.iter().flat_map(|(ip, p)| [25u16, 587].into_iter().filter(|x| p.contains(x)).map(move |x| (*ip, x))).collect();
-    if smtp.is_empty() {
-        r.check("mail refuses delivery outside the range", true, "no SMTP server in the subnet");
+    // Every host DNS names for mail must be one of them: a named mail host that is filtered or closed to the node,
+    // or outside the subnet, is unknown, and unknown fails. (Desktops' default firewalls filter 25, so a filtered
+    // port alone is no mail server.)
+    let mut named: Vec<String> = mx.iter().filter_map(|m| m.split_whitespace().nth(1)).map(String::from).collect();
+    named.extend(auto_targets.iter().cloned());
+    named.push(format!("mail.{domain}."));
+    named.sort();
+    named.dedup();
+    for name in &named {
+        let addrs: Vec<Ipv4Addr> = dns.first().map(|s| dig(*s, "A", name)).unwrap_or_default().iter().filter_map(|a| a.parse().ok()).collect();
+        for a in addrs {
+            if !(subnet.contains(a) && smtp.iter().any(|s| s.0 == a && s.1 == 25)) {
+                let why = if subnet.contains(a) { "port 25 not open to the node: can't show it refuses outside delivery".to_string() } else { format!("{a} is outside {subnet}") };
+                r.check(&format!("mail host {name} ({a}) answers SMTP inside the range"), false, why);
+            }
+        }
+    }
+    if smtp.is_empty() && r.gate.is_empty() {
+        r.check("mail refuses delivery outside the range", true, format!("no SMTP server in the subnet and no mail host named for {domain}"));
     }
     for (ip, port) in smtp {
         let (pass, why) = smtp_refuses_outside(ip, port, &domain);
         r.check(&format!("{ip}:{port} refuses delivery outside {domain}"), pass, why);
     }
     match &bridge {
-        Some(b) => no_route_out(&mut r, b, &vms),
+        Some(b) => no_route_out(&mut r, b, vms.as_deref()),
         None => r.check("no route out", false, format!("this node has no interface in {subnet}: can't inspect the range bridge (run discover on the range's Proxmox node)")),
     }
 
@@ -396,5 +439,9 @@ mod tests {
         assert!(domain_ok("corp.example.test") && !domain_ok("corp") && !domain_ok("a;b.test"));
         assert!(is_desktop("Microsoft Windows 10 Pro") && is_desktop("Microsoft Windows 11 Enterprise"));
         assert!(!is_desktop("Microsoft Windows Server 2022 Standard") && !is_desktop("Debian GNU/Linux 13"));
+        assert!(vm_port("tap121i0", &[121]) && vm_port("fwpr121p0", &[121]));
+        for p in ["tap122i0", "enp1s0", "bond0", "vmbr0.20", "veth100i0", "tap121i", "tap121ix"] {
+            assert!(!vm_port(p, &[121]), "{p}");
+        }
     }
 }
