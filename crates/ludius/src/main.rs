@@ -37,7 +37,7 @@ const USAGE: &str = "usage: ludius [--agent ADDR] [--vm VM] run TASK.yaml [--per
 
 /// The checkout's .env fills variables the environment doesn't set.
 fn load_env() {
-    let Ok(text) = std::fs::read_to_string(root().join(".env")) else { return };
+    let text = std::fs::read_to_string(root().join(".env")).unwrap_or_default();
     for line in text.lines() {
         if let Some((k, v)) = line.split_once('=')
             && !k.trim().is_empty()
