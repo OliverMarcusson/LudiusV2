@@ -1,2 +1,4 @@
 # Intranet downloads are served and checked byte for byte: never convert line endings.
 data/intranet/files/** -text
+# Shell scripts run on Linux (the node gets the checkout via git archive): always LF.
+*.sh text eol=lf
