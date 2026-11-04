@@ -494,8 +494,10 @@ impl Proxmox {
         let at = format!("/nodes/{}/qemu/{}", self.o.node, vm.id);
         match op {
             Op::State => {}
+            // vm.status is /cluster/resources, which pvestatd refreshes every few seconds: right after a stop it
+            // still says running, and a ladder reboot (stop, start) left the VM off. Ask the VM itself.
             Op::Start => {
-                if vm.status != "running" {
+                if self.state(vm.id).await? != "Running" {
                     self.capped(&vm, self.api.post(&format!("{at}/status/start"), &[])).await?;
                 }
             }
@@ -519,7 +521,7 @@ impl Proxmox {
             }
             Op::Clone => return self.clone_vm(&vm, checkpoint, target).await,
             Op::Delete => {
-                if vm.status == "running" {
+                if self.state(vm.id).await? != "Off" {
                     self.complete(self.api.post(&format!("{at}/status/stop"), &[]).await?).await?;
                 }
                 self.complete(self.api.delete(&at, &[("purge", "1"), ("destroy-unreferenced-disks", "1")]).await?).await?;
