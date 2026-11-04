@@ -138,12 +138,17 @@
       register: imap_since
       changed_when: false
 
-    - name: Outlook started and its IMAP log-in seen (one restart, with evidence, if the first start never connects)
+    # Two includes, not a loop: a looped include evaluates every item's condition before the first runs.
+    - name: Outlook started and its IMAP log-in seen
       ansible.builtin.include_tasks: imap-login.yml
-      loop: [1, 2]
-      loop_control:
-        loop_var: imap_try
-      when: imap_try == 1 or not imap_seen
+      vars:
+        imap_try: 1
+
+    - name: Outlook restarted once when the first start never connected (with evidence)
+      ansible.builtin.include_tasks: imap-login.yml
+      vars:
+        imap_try: 2
+      when: not imap_seen
   always:
     - name: Outlook closed and the setup task removed
       ansible.windows.win_powershell:
