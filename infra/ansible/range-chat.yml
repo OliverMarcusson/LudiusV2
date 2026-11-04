@@ -83,6 +83,12 @@
             --net0 virtio,bridge={{ range_bridge }} --ipconfig0 ip={{ chat01_ip }}/24 --onboot 1
           changed_when: true
 
+        - name: A new chat01 has a new host key (forget the one a deleted chat01 left)
+          ansible.builtin.command: ssh-keygen -f /root/.ssh/ludius_known_hosts -R {{ chat01_ip }}
+          register: forgot
+          changed_when: forgot.rc == 0
+          failed_when: false
+
         - name: Chat01 disk 20G (cloud-init grows the root partition)
           ansible.builtin.command: qm disk resize {{ chat01_vmid }} scsi0 20G
           changed_when: true
