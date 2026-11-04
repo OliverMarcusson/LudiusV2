@@ -145,6 +145,8 @@
       }
   register: dovecot_conf
 
+# smtpd_relay_restrictions: Debian's default defer_unauth_destination answers outside recipients 454 (try later);
+# the discover boundary gate wants a permanent refusal.
 - name: Postfix delivers to the range domain only (everything else bounces), submission with SASL over TLS
   ansible.builtin.shell: |
     set -e
@@ -155,7 +157,7 @@
       'inet_interfaces = all' 'inet_protocols = ipv4' 'mynetworks = 127.0.0.0/8' 'relayhost =' \
       'local_transport = error:local delivery is off' 'default_transport = error:outside the range' \
       'relay_transport = error:outside the range' 'virtual_mailbox_domains = {{ mail_domain }}' \
-      'virtual_transport = lmtp:unix:private/dovecot-lmtp' 'smtpd_recipient_restrictions = reject_unauth_destination' \
+      'virtual_transport = lmtp:unix:private/dovecot-lmtp' 'smtpd_recipient_restrictions = reject_unauth_destination'       'smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination' \
       'always_add_missing_headers = yes' 'smtpd_tls_security_level = may' \
       'smtpd_tls_chain_files = /etc/ludius-mail/ssl/server.key /etc/ludius-mail/ssl/chain.pem' \
       'compatibility_level = 3.6'
