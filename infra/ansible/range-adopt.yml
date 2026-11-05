@@ -118,6 +118,8 @@
   gather_facts: false
   vars:
     dc_admin_password: "{{ lookup('ansible.builtin.file', dc_admin_file) }}"
+    # mail_adopt: the EWS account, its password generated once into the secrets file (the controller reads it there)
+    ews_account: "{{ [{'user': ews_user, 'name': 'Ludius EWS', 'pw': lookup('ansible.builtin.password', ews_password_file, length=32, chars=['ascii_letters', 'digits'])}] if mail_adopt | default(false) | bool else [] }}"
   tasks:
     - name: OU Ludius and one account per narrative person (an account outside OU Ludius is never touched)
       run_once: true
@@ -152,16 +154,104 @@
               $e.Properties['mail'].Value = "$u@$domain"
               $e.CommitChanges(); $Ansible.Changed = $true
             }
-            $e.Invoke('SetPassword', "$u$suffix")
+            $e.Invoke('SetPassword', $(if ($p.pw) { $p.pw } else { "$u$suffix" }))
             $e.Properties['userAccountControl'].Value = 0x10200  # normal account, password never expires
             $e.CommitChanges()
           }
         parameters:
           domain: "{{ domain }}"
           pw: "{{ dc_admin_password }}"
-          people: "{{ people }}"
+          people: "{{ people + ews_account }}"
           suffix: "{{ user_password_suffix }}"
       no_log: true
+
+    - name: The EWS account's password file is root's only
+      when: mail_adopt | default(false) | bool
+      run_once: true
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "{{ ews_password_file }}"
+        mode: "0600"
+
+- name: Mailboxes in the adopted Exchange
+  hosts: personas
+  gather_facts: false
+  vars:
+    dc_admin_password: "{{ lookup('ansible.builtin.file', dc_admin_file) }}"
+  tasks:
+    # Exchange's own remote PowerShell from one member desktop, as the domain Administrator: only persona accounts in
+    # OU Ludius get mailboxes and the marker, the scope is rooted at OU Ludius. Connectors, accepted domains, address
+    # policies, virtual directories and certificates are the operator's and never touched.
+    - name: Persona mailboxes, the noise marker, scope 'Ludius noise mailboxes' and EWS impersonation in it
+      when: mail_adopt | default(false) | bool
+      run_once: true
+      ansible.windows.win_powershell:
+        script: |
+          param($domain, $pw, $people, $svc, $marker, $ews_ip)
+          $ErrorActionPreference = 'Stop'
+          $Ansible.Changed = $false
+          $auth = [DirectoryServices.AuthenticationTypes]'Secure,Sealing,Signing'
+          $dse = New-Object DirectoryServices.DirectoryEntry("LDAP://$domain/RootDSE", "Administrator@$domain", $pw, $auth)
+          $cfg = New-Object DirectoryServices.DirectoryEntry("LDAP://$domain/$($dse.Properties['configurationNamingContext'].Value)", "Administrator@$domain", $pw, $auth)
+          $q = New-Object DirectoryServices.DirectorySearcher($cfg, '(objectClass=msExchExchangeServer)')
+          $null = $q.PropertiesToLoad.Add('networkAddress')
+          $servers = @($q.FindAll() | ForEach-Object { $_.Properties['networkaddress'] } | Where-Object { "$_" -like 'ncacn_ip_tcp:*' } | ForEach-Object { "$_".Substring(13) })
+          if (-not $servers) { throw "no Exchange server in $domain's configuration partition" }
+          $fqdn = @($servers | Where-Object { (Resolve-DnsName $_ -Type A -ErrorAction SilentlyContinue).IPAddress -contains $ews_ip }) + $servers | Select-Object -First 1
+          $cred = New-Object Management.Automation.PSCredential("Administrator@$domain", (ConvertTo-SecureString $pw -AsPlainText -Force))
+          $s = New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri "http://$fqdn/PowerShell/" -Authentication Kerberos -Credential $cred
+          try {
+            Import-PSSession $s -DisableNameChecking -AllowClobber -CommandName Get-User, Get-Mailbox, Enable-Mailbox, Set-Mailbox,
+              Get-ManagementScope, New-ManagementScope, Set-ManagementScope,
+              Get-ManagementRoleAssignment, New-ManagementRoleAssignment, Remove-ManagementRoleAssignment | Out-Null
+            $ou = "$domain/Ludius"
+            foreach ($u in $people) {
+              $usr = Get-User "$u@$domain"
+              if ("$($usr.OrganizationalUnit)" -ne $ou) { throw "$u is in $($usr.OrganizationalUnit), not OU Ludius: refusing to touch it" }
+              if ("$($usr.RecipientTypeDetails)" -ne 'UserMailbox') { Enable-Mailbox "$u@$domain" | Out-Null; $Ansible.Changed = $true }
+              $m = Get-Mailbox "$u@$domain"
+              if ($m.CustomAttribute1 -ne $marker) { Set-Mailbox "$u@$domain" -CustomAttribute1 $marker; $Ansible.Changed = $true }
+            }
+            Get-Mailbox -OrganizationalUnit $ou -ResultSize Unlimited | Where-Object { $_.CustomAttribute1 -eq $marker -and $_.SamAccountName -notin $people } |
+              ForEach-Object { Set-Mailbox $_.Identity -CustomAttribute1 $null; $Ansible.Changed = $true }
+            $scope, $filter = 'Ludius noise mailboxes', "CustomAttribute1 -eq '$marker'"
+            $sc = Get-ManagementScope $scope -ErrorAction SilentlyContinue
+            if (-not $sc) { New-ManagementScope $scope -RecipientRoot $ou -RecipientRestrictionFilter $filter | Out-Null; $Ansible.Changed = $true }
+            elseif ($sc.RecipientFilter -ne $filter -or "$($sc.RecipientRoot)" -ne $ou) {
+              Set-ManagementScope $scope -RecipientRoot $ou -RecipientRestrictionFilter $filter; $Ansible.Changed = $true
+            }
+            Get-ManagementRoleAssignment -RoleAssignee $svc -Role ApplicationImpersonation -ErrorAction SilentlyContinue |
+              Where-Object CustomRecipientWriteScope -ne $scope |
+              ForEach-Object { Remove-ManagementRoleAssignment $_.Identity -Confirm:$false; $Ansible.Changed = $true }
+            if (-not (Get-ManagementRoleAssignment -RoleAssignee $svc -Role ApplicationImpersonation -ErrorAction SilentlyContinue)) {
+              New-ManagementRoleAssignment -Name 'Ludius EWS impersonation' -Role ApplicationImpersonation -User $svc -CustomRecipientWriteScope $scope | Out-Null
+              $Ansible.Changed = $true
+            }
+            # the controller addresses personas as <account>@<mail domain>; the operator's address policy decides
+            $addr = @($people | ForEach-Object { "$((Get-Mailbox "$_@$domain").PrimarySmtpAddress)".ToLower() })
+            $md = ($addr[0] -split '@')[1]
+            $bad = @($addr | Where-Object { ($_ -split '@')[1] -ne $md -or ($_ -split '@')[0] -notin $people })
+            if ($bad) { throw "persona addresses are not <account>@<one domain> ($($addr -join ', ')): the address policy for OU Ludius has to give alias@domain" }
+            @{ mail_domain = $md; server = $fqdn }
+          } finally { Remove-PSSession $s }
+        parameters:
+          domain: "{{ domain }}"
+          pw: "{{ dc_admin_password }}"
+          people: "{{ people | map(attribute='user') | list }}"
+          svc: "{{ ews_user }}"
+          marker: "{{ ews_scope_marker }}"
+          ews_ip: "{{ (lookup('ansible.builtin.file', discovery_file) | from_json).ews.ip }}"
+      no_log: true
+      register: exchange_adopt
+
+    - name: The mail domain the mailboxes got, for the controller settings
+      when: mail_adopt | default(false) | bool
+      run_once: true
+      delegate_to: localhost
+      ansible.builtin.copy:
+        content: "{{ exchange_adopt.output[0] | to_nice_json }}\n"
+        dest: "{{ mail_facts_file }}"
+        mode: "0644"
 
 - name: Persona desktops
   hosts: personas
@@ -177,6 +267,23 @@
           $Ansible.Changed = $false
           $miss = 'OUTLOOK.EXE', 'WINWORD.EXE', 'EXCEL.EXE' | Where-Object { -not (Test-Path "C:\Program Files\Microsoft Office\root\Office16\$_") }
           if ($miss) { throw "Office 2016 or later (64-bit, Click-to-Run) is missing here: $($miss -join ', '). Install it, then run apply again" }
+
+    - name: This desktop has a default gateway and trusts the Exchange certificate (both the operator's on an existing range)
+      when: mail_adopt | default(false) | bool
+      ansible.windows.win_powershell:
+        script: |
+          param($url)
+          $Ansible.Changed = $false
+          if (-not (Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction SilentlyContinue)) {
+            throw 'no default gateway on this desktop: Outlook then counts itself offline and will not open Exchange'
+          }
+          try { Invoke-WebRequest $url -UseBasicParsing -TimeoutSec 20 | Out-Null }
+          catch [Net.WebException] {
+            if ($_.Exception.Response) { return } # 401: TLS held, the server asks for credentials
+            throw "EWS $url unreachable or not trusted here ($($_.Exception.Message)): Outlook needs the server's certificate chain trusted on this desktop"
+          }
+        parameters:
+          url: "{{ ews_url }}"
 
     - name: The domain's NetBIOS name, from this member
       ansible.windows.win_powershell:
@@ -236,6 +343,21 @@
       retries: 20
       delay: 15
       until: obs is succeeded
+
+    # without it Outlook's first start asks for the account; with it, it builds the profile from the logon (Autodiscover)
+    - name: Outlook sets itself up from the persona's logon (ZeroConfigExchange, the persona's policy hive)
+      when: mail_adopt | default(false) | bool
+      ansible.windows.win_powershell:
+        script: |
+          param($p)
+          $ErrorActionPreference = 'Stop'
+          $sid = ([Security.Principal.NTAccount]$p).Translate([Security.Principal.SecurityIdentifier]).Value
+          $k = "Registry::HKEY_USERS\$sid\Software\Policies\Microsoft\Office\16.0\Outlook\AutoDiscover"
+          $Ansible.Changed = (Get-ItemProperty $k -ErrorAction SilentlyContinue).ZeroConfigExchange -ne 1
+          if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
+          if ($Ansible.Changed) { Set-ItemProperty $k ZeroConfigExchange 1 -Type DWord }
+        parameters:
+          p: "{{ domain_netbios }}\\{{ persona }}"
 
     - name: Persona done
       ansible.builtin.set_fact:

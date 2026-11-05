@@ -106,6 +106,9 @@ pub struct Addon {
     /// AD backend "adopt": "secret:<name>", the file holding the domain Administrator's password.
     #[serde(default)]
     pub admin: String,
+    /// Mail backend "adopt" (an existing Exchange): its EWS URL, a name in the server's certificate.
+    #[serde(default)]
+    pub ews: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,6 +199,11 @@ impl Spec {
         self.addons.mail.as_ref().map_or("", |a| a.backend.as_str())
     }
 
+    /// An existing range's Exchange: mailboxes for the personas, the scope and the EWS account; the server is the operator's.
+    pub fn mail_adopt(&self) -> bool {
+        self.existing() && self.mail() == "adopt"
+    }
+
     pub fn chat(&self) -> bool {
         self.addons.chat.is_some()
     }
@@ -254,8 +262,12 @@ impl Spec {
             let ad = self.addons.ad.as_ref().context("addons.ad: an existing range needs backend = \"adopt\" (its domain gets the persona accounts)")?;
             ensure!(ad.backend == "adopt", "addons.ad.backend {:?}: an existing range adopts its AD (\"adopt\")", ad.backend);
             ensure!(re(r"^secret:[A-Za-z0-9_.-]+$").is_match(&ad.admin), "addons.ad.admin: \"secret:<name>\", the domain Administrator's password in {}/<name>", secrets_dir().display());
-            // ponytail: adopting mail and chat comes next; until then the range runs Office without mail
-            ensure!(self.addons.mail.is_none() && self.addons.chat.is_none(), "addons.mail and addons.chat: adopting them in an existing range is not scripted yet; leave them out");
+            if let Some(m) = &self.addons.mail {
+                ensure!(m.backend == "adopt", "addons.mail.backend {:?}: an existing range adopts its Exchange (\"adopt\")", m.backend);
+                ensure!(re(r"^https://[A-Za-z0-9.-]+(:[0-9]+)?/").is_match(&m.ews), "addons.mail.ews {:?}: the EWS URL, https://NAME/EWS/Exchange.asmx with a name in the server's certificate", m.ews);
+            }
+            // ponytail: adopting chat comes next; until then an existing range runs without it
+            ensure!(self.addons.chat.is_none(), "addons.chat: adopting chat in an existing range is not scripted yet; leave it out");
         } else {
             ensure!(self.personas.desktops.is_empty(), "personas.desktops: only for range.mode \"existing\"");
             ensure!(n <= 78, "personas.count: at most 78 (addresses .21-.99)");
@@ -587,13 +599,14 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
             what: format!("Boundary gate (hard stop): discover {} read-only, and {desktops} are Windows desktops on its bridge", spec.range.subnet),
             sh: Some(format!(
                 "set -e; command -v nmap ldapsearch smbclient dig >/dev/null || apt-get install -y nmap ldap-utils smbclient dnsutils; \
-                 ./ludius-rs setup discover --subnet {} --domain {} --out {dir}; \
+                 ./ludius-rs setup discover --subnet {} --domain {}{ews} --out {dir}; \
                  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); have={{v[\"name\"] for v in d[\"desktops\"]}}; miss=[n for n in sys.argv[2:] if n not in have]; \
                  miss and sys.exit(\"not Windows 10/11 desktops on the range bridge: \" + \" \".join(miss))' {discovery} {desktops}",
                 spec.range.subnet, spec.range.domain,
+                ews = if spec.mail_adopt() { format!(" --ews {}", shell_quote(&ews_url(spec))) } else { String::new() },
             )),
             exists: None,
-            creates: vec![format!("file {discovery}"), "node packages nmap, ldap-utils, smbclient, dnsutils when missing (read-only probes; on the node, not the range)".into()],
+            creates: vec![format!("file {discovery}"), format!("file {dir}/ews-ca.pem (mail adopt: the EWS certificate, pinned)"), "node packages nmap, ldap-utils, smbclient, dnsutils when missing (read-only probes; on the node, not the range)".into()],
             irreversible: vec![],
             rerun: true,
         },
@@ -645,20 +658,42 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
         },
         Step {
             id: "adopt",
-            what: format!("range-adopt.yml: persona accounts in OU Ludius of {}, then on {desktops}: observer, settings, autologon", spec.range.domain),
+            what: format!(
+                "range-adopt.yml: persona accounts in OU Ludius of {}{}, then on {desktops}: observer, settings, autologon",
+                spec.range.domain,
+                if spec.mail_adopt() { ", their Exchange mailboxes and the EWS account" } else { "" }
+            ),
             sh: Some(format!("{ANSIBLE} range-adopt.yml -e @{vars}")),
             exists: None,
             creates: vec![
                 format!("AD OU Ludius in {} with one account per narrative person", spec.range.domain),
                 "on the desktops: event log sizes, Netlogon DisablePasswordChange (machine password kept through clock warps), the base role's power, lock, first-run and Edge settings".into(),
                 format!("on {desktops}: observer in C:\\Program Files\\RangeAssist, its logon task, the range code-signing root, viosock driver, Office first-run settings, autologon as the persona"),
-            ],
+            ]
+            .into_iter()
+            .chain(
+                spec.mail_adopt()
+                    .then(|| {
+                        [
+                            format!("Exchange: a mailbox per persona account (OU Ludius), marked CustomAttribute1 {EWS_MARKER}"),
+                            format!("Exchange: management scope '{EWS_SCOPE}' (OU Ludius, that marker) and role assignment '{EWS_ASSIGNMENT}' (ApplicationImpersonation in it) for {EWS_USER}"),
+                            format!("AD account {EWS_USER} in OU Ludius, its password in {}", ews_secret(spec).display()),
+                            format!("file {dir}/exchange.json (the mail domain the mailboxes got)"),
+                        ]
+                    })
+                    .into_iter()
+                    .flatten(),
+            )
+            .collect(),
             irreversible: vec![
                 "Windows Update, Defender and automatic maintenance off on the desktops (the image settings Ludius runs with)".into(),
                 "WinRM is stopped and disabled on the desktops afterwards, also where it ran before".into(),
                 "an account already in OU Ludius (from an earlier run) gets its password reset to the persona password".into(),
                 "each desktop gets a vsock device and a fixed 1920x1080 standard display (QEMU args, vga std), applied with one power cycle".into(),
-            ],
+            ]
+            .into_iter()
+            .chain(spec.mail_adopt().then(|| "Exchange mailboxes, once created, hold mail; removing them (Disable-Mailbox) deletes it".to_string()))
+            .collect(),
             rerun: true,
         },
         shared("controller"),
@@ -1119,6 +1154,10 @@ pub fn ansible_vars(spec: &Spec, l: &Layout) -> Result<String> {
         let v = serde_json::json!({
             "domain": spec.range.domain,
             "mail_backend": "",
+            "mail_adopt": spec.mail_adopt(),
+            "ews_url": ews_url(spec),
+            "ews_password_file": ews_secret(spec).display().to_string(),
+            "mail_facts_file": l.dir.join("exchange.json").display().to_string(),
             "chat_enabled": false,
             "range_pool": h.pool,
             "range_net": spec.range_net(),
@@ -1186,6 +1225,21 @@ pub fn controller_env(spec: &Spec, l: &Layout, root: &Path) -> String {
     let net = spec.range_net();
     let ca = root.join("infra/ansible/build/range-ca.crt").display().to_string();
     match spec.mail() {
+        "adopt" if spec.existing() => {
+            // the gate's discovery (EWS address, pinned certificate) and the adopt play's exchange.json (mail domain)
+            let read = |f: &str| std::fs::read_to_string(l.dir.join(f)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).unwrap_or_default();
+            let (d, x) = (read("discovery.json"), read("exchange.json"));
+            let get = |v: &serde_json::Value, k: &str| v[k].as_str().unwrap_or_default().to_string();
+            e.extend([
+                "LUDIUS_MAIL_BACKEND=exchange".into(),
+                format!("LUDIUS_MAIL_DOMAIN={}", get(&x, "mail_domain")),
+                format!("LUDIUS_EWS_URL={}", ews_url(spec)),
+                format!("LUDIUS_EWS_ADDR={}", get(&d["ews"], "ip")),
+                format!("LUDIUS_EWS_USER={EWS_USER}@{}", spec.range.domain),
+                format!("LUDIUS_EWS_PASSWORD_FILE={}", ews_secret(spec).display()),
+                format!("LUDIUS_EWS_CA={}", get(&d["ews"], "ca")),
+            ]);
+        }
         "exchange" => e.extend([
             "LUDIUS_MAIL_BACKEND=exchange".into(),
             "LUDIUS_MAIL_DOMAIN=ludius.internal".into(),
@@ -1212,10 +1266,25 @@ pub fn controller_env(spec: &Spec, l: &Layout, root: &Path) -> String {
     format!("# generated by ludius setup; add to the checkout's .env\n{}\n", e.join("\n"))
 }
 
+/// infra/ansible group_vars: the EWS account and the marker its impersonation scope filters on.
+const EWS_USER: &str = "ludiussvc";
+const EWS_MARKER: &str = "ludius-noise";
+const EWS_SCOPE: &str = "Ludius noise mailboxes";
+const EWS_ASSIGNMENT: &str = "Ludius EWS impersonation";
+
+fn ews_url(spec: &Spec) -> String {
+    spec.addons.mail.as_ref().map(|m| m.ews.clone()).unwrap_or_default()
+}
+
+/// The adopted Exchange's EWS account password (the adopt play generates it once).
+fn ews_secret(spec: &Spec) -> PathBuf {
+    secrets_dir().join(format!("ews-{}", spec.range.domain))
+}
+
 pub mod discover;
 
 pub fn main(args: &[String], root: &Path) -> Result<()> {
-    const USAGE: &str = "usage: ludius setup plan|apply RANGE.toml | discover --subnet A.B.C.D/P --domain DOMAIN [--out DIR]";
+    const USAGE: &str = "usage: ludius setup plan|apply RANGE.toml | discover --subnet A.B.C.D/P --domain DOMAIN [--ews URL] [--out DIR]";
     if args.first().is_some_and(|a| a == "discover") {
         return discover::main(&args[1..]);
     }
@@ -1314,7 +1383,13 @@ decider = { provider = "openrouter", model = "liquid/d1.1", key = "secret:openro
         assert!(existing("backend = \"adopt\"", "backend = \"samba\"").is_err(), "AD must be adopted");
         assert!(existing("admin = \"secret:dc-admin\"", "admin = \"hunter2\"").is_err(), "inline admin password");
         assert!(existing("\"ws-b\"", "\"ws-a\"").is_err(), "desktop twice");
-        assert!(existing("[ai]", "[addons.mail]\nbackend = \"imap\"\n[ai]").is_err(), "mail not adoptable yet");
+        assert!(existing("[ai]", "[addons.mail]\nbackend = \"imap\"\n[ai]").is_err(), "an existing range adopts its mail");
+        assert!(existing("[ai]", "[addons.mail]\nbackend = \"adopt\"\n[ai]").is_err(), "adopted mail needs its EWS URL");
+        let m = existing("[ai]", "[addons.mail]\nbackend = \"adopt\"\news = \"https://mail.corp.test/EWS/Exchange.asmx\"\n[ai]").unwrap();
+        assert!(m.mail_adopt() && verify_apps(&m).contains(&"outlook"));
+        let gate = plan(&m, &Layout { dir: PathBuf::from("/tmp/r") }).into_iter().find(|s| s.id == "gate").unwrap();
+        assert!(gate.sh.unwrap().contains("--ews 'https://mail.corp.test/EWS/Exchange.asmx'"));
+        assert!(existing("[ai]", "[addons.chat]\n[ai]").is_err(), "chat not adoptable yet");
         assert!(spec("count = 3", "count = 3\ndesktops = [\"ws-a\"]").is_err(), "desktops only for existing");
     }
 

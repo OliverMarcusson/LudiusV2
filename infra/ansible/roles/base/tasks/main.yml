@@ -47,7 +47,8 @@
     script: |
       $Ansible.Changed = $false
       $t = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Defender\Features' -ErrorAction SilentlyContinue).TamperProtection
-      if ($t -eq 5) { throw 'Tamper Protection is on: turn it off in the Security app (or the offline SOFTWARE hive) first' }
+      # 1 or 5 is on, 0 or 4 off
+      if ($t -band 1) { throw 'Tamper Protection is on: turn it off in the Security app (or the offline SOFTWARE hive) first' }
 
 - name: Defender realtime protection off (preference, while the service still runs)
   ansible.windows.win_powershell:

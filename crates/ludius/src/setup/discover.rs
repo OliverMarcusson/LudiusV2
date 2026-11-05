@@ -133,6 +133,56 @@ fn resolve_a(server: Ipv4Addr, name: &str) -> std::result::Result<Vec<Ipv4Addr>,
     }
 }
 
+/// HOST and PORT of an https URL; None when it isn't one.
+fn https_host(url: &str) -> Option<(String, u16)> {
+    let rest = url.strip_prefix("https://")?;
+    let auth = rest.split('/').next()?;
+    let (host, port) = match auth.rsplit_once(':') {
+        Some((h, p)) => (h, p.parse().ok()?),
+        None => (auth, 443),
+    };
+    (domain_ok(host) || host.parse::<Ipv4Addr>().is_ok()).then(|| (host.to_lowercase(), port))
+}
+
+/// addons.mail adopt: the EWS host resolves (range DNS) to one address inside the subnet, offers Basic sign-in (the
+/// controller's EWS client uses it), and the last certificate the server sends verifies its name; that certificate
+/// is pinned in OUT/ews-ca.pem. Reads only; a server without Basic fails here, Ludius doesn't change its settings.
+fn ews_check(url: &str, dns: Option<Ipv4Addr>, subnet: Subnet, out: &std::path::Path) -> (bool, String, Value) {
+    let fail = |why: String| (false, why, Value::Null);
+    let Some((host, port)) = https_host(url) else { return fail(format!("{url}: want https://HOST[:PORT]/EWS/Exchange.asmx")) };
+    let ip = match host.parse::<Ipv4Addr>() {
+        Ok(ip) => ip,
+        Err(_) => match dns.map(|s| resolve_a(s, &host)) {
+            Some(Ok(a)) if a.len() == 1 => a[0],
+            Some(Ok(a)) => return fail(format!("{host}: {} addresses in the range's DNS, want one", a.len())),
+            Some(Err(e)) => return fail(format!("{host}: {e}")),
+            None => return fail(format!("no DNS server in {subnet} to resolve {host}")),
+        },
+    };
+    if !subnet.contains(ip) {
+        return fail(format!("{host} is {ip}, outside {subnet}"));
+    }
+    let pin = format!("{host}:{port}:{ip}");
+    let head = run(&["curl", "-sk", "-m", "10", "--max-redirs", "0", "--resolve", &pin, "-o", "/dev/null", "-D", "-", url]).unwrap_or_default();
+    if !head.lines().any(|l| l.to_ascii_lowercase().starts_with("www-authenticate: basic")) {
+        return fail(format!("{url} ({ip}) does not offer Basic sign-in: the operator enables it on the EWS virtual directory (Set-WebServicesVirtualDirectory -BasicAuthentication $true)"));
+    }
+    let chain = run(&["openssl", "s_client", "-connect", &format!("{ip}:{port}"), "-servername", &host, "-showcerts"]).unwrap_or_default();
+    let Some(last) = chain.rsplit_once("-----BEGIN CERTIFICATE-----").and_then(|(_, b)| b.split_once("-----END CERTIFICATE-----")).map(|(b, _)| format!("-----BEGIN CERTIFICATE-----{b}-----END CERTIFICATE-----\n")) else {
+        return fail(format!("no certificate from {ip}:{port}"));
+    };
+    let ca = out.join("ews-ca.pem");
+    if let Err(e) = std::fs::create_dir_all(out).and_then(|_| std::fs::write(&ca, last)) {
+        return fail(format!("{}: {e}", ca.display()));
+    }
+    let ca_s = ca.display().to_string();
+    let code = run(&["curl", "-s", "-m", "10", "--max-redirs", "0", "--cacert", &ca_s, "--resolve", &pin, "-o", "/dev/null", "-w", "%{http_code}", url]).unwrap_or_default();
+    if code != "401" {
+        return fail(format!("the last certificate {ip}:{port} sends doesn't verify {host} (HTTP {code:?}): the server must send its chain up to the root, and the name must be in the certificate"));
+    }
+    (true, format!("{host} = {ip}, Basic offered, certificate pinned in {ca_s}"), json!({"url": url, "host": host, "ip": ip.to_string(), "ca": ca_s}))
+}
+
 /// One SMTP RCPT to an address outside the range domain: the gate passes only on a 5xx refusal. Never sends DATA.
 fn smtp_refuses_outside(ip: Ipv4Addr, port: u16, domain: &str) -> (bool, String) {
     let attempt = || -> Result<(bool, String)> {
@@ -288,7 +338,7 @@ fn on(b: bool) -> &'static str {
 }
 
 pub fn main(args: &[String]) -> Result<()> {
-    const USAGE: &str = "usage: ludius setup discover --subnet A.B.C.D/P --domain DOMAIN [--out DIR]";
+    const USAGE: &str = "usage: ludius setup discover --subnet A.B.C.D/P --domain DOMAIN [--ews URL] [--out DIR]";
     let get = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let (Some(subnet), Some(domain)) = (get("--subnet"), get("--domain")) else { bail!(USAGE) };
     let subnet = Subnet::parse(&subnet)?;
@@ -433,6 +483,12 @@ pub fn main(args: &[String]) -> Result<()> {
         let (pass, why) = smtp_refuses_outside(ip, port, &domain);
         r.check(&format!("{ip}:{port} refuses delivery outside {domain}"), pass, why);
     }
+    let mut ews = Value::Null;
+    if let Some(url) = get("--ews") {
+        let (pass, why, doc) = ews_check(&url, dns.first().copied(), subnet, &out);
+        r.check(&format!("EWS {url}: inside {subnet}, Basic sign-in, certificate pinned"), pass, why);
+        ews = doc;
+    }
     match &bridge {
         Some(b) => no_route_out(&mut r, b, vms.as_deref()),
         None => r.check("no route out", false, format!("this node has no interface in {subnet}: can't inspect the range bridge (run discover on the range's Proxmox node)")),
@@ -442,7 +498,7 @@ pub fn main(args: &[String]) -> Result<()> {
     let doc = json!({
         "subnet": subnet.to_string(), "domain": domain, "at": chrono::Local::now().to_rfc3339(),
         "hosts": hosts.iter().map(|(ip, p)| json!({"ip": ip.to_string(), "open": p})).collect::<Vec<_>>(),
-        "bridge": bridge, "desktops": desktops, "facts": r.facts, "gate": {"pass": gate_pass, "checks": r.gate},
+        "bridge": bridge, "desktops": desktops, "facts": r.facts, "ews": ews, "gate": {"pass": gate_pass, "checks": r.gate},
     });
     std::fs::create_dir_all(&out)?;
     let file = out.join("discovery.json");
@@ -468,6 +524,9 @@ mod tests {
         assert!(Subnet::parse("10.0.0.0/8").is_err(), "too wide");
         let s = Subnet::parse("10.20.0.0/24").unwrap();
         assert!(s.contains("10.20.0.9".parse().unwrap()) && !s.contains("10.20.1.9".parse().unwrap()));
+        assert_eq!(https_host("https://mail.corp.test/EWS/Exchange.asmx"), Some(("mail.corp.test".into(), 443)));
+        assert_eq!(https_host("https://10.0.0.12:8443/EWS/Exchange.asmx"), Some(("10.0.0.12".into(), 8443)));
+        assert!(https_host("http://mail.corp.test/EWS").is_none() && https_host("https://a;b.test/").is_none());
         assert!(domain_ok("corp.example.test") && !domain_ok("corp") && !domain_ok("a;b.test"));
         assert!(is_desktop("Microsoft Windows 10 Pro") && is_desktop("Microsoft Windows 11 Enterprise"));
         assert!(!is_desktop("Microsoft Windows Server 2022 Standard") && !is_desktop("Debian GNU/Linux 13"));
