@@ -625,7 +625,14 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
         Step {
             id: "agent",
             what: format!("Desktops {desktops} into pool {}, host agent as systemd unit {AGENT_UNIT}", h.pool),
-            sh: Some(format!("set -e; {ids}pvesh set /pools/{} --vms \"$ids\"; echo \"pool {}: $ids\"; {}", h.pool, h.pool, agent_sh(spec, "", spec.personas.count))),
+            // a rerun (or an operator who pooled them already) finds members: add only the rest; another pool still fails
+            sh: Some(format!(
+                "set -e; {ids}have=$(pvesh get /pools/{p} --output-format json | python3 -c 'import json,sys; print(\" \".join(str(m[\"vmid\"]) for m in json.load(sys.stdin).get(\"members\",[]) if \"vmid\" in m))'); \
+                 add=; for i in ${{ids//,/ }}; do case \" $have \" in *\" $i \"*) ;; *) add=\"$add${{add:+,}}$i\";; esac; done; \
+                 [ -z \"$add\" ] || pvesh set /pools/{p} --vms \"$add\"; echo \"pool {p}: $ids (added: ${{add:-none}})\"; {}",
+                agent_sh(spec, "", spec.personas.count),
+                p = h.pool
+            )),
             exists: None,
             creates: vec![
                 format!("pool {} membership of {desktops} (the host agent acts only on its pool)", h.pool),
