@@ -70,26 +70,15 @@
     - { path: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection', name: DisableRealtimeMonitoring }
   register: defender_policy
 
+# base_defer_reboot: the caller reboots later anyway (adopt: the persona restart) and runs defender-check.yml after it
 - name: Reboot for the Defender policy
   ansible.windows.win_reboot:
     reboot_timeout: 900
-  when: defender_policy is changed
+  when: defender_policy is changed and not (base_defer_reboot | default(false))
 
-- name: Defender antivirus and realtime protection are off
-  ansible.windows.win_powershell:
-    script: |
-      $Ansible.Changed = $false
-      $svc = Get-Service WinDefend -ErrorAction SilentlyContinue
-      try { $s = Get-MpComputerStatus -ErrorAction Stop } catch { $s = $null }
-      if ($s) {
-        if ($s.RealTimeProtectionEnabled -or $s.AntivirusEnabled) {
-          throw "Defender still on: RealTimeProtectionEnabled=$($s.RealTimeProtectionEnabled) AntivirusEnabled=$($s.AntivirusEnabled)"
-        }
-        "RealTimeProtectionEnabled=False AntivirusEnabled=False"
-      }
-      elseif ($svc -and $svc.Status -eq 'Running') { throw 'WinDefend is running but its status is unreadable' }
-      else { "WinDefend $(if ($svc) { $svc.Status } else { 'absent' }): Defender antivirus not running" }
-  register: defender_off
+- name: Defender is off
+  ansible.builtin.include_tasks: defender-check.yml
+  when: not (base_defer_reboot | default(false))
 
 - name: No automatic maintenance (it runs Defender, defrag and update scans in idle time)
   ansible.windows.win_regedit:

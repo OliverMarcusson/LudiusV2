@@ -169,6 +169,7 @@
   vars:
     dc_admin_password: "{{ lookup('ansible.builtin.file', dc_admin_file) }}"
     range_ca: false
+    base_defer_reboot: true # one reboot per desktop: the domain role's restart into the persona's session
   tasks:
     - name: Office (Outlook, Word, Excel) is installed; on an existing range it is the operator's
       ansible.windows.win_powershell:
@@ -206,18 +207,21 @@
       loop_control:
         label: "{{ item.role }}"
 
-    - name: Domain role (already a member; autologon as the persona)
-      ansible.builtin.include_role:
-        name: domain
-
+    # Already a domain member, so the persona's account resolves before its first logon: the task is registered
+    # before the domain role's restart, whose autologon then starts the observer (no second reboot).
     - name: Observer logon task
       ansible.builtin.include_role:
         name: observer
         tasks_from: persona
 
-    - name: Log on again (the observer starts at logon)
-      ansible.windows.win_reboot:
-        reboot_timeout: 900
+    - name: Domain role (already a member; autologon as the persona, then the one restart)
+      ansible.builtin.include_role:
+        name: domain
+
+    - name: Defender is off (its policy took effect with that restart)
+      ansible.builtin.include_role:
+        name: base
+        tasks_from: defender-check
 
     - name: Observer process in the persona's session
       ansible.windows.win_powershell:

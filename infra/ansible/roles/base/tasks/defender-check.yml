@@ -1,0 +1,16 @@
+---
+- name: Defender antivirus and realtime protection are off
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      $svc = Get-Service WinDefend -ErrorAction SilentlyContinue
+      try { $s = Get-MpComputerStatus -ErrorAction Stop } catch { $s = $null }
+      if ($s) {
+        if ($s.RealTimeProtectionEnabled -or $s.AntivirusEnabled) {
+          throw "Defender still on: RealTimeProtectionEnabled=$($s.RealTimeProtectionEnabled) AntivirusEnabled=$($s.AntivirusEnabled)"
+        }
+        "RealTimeProtectionEnabled=False AntivirusEnabled=False"
+      }
+      elseif ($svc -and $svc.Status -eq 'Running') { throw 'WinDefend is running but its status is unreadable' }
+      else { "WinDefend $(if ($svc) { $svc.Status } else { 'absent' }): Defender antivirus not running" }
+  register: defender_off
