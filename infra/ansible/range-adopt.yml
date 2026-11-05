@@ -17,9 +17,10 @@
           - people | map(attribute='user') | select('match', '^[a-z][a-z0-9._-]{0,19}$') | list | length == people | length
           - people | map(attribute='name') | select('match', "^[A-Za-zÀ-ɏ][A-Za-zÀ-ɏ .'-]*$") | list | length == people | length
           - people | map(attribute='user') | unique | length == people | length
+          - ews_user not in people | map(attribute='user')
           - range_personas | map(attribute='user') | difference(people | map(attribute='user')) | length == 0
           - range_admin_password | length >= 12
-        fail_msg: unsafe or duplicate narrative people, a persona outside the narrative, or a bring-up password under 12 characters
+        fail_msg: unsafe or duplicate narrative people, one named {{ ews_user }}, a persona outside the narrative, or a bring-up password under 12 characters
 
     - name: Each desktop's VM id (this node, range pool), range address and computer name (Proxmox and its guest agent)
       ansible.builtin.command:
@@ -230,7 +231,7 @@
             # the controller addresses personas as <account>@<mail domain>; the operator's address policy decides
             $addr = @($people | ForEach-Object { "$((Get-Mailbox "$_@$domain").PrimarySmtpAddress)".ToLower() })
             $md = ($addr[0] -split '@')[1]
-            $bad = @($addr | Where-Object { ($_ -split '@')[1] -ne $md -or ($_ -split '@')[0] -notin $people })
+            $bad = @(0..($people.Count - 1) | Where-Object { $addr[$_] -ne "$($people[$_])@$md".ToLower() })
             if ($bad) { throw "persona addresses are not <account>@<one domain> ($($addr -join ', ')): the address policy for OU Ludius has to give alias@domain" }
             @{ mail_domain = $md; server = $fqdn }
           } finally { Remove-PSSession $s }
