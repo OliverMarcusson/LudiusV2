@@ -7,10 +7,6 @@ apps:
     process: wordpad.exe
     start_query: wordpad
     features: [write a short document, bold and bullet formatting, change font size, save as .rtf or .docx, insert date and time]
-  - name: paint
-    process: mspaint.exe
-    start_query: paint
-    features: [draw shapes, add text, resize an image, crop, save as .png]
   - name: explorer
     process: explorer.exe
     window_class: CabinetWClass

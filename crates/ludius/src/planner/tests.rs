@@ -6,7 +6,7 @@ fn setup() -> std::path::PathBuf {
     unsafe {
         std::env::set_var("LUDIUS_DATA", Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"));
         std::env::set_var("LUDIUS_MAIL_BACKEND", "exchange");
-        std::env::set_var("LUDIUS_APPS", "edge,excel,explorer,notepad,outlook,paint,powerpoint,powershell,wordpad");
+        std::env::set_var("LUDIUS_APPS", "edge,excel,explorer,notepad,outlook,powerpoint,powershell,wordpad");
         std::env::set_var("LUDIUS_SCENARIO", "none");
         std::env::set_var("LUDIUS_MAIL_DOMAIN", "ludius.test");
     }

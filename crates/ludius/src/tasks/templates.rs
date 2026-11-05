@@ -5,7 +5,6 @@ pub(crate) fn save_extension(app: &str) -> Option<&'static str> {
     match app {
         "notepad" => Some(".txt"),
         "wordpad" => Some(".rtf"),
-        "paint" => Some(".png"),
         "excel" => Some(".xlsx"),
         "word" => Some(".docx"),
         "powerpoint" => Some(".pptx"),
