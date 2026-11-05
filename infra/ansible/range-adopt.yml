@@ -232,7 +232,7 @@
             $addr = @($people | ForEach-Object { "$((Get-Mailbox "$_@$domain").PrimarySmtpAddress)".ToLower() })
             $md = ($addr[0] -split '@')[1]
             $bad = @(0..($people.Count - 1) | Where-Object { $addr[$_] -ne "$($people[$_])@$md".ToLower() })
-            if ($bad) { throw "persona addresses are not <account>@<one domain> ($($addr -join ', ')): the address policy for OU Ludius has to give alias@domain" }
+            if ($bad.Count) { throw "persona addresses are not <account>@<one domain> ($($addr -join ', ')): the address policy for OU Ludius has to give alias@domain" }
             @{ mail_domain = $md; server = $fqdn }
           } finally { Remove-PSSession $s }
         parameters:
