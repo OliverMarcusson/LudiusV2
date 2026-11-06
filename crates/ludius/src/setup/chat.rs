@@ -20,11 +20,13 @@ pub struct Server {
     token: String,
 }
 
-/// The same client as the controller's (ludius-chat api.rs): only `ca` is trusted, the name resolves to `ip`.
+/// The same client as the controller's (ludius-chat api.rs): only `ca` is trusted, the name resolves to `ip`, and a
+/// redirect is never followed (it could point out of the range).
 pub fn connect(url: &str, ip: IpAddr, ca: &[u8]) -> Result<Server> {
     let u = reqwest::Url::parse(url)?;
     let cert = reqwest::Certificate::from_pem(ca)?;
     let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .tls_certs_only([cert])
         .timeout(Duration::from_secs(30))
         .resolve(u.host_str().context("no host")?, SocketAddr::new(ip, u.port_or_known_default().unwrap_or(443)))

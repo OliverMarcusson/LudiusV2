@@ -24,7 +24,8 @@ fn client() -> Option<&'static reqwest::blocking::Client> {
     C.get_or_init(|| {
         let base = reqwest::Url::parse(&env("LUDIUS_CHAT_API")).ok()?;
         let cert = reqwest::Certificate::from_pem(&std::fs::read(env("LUDIUS_CHAT_CA")).ok()?).ok()?;
-        let mut b = reqwest::blocking::Client::builder().tls_certs_only([cert]).timeout(Duration::from_secs(30));
+        // a redirect is never followed: it could point out of the range
+        let mut b = reqwest::blocking::Client::builder().redirect(reqwest::redirect::Policy::none()).tls_certs_only([cert]).timeout(Duration::from_secs(30));
         if let Ok(ip) = env("LUDIUS_CHAT_ADDR").parse::<std::net::IpAddr>() {
             b = b.resolve(base.host_str()?, std::net::SocketAddr::new(ip, base.port_or_known_default()?));
         }
@@ -123,13 +124,19 @@ fn viewed(uid: &str) -> Option<BTreeMap<String, i64>> {
     get(&format!("users/{uid}/teams/{}/channels/members", team()?))?.as_array()?.iter().map(|m| Some((s(m, "channel_id")?, m["last_viewed_at"].as_i64()?))).collect()
 }
 
-/// The direct channel between two users, named by their sorted ids; None if they never talked.
-fn direct(chans: &[(String, String, String)], a: &str, b: &str) -> Option<String> {
+/// The direct channel between two users, named by their sorted ids: Some(None) if they never talked, None when a
+/// lookup failed (unknown, not absent).
+fn direct(chans: &[(String, String, String)], a: &str, b: &str) -> Option<Option<String>> {
     let mut ids = [a, b];
     ids.sort();
     let name = format!("{}__{}", ids[0], ids[1]);
     // the API lists D channels' name only as `name`; fetch it per candidate
-    chans.iter().filter(|c| c.1 == "D").find(|c| get(&format!("channels/{}", c.0)).and_then(|v| s(&v, "name")).as_deref() == Some(name.as_str())).map(|c| c.0.clone())
+    for c in chans.iter().filter(|c| c.1 == "D") {
+        if s(&get(&format!("channels/{}", c.0))?, "name")? == name {
+            return Some(Some(c.0.clone()));
+        }
+    }
+    Some(None)
 }
 
 struct Raw {
@@ -197,7 +204,7 @@ pub fn conversation(user: &str, other: &str) -> Option<(Vec<Post>, i64)> {
     let chans = channels(&me)?;
     let cid = match other.strip_prefix('~') {
         Some(c) => chans.iter().find(|x| x.1 == "P" && x.2 == c)?.0.clone(),
-        None => direct(&chans, &me, &uid(other)?)?,
+        None => direct(&chans, &me, &uid(other)?)??,
     };
     let seen = *viewed(&me)?.get(&cid)?;
     let mut raw: Vec<Raw> = raw_posts(&cid, None)?.into_iter().filter(|p| p.at <= seen).collect();
@@ -211,7 +218,7 @@ pub fn shared(user: &str, other: &str, name: &str, since_ms: i64, posted: bool) 
         return None;
     }
     let me = uid(user)?;
-    let Some(cid) = direct(&channels(&me)?, &me, &uid(other)?) else { return Some(vec![]) };
+    let Some(cid) = direct(&channels(&me)?, &me, &uid(other)?)? else { return Some(vec![]) };
     let mut sums = vec![];
     for f in raw_posts(&cid, Some(since_ms))?.into_iter().filter(|p| p.user == me).flat_map(|p| p.files) {
         let info = get(&format!("files/{f}/info"))?;
@@ -228,7 +235,7 @@ pub fn posted(user: &str, r#where: &str, message: &str, since_ms: i64) -> Option
     let chans = channels(&me)?;
     let cid = match r#where.strip_prefix('~') {
         Some(c) => chans.iter().find(|x| (x.1 == "O" || x.1 == "P") && x.2 == c).map(|x| x.0.clone()),
-        None => direct(&chans, &me, &uid(r#where)?),
+        None => direct(&chans, &me, &uid(r#where)?)?,
     };
     let Some(cid) = cid else { return Some(0) };
     Some(raw_posts(&cid, Some(since_ms))?.iter().filter(|p| p.user == me && p.message.trim() == message.trim()).count() as i64)
@@ -245,9 +252,15 @@ pub fn post(user: &str, other: &str, message: &str) -> Option<bool> {
     Some(r.status().is_success())
 }
 
+/// Deletes the direct chat's posts between two noise accounts; an account without Ludius's mark (the operator's) is
+/// refused (None).
 pub fn reset(user: &str, other: &str) -> Option<usize> {
+    let noise = |u: &str| get(&format!("users/username/{u}")).is_some_and(|v| v["props"]["ludius"].as_str() == Some("noise"));
+    if !noise(user) || !noise(other) {
+        return None;
+    }
     let me = uid(user)?;
-    let Some(cid) = direct(&channels(&me)?, &me, &uid(other)?) else { return Some(0) };
+    let Some(cid) = direct(&channels(&me)?, &me, &uid(other)?)? else { return Some(0) };
     let mut n = 0;
     loop {
         let ids: Vec<String> = raw_posts(&cid, None)?.into_iter().map(|p| p.id).collect();

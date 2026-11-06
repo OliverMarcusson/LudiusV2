@@ -52,7 +52,8 @@ pub fn call(mailbox: &str, body: &str) -> Option<String> {
     );
     let password = std::fs::read_to_string(secret).ok()?.trim().to_string();
     let cert = reqwest::Certificate::from_pem(&std::fs::read(ca).ok()?).ok()?;
-    let mut b = reqwest::blocking::Client::builder().tls_certs_only([cert]).timeout(Duration::from_secs(30));
+    // a redirect is never followed: it could point out of the range
+    let mut b = reqwest::blocking::Client::builder().redirect(reqwest::redirect::Policy::none()).tls_certs_only([cert]).timeout(Duration::from_secs(30));
     // LUDIUS_EWS_ADDR (an adopted Exchange): the URL's name is in the certificate but not in the node's DNS
     if let Ok(ip) = env("LUDIUS_EWS_ADDR").parse::<std::net::IpAddr>() {
         let u = reqwest::Url::parse(&url).ok()?;
