@@ -127,6 +127,8 @@ pub fn generate_day(llm: &LlmClient, world: &World, persona: &Persona, src: &Sou
     let boss = requests::manager_of(n, user);
     match &boss {
         Err(why) => notes.push(format!("requests: {why}")),
+        // requests are mails: without a mail backend none could be delivered
+        Ok(_) if !mail::available() => notes.push("requests: no mail backend".into()),
         Ok(boss) => {
             let reports: Vec<&str> = src.personas.iter().map(|p| p.user.as_str()).filter(|u| *u == user || requests::manager_of(n, u).as_ref() == Ok(boss)).collect();
             let briefs = reports.iter().map(|u| (u.to_string(), world_state::brief(&state, u, date))).collect();
