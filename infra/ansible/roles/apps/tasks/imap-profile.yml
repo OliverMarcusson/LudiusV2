@@ -3,6 +3,8 @@
 # into the imported account afterwards the way Outlook stores it: 0x02 + DPAPI (the persona's CurrentUser) of the
 # UTF-16 password. Writes the persona's Outlook profile only (plus a transient PRF and logon task); nothing irreversible.
 # Done: srv01's Dovecot logs the persona's IMAP log-in from this machine after Outlook starts with the stored password.
+# An adopted server (imap_adopt: imap_server, smtp_server, smtp_port) has no log Ludius reads: verify's Outlook
+# canary proves the profile there, and the controller's mail check the account's own sign-in.
 - name: Outlook IMAP profile
   vars:
     imap_account: "{{ domain_netbios }}\\{{ persona }}"
@@ -76,16 +78,16 @@
             AccountName={{ persona }}@{{ mail_domain }}
             DisplayName={{ people | selectattr('user', 'eq', persona) | map(attribute='name') | first | default(persona) }}
             EmailAddress={{ persona }}@{{ mail_domain }}
-            IMAPServer=mail.{{ domain }}
+            IMAPServer={{ imap_server | default('mail.' ~ domain, true) }}
             IMAPUserName={{ persona }}@{{ mail_domain }}
             IMAPUseSPA=0
             IMAPPort=993
             IMAPUseSSL=1
-            SMTPServer=mail.{{ domain }}
+            SMTPServer={{ smtp_server | default('mail.' ~ domain, true) }}
             SMTPUseAuth=1
             SMTPAuthMethod=0
-            SMTPPort=587
-            SMTPSecureConnection=2
+            SMTPPort={{ smtp_port | default(587) }}
+            SMTPSecureConnection={{ 1 if (smtp_port | default(587) | int) == 465 else 2 }}
             ConnectionType=0
 
             [IMAP_I_Mail]
@@ -133,6 +135,7 @@
         imap_client_ip: "{{ ansible_host }}"
 
     - name: Srv01 clock before Outlook starts
+      when: not (imap_adopt | default(false) | bool)
       ansible.builtin.command: date +%s
       delegate_to: srv01
       register: imap_since
@@ -143,12 +146,13 @@
       ansible.builtin.include_tasks: imap-login.yml
       vars:
         imap_try: 1
+      when: not (imap_adopt | default(false) | bool)
 
     - name: Outlook restarted once when the first start never connected (with evidence)
       ansible.builtin.include_tasks: imap-login.yml
       vars:
         imap_try: 2
-      when: not imap_seen
+      when: not (imap_adopt | default(false) | bool) and not imap_seen
   always:
     - name: Outlook closed and the setup task removed
       ansible.windows.win_powershell:

@@ -241,6 +241,55 @@ fn ews_check(url: &str, dns: Option<Ipv4Addr>, subnet: Subnet, out: &std::path::
     (true, format!("{host} = {ip}, Basic offered, certificate pinned in {ca_s}"), json!({"url": url, "host": host, "ip": ip.to_string(), "ca": ca_s}))
 }
 
+/// Whether `ca` verifies `host` on ip:port (TLS, or STARTTLS SMTP first), as the controller's TLS client will.
+fn verifies(ip: Ipv4Addr, port: u16, host: &str, ca: &str, starttls: bool) -> bool {
+    let to = format!("{ip}:{port}");
+    let mut argv = vec!["openssl", "s_client", "-connect", &to, "-servername", host, "-CAfile", ca, "-partial_chain", "-verify_hostname", host, "-verify_return_error"];
+    if starttls {
+        argv.extend(["-starttls", "smtp"]);
+    }
+    run(&argv).is_some_and(|o| o.contains("Verify return code: 0 (ok)"))
+}
+
+/// addons.mail adopt with an IMAP server: its name and the submission server's resolve (range DNS) to one address
+/// each inside the subnet; the last certificate IMAPS (993) sends is pinned in OUT/imap-ca.pem and must verify both
+/// names (submission: TLS on 465, else STARTTLS), since the controller trusts only it. Reads only: no sign-in, nothing
+/// sent. (Port 25 on every SMTP host is the gate's own "refuses delivery outside" check.)
+fn imap_check(imap: &str, smtp: &str, dns: Option<Ipv4Addr>, subnet: Subnet, out: &std::path::Path) -> (bool, String, Value, Value) {
+    let fail = |why: String| (false, why, Value::Null, Value::Null);
+    let (shost, sport) = match smtp.rsplit_once(':').map(|(h, p)| (h, p.parse::<u16>())) {
+        Some((h, Ok(p @ (465 | 587)))) => (h, p),
+        _ => return fail(format!("--smtp {smtp:?}: NAME:465 or NAME:587")),
+    };
+    let (host, _, ip) = match range_addr(&format!("https://{imap}:993/"), dns, subnet) {
+        Ok(a) => a,
+        Err(e) => return fail(e),
+    };
+    let (shost, _, sip) = match range_addr(&format!("https://{shost}:{sport}/"), dns, subnet) {
+        Ok(a) => a,
+        Err(e) => return fail(e),
+    };
+    let ca = match pin_last(&host, 993, ip, out, "imap-ca.pem") {
+        Ok(c) => c.display().to_string(),
+        Err(e) => return fail(e),
+    };
+    if !verifies(ip, 993, &host, &ca, false) {
+        return fail(format!("the last certificate {ip}:993 sends doesn't verify {host}: the server must send its chain up to the root, and the name must be in the certificate"));
+    }
+    if !verifies(sip, sport, &shost, &ca, sport == 587) {
+        return fail(format!(
+            "submission {shost}:{sport} ({sip}) doesn't offer {} with a certificate for {shost} from the IMAP server's CA",
+            if sport == 587 { "STARTTLS" } else { "TLS" }
+        ));
+    }
+    (
+        true,
+        format!("{host} = {ip}, submission {shost}:{sport} = {sip}, certificate pinned in {ca}"),
+        json!({"host": host, "ip": ip.to_string(), "ca": ca}),
+        json!({"host": shost, "port": sport, "ip": sip.to_string()}),
+    )
+}
+
 /// One SMTP RCPT to an address outside the range domain: the gate passes only on a 5xx refusal. Never sends DATA.
 fn smtp_refuses_outside(ip: Ipv4Addr, port: u16, domain: &str) -> (bool, String) {
     let attempt = || -> Result<(bool, String)> {
@@ -396,7 +445,7 @@ fn on(b: bool) -> &'static str {
 }
 
 pub fn main(args: &[String]) -> Result<()> {
-    const USAGE: &str = "usage: ludius setup discover --subnet A.B.C.D/P --domain DOMAIN [--ews URL] [--chat URL --chat-team TEAM --chat-user USER --chat-secret FILE] [--out DIR]";
+    const USAGE: &str = "usage: ludius setup discover --subnet A.B.C.D/P --domain DOMAIN [--ews URL] [--imap NAME --smtp NAME:PORT] [--chat URL --chat-team TEAM --chat-user USER --chat-secret FILE] [--out DIR]";
     let get = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let (Some(subnet), Some(domain)) = (get("--subnet"), get("--domain")) else { bail!(USAGE) };
     let subnet = Subnet::parse(&subnet)?;
@@ -547,6 +596,13 @@ pub fn main(args: &[String]) -> Result<()> {
         r.check(&format!("EWS {url}: inside {subnet}, Basic sign-in, certificate pinned"), pass, why);
         ews = doc;
     }
+    let (mut imap, mut smtp) = (Value::Null, Value::Null);
+    if let Some(name) = get("--imap") {
+        let sub = get("--smtp").unwrap_or_else(|| format!("{name}:587"));
+        let (pass, why, i, s) = imap_check(&name, &sub, dns.first().copied(), subnet, &out);
+        r.check(&format!("IMAP {name} and submission {sub}: inside {subnet}, certificate pinned"), pass, why);
+        (imap, smtp) = (i, s);
+    }
     let mut chat = Value::Null;
     if let Some(url) = get("--chat") {
         let a = ChatArgs { url, team: get("--chat-team").unwrap_or_default(), user: get("--chat-user").unwrap_or_default(), secret: get("--chat-secret").unwrap_or_default() };
@@ -563,7 +619,7 @@ pub fn main(args: &[String]) -> Result<()> {
     let doc = json!({
         "subnet": subnet.to_string(), "domain": domain, "at": chrono::Local::now().to_rfc3339(),
         "hosts": hosts.iter().map(|(ip, p)| json!({"ip": ip.to_string(), "open": p})).collect::<Vec<_>>(),
-        "bridge": bridge, "desktops": desktops, "facts": r.facts, "ews": ews, "chat": chat, "gate": {"pass": gate_pass, "checks": r.gate},
+        "bridge": bridge, "desktops": desktops, "facts": r.facts, "ews": ews, "imap": imap, "smtp": smtp, "chat": chat, "gate": {"pass": gate_pass, "checks": r.gate},
     });
     std::fs::create_dir_all(&out)?;
     let file = out.join("discovery.json");

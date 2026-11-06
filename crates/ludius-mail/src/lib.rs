@@ -111,6 +111,16 @@ pub fn calendar() -> bool {
     cfg!(feature = "ews") && std::env::var("LUDIUS_MAIL_BACKEND").is_ok_and(|b| b == "exchange")
 }
 
+/// Whether `user` signs in to an adopted IMAP server's mail submission (sends nothing). None: no such server.
+pub fn submit_check(user: &str) -> Option<bool> {
+    #[cfg(feature = "imap")]
+    if user_ok(user) && std::env::var("LUDIUS_MAIL_BACKEND").is_ok_and(|b| b == "imap") {
+        return imap::submit_check(&address(user));
+    }
+    let _ = user;
+    None
+}
+
 fn user_ok(user: &str) -> bool {
     !user.is_empty() && user.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }

@@ -109,6 +109,12 @@ pub struct Addon {
     /// Mail backend "adopt" (an existing Exchange): its EWS URL, a name in the server's certificate.
     #[serde(default)]
     pub ews: String,
+    /// Mail backend "adopt" (an existing IMAP server): its name, in the server's certificate; IMAPS on 993.
+    #[serde(default)]
+    pub imap: String,
+    /// Mail backend "adopt", IMAP: the submission server, "NAME[:465|587]" (default: the imap name, 587 STARTTLS).
+    #[serde(default)]
+    pub smtp: String,
     /// Chat backend "adopt" (an existing Mattermost): its https URL, a name in the server's certificate.
     #[serde(default)]
     pub url: String,
@@ -210,7 +216,20 @@ impl Spec {
 
     /// An existing range's Exchange: mailboxes for the personas, the scope and the EWS account; the server is the operator's.
     pub fn mail_adopt(&self) -> bool {
-        self.existing() && self.mail() == "adopt"
+        self.existing() && self.mail() == "adopt" && !self.imap_adopt()
+    }
+
+    /// An existing range's IMAP server: nothing is made on it, every account signs in as itself (the AD password).
+    pub fn imap_adopt(&self) -> bool {
+        self.existing() && self.mail() == "adopt" && self.addons.mail.as_ref().is_some_and(|m| !m.imap.is_empty())
+    }
+
+    /// IMAP adopt: the IMAP name and the submission server as NAME:PORT.
+    fn imap_hosts(&self) -> (String, String) {
+        let m = self.addons.mail.clone().unwrap_or_default();
+        let smtp = if m.smtp.is_empty() { m.imap.clone() } else { m.smtp };
+        let smtp = if smtp.contains(':') { smtp } else { format!("{smtp}:587") };
+        (m.imap, smtp)
     }
 
     pub fn chat(&self) -> bool {
@@ -281,8 +300,19 @@ impl Spec {
             ensure!(ad.backend == "adopt", "addons.ad.backend {:?}: an existing range adopts its AD (\"adopt\")", ad.backend);
             ensure!(re(r"^secret:[A-Za-z0-9_.-]+$").is_match(&ad.admin), "addons.ad.admin: \"secret:<name>\", the domain Administrator's password in {}/<name>", secrets_dir().display());
             if let Some(m) = &self.addons.mail {
-                ensure!(m.backend == "adopt", "addons.mail.backend {:?}: an existing range adopts its Exchange (\"adopt\")", m.backend);
-                ensure!(re(r"^https://[A-Za-z0-9.-]+(:[0-9]+)?/").is_match(&m.ews), "addons.mail.ews {:?}: the EWS URL, https://NAME/EWS/Exchange.asmx with a name in the server's certificate", m.ews);
+                ensure!(m.backend == "adopt", "addons.mail.backend {:?}: an existing range adopts its mail server (\"adopt\")", m.backend);
+                if m.imap.is_empty() {
+                    ensure!(m.smtp.is_empty(), "addons.mail.smtp: only with imap (an Exchange takes mail over EWS)");
+                    ensure!(re(r"^https://[A-Za-z0-9.-]+(:[0-9]+)?/").is_match(&m.ews), "addons.mail.ews {:?}: the EWS URL, https://NAME/EWS/Exchange.asmx with a name in the server's certificate (or imap = NAME for an IMAP server)", m.ews);
+                } else {
+                    ensure!(m.ews.is_empty(), "addons.mail: ews (an Exchange) or imap (an IMAP server), not both");
+                    ensure!(re(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$").is_match(&m.imap), "addons.mail.imap {:?}: the IMAP server's name, in its certificate (IMAPS on port 993)", m.imap);
+                    ensure!(
+                        m.smtp.is_empty() || re(r"^[a-z0-9-]+(\.[a-z0-9-]+)+(:(465|587))?$").is_match(&m.smtp),
+                        "addons.mail.smtp {:?}: NAME[:465|587], the submission server (default: the imap name, 587)",
+                        m.smtp
+                    );
+                }
             }
             if let Some(c) = &self.addons.chat {
                 ensure!(c.backend == "adopt", "addons.chat.backend {:?}: an existing range adopts its Mattermost (\"adopt\")", c.backend);
@@ -628,11 +658,17 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
             what: format!("Boundary gate (hard stop): discover {} read-only, and {desktops} are Windows desktops on its bridge", spec.range.subnet),
             sh: Some(format!(
                 "set -e; command -v nmap ldapsearch smbclient dig >/dev/null || apt-get install -y nmap ldap-utils smbclient dnsutils; \
-                 ./ludius-rs setup discover --subnet {} --domain {}{ews}{chat} --out {dir}; \
+                 ./ludius-rs setup discover --subnet {} --domain {}{ews}{imap}{chat} --out {dir}; \
                  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); have={{v[\"name\"] for v in d[\"desktops\"]}}; miss=[n for n in sys.argv[2:] if n not in have]; \
                  miss and sys.exit(\"not Windows 10/11 desktops on the range bridge: \" + \" \".join(miss))' {discovery} {desktops}",
                 spec.range.subnet, spec.range.domain,
                 ews = if spec.mail_adopt() { format!(" --ews {}", shell_quote(&ews_url(spec))) } else { String::new() },
+                imap = if spec.imap_adopt() {
+                    let (imap, smtp) = spec.imap_hosts();
+                    format!(" --imap {} --smtp {}", shell_quote(&imap), shell_quote(&smtp))
+                } else {
+                    String::new()
+                },
                 chat = if spec.chat_adopt() {
                     let c = spec.chat_addon();
                     format!(
@@ -650,6 +686,7 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
             creates: vec![
                 format!("file {discovery}"),
                 format!("file {dir}/ews-ca.pem (mail adopt: the EWS certificate, pinned)"),
+                format!("file {dir}/imap-ca.pem (IMAP adopt: the mail server's certificate, pinned)"),
                 format!("files {dir}/chat-ca.pem and {dir}/chat.json (chat adopt: the chat certificate, pinned; the team's public channels)"),
                 "node packages nmap, ldap-utils, smbclient, dnsutils when missing (read-only probes; on the node, not the range)".into(),
             ],
@@ -726,7 +763,13 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
             what: format!(
                 "range-adopt.yml: persona accounts in OU Ludius of {}{}, then on {desktops}: observer, settings, autologon",
                 spec.range.domain,
-                if spec.mail_adopt() { ", their Exchange mailboxes and the EWS account" } else { "" }
+                if spec.mail_adopt() {
+                    ", their Exchange mailboxes and the EWS account"
+                } else if spec.imap_adopt() {
+                    ", Outlook IMAP profiles for their mail server"
+                } else {
+                    ""
+                }
             ),
             sh: Some(format!("{ANSIBLE} range-adopt.yml -e @{vars}")),
             exists: None,
@@ -749,6 +792,13 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
                     .into_iter()
                     .flatten(),
             )
+            .chain(spec.imap_adopt().then(|| {
+                format!(
+                    "on {desktops}: Outlook profile Ludius with the persona's IMAP account at {} (submission {}), its password stored by DPAPI; nothing on the mail server (each account signs in with its AD password)",
+                    spec.imap_hosts().0,
+                    spec.imap_hosts().1
+                )
+            }))
             .chain(spec.chat_adopt().then(|| format!("on {desktops}: a Mattermost session in the persona's Edge profile (signed in once, headless, in the persona's session; Edge policy UserDataDir %LOCALAPPDATA%\\Ludius\\Edge in the persona's hive)")))
             .collect(),
             irreversible: vec![
@@ -1231,6 +1281,10 @@ pub fn ansible_vars(spec: &Spec, l: &Layout) -> Result<String> {
             "domain": spec.range.domain,
             "mail_backend": "",
             "mail_adopt": spec.mail_adopt(),
+            "imap_adopt": spec.imap_adopt(),
+            "imap_server": spec.imap_hosts().0,
+            "smtp_server": spec.imap_hosts().1.rsplit_once(':').map(|h| h.0.to_string()).unwrap_or_default(),
+            "smtp_port": spec.imap_hosts().1.rsplit_once(':').and_then(|h| h.1.parse::<u16>().ok()).unwrap_or(587),
             "ews_url": ews_url(spec),
             "ews_password_file": ews_secret(spec).display().to_string(),
             "mail_facts_file": l.dir.join("exchange.json").display().to_string(),
@@ -1303,6 +1357,21 @@ pub fn controller_env(spec: &Spec, l: &Layout, root: &Path) -> String {
     let net = spec.range_net();
     let ca = root.join("infra/ansible/build/range-ca.crt").display().to_string();
     match spec.mail() {
+        "adopt" if spec.imap_adopt() => {
+            // the gate's discovery (addresses, pinned certificate); no LUDIUS_IMAP_USER: each account signs in as itself
+            let d = std::fs::read_to_string(l.dir.join("discovery.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).unwrap_or_default();
+            let get = |k: &str, f: &str| d[k][f].as_str().unwrap_or_default().to_string();
+            let (imap, smtp) = spec.imap_hosts();
+            e.extend([
+                "LUDIUS_MAIL_BACKEND=imap".into(),
+                format!("LUDIUS_MAIL_DOMAIN={}", spec.range.domain),
+                format!("LUDIUS_IMAP_HOST={imap}"),
+                format!("LUDIUS_IMAP_ADDR={}", get("imap", "ip")),
+                format!("LUDIUS_IMAP_CA={}", get("imap", "ca")),
+                format!("LUDIUS_SMTP_SUBMIT={smtp}"),
+                format!("LUDIUS_SMTP_ADDR={}", get("smtp", "ip")),
+            ]);
+        }
         "adopt" if spec.existing() => {
             // the gate's discovery (EWS address, pinned certificate) and the adopt play's exchange.json (mail domain)
             let read = |f: &str| std::fs::read_to_string(l.dir.join(f)).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).unwrap_or_default();
@@ -1496,6 +1565,14 @@ decider = { provider = "openrouter", model = "liquid/d1.1", key = "secret:openro
         assert!(m.mail_adopt() && verify_apps(&m).contains(&"outlook"));
         let gate = plan(&m, &Layout { dir: PathBuf::from("/tmp/r") }).into_iter().find(|s| s.id == "gate").unwrap();
         assert!(gate.sh.unwrap().contains("--ews 'https://mail.corp.test/EWS/Exchange.asmx'"));
+        let i = existing("[ai]", "[addons.mail]\nbackend = \"adopt\"\nimap = \"mail.corp.test\"\n[ai]").unwrap();
+        assert!(i.imap_adopt() && !i.mail_adopt() && verify_apps(&i).contains(&"outlook"));
+        let gate = plan(&i, &Layout { dir: PathBuf::from("/tmp/r") }).into_iter().find(|s| s.id == "gate").unwrap();
+        assert!(gate.sh.unwrap().contains("--imap 'mail.corp.test' --smtp 'mail.corp.test:587'"));
+        let env = controller_env(&i, &Layout { dir: PathBuf::from("/tmp/r") }, Path::new("/x"));
+        assert!(env.contains("LUDIUS_MAIL_BACKEND=imap\n") && env.contains("LUDIUS_SMTP_SUBMIT=mail.corp.test:587\n") && !env.contains("LUDIUS_IMAP_USER"));
+        assert!(existing("[ai]", "[addons.mail]\nbackend = \"adopt\"\nimap = \"mail.corp.test\"\news = \"https://mail.corp.test/EWS/Exchange.asmx\"\n[ai]").is_err(), "ews or imap");
+        assert!(existing("[ai]", "[addons.mail]\nbackend = \"adopt\"\nimap = \"mail.corp.test\"\nsmtp = \"mail.corp.test:25\"\n[ai]").is_err(), "submission only");
         assert!(existing("[ai]", "[addons.chat]\n[ai]").is_err(), "adopted chat needs backend, url, team, user, admin");
         let c = existing("[ai]", "[addons.chat]\nbackend = \"adopt\"\nurl = \"https://chat.corp.test\"\nteam = \"corp\"\nuser = \"mmadmin\"\nadmin = \"secret:chat-admin\"\n[ai]").unwrap();
         let steps = plan(&c, &Layout { dir: PathBuf::from("/tmp/r") });

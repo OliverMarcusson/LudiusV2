@@ -1,5 +1,7 @@
 //! The lightweight mail backend: IMAPS reads as a Dovecot master user (`<address>*<master>`) and SMTP to the range's
-//! Postfix for planned deliveries. No calendar: invites and responses read as unknown.
+//! Postfix for planned deliveries. On an adopted mail server (no LUDIUS_IMAP_USER) every account signs in as itself
+//! with the password `ludius setup` gave it, and deliveries go through authenticated submission (LUDIUS_SMTP_SUBMIT).
+//! No calendar: invites and responses read as unknown.
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
@@ -33,15 +35,18 @@ fn host_port(var: &str, port: u16) -> Option<(String, u16)> {
     }
 }
 
-fn tcp(host: &str, port: u16) -> Option<TcpStream> {
-    let s = (host, port).to_socket_addrs().ok()?.find_map(|a| TcpStream::connect_timeout(&a, Duration::from_secs(10)).ok())?;
+/// To `addr` when given (the gate's address for the name, pinned like the certificate), else to `host` resolved.
+fn tcp(host: &str, port: u16, addr: &str) -> Option<TcpStream> {
+    let to = if addr.is_empty() { host } else { addr };
+    let s = (to, port).to_socket_addrs().ok()?.find_map(|a| TcpStream::connect_timeout(&a, Duration::from_secs(10)).ok())?;
     s.set_read_timeout(Some(Duration::from_secs(30))).ok()?;
     s.set_write_timeout(Some(Duration::from_secs(30))).ok()?;
     Some(s)
 }
 
-/// TLS to the range server, trusting only the range CA (LUDIUS_IMAP_CA, else the bring-up's build/range-ca.crt).
-fn tls(host: &str, port: u16) -> Option<Tls> {
+/// TLS on `s` to `host`, trusting only the range CA (LUDIUS_IMAP_CA, else the bring-up's build/range-ca.crt; an
+/// adopted server: the certificate the gate pinned).
+fn tls(host: &str, s: TcpStream) -> Option<Tls> {
     let ca = std::env::var("LUDIUS_IMAP_CA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| root().join("infra/ansible/build/range-ca.crt"));
@@ -55,7 +60,7 @@ fn tls(host: &str, port: u16) -> Option<Tls> {
         .with_root_certificates(roots)
         .with_no_client_auth();
     let conn = rustls::ClientConnection::new(Arc::new(cfg), ServerName::try_from(host.to_string()).ok()?).ok()?;
-    Some(rustls::StreamOwned::new(conn, tcp(host, port)?))
+    Some(rustls::StreamOwned::new(conn, s))
 }
 
 /// One server response: its text (literals cut out) and the literals in order.
@@ -112,17 +117,20 @@ struct Imap {
 }
 
 impl Imap {
-    /// Logged in to `mailbox` (an address) as the master user; None = unknown.
+    /// Logged in to `mailbox` (an address) as the master user, or (no LUDIUS_IMAP_USER: an adopted server) as the
+    /// mailbox's own account; None = unknown.
     fn open(mailbox: &str) -> Option<Self> {
         let (host, port) = host_port("LUDIUS_IMAP_HOST", 993)?;
-        let (user, secret) = (env("LUDIUS_IMAP_USER"), env("LUDIUS_IMAP_PASSWORD_FILE"));
-        if user.is_empty() || secret.is_empty() || mailbox.contains(['*', '\r', '\n']) {
+        if mailbox.contains(['*', '\r', '\n']) {
             return None;
         }
-        let password = std::fs::read_to_string(secret).ok()?.trim().to_string();
-        let mut c = Imap { r: BufReader::new(tls(&host, port)?), tag: 0 };
+        let (login, password) = match env("LUDIUS_IMAP_USER") {
+            u if u.is_empty() => (mailbox.to_string(), own_password(mailbox)?),
+            u => (format!("{mailbox}*{u}"), secret(&env("LUDIUS_IMAP_PASSWORD_FILE"))?),
+        };
+        let mut c = Imap { r: BufReader::new(tls(&host, tcp(&host, port, &env("LUDIUS_IMAP_ADDR"))?)?), tag: 0 };
         response(&mut c.r)?.text.starts_with("* OK").then_some(())?;
-        c.run(&[b"LOGIN ".as_slice(), &astring(&format!("{mailbox}*{user}")), b" ", &astring(&password)].concat())?;
+        c.run(&[b"LOGIN ".as_slice(), &astring(&login), b" ", &astring(&password)].concat())?;
         Some(c)
     }
 
@@ -426,45 +434,113 @@ pub fn compose(sender: &str, sender_name: &str, to: &str, to_name: &str, subject
     )
 }
 
-fn smtp_reply(r: &mut impl BufRead) -> Option<u16> {
+/// A reply's code and its text lines (without the code).
+fn smtp_reply(r: &mut impl BufRead) -> Option<(u16, Vec<String>)> {
+    let mut lines = vec![];
     loop {
         let mut line = String::new();
         r.by_ref().take(MAX_LINE).read_line(&mut line).ok()?;
         let code: u16 = line.get(..3)?.parse().ok()?;
+        lines.push(line.get(4..).unwrap_or("").trim_end().to_string());
         if line.as_bytes().get(3) != Some(&b'-') {
-            return Some(code);
+            return Some((code, lines));
         }
     }
 }
 
-/// Deliver a planned mail through the range's Postfix (LUDIUS_SMTP_HOST, else the IMAP host on port 25). The caller
-/// has checked both addresses are in the range domain; Postfix itself delivers only to that domain.
+fn secret(path: &str) -> Option<String> {
+    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// The account's password as `ludius setup` made it: the address's account name + the persona suffix.
+fn own_password(address: &str) -> Option<String> {
+    let (user, _) = address.split_once('@')?;
+    Some(format!("{user}{}", secret(&env("LUDIUS_PERSONA_PASSWORD_SUFFIX_FILE"))?))
+}
+
+trait Rw: Read + Write {}
+impl<T: Read + Write> Rw for T {}
+type Smtp = BufReader<Box<dyn Rw>>;
+
+fn smtp_step(r: &mut Smtp, cmd: &str, want: u16) -> Option<Vec<String>> {
+    if !cmd.is_empty() {
+        r.get_mut().write_all(cmd.as_bytes()).ok()?;
+        r.get_mut().flush().ok()?;
+    }
+    let (code, lines) = smtp_reply(r)?;
+    (code == want).then_some(lines)
+}
+
+/// The SASL mechanisms an EHLO reply offers (AUTH line), upper case.
+fn auth_mechs(ehlo: &[String]) -> Vec<String> {
+    ehlo.iter().filter_map(|l| l.to_ascii_uppercase().strip_prefix("AUTH ").map(str::to_string)).flat_map(|m| m.split_whitespace().map(String::from).collect::<Vec<_>>()).collect()
+}
+
+/// An SMTP session ready for MAIL FROM. LUDIUS_SMTP_SUBMIT (an adopted server): submission signed in as `sender`
+/// with its own password, TLS on port 465, else STARTTLS (never in clear text). Else plain SMTP to the range's
+/// Postfix (LUDIUS_SMTP_HOST, else the IMAP host, port 25).
+fn smtp(sender: &str) -> Option<Smtp> {
+    let Some((host, port)) = host_port("LUDIUS_SMTP_SUBMIT", 587) else {
+        let (host, port) = host_port("LUDIUS_SMTP_HOST", 25).or_else(|| host_port("LUDIUS_IMAP_HOST", 993).map(|(h, _)| (h, 25)))?;
+        let mut r: Smtp = BufReader::new(Box::new(tcp(&host, port, "")?));
+        smtp_step(&mut r, "", 220)?;
+        smtp_step(&mut r, "EHLO ludius-controller\r\n", 250)?;
+        return Some(r);
+    };
+    let s = tcp(&host, port, &env("LUDIUS_SMTP_ADDR"))?;
+    let mut r: Smtp = if port == 465 {
+        let mut r: Smtp = BufReader::new(Box::new(tls(&host, s)?));
+        smtp_step(&mut r, "", 220)?;
+        r
+    } else {
+        // the server says nothing after its 220 to STARTTLS, so the clone's buffer is empty when TLS starts
+        let mut plain: Smtp = BufReader::new(Box::new(s.try_clone().ok()?));
+        smtp_step(&mut plain, "", 220)?;
+        smtp_step(&mut plain, "EHLO ludius-controller\r\n", 250)?;
+        smtp_step(&mut plain, "STARTTLS\r\n", 220)?;
+        BufReader::new(Box::new(tls(&host, s)?))
+    };
+    let mechs = auth_mechs(&smtp_step(&mut r, "EHLO ludius-controller\r\n", 250)?);
+    let (b64, pw) = (base64::engine::general_purpose::STANDARD, own_password(sender)?);
+    // PLAIN (Dovecot SASL), else LOGIN (Exchange offers LOGIN, NTLM and GSSAPI)
+    if mechs.iter().any(|m| m == "PLAIN") {
+        smtp_step(&mut r, &format!("AUTH PLAIN {}\r\n", b64.encode(format!("\0{sender}\0{pw}"))), 235)?;
+    } else if mechs.iter().any(|m| m == "LOGIN") {
+        smtp_step(&mut r, "AUTH LOGIN\r\n", 334)?;
+        smtp_step(&mut r, &format!("{}\r\n", b64.encode(sender)), 334)?;
+        smtp_step(&mut r, &format!("{}\r\n", b64.encode(&pw)), 235)?;
+    } else {
+        return None;
+    }
+    Some(r)
+}
+
+/// Deliver a planned mail (see `smtp`). The caller has checked both addresses are in the range domain; the range's
+/// own Postfix delivers only to that domain, and the boundary gate checked an adopted server's.
 pub fn send(sender: &str, sender_name: &str, to: &str, to_name: &str, subject: &str, body: &str, msgid: &str) -> bool {
-    let Some((host, port)) = host_port("LUDIUS_SMTP_HOST", 25).or_else(|| host_port("LUDIUS_IMAP_HOST", 993).map(|(h, _)| (h, 25))) else { return false };
     if [sender, to].iter().any(|a| a.contains(['<', '>', '\r', '\n', ' '])) {
         return false;
     }
-    let Some(s) = tcp(&host, port) else { return false };
-    let Ok(w) = s.try_clone() else { return false };
-    let (mut r, mut w) = (BufReader::new(s), w);
     let data = compose(sender, sender_name, to, to_name, subject, body, msgid);
-    let mut step = |cmd: &str, want: u16| -> Option<()> {
-        if !cmd.is_empty() {
-            w.write_all(cmd.as_bytes()).ok()?;
-        }
-        (smtp_reply(&mut r)? == want).then_some(())
-    };
+    let Some(mut r) = smtp(sender) else { return false };
     let ok = (|| {
-        step("", 220)?;
-        step("EHLO ludius-controller\r\n", 250)?;
-        step(&format!("MAIL FROM:<{sender}>\r\n"), 250)?;
-        step(&format!("RCPT TO:<{to}>\r\n"), 250)?;
-        step("DATA\r\n", 354)?;
-        step(&format!("{data}.\r\n"), 250)
+        smtp_step(&mut r, &format!("MAIL FROM:<{sender}>\r\n"), 250)?;
+        smtp_step(&mut r, &format!("RCPT TO:<{to}>\r\n"), 250)?;
+        smtp_step(&mut r, "DATA\r\n", 354)?;
+        smtp_step(&mut r, &format!("{data}.\r\n"), 250)
     })()
     .is_some();
-    let _ = w.write_all(b"QUIT\r\n");
+    let _ = r.get_mut().write_all(b"QUIT\r\n");
     ok
+}
+
+/// Whether `sender` signs in to an adopted server's submission (sends nothing); None: no submission configured
+/// (the range's own Postfix takes mail without a sign-in).
+pub fn submit_check(sender: &str) -> Option<bool> {
+    if env("LUDIUS_SMTP_SUBMIT").is_empty() {
+        return None;
+    }
+    Some(smtp(sender).map(|mut r| r.get_mut().write_all(b"QUIT\r\n")).is_some())
 }
 
 #[cfg(test)]
@@ -487,6 +563,13 @@ mod tests {
         assert_eq!(split_subject("RE: Lead times"), ("RE: ".into(), "Lead times".into()));
         assert_eq!(split_subject("Agenda: Q3"), ("".into(), "Agenda: Q3".into()));
         assert_eq!(mutf7("M&APY-te &- Q3").as_deref(), Some("Möte & Q3"));
+    }
+
+    #[test]
+    fn smtp_auth_offer() {
+        let mut r = std::io::Cursor::new(b"250-EX01 Hello\r\n250-AUTH GSSAPI NTLM LOGIN\r\n250 SMTPUTF8\r\n".to_vec());
+        let (code, lines) = smtp_reply(&mut r).unwrap();
+        assert_eq!((code, auth_mechs(&lines)), (250, vec!["GSSAPI".to_string(), "NTLM".into(), "LOGIN".into()]));
     }
 
     #[test]

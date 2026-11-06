@@ -280,6 +280,11 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
         }
+        // an adopted IMAP server: deliveries need the sender's sign-in to its submission (nothing is sent here)
+        if ludius::mail::submit_check(user) == Some(false) {
+            println!("{user}@{}: mail submission sign-in failed", ludius::mail::domain());
+            std::process::exit(1);
+        }
         return Ok(());
     }
     if args.first().is_some_and(|a| a == "observe") {

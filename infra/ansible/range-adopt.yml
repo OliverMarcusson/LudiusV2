@@ -350,6 +350,31 @@
       when: chat_adopt | default(false) | bool
       ansible.builtin.include_tasks: tasks/chat-session.yml
 
+    - name: This desktop reaches the IMAP and submission servers and trusts the IMAP certificate (IMAP adopt; DNS and CA are the operator's)
+      when: imap_adopt | default(false) | bool
+      ansible.windows.win_powershell:
+        script: |
+          param($imap, $smtp, $port)
+          $Ansible.Changed = $false
+          $c = New-Object Net.Sockets.TcpClient
+          try {
+            $c.Connect($imap, 993)
+            $ssl = New-Object Net.Security.SslStream($c.GetStream(), $false)
+            $ssl.AuthenticateAsClient($imap)
+          } catch { throw "IMAPS ${imap}:993 unreachable or not trusted here ($($_.Exception.Message)): Outlook needs the name in this desktop's DNS and the server's CA trusted" }
+          finally { $c.Close() }
+          if (-not (Test-NetConnection $smtp -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue)) { throw "submission ${smtp}:$port unreachable from this desktop" }
+        parameters:
+          imap: "{{ imap_server }}"
+          smtp: "{{ smtp_server }}"
+          port: "{{ smtp_port }}"
+
+    - name: Outlook IMAP profile for their mail server (IMAP adopt; the persona's own account and AD password)
+      when: imap_adopt | default(false) | bool
+      ansible.builtin.include_role:
+        name: apps
+        tasks_from: imap-profile
+
     # without it Outlook's first start asks for the account; with it, it builds the profile from the logon (Autodiscover)
     - name: Outlook sets itself up from the persona's logon (ZeroConfigExchange, the persona's policy hive)
       when: mail_adopt | default(false) | bool
