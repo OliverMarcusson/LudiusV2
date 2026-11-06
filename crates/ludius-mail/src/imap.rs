@@ -35,6 +35,12 @@ fn host_port(var: &str, port: u16) -> Option<(String, u16)> {
     }
 }
 
+/// The gate's in-range address for an adopted server's name (LUDIUS_IMAP_ADDR, LUDIUS_SMTP_ADDR); None when missing,
+/// so an adopted server is never reached through ordinary DNS.
+fn pinned(var: &str) -> Option<String> {
+    Some(env(var)).filter(|a| !a.is_empty())
+}
+
 /// To `addr` when given (the gate's address for the name, pinned like the certificate), else to `host` resolved.
 fn tcp(host: &str, port: u16, addr: &str) -> Option<TcpStream> {
     let to = if addr.is_empty() { host } else { addr };
@@ -124,11 +130,11 @@ impl Imap {
         if mailbox.contains(['*', '\r', '\n']) {
             return None;
         }
-        let (login, password) = match env("LUDIUS_IMAP_USER") {
-            u if u.is_empty() => (mailbox.to_string(), own_password(mailbox)?),
-            u => (format!("{mailbox}*{u}"), secret(&env("LUDIUS_IMAP_PASSWORD_FILE"))?),
+        let (login, password, addr) = match env("LUDIUS_IMAP_USER") {
+            u if u.is_empty() => (mailbox.to_string(), own_password(mailbox)?, pinned("LUDIUS_IMAP_ADDR")?),
+            u => (format!("{mailbox}*{u}"), secret(&env("LUDIUS_IMAP_PASSWORD_FILE"))?, env("LUDIUS_IMAP_ADDR")),
         };
-        let mut c = Imap { r: BufReader::new(tls(&host, tcp(&host, port, &env("LUDIUS_IMAP_ADDR"))?)?), tag: 0 };
+        let mut c = Imap { r: BufReader::new(tls(&host, tcp(&host, port, &addr)?)?), tag: 0 };
         response(&mut c.r)?.text.starts_with("* OK").then_some(())?;
         c.run(&[b"LOGIN ".as_slice(), &astring(&login), b" ", &astring(&password)].concat())?;
         Some(c)
@@ -487,7 +493,7 @@ fn smtp(sender: &str) -> Option<Smtp> {
         smtp_step(&mut r, "EHLO ludius-controller\r\n", 250)?;
         return Some(r);
     };
-    let s = tcp(&host, port, &env("LUDIUS_SMTP_ADDR"))?;
+    let s = tcp(&host, port, &pinned("LUDIUS_SMTP_ADDR")?)?;
     let mut r: Smtp = if port == 465 {
         let mut r: Smtp = BufReader::new(Box::new(tls(&host, s)?));
         smtp_step(&mut r, "", 220)?;
@@ -535,7 +541,8 @@ pub fn send(sender: &str, sender_name: &str, to: &str, to_name: &str, subject: &
 }
 
 /// Whether `sender` signs in to an adopted server's submission (sends nothing); None: no submission configured
-/// (the range's own Postfix takes mail without a sign-in).
+/// (the range's own Postfix takes mail without a sign-in). Outside recipients aren't probed: a signed-in Exchange
+/// sender gets 250 at RCPT for any domain; the gate's "no route out" checks are what keep such a mail in the range.
 pub fn submit_check(sender: &str) -> Option<bool> {
     if env("LUDIUS_SMTP_SUBMIT").is_empty() {
         return None;
