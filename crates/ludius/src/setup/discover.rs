@@ -144,37 +144,95 @@ fn https_host(url: &str) -> Option<(String, u16)> {
     (domain_ok(host) || host.parse::<Ipv4Addr>().is_ok()).then(|| (host.to_lowercase(), port))
 }
 
+/// The https URL's host and port, and its one address (range DNS) inside the subnet.
+fn range_addr(url: &str, dns: Option<Ipv4Addr>, subnet: Subnet) -> std::result::Result<(String, u16, Ipv4Addr), String> {
+    let (host, port) = https_host(url).ok_or_else(|| format!("{url}: not an https://HOST[:PORT]/ URL"))?;
+    let ip = match host.parse::<Ipv4Addr>() {
+        Ok(ip) => ip,
+        Err(_) => match dns.map(|s| resolve_a(s, &host)) {
+            Some(Ok(a)) if a.len() == 1 => a[0],
+            Some(Ok(a)) => return Err(format!("{host}: {} addresses in the range's DNS, want one", a.len())),
+            Some(Err(e)) => return Err(format!("{host}: {e}")),
+            None => return Err(format!("no DNS server in {subnet} to resolve {host}")),
+        },
+    };
+    if !subnet.contains(ip) {
+        return Err(format!("{host} is {ip}, outside {subnet}"));
+    }
+    Ok((host, port, ip))
+}
+
+/// The last certificate the server sends (its root, or the top of the chain it sends), pinned in OUT/FILE.
+fn pin_last(host: &str, port: u16, ip: Ipv4Addr, out: &std::path::Path, file: &str) -> std::result::Result<std::path::PathBuf, String> {
+    let chain = run(&["openssl", "s_client", "-connect", &format!("{ip}:{port}"), "-servername", host, "-showcerts"]).unwrap_or_default();
+    let last = chain
+        .rsplit_once("-----BEGIN CERTIFICATE-----")
+        .and_then(|(_, b)| b.split_once("-----END CERTIFICATE-----"))
+        .map(|(b, _)| format!("-----BEGIN CERTIFICATE-----{b}-----END CERTIFICATE-----\n"))
+        .ok_or_else(|| format!("no certificate from {ip}:{port}"))?;
+    let ca = out.join(file);
+    std::fs::create_dir_all(out).and_then(|_| std::fs::write(&ca, last)).map_err(|e| format!("{}: {e}", ca.display()))?;
+    Ok(ca)
+}
+
+/// addons.chat adopt: the chat name resolves (range DNS) inside the subnet, the last certificate it sends is pinned
+/// in OUT/chat-ca.pem and verifies with the controller's own TLS client, the admin signs in and the team exists.
+/// Writes OUT/chat.json (team and public channels: the planner's channel list). Reads only.
+fn chat_check(a: &ChatArgs, dns: Option<Ipv4Addr>, subnet: Subnet, out: &std::path::Path) -> (bool, String, Value) {
+    let fail = |why: String| (false, why, Value::Null);
+    let (host, port, ip) = match range_addr(&a.url, dns, subnet) {
+        Ok(x) => x,
+        Err(e) => return fail(e),
+    };
+    let ca = match pin_last(&host, port, ip, out, "chat-ca.pem") {
+        Ok(c) => c,
+        Err(e) => return fail(e),
+    };
+    let file = out.join("chat.json");
+    let res = (|| -> Result<Vec<String>> {
+        let pw = std::fs::read_to_string(&a.secret).with_context(|| a.secret.clone())?;
+        let mut s = super::chat::connect(&a.url, ip.into(), &std::fs::read(&ca)?)?;
+        s.login(&a.user, pw.trim())?;
+        let (_, display, chans) = s.team(&a.team)?;
+        let chans: Vec<String> = chans.into_iter().map(|c| c.1).collect();
+        std::fs::write(&file, serde_json::to_string_pretty(&json!({"team": {"name": a.team, "display_name": display}, "channels": chans}))?)?;
+        Ok(chans)
+    })();
+    match res {
+        Ok(chans) => (
+            true,
+            format!("{host} = {ip}, certificate pinned in {}, {} signs in as system admin, team {} with {} public channels", ca.display(), a.user, a.team, chans.len()),
+            json!({"url": a.url, "host": host, "ip": ip.to_string(), "ca": ca.display().to_string(), "channels_file": file.display().to_string()}),
+        ),
+        Err(e) => fail(format!("{e:#}")),
+    }
+}
+
+struct ChatArgs {
+    url: String,
+    team: String,
+    user: String,
+    secret: String,
+}
+
 /// addons.mail adopt: the EWS host resolves (range DNS) to one address inside the subnet, offers Basic sign-in (the
 /// controller's EWS client uses it), and the last certificate the server sends verifies its name; that certificate
 /// is pinned in OUT/ews-ca.pem. Reads only; a server without Basic fails here, Ludius doesn't change its settings.
 fn ews_check(url: &str, dns: Option<Ipv4Addr>, subnet: Subnet, out: &std::path::Path) -> (bool, String, Value) {
     let fail = |why: String| (false, why, Value::Null);
-    let Some((host, port)) = https_host(url) else { return fail(format!("{url}: want https://HOST[:PORT]/EWS/Exchange.asmx")) };
-    let ip = match host.parse::<Ipv4Addr>() {
-        Ok(ip) => ip,
-        Err(_) => match dns.map(|s| resolve_a(s, &host)) {
-            Some(Ok(a)) if a.len() == 1 => a[0],
-            Some(Ok(a)) => return fail(format!("{host}: {} addresses in the range's DNS, want one", a.len())),
-            Some(Err(e)) => return fail(format!("{host}: {e}")),
-            None => return fail(format!("no DNS server in {subnet} to resolve {host}")),
-        },
+    let (host, port, ip) = match range_addr(url, dns, subnet) {
+        Ok(a) => a,
+        Err(e) => return fail(e),
     };
-    if !subnet.contains(ip) {
-        return fail(format!("{host} is {ip}, outside {subnet}"));
-    }
     let pin = format!("{host}:{port}:{ip}");
     let head = run(&["curl", "-sk", "-m", "10", "--max-redirs", "0", "--resolve", &pin, "-o", "/dev/null", "-D", "-", url]).unwrap_or_default();
     if !head.lines().any(|l| l.to_ascii_lowercase().starts_with("www-authenticate: basic")) {
         return fail(format!("{url} ({ip}) does not offer Basic sign-in: the operator enables it on the EWS virtual directory (Set-WebServicesVirtualDirectory -BasicAuthentication $true)"));
     }
-    let chain = run(&["openssl", "s_client", "-connect", &format!("{ip}:{port}"), "-servername", &host, "-showcerts"]).unwrap_or_default();
-    let Some(last) = chain.rsplit_once("-----BEGIN CERTIFICATE-----").and_then(|(_, b)| b.split_once("-----END CERTIFICATE-----")).map(|(b, _)| format!("-----BEGIN CERTIFICATE-----{b}-----END CERTIFICATE-----\n")) else {
-        return fail(format!("no certificate from {ip}:{port}"));
+    let ca = match pin_last(&host, port, ip, out, "ews-ca.pem") {
+        Ok(c) => c,
+        Err(e) => return fail(e),
     };
-    let ca = out.join("ews-ca.pem");
-    if let Err(e) = std::fs::create_dir_all(out).and_then(|_| std::fs::write(&ca, last)) {
-        return fail(format!("{}: {e}", ca.display()));
-    }
     let ca_s = ca.display().to_string();
     let code = run(&["curl", "-s", "-m", "10", "--max-redirs", "0", "--cacert", &ca_s, "--resolve", &pin, "-o", "/dev/null", "-w", "%{http_code}", url]).unwrap_or_default();
     if code != "401" {
@@ -338,7 +396,7 @@ fn on(b: bool) -> &'static str {
 }
 
 pub fn main(args: &[String]) -> Result<()> {
-    const USAGE: &str = "usage: ludius setup discover --subnet A.B.C.D/P --domain DOMAIN [--ews URL] [--out DIR]";
+    const USAGE: &str = "usage: ludius setup discover --subnet A.B.C.D/P --domain DOMAIN [--ews URL] [--chat URL --chat-team TEAM --chat-user USER --chat-secret FILE] [--out DIR]";
     let get = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let (Some(subnet), Some(domain)) = (get("--subnet"), get("--domain")) else { bail!(USAGE) };
     let subnet = Subnet::parse(&subnet)?;
@@ -489,6 +547,13 @@ pub fn main(args: &[String]) -> Result<()> {
         r.check(&format!("EWS {url}: inside {subnet}, Basic sign-in, certificate pinned"), pass, why);
         ews = doc;
     }
+    let mut chat = Value::Null;
+    if let Some(url) = get("--chat") {
+        let a = ChatArgs { url, team: get("--chat-team").unwrap_or_default(), user: get("--chat-user").unwrap_or_default(), secret: get("--chat-secret").unwrap_or_default() };
+        let (pass, why, doc) = chat_check(&a, dns.first().copied(), subnet, &out);
+        r.check(&format!("chat {}: inside {subnet}, certificate pinned, admin sign-in, team {}", a.url, a.team), pass, why);
+        chat = doc;
+    }
     match &bridge {
         Some(b) => no_route_out(&mut r, b, vms.as_deref()),
         None => r.check("no route out", false, format!("this node has no interface in {subnet}: can't inspect the range bridge (run discover on the range's Proxmox node)")),
@@ -498,7 +563,7 @@ pub fn main(args: &[String]) -> Result<()> {
     let doc = json!({
         "subnet": subnet.to_string(), "domain": domain, "at": chrono::Local::now().to_rfc3339(),
         "hosts": hosts.iter().map(|(ip, p)| json!({"ip": ip.to_string(), "open": p})).collect::<Vec<_>>(),
-        "bridge": bridge, "desktops": desktops, "facts": r.facts, "ews": ews, "gate": {"pass": gate_pass, "checks": r.gate},
+        "bridge": bridge, "desktops": desktops, "facts": r.facts, "ews": ews, "chat": chat, "gate": {"pass": gate_pass, "checks": r.gate},
     });
     std::fs::create_dir_all(&out)?;
     let file = out.join("discovery.json");

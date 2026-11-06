@@ -1,5 +1,6 @@
 //! Mattermost backend: read-only psql queries and mmctl over SSH (port of react.py's queries).
-//! Every failure (no host, SSH, psql, odd output) is None: unknown, never empty.
+//! Every failure (no host, SSH, psql, odd output) is None: unknown, never empty. An adopted server (LUDIUS_CHAT_API) is read
+//! over its REST API instead (api.rs).
 use std::io::{Read as _, Write as _};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -9,6 +10,14 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::Post;
+
+#[path = "api.rs"]
+mod api;
+
+/// The range has a chat server Ludius can read: its own (LUDIUS_CHAT_HOST over SSH) or an adopted one (LUDIUS_CHAT_API).
+pub fn available() -> bool {
+    api::on() || std::env::var("LUDIUS_CHAT_HOST").is_ok_and(|h| !h.is_empty())
+}
 
 /// Posts the conversation view shows before the unread ones.
 pub const TALK: usize = 12;
@@ -144,11 +153,17 @@ fn posts(rows: &Value) -> Option<Vec<Post>> {
 
 /// Unread posts to `user` in direct messages and private team channels, oldest first.
 pub fn unread(user: &str) -> Option<Vec<Post>> {
+    if api::on() {
+        return api::unread(user);
+    }
     posts(&query(UNREAD_SQL, &[("u", user)])?)
 }
 
 /// The last TALK read posts with `other` (a user, or ~channel) and when `user` last viewed it.
 pub fn conversation(user: &str, other: &str) -> Option<(Vec<Post>, i64)> {
+    if api::on() {
+        return api::conversation(user, other);
+    }
     let row = match other.strip_prefix('~') {
         Some(c) => query(&talk_sql(CHANNEL_TAIL), &[("u", user), ("c", c)])?,
         None => query(&talk_sql(DM_TAIL), &[("u", user), ("o", other)])?,
@@ -158,6 +173,9 @@ pub fn conversation(user: &str, other: &str) -> Option<(Vec<Post>, i64)> {
 
 /// sha256 of each file `user` shared with `other` named `name` since `since_ms` (posted, or only staged).
 pub fn shared(user: &str, other: &str, name: &str, since_ms: i64, posted: bool) -> Option<Vec<String>> {
+    if api::on() {
+        return api::shared(user, other, name, since_ms, posted);
+    }
     static PATH: OnceLock<Regex> = OnceLock::new();
     static SHA: OnceLock<Regex> = OnceLock::new();
     let state = if posted { "posted" } else { "staged" };
@@ -183,6 +201,9 @@ pub fn shared(user: &str, other: &str, name: &str, since_ms: i64, posted: bool) 
 
 /// Posts by `user` in `where` (a user, or ~channel) with exactly `message` since `since_ms`.
 pub fn posted(user: &str, r#where: &str, message: &str, since_ms: i64) -> Option<i64> {
+    if api::on() {
+        return api::posted(user, r#where, message, since_ms);
+    }
     let (k, c) = match r#where.strip_prefix('~') {
         Some(c) => ("C", c),
         None => ("D", r#where),
@@ -198,7 +219,8 @@ pub fn post(user: &str, other: &str, message: &str, since_ms: i64) -> Option<boo
     if !user_ok(user) || !user_ok(other) || message.trim().is_empty() {
         return Some(false);
     }
-    if ssh(&format!("sudo /usr/local/sbin/chat-post {user} {other}"), message.trim(), 60).is_some_and(|o| !o.is_empty()) {
+    let sent = if api::on() { api::post(user, other, message) == Some(true) } else { ssh(&format!("sudo /usr/local/sbin/chat-post {user} {other}"), message.trim(), 60).is_some_and(|o| !o.is_empty()) };
+    if sent {
         return Some(true);
     }
     posted(user, other, message, since_ms).map(|n| n > 0)
@@ -206,6 +228,9 @@ pub fn post(user: &str, other: &str, message: &str, since_ms: i64) -> Option<boo
 
 /// Soft-delete every post in the direct chat between `user` and `other` (mmctl); how many.
 pub fn reset(user: &str, other: &str) -> Option<usize> {
+    if api::on() {
+        return api::reset(user, other);
+    }
     static ID: OnceLock<Regex> = OnceLock::new();
     let result = query(PAIR_SQL, &[("u", user), ("o", other)])?;
     let raw = result.as_array()?;

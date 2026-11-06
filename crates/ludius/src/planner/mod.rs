@@ -56,13 +56,15 @@ pub(crate) fn fullmatch(pattern: &str, s: &str) -> bool {
     re(&format!("^(?:{pattern})$")).is_match(s)
 }
 
-/// Every chat channel the chat server has (data/chat.yaml); team channels come from the narrative.
+/// Every chat channel the chat server has (data/chat.yaml, or an adopted team's LUDIUS_CHAT_CHANNELS_FILE); team
+/// channels come from the narrative.
 pub fn chat_channels() -> Result<Vec<String>> {
     #[derive(Deserialize)]
     struct Chat {
         channels: Vec<String>,
     }
-    Ok(crate::tasks::load_yaml::<Chat>(&crate::paths::data().join("chat.yaml"))?.channels)
+    let file = std::env::var_os("LUDIUS_CHAT_CHANNELS_FILE").filter(|f| !f.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| crate::paths::data().join("chat.yaml"));
+    Ok(crate::tasks::load_yaml::<Chat>(&file)?.channels)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

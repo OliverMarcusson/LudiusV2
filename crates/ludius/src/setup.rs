@@ -109,6 +109,15 @@ pub struct Addon {
     /// Mail backend "adopt" (an existing Exchange): its EWS URL, a name in the server's certificate.
     #[serde(default)]
     pub ews: String,
+    /// Chat backend "adopt" (an existing Mattermost): its https URL, a name in the server's certificate.
+    #[serde(default)]
+    pub url: String,
+    /// Chat backend "adopt": the Mattermost team the personas join.
+    #[serde(default)]
+    pub team: String,
+    /// Chat backend "adopt": the system admin's username (its password in `admin`).
+    #[serde(default)]
+    pub user: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,6 +217,15 @@ impl Spec {
         self.addons.chat.is_some()
     }
 
+    /// An existing range's Mattermost: accounts, memberships and the narrative's team channels over its API.
+    pub fn chat_adopt(&self) -> bool {
+        self.existing() && self.addons.chat.is_some()
+    }
+
+    fn chat_addon(&self) -> Addon {
+        self.addons.chat.clone().unwrap_or_default()
+    }
+
     /// (user index -> vmid, ip)
     pub fn persona_slot(&self, i: u32) -> (u32, String) {
         (self.range.hypervisor.vmid_base + 21 + i, format!("{}.{}", self.range_net(), 21 + i))
@@ -266,8 +284,13 @@ impl Spec {
                 ensure!(m.backend == "adopt", "addons.mail.backend {:?}: an existing range adopts its Exchange (\"adopt\")", m.backend);
                 ensure!(re(r"^https://[A-Za-z0-9.-]+(:[0-9]+)?/").is_match(&m.ews), "addons.mail.ews {:?}: the EWS URL, https://NAME/EWS/Exchange.asmx with a name in the server's certificate", m.ews);
             }
-            // ponytail: adopting chat comes next; until then an existing range runs without it
-            ensure!(self.addons.chat.is_none(), "addons.chat: adopting chat in an existing range is not scripted yet; leave it out");
+            if let Some(c) = &self.addons.chat {
+                ensure!(c.backend == "adopt", "addons.chat.backend {:?}: an existing range adopts its Mattermost (\"adopt\")", c.backend);
+                ensure!(re(r"^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$").is_match(&c.url), "addons.chat.url {:?}: https://NAME, a name in the chat server's certificate", c.url);
+                ensure!(re(r"^[a-z0-9][a-z0-9-]{1,63}$").is_match(&c.team), "addons.chat.team {:?}: the Mattermost team's name (its URL handle)", c.team);
+                ensure!(re(r"^[a-z0-9._-]{1,64}$").is_match(&c.user), "addons.chat.user {:?}: the system admin's username", c.user);
+                ensure!(re(r"^secret:[A-Za-z0-9_.-]+$").is_match(&c.admin), "addons.chat.admin: \"secret:<name>\", the system admin's password in {}/<name>", secrets_dir().display());
+            }
         } else {
             ensure!(self.personas.desktops.is_empty(), "personas.desktops: only for range.mode \"existing\"");
             ensure!(n <= 78, "personas.count: at most 78 (addresses .21-.99)");
@@ -582,10 +605,16 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
                  test -x ./ludius-rs || {{ echo './ludius-rs missing in the checkout'; exit 1; }}; \
                  test -x target/release/ludius-host-agent || {{ echo 'host agent not built: cargo build --release -p ludius-host-agent'; exit 1; }}; \
                  test -s {key} || {{ echo 'AI key file missing'; exit 1; }}; {checks}\
-                 test -s {admin} || {{ echo 'the domain Administrator password file {admin} is missing (addons.ad.admin)'; exit 1; }}",
+                 test -s {admin} || {{ echo 'the domain Administrator password file {admin} is missing (addons.ad.admin)'; exit 1; }}{chat}",
                 key = key_path(&spec.ai.planner.key).display(),
                 checks = key_checks(spec),
                 admin = admin.display(),
+                chat = if spec.chat_adopt() {
+                    let f = key_path(&spec.chat_addon().admin).display().to_string();
+                    format!("; test -s {f} || {{ echo 'the chat admin password file {f} is missing (addons.chat.admin)'; exit 1; }}")
+                } else {
+                    String::new()
+                },
             )),
             exists: None,
             creates: vec![],
@@ -599,14 +628,31 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
             what: format!("Boundary gate (hard stop): discover {} read-only, and {desktops} are Windows desktops on its bridge", spec.range.subnet),
             sh: Some(format!(
                 "set -e; command -v nmap ldapsearch smbclient dig >/dev/null || apt-get install -y nmap ldap-utils smbclient dnsutils; \
-                 ./ludius-rs setup discover --subnet {} --domain {}{ews} --out {dir}; \
+                 ./ludius-rs setup discover --subnet {} --domain {}{ews}{chat} --out {dir}; \
                  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); have={{v[\"name\"] for v in d[\"desktops\"]}}; miss=[n for n in sys.argv[2:] if n not in have]; \
                  miss and sys.exit(\"not Windows 10/11 desktops on the range bridge: \" + \" \".join(miss))' {discovery} {desktops}",
                 spec.range.subnet, spec.range.domain,
                 ews = if spec.mail_adopt() { format!(" --ews {}", shell_quote(&ews_url(spec))) } else { String::new() },
+                chat = if spec.chat_adopt() {
+                    let c = spec.chat_addon();
+                    format!(
+                        " --chat {} --chat-team {} --chat-user {} --chat-secret {}",
+                        shell_quote(&c.url),
+                        shell_quote(&c.team),
+                        shell_quote(&c.user),
+                        shell_quote(&key_path(&c.admin).display().to_string())
+                    )
+                } else {
+                    String::new()
+                },
             )),
             exists: None,
-            creates: vec![format!("file {discovery}"), format!("file {dir}/ews-ca.pem (mail adopt: the EWS certificate, pinned)"), "node packages nmap, ldap-utils, smbclient, dnsutils when missing (read-only probes; on the node, not the range)".into()],
+            creates: vec![
+                format!("file {discovery}"),
+                format!("file {dir}/ews-ca.pem (mail adopt: the EWS certificate, pinned)"),
+                format!("files {dir}/chat-ca.pem and {dir}/chat.json (chat adopt: the chat certificate, pinned; the team's public channels)"),
+                "node packages nmap, ldap-utils, smbclient, dnsutils when missing (read-only probes; on the node, not the range)".into(),
+            ],
             irreversible: vec![],
             rerun: true,
         },
@@ -656,6 +702,25 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
             irreversible: vec![],
             rerun: true,
         },
+    ]
+    .into_iter()
+    .chain(spec.chat_adopt().then(|| {
+        let c = spec.chat_addon();
+        Step {
+            id: "chat",
+            what: format!("Mattermost {} (API, as {}): an account per narrative person, team {} and its public channels, the narrative's team channels", c.url, c.user, c.team),
+            sh: None,
+            exists: None,
+            creates: vec![
+                format!("Mattermost accounts for the narrative people (marked props.ludius = {}), password user + the persona suffix", chat::USER_MARK),
+                format!("their membership of team {} and every public channel in it", c.team),
+                format!("private channels for the narrative's team channels, purpose '{}'", chat::CHANNEL_MARK),
+            ],
+            irreversible: vec!["an account already marked as Ludius's gets its password reset to the persona password".into()],
+            rerun: true,
+        }
+    }))
+    .chain([
         Step {
             id: "adopt",
             what: format!(
@@ -684,6 +749,7 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
                     .into_iter()
                     .flatten(),
             )
+            .chain(spec.chat_adopt().then(|| format!("on {desktops}: a Mattermost session in the persona's Edge profile (signed in once, headless, in the persona's session; Edge policy UserDataDir %LOCALAPPDATA%\\Ludius\\Edge in the persona's hive)")))
             .collect(),
             irreversible: vec![
                 "Windows Update, Defender and automatic maintenance off on the desktops (the image settings Ludius runs with)".into(),
@@ -698,7 +764,8 @@ fn plan_existing(spec: &Spec, l: &Layout, build: &[Step]) -> Vec<Step> {
         },
         shared("controller"),
         shared("verify"),
-    ]
+    ])
+    .collect()
 }
 
 const VERIFY_DECISIONS: u32 = 1000;
@@ -898,6 +965,11 @@ pub fn apply(spec_path: &Path, root: &Path) -> Result<()> {
         unsafe { std::env::set_var("LUDIUS_PLANNER_URL", &spec.ai.planner.url) };
     }
 
+    // the narrative's channel check reads the adopted team's channels (the gate's chat.json), not data/chat.yaml
+    if spec.chat_adopt() {
+        unsafe { std::env::set_var("LUDIUS_CHAT_CHANNELS_FILE", l.dir.join("chat.json")) };
+    }
+
     let mut took: Vec<(&str, std::time::Duration)> = vec![];
     for s in &steps {
         if state.done.iter().any(|d| d == s.id) {
@@ -959,6 +1031,10 @@ fn run_step(s: &Step, spec: &Spec, l: &Layout, root: &Path, path: &str, vault_pa
         "vault" => vault(root, vault_pass, path),
         "personas" => personas(spec, l),
         "vars" => Ok(std::fs::write(l.vars(), ansible_vars(spec, l)?)?),
+        "chat" => {
+            persona_suffix(root, vault_pass, path)?;
+            chat_adopt(spec, l)
+        }
         "controller" => {
             persona_suffix(root, vault_pass, path)?;
             Ok(std::fs::write(l.controller_env(), controller_env(spec, l, root))?)
@@ -1159,6 +1235,8 @@ pub fn ansible_vars(spec: &Spec, l: &Layout) -> Result<String> {
             "ews_password_file": ews_secret(spec).display().to_string(),
             "mail_facts_file": l.dir.join("exchange.json").display().to_string(),
             "chat_enabled": false,
+            "chat_adopt": spec.chat_adopt(),
+            "chat_url": spec.chat_addon().url.trim_end_matches('/'),
             "range_pool": h.pool,
             "range_net": spec.range_net(),
             "range_personas": personas,
@@ -1259,7 +1337,22 @@ pub fn controller_env(spec: &Spec, l: &Layout, root: &Path) -> String {
         ]),
         _ => e.push(format!("LUDIUS_MAIL_DOMAIN={}", spec.range.domain)),
     }
-    if spec.chat() {
+    if spec.chat_adopt() {
+        // the gate's discovery: the chat's address in the range, its pinned certificate, the team's channel list
+        let d = std::fs::read_to_string(l.dir.join("discovery.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).unwrap_or_default();
+        let get = |k: &str| d["chat"][k].as_str().unwrap_or_default().to_string();
+        let c = spec.chat_addon();
+        e.extend([
+            format!("LUDIUS_CHAT_URL={}", c.url.trim_end_matches('/').trim_start_matches("https://")),
+            format!("LUDIUS_CHAT_API={}", c.url.trim_end_matches('/')),
+            format!("LUDIUS_CHAT_ADDR={}", get("ip")),
+            format!("LUDIUS_CHAT_CA={}", get("ca")),
+            format!("LUDIUS_CHAT_ADMIN_USER={}", c.user),
+            format!("LUDIUS_CHAT_ADMIN_PASSWORD_FILE={}", key_path(&c.admin).display()),
+            format!("LUDIUS_CHAT_TEAM={}", c.team),
+            format!("LUDIUS_CHAT_CHANNELS_FILE={}", get("channels_file")),
+        ]);
+    } else if spec.chat() {
         e.push(format!("LUDIUS_CHAT_URL=chat.{}", spec.range.domain));
         e.push(format!("LUDIUS_CHAT_HOST={net}.13"));
     }
@@ -1281,6 +1374,20 @@ fn ews_secret(spec: &Spec) -> PathBuf {
     secrets_dir().join(format!("ews-{}", spec.range.domain))
 }
 
+/// The chat step: accounts, memberships and team channels on the adopted Mattermost (setup/chat.rs).
+fn chat_adopt(spec: &Spec, l: &Layout) -> Result<()> {
+    let c = spec.chat_addon();
+    let d: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(l.dir.join("discovery.json"))?)?;
+    let (ip, ca) = (d["chat"]["ip"].as_str().context("discovery.json: no chat (gate)")?, d["chat"]["ca"].as_str().context("discovery.json: no chat ca")?);
+    let mut s = chat::connect(&c.url, ip.parse()?, &std::fs::read(ca)?)?;
+    s.login(&c.user, std::fs::read_to_string(key_path(&c.admin))?.trim())?;
+    let n: crate::planner::Narrative = serde_yaml::from_str(&std::fs::read_to_string(l.narrative())?)?;
+    let people: Vec<(String, String)> = n.people.iter().filter(|p| !p.user.is_empty()).map(|p| (p.user.clone(), p.name.clone())).collect();
+    let suffix = std::fs::read_to_string(secrets_dir().join(PERSONA_SUFFIX))?;
+    chat::adopt(&s, &c.team, &spec.range.domain, &people, suffix.trim(), &n.channels)
+}
+
+pub mod chat;
 pub mod discover;
 
 pub fn main(args: &[String], root: &Path) -> Result<()> {
@@ -1389,7 +1496,12 @@ decider = { provider = "openrouter", model = "liquid/d1.1", key = "secret:openro
         assert!(m.mail_adopt() && verify_apps(&m).contains(&"outlook"));
         let gate = plan(&m, &Layout { dir: PathBuf::from("/tmp/r") }).into_iter().find(|s| s.id == "gate").unwrap();
         assert!(gate.sh.unwrap().contains("--ews 'https://mail.corp.test/EWS/Exchange.asmx'"));
-        assert!(existing("[ai]", "[addons.chat]\n[ai]").is_err(), "chat not adoptable yet");
+        assert!(existing("[ai]", "[addons.chat]\n[ai]").is_err(), "adopted chat needs backend, url, team, user, admin");
+        let c = existing("[ai]", "[addons.chat]\nbackend = \"adopt\"\nurl = \"https://chat.corp.test\"\nteam = \"corp\"\nuser = \"mmadmin\"\nadmin = \"secret:chat-admin\"\n[ai]").unwrap();
+        let steps = plan(&c, &Layout { dir: PathBuf::from("/tmp/r") });
+        assert!(steps.iter().map(|s| s.id).collect::<Vec<_>>().windows(2).any(|w| w == ["chat", "adopt"]));
+        assert!(steps.iter().find(|s| s.id == "gate").unwrap().sh.as_ref().unwrap().contains("--chat 'https://chat.corp.test' --chat-team 'corp' --chat-user 'mmadmin'"));
+        assert!(controller_env(&c, &Layout { dir: PathBuf::from("/tmp/r") }, Path::new("/x")).contains("LUDIUS_CHAT_API=https://chat.corp.test\n"));
         assert!(spec("count = 3", "count = 3\ndesktops = [\"ws-a\"]").is_err(), "desktops only for existing");
     }
 

@@ -24,7 +24,9 @@
   ansible.windows.win_powershell:
     script: |
       $ErrorActionPreference = 'Stop'
-      if ((Get-Service WinDefend -ErrorAction SilentlyContinue).Status -eq 'Running') { # not once turned off below
+      # not once turned off below: the service may still run then, but refuses preferences (0x800106ba on a rerun)
+      $off = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -ErrorAction SilentlyContinue).DisableAntiSpyware -eq 1
+      if (-not $off -and (Get-Service WinDefend -ErrorAction SilentlyContinue).Status -eq 'Running') {
         Set-MpPreference -ScanScheduleDay 8 -RemediationScheduleDay 8 -SignatureScheduleDay 8 `
           -DisableCatchupFullScan $true -DisableCatchupQuickScan $true
       }
@@ -56,6 +58,7 @@
       $ErrorActionPreference = 'Stop'
       $Ansible.Changed = $false
       if ((Get-Service WinDefend -ErrorAction SilentlyContinue).Status -ne 'Running') { return } # already off
+      if ((Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -ErrorAction SilentlyContinue).DisableAntiSpyware -eq 1) { return } # off by policy (a rerun)
       $Ansible.Changed = (Get-MpPreference).DisableRealtimeMonitoring -ne $true
       Set-MpPreference -DisableRealtimeMonitoring $true
 

@@ -345,6 +345,11 @@
       delay: 15
       until: obs is succeeded
 
+    # in the persona's session, which the autologon just opened
+    - name: Mattermost session in the persona's Edge (chat adopt; setup's chat step made the account)
+      when: chat_adopt | default(false) | bool
+      ansible.builtin.include_tasks: tasks/chat-session.yml
+
     # without it Outlook's first start asks for the account; with it, it builds the profile from the logon (Autodiscover)
     - name: Outlook sets itself up from the persona's logon (ZeroConfigExchange, the persona's policy hive)
       when: mail_adopt | default(false) | bool

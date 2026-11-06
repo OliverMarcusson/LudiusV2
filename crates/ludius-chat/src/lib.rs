@@ -10,6 +10,9 @@ pub use mattermost::*;
 #[cfg(not(feature = "mattermost"))]
 mod none {
     use super::Post;
+    pub fn available() -> bool {
+        false
+    }
     pub fn unread(_: &str) -> Option<Vec<Post>> {
         None
     }

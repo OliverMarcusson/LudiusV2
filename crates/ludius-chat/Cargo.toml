@@ -7,8 +7,11 @@ publish.workspace = true
 [dependencies]
 regex = { version = "1.13.1", optional = true }
 serde_json = { version = "1.0.154", optional = true }
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json", "rustls"], optional = true }
+sha2 = { version = "0.10", optional = true }
 
 [features]
 default = ["mattermost"]
-# Mattermost backend (psql and mmctl over SSH to LUDIUS_CHAT_HOST). Without a backend, chat reads are unknown.
-mattermost = ["dep:regex", "dep:serde_json"]
+# Mattermost backend: psql and mmctl over SSH to LUDIUS_CHAT_HOST (Ludius's own chat01), or the REST API of an adopted
+# server (LUDIUS_CHAT_API). Without a backend, chat reads are unknown.
+mattermost = ["dep:regex", "dep:serde_json", "dep:reqwest", "dep:sha2"]

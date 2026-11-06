@@ -27,7 +27,7 @@ subgoals:
     launch: true
     done: {foreground: {process: msedge.exe}}
   open_chat:
-    goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click the GitLab button (it signs in with the Windows account; never type a password)"
+    goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click its single sign-on button such as GitLab if it has one (it signs in with the Windows account); never type a password"
     text: chat_url
     keys: [Ctrl+L, Enter]
     replace: true
@@ -63,7 +63,7 @@ subgoals:
     require: [{role: list item, name: '^({file_name}|{file_name_stem})$', selected: true}]
     forbid: [{role: list item, name: '^(?!({file_name}|{file_name_stem})$)', selected: true}]
     avoid: [{name: '^Cancel$'}]
-    done: {chat_file: {path: 'Documents\{file_name}', posted: false}}
+    done: {ask: "Does the message box at the bottom of the conversation with {to_name}, not yet sent, hold the attached file {file_name}?"}
   write_message:
     goal: "Type the message into the message box at the bottom of the conversation with {to_name}: {message}"
     text: message

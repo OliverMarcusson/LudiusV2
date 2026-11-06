@@ -1,0 +1,160 @@
+---
+# chat adopt: the persona's own Edge profile holds a Mattermost session, so a day run never types a password.
+# Runs after the restart's autologon: Edge exits at once in the WinRM session (session 0), so the sign-in runs as a
+# scheduled task in the persona's interactive session. Chromium ignores DevTools on its built-in profile folder, so
+# a per-persona policy moves Edge's profile to %LOCALAPPDATA%\Ludius\Edge; the persona's own Edge opens it too.
+# Already signed in: nothing changes. The password reaches the persona in a file only it can read, deleted at start.
+- name: The chat answers on this desktop (name from the range DNS, certificate trusted; both the operator's)
+  ansible.windows.win_powershell:
+    script: |
+      param($url)
+      $Ansible.Changed = $false
+      try { Invoke-WebRequest "$url/api/v4/system/ping" -UseBasicParsing -TimeoutSec 20 | Out-Null }
+      catch { throw "chat $url unreachable or not trusted here ($($_.Exception.Message)): the desktop needs the chat name in its DNS and the chat certificate's CA trusted" }
+    parameters:
+      url: "{{ chat_url }}"
+
+- name: Mattermost session in the persona's Edge profile (signed in once, headless, in the persona's session)
+  ansible.windows.win_powershell:
+    script: |
+      param($p, $url, $user, $pw)
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+      # failures come back as output (no_log would hide a thrown message); the next task fails with it
+      try {
+      $sid = ([Security.Principal.NTAccount]$p).Translate([Security.Principal.SecurityIdentifier]).Value
+      $prof = (Get-CimInstance Win32_UserProfile | Where-Object SID -eq $sid).LocalPath
+      if (-not $prof) { throw "no profile for $p yet (the autologon has not happened)" }
+      # Edge's profile out of its built-in folder (DevTools is refused there); the persona's policy hive only
+      $k = "Registry::HKEY_USERS\$sid\Software\Policies\Microsoft\Edge"
+      if ((Get-ItemProperty $k -ErrorAction SilentlyContinue).UserDataDir -ne '${local_app_data}\Ludius\Edge') {
+        if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }
+        Set-ItemProperty $k UserDataDir '${local_app_data}\Ludius\Edge'
+        $Ansible.Changed = $true
+      }
+      $dir = "$prof\AppData\Local\Ludius\chat-session"
+      New-Item $dir -ItemType Directory -Force | Out-Null
+      $acl = New-Object Security.AccessControl.DirectorySecurity
+      $acl.SetAccessRuleProtection($true, $false)
+      foreach ($who in $p, 'NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators') {
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($who, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+      }
+      Set-Acl $dir $acl
+      Remove-Item "$dir\*" -Force -ErrorAction SilentlyContinue
+      [IO.File]::WriteAllText("$dir\pw", $pw)
+      Set-Content "$dir\run.ps1" -Encoding UTF8 -Value @'
+      param($url, $user, $dir)
+      $ErrorActionPreference = 'Stop'
+      $out = "$dir\result.json"
+      $pw = [IO.File]::ReadAllText("$dir\pw"); Remove-Item "$dir\pw" -Force
+      $port = 9333
+      $none = [Threading.CancellationToken]::None
+      $script:n = 0
+      $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+      function Send($ws, $method, $params) {
+        $script:n++
+        $b = [Text.Encoding]::UTF8.GetBytes((@{ id = $script:n; method = $method; params = $params } | ConvertTo-Json -Depth 8 -Compress))
+        $ws.SendAsync([ArraySegment[byte]]::new($b), 'Text', $true, $none).Wait()
+        $buf = New-Object byte[] 262144
+        while ($true) {
+          $ms = New-Object IO.MemoryStream
+          do {
+            $r = $ws.ReceiveAsync([ArraySegment[byte]]::new($buf), $none)
+            if (-not $r.Wait(60000)) { throw "Edge DevTools: no answer to $method" }
+            $ms.Write($buf, 0, $r.Result.Count)
+          } until ($r.Result.EndOfMessage)
+          $o = [Text.Encoding]::UTF8.GetString($ms.ToArray()) | ConvertFrom-Json
+          if ($o.id -eq $script:n) { return $o }
+        }
+      }
+      function Js($ws, $expr) {
+        (Send $ws 'Runtime.evaluate' @{ expression = $expr; awaitPromise = $true; returnByValue = $true }).result.result.value
+      }
+      # headless Edge on the chat's page in the policy's profile folder, and its DevTools socket
+      function Open {
+        $proc = Start-Process $edge -PassThru -ArgumentList '--headless=new', "--remote-debugging-port=$port", '--no-first-run', '--no-default-browser-check',
+          "--user-data-dir=`"$env:LOCALAPPDATA\Ludius\Edge`"", '--profile-directory=Default', "$url/login"
+        $null = $proc.Handle
+        $page = $null
+        foreach ($i in 1..60) {
+          # PowerShell 5.1 hands a JSON array on as one object: unrolled from a variable
+          try { $list = Invoke-RestMethod "http://127.0.0.1:$port/json/list" -UseBasicParsing; $page = @($list | Where-Object { $_.type -eq 'page' -and $_.url -like "$url*" })[0] } catch {}
+          if ($page -or $proc.HasExited) { break }
+          Start-Sleep 1
+        }
+        if (-not $page) {
+          $why = if ($proc.HasExited) { "it exited with 0x{0:X}" -f $proc.ExitCode } else { 'no DevTools page in 60 s' }
+          $proc | Stop-Process -Force -ErrorAction SilentlyContinue
+          throw "headless Edge did not open $url ($why)"
+        }
+        $ws = New-Object Net.WebSockets.ClientWebSocket
+        $ws.ConnectAsync([Uri]$page.webSocketDebuggerUrl, $none).Wait()
+        foreach ($i in 1..60) { if ((Js $ws 'document.readyState') -eq 'complete') { break }; Start-Sleep 1 }
+        @{ proc = $proc; ws = $ws }
+      }
+      function Close($e) {
+        try { Send $e.ws 'Browser.close' @{} | Out-Null } catch {}
+        $clean = $e.proc.WaitForExit(30000)
+        if (-not $clean) { $e.proc | Stop-Process -Force }
+        Start-Sleep 2
+        $clean
+      }
+      try {
+        if (-not $edge) { throw 'Edge is not installed' }
+        $sess = (Get-Process -Id $PID).SessionId
+        Get-Process msedge -ErrorAction SilentlyContinue | Where-Object SessionId -eq $sess | Stop-Process -Force; Start-Sleep 2
+        $me = "fetch('/api/v4/users/me', {headers: {'X-Requested-With': 'XMLHttpRequest'}}).then(r => r.ok ? r.json() : {}).then(j => j.username || '')"
+        $changed = $false
+        # Chromium writes cookies to disk every 30 s or on a clean exit: a sign-in waits that out, then a new
+        # start must still be signed in (two tries)
+        foreach ($try in 1, 2) {
+          $e = Open
+          $signed = $false; $clean = $true
+          try {
+            if ((Js $e.ws $me) -eq $user) { break }
+            $body = @{ login_id = $user; password = $pw } | ConvertTo-Json -Compress
+            $st = Js $e.ws "fetch('/api/v4/users/login', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'}, body: JSON.stringify($body)}).then(r => r.status)"
+            if ($st -ne 200) { throw "chat sign-in as $user answered HTTP $st" }
+            $signed = $changed = $true
+            Start-Sleep 31
+          } finally { $clean = Close $e }
+          if ($signed) {
+            $e = Open
+            try { $who = Js $e.ws $me } finally { Close $e | Out-Null }
+            if ($who -eq $user) { break }
+            if ($try -eq 2) { throw "the chat session for $user was not kept in the Edge profile (a new start is not signed in; Edge closed $(if ($clean) { 'cleanly' } else { 'by force' }))" }
+          }
+        }
+        @{ error = ''; changed = $changed } | ConvertTo-Json | Set-Content $out
+      } catch { @{ error = "$($_.Exception.Message)"; changed = $false } | ConvertTo-Json | Set-Content $out }
+      '@
+      $t = 'Ludius chat session'
+      $a = New-ScheduledTaskAction -Execute powershell.exe -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$dir\run.ps1`" -url `"$url`" -user `"$user`" -dir `"$dir`""
+      Register-ScheduledTask $t -Action $a -Principal (New-ScheduledTaskPrincipal -UserId $p -LogonType Interactive -RunLevel Limited) -Force | Out-Null
+      try {
+        Start-ScheduledTask $t
+        foreach ($i in 1..480) { if (Test-Path "$dir\result.json") { break }; Start-Sleep 1 }
+        if (-not (Test-Path "$dir\result.json")) { throw "the sign-in in $p's session gave no result in 8 minutes (task result $((Get-ScheduledTaskInfo $t).LastTaskResult))" }
+        Start-Sleep 1
+        $r = Get-Content "$dir\result.json" -Raw | ConvertFrom-Json
+        if ($r.error) { throw $r.error }
+        if ($r.changed) { $Ansible.Changed = $true }
+      } finally {
+        Unregister-ScheduledTask $t -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+      }
+      @{ error = '' }
+      } catch { @{ error = "$($_.Exception.Message)" } }
+    parameters:
+      p: "{{ domain_netbios }}\\{{ persona }}"
+      url: "{{ chat_url }}"
+      user: "{{ persona }}"
+      pw: "{{ persona }}{{ user_password_suffix }}"
+  no_log: true
+  register: chat_session
+
+- name: Chat session result
+  ansible.builtin.assert:
+    that: chat_session.output[-1].error == ''
+    fail_msg: "{{ chat_session.output[-1].error }}"
+    quiet: true

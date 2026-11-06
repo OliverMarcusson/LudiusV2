@@ -26,7 +26,7 @@ subgoals:
     launch: true
     done: {foreground: {process: msedge.exe}}
   open_chat:
-    goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click the GitLab button (it signs in with the Windows account; never type a password)"
+    goal: "Open the team chat: go to {chat_url} in the address bar. If a sign-in page shows, click its single sign-on button such as GitLab if it has one (it signs in with the Windows account); never type a password"
     text: chat_url
     keys: [Ctrl+L, Enter]
     replace: true

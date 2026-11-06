@@ -143,7 +143,7 @@ pub struct Reactor<'r> {
     pub decider: Option<Ask<'r>>,
     pub taken: Vec<String>,
     pub planned_mail: BTreeSet<String>,
-    /// The range has the chat add-on (LUDIUS_CHAT_HOST); mail reactions follow the mail backend.
+    /// The range has the chat add-on (chat::available); mail reactions follow the mail backend.
     pub chat: bool,
     /// The reply-text LLM: (system, user prompt) -> reply body.
     pub draft: Box<dyn Fn(&str, &str) -> Result<String> + 'r>,
@@ -170,7 +170,7 @@ impl<'r> Reactor<'r> {
             decider: None,
             taken: vec![],
             planned_mail: BTreeSet::new(),
-            chat: cfg!(feature = "chat") && std::env::var("LUDIUS_CHAT_HOST").is_ok_and(|h| !h.is_empty()),
+            chat: cfg!(feature = "chat") && chat::available(),
             draft: Box::new(move |s, u| Ok(llm.json::<crate::reply::Draft>(s, u, 0.8, 1)?.body.trim().replace('\r', ""))),
             send: Box::new(crate::mail::deliver),
             inbox: Box::new(|u| crate::mail::newest(u, "inbox")),
